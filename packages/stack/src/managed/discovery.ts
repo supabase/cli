@@ -3,9 +3,7 @@ import {
   InvalidManagedIdentityError,
   UnsupportedGitWorkspaceError,
   type ManagedCheckoutLocation,
-  type ManagedCheckoutKind,
   type ManagedContextDescriptor,
-  type ManagedContextKind,
   type ManagedIdentityTransitionRecord,
   type ManagedIdentityClaims,
   type ManagedOperationRecord,
@@ -20,7 +18,6 @@ import {
   readBranchContextId,
   readGitCheckoutIdentityWithFileSystem,
   type GitCheckoutInspection,
-  type WorkspaceInspection,
 } from "./git.ts";
 import {
   canonicalizeManagedWorkspacePathWithFileSystem,
@@ -32,7 +29,17 @@ import {
   protectedManagedCheckoutLocationIds,
   type ManagedStackRepositoryShape,
 } from "./repository.ts";
-import { checkoutKindOf, newCheckoutTopologyMatches } from "./topology.ts";
+import { newCheckoutTopologyMatches } from "./topology.ts";
+import {
+  workspaceMetadata,
+  type ManagedWorkspaceDiscoveryContext,
+  type ManagedWorkspaceDiscoveryWorkspace,
+} from "./workspace-metadata.ts";
+
+export type {
+  ManagedWorkspaceDiscoveryContext,
+  ManagedWorkspaceDiscoveryWorkspace,
+} from "./workspace-metadata.ts";
 
 export type ManagedWorkspaceDiscoveryState =
   | "adoptable"
@@ -49,20 +56,6 @@ export type ManagedRecoveryOperation =
   | { readonly operation: "rebindCheckout"; readonly checkoutId: string; readonly path: string }
   | { readonly operation: "adoptContext"; readonly contextId: string; readonly branch: string }
   | { readonly operation: "prune"; readonly recordIds: ReadonlyArray<string> };
-
-export interface ManagedWorkspaceDiscoveryWorkspace {
-  readonly checkoutKind: ManagedCheckoutKind;
-  readonly canonicalPath: string;
-  readonly workspaceRoot: string;
-  readonly projectIdentityLocation: string;
-  readonly checkoutIdentityLocation: string;
-}
-
-export interface ManagedWorkspaceDiscoveryContext {
-  readonly kind: ManagedContextKind;
-  readonly branch?: string;
-  readonly commit?: string;
-}
 
 export interface ManagedWorkspaceDiscoveryIdentity {
   readonly projectId?: string;
@@ -470,48 +463,6 @@ const inspectBranchOwners = (
     }
     return { contextId, claims: liveClaims };
   });
-
-const workspaceMetadata = (
-  inspection: WorkspaceInspection,
-): {
-  readonly workspace: ManagedWorkspaceDiscoveryWorkspace;
-  readonly context: ManagedWorkspaceDiscoveryContext;
-  readonly contextDescriptor: ManagedContextDescriptor;
-} => {
-  if (inspection.kind === "ordinary-folder") {
-    const markerPath = ordinaryWorkspaceIdentityPath(inspection.canonicalPath);
-    return {
-      workspace: {
-        checkoutKind: "ordinary",
-        canonicalPath: inspection.canonicalPath,
-        workspaceRoot: inspection.canonicalPath,
-        projectIdentityLocation: markerPath,
-        checkoutIdentityLocation: markerPath,
-      },
-      context: { kind: "workspace" },
-      contextDescriptor: { kind: "workspace" },
-    };
-  }
-  const context: ManagedWorkspaceDiscoveryContext =
-    inspection.head.kind === "detached"
-      ? { kind: "detached", commit: inspection.head.commit }
-      : { kind: "branch", branch: inspection.head.branch };
-  const contextDescriptor: ManagedContextDescriptor =
-    inspection.head.kind === "detached"
-      ? { kind: "detached" }
-      : { kind: "branch", locator: inspection.head.branch };
-  return {
-    workspace: {
-      checkoutKind: checkoutKindOf(inspection),
-      canonicalPath: inspection.canonicalPath,
-      workspaceRoot: inspection.workspaceRoot,
-      projectIdentityLocation: inspection.commonDirectory,
-      checkoutIdentityLocation: inspection.gitDirectory,
-    },
-    context,
-    contextDescriptor,
-  };
-};
 
 /** Read-only managed identity discovery. No repository or identity writes occur. */
 export const discoverWorkspace = (

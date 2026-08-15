@@ -33,7 +33,7 @@ import {
   type GitCheckoutInspection,
 } from "./git.ts";
 import { assertManagedUuid } from "./ids.ts";
-import { ordinaryWorkspaceIdentityPath, gitConfigPath } from "./paths.ts";
+import { gitConfigPath } from "./paths.ts";
 import {
   ManagedStackRepository,
   type AbandonManagedIdentityTransitionResult,
@@ -48,6 +48,7 @@ import {
   newCheckoutTopologyMatches,
 } from "./topology.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
+import { workspaceMetadata } from "./workspace-metadata.ts";
 
 export interface WorkspaceIdentityDependencies {
   readonly repository: ManagedStackRepositoryShape;
@@ -363,9 +364,9 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
+      const metadata = workspaceMetadata(inspection);
 
       if (inspection.kind === "ordinary-folder") {
-        const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
         const marker =
           targetIdentity === undefined
             ? yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory)
@@ -382,15 +383,7 @@ export const makeWorkspaceIdentity = ({
         return {
           // A folder keeps all three identities in one marker, so that
           // marker is both identity locations.
-          workspace: {
-            checkoutKind: "ordinary",
-            canonicalPath,
-            workspaceRoot: canonicalPath,
-            projectIdentityLocation: markerPath,
-            checkoutIdentityLocation: markerPath,
-          },
-          context: { kind: "workspace" },
-          contextDescriptor: { kind: "workspace" },
+          ...metadata,
           identity: {
             projectId: identity?.projectId,
             checkoutId: identity?.checkoutId,
@@ -433,23 +426,8 @@ export const makeWorkspaceIdentity = ({
             targetIdentity.contextId,
           );
         }
-        const head = inspection.head;
         return {
-          workspace: {
-            checkoutKind: checkoutKindOf(inspection),
-            canonicalPath: inspection.canonicalPath,
-            workspaceRoot: inspection.workspaceRoot,
-            projectIdentityLocation: inspection.commonDirectory,
-            checkoutIdentityLocation: inspection.gitDirectory,
-          },
-          context:
-            head.kind === "detached"
-              ? { kind: "detached", commit: head.commit }
-              : { kind: "branch", branch: head.branch },
-          contextDescriptor:
-            head.kind === "detached"
-              ? { kind: "detached" }
-              : { kind: "branch", locator: head.branch },
+          ...metadata,
           identity: targetIdentity,
           identityMarkerCreated: checkoutIdentityCreated,
         };
@@ -460,24 +438,10 @@ export const makeWorkspaceIdentity = ({
       const checkoutId = claimed.checkoutId;
       const head = inspection.head;
       return {
-        workspace: {
-          checkoutKind: checkoutKindOf(inspection),
-          canonicalPath: inspection.canonicalPath,
-          workspaceRoot: inspection.workspaceRoot,
-          projectIdentityLocation: inspection.commonDirectory,
-          checkoutIdentityLocation: inspection.gitDirectory,
-        },
+        ...metadata,
         // An unborn branch names a context exactly as a born one does: it is
         // the state a fresh repository starts in, and a first start there
         // must not be treated as a detached `HEAD`.
-        context:
-          head.kind === "detached"
-            ? { kind: "detached", commit: head.commit }
-            : { kind: "branch", branch: head.branch },
-        contextDescriptor:
-          head.kind === "detached"
-            ? { kind: "detached" }
-            : { kind: "branch", locator: head.branch },
         identity: {
           projectId: claimed.projectId,
           checkoutId,
