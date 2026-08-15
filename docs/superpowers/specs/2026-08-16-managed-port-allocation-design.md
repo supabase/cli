@@ -3,8 +3,9 @@
 ## Context
 
 CLI-2110 defines the managed stack's port ownership policy. A port explicitly present in the
-effective project configuration is exact, while an omitted port is automatic. Automatic ports are
-allocated once and remain sticky across stop/start, branch return, and workspace moves.
+effective project configuration is exact, while an omitted config-addressable port is automatic.
+Those automatic ports are allocated once and remain sticky across stop/start, branch return, and
+workspace moves.
 
 The stack package and managed state are not published compatibility boundaries. This change can
 therefore replace the current development schema and port APIs directly instead of preserving
@@ -20,7 +21,8 @@ model without treating its runtime allocator as a managed-state integration poin
   to the template default.
 - Allocate omitted ports automatically, prefer conventional ports for new stacks, and persist the
   accepted assignment for sticky reuse.
-- Prevent two non-tombstoned managed stacks from owning the same port, including while stopped.
+- Keep automatic assignments unique across non-tombstoned managed stacks while allowing stopped
+  stacks that share an exact committed configuration to retain the same exact metadata.
 - Hold operating-system socket leases across selection, persistence, and runtime handoff so
   allocation is not a probe-then-bind race.
 - Preserve a strict boundary between managed allocation and direct, unmanaged `createStack()` use.
@@ -66,13 +68,19 @@ Introduce one exhaustive typed catalog for host-visible runtime ports. Each entr
 
 Configured host ports include the applicable keys under `api`, `db`, `db.pooler`, `studio`,
 `local_smtp`, `analytics`, and `edge_runtime`. Host ports that have no project-configuration key are
-always automatic. The catalog, rather than duplicated object literals, is the exhaustive mapping
-used by both intent resolution and concrete runtime projection.
+runtime-only automatic ports. The catalog, rather than duplicated object literals, is the
+exhaustive mapping used by both intent resolution and concrete runtime projection.
 
 Disabled services do not participate in allocation and do not hold socket leases. Persisted
-assignments for disabled fields remain available for future re-enablement unless the stack is
-tombstoned; disabling a service is not permission to give its sticky port to another managed
-stack.
+config-addressable assignments for disabled fields remain available for future re-enablement unless
+the stack is tombstoned; disabling a service is not permission to give its sticky automatic port to
+another managed stack.
+
+Config-addressable assignments are durable: present keys are exact, while omitted keys are
+automatic and sticky. Keyless internal fields are allocated for the current runtime only, may move
+freely between starts, and are recorded in live runtime state rather than durable
+`ManagedPortAssignment` rows. This keeps all port selection inside managed orchestration without
+creating an unremediable sticky conflict for a field the user cannot configure.
 
 ## Effective configuration and intent
 
@@ -98,10 +106,11 @@ The managed coordinator receives resolved stack identity, effective intents, ena
 and any persisted assignments. It constructs a complete candidate allocation before changing
 managed state.
 
-For a new automatic field, the coordinator tries its conventional port first while excluding all
-ports reserved by non-tombstoned managed stacks. If that port cannot be bound or is already owned,
-it selects another available port. For a new or changed exact field, only the requested number is a
-valid candidate.
+For a new sticky automatic field, the coordinator tries its conventional port first while excluding
+all durable assignments of non-tombstoned managed stacks. If that port cannot be bound or is already
+owned, it selects another available port. A keyless runtime-only automatic field also excludes all
+durable assignments plus current runtime reservations, but is not retained after stop. For a new
+or changed exact field, only the requested number is a valid candidate.
 
 The coordinator binds every candidate on loopback and retains the complete socket lease. Only
 after all fields are bound does it atomically publish the allocation and pending lifecycle change
@@ -109,13 +118,46 @@ through the repository. A managed ownership race during a new automatic allocati
 whole candidate set and retries selection. A race for an exact or previously sticky port fails;
 those meanings do not permit relocation.
 
-Repository uniqueness covers every non-tombstoned stack, including stopped, failed, starting,
-running, and stopping stacks. Tombstoning releases ownership. The SQLite schema enforces this
-invariant directly, and the in-memory repository implements the same transactional contract.
+Repository ownership is intent-sensitive. Sticky automatic assignments are exclusive across every
+non-tombstoned stack, including stopped and failed stacks. Exact assignments may coexist as metadata
+on multiple stopped or failed stacks, which is required when branches share committed scaffolded
+ports. An exact assignment may not take a sticky automatic assignment, even while its owner is
+stopped. Entering a port-occupying lifecycle additionally rejects any exact assignment already
+occupied by another stack. Tombstoning releases durable ownership. SQLite and memory adapters
+implement the same transactional matrix.
 
 The runtime receives only concrete ports and the held lease. It neither reselects ports nor reads
 managed reservations. As each service successfully binds its port, the corresponding lease socket
 is released. Failures before handoff release the complete set interruption-safely.
+
+### Detached daemon placement
+
+The process that initializes the runtime also owns managed allocation and its socket leases. For a
+detached start, the parent resolves identity and sends the selected stack, effective intents, and
+managed operation inputs to a managed daemon entrypoint. The child claims the start operation,
+selects and binds ports, persists the accepted durable assignments, and initializes services while
+holding those leases. It acknowledges startup only after runtime initialization and managed
+publication succeed.
+
+The ordinary daemon entrypoint remains unmanaged and retains its ephemeral allocator. No listener
+is transferred between processes, and no parent-held lease is released before a child races to bind.
+Foreground managed startup uses the same coordinator composition in-process.
+
+## Durable ownership matrix
+
+For another non-tombstoned stack, assignment compatibility is:
+
+| Existing assignment | Incoming assignment | Existing owner stopped or failed | Existing owner occupying ports |
+| ------------------- | ------------------- | -------------------------------- | ------------------------------ |
+| exact               | exact               | coexist                          | conflict                       |
+| automatic sticky    | exact               | conflict                         | conflict                       |
+| exact               | automatic sticky    | allocate elsewhere               | allocate elsewhere             |
+| automatic sticky    | automatic sticky    | allocate elsewhere               | allocate elsewhere             |
+
+An automatic-to-automatic collision is normally resolved during allocation rather than surfaced.
+An exact request that conflicts with a stopped sticky owner fails with guidance to change the exact
+key or delete and recreate the automatic owner. It must not report that stopping the already-stopped
+owner will help.
 
 ## Sticky and exact transition rules
 
@@ -128,9 +170,15 @@ For an existing stopped stack:
 - removing an exact key changes its intent to automatic while preserving its existing number; and
 - any bind or managed-ownership conflict leaves the previously accepted allocation untouched.
 
-A sticky automatic port is not a preference on restart. If another process occupies it while the
-managed stack is stopped, restart fails and reports the collision. Silent relocation would break
-stable URLs and connection settings.
+If removing an exact key would turn a number shared by another stopped exact assignment into an
+exclusive sticky automatic assignment, the transition fails and preserves the previous exact row.
+The caller may change the explicit configuration or delete and recreate the stack to obtain a fresh
+automatic assignment.
+
+A config-addressable sticky automatic port is not a preference on restart. If another process
+occupies it while the managed stack is stopped, restart fails and reports the collision. Silent
+relocation would break stable URLs and connection settings. A keyless runtime-only automatic port
+has no such promise and is reallocated when unavailable.
 
 For a running stack, no intent or port mutation is accepted. The coordinator compares the effective
 intent set with the persisted allocation and returns structured drift, including intent-only drift
@@ -163,19 +211,21 @@ turns an exact or sticky conflict into an automatic fallback.
 
 ## Repository model
 
-`ManagedPortAssignment` remains the durable expression of key, concrete port, and intent, with the
-key narrowed to the catalog's port-field type. Repository preparation accepts a complete allocation
-and validates:
+`ManagedPortAssignment` remains the durable expression of a config-addressable key, concrete port,
+and intent. Repository preparation accepts the complete durable assignment set and validates:
 
 - every enabled key appears exactly once;
 - disabled or unknown keys cannot acquire a new active lease;
-- all numbers are valid and unique within the stack; and
-- no number belongs to another non-tombstoned stack.
+- all numbers are valid and unique within the stack;
+- sticky automatic numbers are exclusive across non-tombstoned stacks;
+- an exact number does not overlap another stack's sticky automatic number; and
+- an occupying exact number does not overlap another occupying stack's exact number.
 
-The unpublished SQLite `ports` table is replaced directly with the constraints and indexes needed
-for global non-tombstoned ownership. There is no schema migration, compatibility reader, or
-fallback to filesystem metadata. Memory and SQLite implementations must pass the same public
-repository contract scenarios.
+The unpublished SQLite `ports` table is replaced directly with the constraints, transactional
+checks, and indexes needed for the intent-sensitive ownership matrix. Exact-to-exact stopped
+duplicates mean a blanket unique index on `port` is incorrect. There is no schema migration,
+compatibility reader, or fallback to filesystem metadata. Memory and SQLite implementations must
+pass the same public repository contract scenarios.
 
 ## Testing strategy
 
@@ -188,7 +238,9 @@ repositories and covers:
 - sibling branches, worktrees, and named stacks avoiding each other's reservations;
 - sticky reuse across restart, branch return, and workspace move;
 - exact changes, exact-key removal, and intent-only running drift;
-- ownership retained by stopped and failed non-tombstoned stacks and released by tombstones;
+- shared exact scaffolded ports across stopped branch stacks, with conflict only while occupied;
+- sticky automatic ownership retained by stopped and failed stacks and released by tombstones;
+- exact requests rejected against stopped sticky automatic owners;
 - collisions with external processes, legacy/direct stacks, and other managed stacks;
 - deterministic concurrent automatic and exact allocation attempts; and
 - interruption and runtime-initialization cleanup of socket leases.
@@ -201,6 +253,11 @@ to the catalog and effective-document-to-intent transformation.
 A direct `createStack()` integration regression proves that the unmanaged path remains ephemeral
 and performs no managed-state read. Existing CLI-2102 contract fixtures are consumed through the
 public managed interface rather than copied into implementation-specific tests.
+
+A managed-daemon subprocess scenario verifies that allocation and lease ownership occur in the
+child process through runtime bind and publication. A keyless-port scenario occupies the previous
+runtime number before restart and verifies automatic relocation without changing durable
+assignments.
 
 ### Parallel-suite invariant
 
@@ -218,6 +275,7 @@ state.
 ## Documentation
 
 Update the managed architecture and contract documentation to name the coordinator as the owner of
-managed port policy, describe stopped-stack ownership, and state that direct `createStack()` is an
-external unmanaged participant. Remove documentation that implies managed allocation is derived
-from filesystem stack metadata or performed inside the core runtime resolver.
+managed port policy, document the intent-sensitive stopped-stack ownership matrix, distinguish
+sticky config-addressable assignments from runtime-only keyless ports, and state that direct
+`createStack()` is an external unmanaged participant. Remove documentation that implies managed
+allocation is derived from filesystem stack metadata or performed inside the core runtime resolver.
