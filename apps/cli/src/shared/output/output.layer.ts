@@ -42,6 +42,18 @@ function formatTaskMessage(message: string | undefined): string | undefined {
 }
 
 /**
+ * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
+ * does not, so a streamed payload piped to a slow consumer buffers in memory.
+ */
+const stdioWriter =
+  (stdio: typeof Stdio.Stdio.Service) =>
+  (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+    Stream.make(chunk).pipe(
+      Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+      Effect.orDie,
+    );
+
+/**
  * Output layers - Concrete output mode implementations for the CLI.
  *
  * Each layer binds the shared `Output` contract to one transport policy:
@@ -51,6 +63,8 @@ export const textOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
     const tty = yield* Tty;
+    const write = stdioWriter(yield* Stdio.Stdio);
+
     const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
     const buildSelectOptions = (
       options: ReadonlyArray<{
@@ -379,22 +393,8 @@ export const textOutputLayer = Layer.effect(
             );
           }
         }),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        Effect.sync(() => {
-          if (stream === "stderr") {
-            process.stderr.write(text);
-          } else {
-            process.stdout.write(text);
-          }
-        }),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Effect.sync(() => {
-          if (stream === "stderr") {
-            process.stderr.write(bytes);
-          } else {
-            process.stdout.write(bytes);
-          }
-        }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );
@@ -403,12 +403,9 @@ export const textOutputLayer = Layer.effect(
 export const jsonOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-
-    const writeStdout = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
-    const writeStderr = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
+    const write = stdioWriter(yield* Stdio.Stdio);
+    const writeStdout = (s: string) => write(s, "stdout");
+    const writeStderr = (s: string) => write(s, "stderr");
 
     const nonInteractive = (action: string) =>
       Effect.fail(
@@ -469,13 +466,8 @@ export const jsonOutputLayer = Layer.effect(
           // shape it's decorating always wins.
           yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
         }),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        stream === "stderr" ? writeStderr(text) : writeStdout(text),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Stream.make(bytes).pipe(
-          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-          Effect.orDie,
-        ),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );
@@ -484,12 +476,8 @@ export const jsonOutputLayer = Layer.effect(
 export const streamJsonOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-
-    const writeStdout = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
-    const writeStderr = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
+    const write = stdioWriter(yield* Stdio.Stdio);
+    const writeStdout = (s: string) => write(s, "stdout");
     const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
       const event: StreamEvent = {
         type: "log",
@@ -577,13 +565,8 @@ export const streamJsonOutputLayer = Layer.effect(
           // over an opt-in context field of the same name (PR #6168 review).
           yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
         }),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        stream === "stderr" ? writeStderr(text) : writeStdout(text),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Stream.make(bytes).pipe(
-          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-          Effect.orDie,
-        ),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );
