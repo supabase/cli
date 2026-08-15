@@ -218,10 +218,10 @@ function substituteEnvLeaf(
   value: string,
   env: Readonly<Record<string, string>>,
   goViperCompat: boolean,
-): string {
+): { readonly value: string; readonly resolved: boolean } {
   const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   if (match === null) {
-    return value;
+    return { value, resolved: false };
   }
   const envName = match[1];
   const resolved = envName === undefined ? undefined : env[envName];
@@ -230,9 +230,9 @@ function substituteEnvLeaf(
   // key that's present but empty (e.g. a dotenv `KEY=` line) preserves the
   // `env(KEY)` literal exactly like an unset key, rather than substituting "".
   if (resolved === undefined || resolved === "") {
-    return value;
+    return { value, resolved: false };
   }
-  return resolved;
+  return { value: resolved, resolved: true };
 }
 
 function isDeferredEnvField(ast: SchemaAST.AST): boolean {
@@ -257,11 +257,13 @@ function walk(
   env: Readonly<Record<string, string>>,
   ast: SchemaAST.AST | null,
   goViperCompat: boolean,
+  path: ReadonlyArray<string>,
+  onResolvedEnv: ((path: ReadonlyArray<string>) => void) | undefined,
 ): unknown {
   if (Array.isArray(document)) {
     return document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child, goViperCompat);
+      return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedEnv);
     });
   }
 
@@ -269,7 +271,7 @@ function walk(
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(document)) {
       const child = ast === null ? null : descendAst(ast, key);
-      result[key] = walk(value, env, child, goViperCompat);
+      result[key] = walk(value, env, child, goViperCompat, [...path, key], onResolvedEnv);
     }
     return result;
   }
@@ -282,7 +284,11 @@ function walk(
       return document;
     }
 
-    const substituted = substituteEnvLeaf(document, env, goViperCompat);
+    const interpolation = substituteEnvLeaf(document, env, goViperCompat);
+    const substituted = interpolation.value;
+    if (interpolation.resolved) {
+      onResolvedEnv?.(path);
+    }
     const expected = ast === null ? "unknown" : leafExpectedType(ast);
 
     // Go's `StringToSliceHookFunc(",")` (`apps/cli-go/pkg/config/config.go:
@@ -338,7 +344,17 @@ export function interpolateEnvReferencesAgainstSchema(
   document: unknown,
   env: Readonly<Record<string, string>>,
   schema: { readonly ast: SchemaAST.AST },
-  options?: { readonly goViperCompat?: boolean },
+  options?: {
+    readonly goViperCompat?: boolean;
+    readonly onResolvedEnv?: (path: ReadonlyArray<string>) => void;
+  },
 ): unknown {
-  return walk(document, env, schema.ast, options?.goViperCompat ?? false);
+  return walk(
+    document,
+    env,
+    schema.ast,
+    options?.goViperCompat ?? false,
+    [],
+    options?.onResolvedEnv,
+  );
 }
