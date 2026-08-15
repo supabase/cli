@@ -56,9 +56,9 @@ import {
 } from "../declarative.errors.ts";
 import {
   legacyClassifyDeclarativeCompatibilityGap,
-  legacyExtensionDeclaration,
+  legacyFormatDeclarativeGapEvidence,
+  legacyFormatDeclarativeUpgradeGate,
   legacyFormatStagedExportAdoption,
-  legacyFormatStagedExportRecommendation,
   legacyResolveStagedDeclarativeDir,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
@@ -161,6 +161,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
       const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
       const stagedDirRel = legacyResolveStagedDeclarativeDir(declarativeDirRel);
+      // Repair prompts name the file they would edit by its full configured path —
+      // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
+      const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
       const run: LegacyDeclarativeRunContext = {
@@ -435,7 +438,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               label: `Generate next export to ${stagedDirRel}`,
               hint: "recommended",
             },
-            { value: "repair", label: "Add missing extension declarations and re-plan" },
+            {
+              value: "repair",
+              label: `Add missing extension declarations to ${extensionSqlRel} and re-plan`,
+              hint: "may surface another gap",
+            },
             { value: "cancel", label: "Cancel" },
           ]);
           if (choice === "cancel") return Option.none<LegacyDeclarativeSyncResult>();
@@ -485,17 +492,26 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         });
         if (compatibility.recommendedAction === "none") break;
 
+        // Both recommended actions mean the same thing to the user — the tree is a
+        // legacy export — so they render one shared template and differ only in the
+        // choices offered. Non-interactively there is exactly one recovery: the
+        // staged regenerate, carried on `suggestion` so `Output.fail` prints it
+        // instead of the "rerun with --debug" footer.
+        const gate = legacyFormatDeclarativeUpgradeGate({
+          evidence: legacyFormatDeclarativeGapEvidence(compatibility),
+          context: { declarativeDir: declarativeDirRel, schema: flags.schema },
+        });
+        if (!tty.stdinIsTty || yes) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: gate.message,
+              suggestion: gate.suggestion,
+            }),
+          );
+        }
+        yield* output.raw(`${legacyYellow(gate.message)}\n`, "stderr");
+
         if (compatibility.recommendedAction === "stage-next-export") {
-          const explanation = legacyFormatStagedExportRecommendation(compatibility, {
-            declarativeDir: declarativeDirRel,
-            schema: flags.schema,
-          });
-          if (!tty.stdinIsTty || yes) {
-            return yield* Effect.fail(
-              new LegacyDeclarativeCompatibilityError({ message: explanation }),
-            );
-          }
-          yield* output.raw(`${legacyYellow(explanation)}\n`, "stderr");
           const choice = yield* output.promptSelect("How would you like to continue?", [
             {
               value: "stage",
@@ -508,37 +524,24 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           return;
         }
 
-        const statements = compatibility.repairableExtensions.map(legacyExtensionDeclaration);
-        const explanation = [
-          "This declarative schema appears to use legacy pg-delta behavior. Legacy pg-delta treated these installed extensions as implicit, while pg-delta next treats their omission as removal:",
-          "",
-          ...compatibility.repairableExtensions.map((extension) => `- ${extension}`),
-        ].join("\n");
-        if (!tty.stdinIsTty || yes) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeCompatibilityError({
-              message: [
-                explanation,
-                "",
-                "Non-interactive sync will not modify the declarative schema automatically. Add these statements to extension.sql, then run sync again:",
-                ...statements,
-                "",
-                legacyFormatStagedExportRecommendation(compatibility, {
-                  declarativeDir: declarativeDirRel,
-                  schema: flags.schema,
-                }),
-              ].join("\n"),
-            }),
-          );
-        }
-
-        yield* output.raw(`${legacyYellow(explanation)}\n`, "stderr");
+        // Repairing the tree in place is offered only interactively, and only as an
+        // advanced choice: on a real legacy tree each added declaration tends to
+        // unlock the next refusal, so it is a false trail for a scripted run.
         const choice = yield* output.promptSelect("How would you like to continue?", [
-          { value: "repair", label: "Add declarations and re-plan", hint: "recommended" },
+          { value: "stage", label: `Generate next export to ${stagedDirRel}`, hint: "recommended" },
+          {
+            value: "repair",
+            label: `Add declarations to ${extensionSqlRel} and re-plan`,
+            hint: "may surface another gap",
+          },
           { value: "continue", label: "Continue with removals" },
           { value: "cancel", label: "Cancel" },
         ]);
         if (choice === "cancel") return;
+        if (choice === "stage") {
+          yield* stageNextExport();
+          return;
+        }
         if (choice === "continue") break;
         const repaired = yield* legacyAppendExtensionDeclarations(
           declarativeDir,

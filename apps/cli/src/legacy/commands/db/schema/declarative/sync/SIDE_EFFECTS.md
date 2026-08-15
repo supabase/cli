@@ -83,11 +83,22 @@ legacy opt-out, warming the catalog cache) — on both interactive and `--yes` p
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.
 
-Before writing a bundled-engine migration, a manifest-less legacy tree that
-would remove only `pgcrypto`, `uuid-ossp`, or `pg_net` offers to append their
-declarations to `extension.sql` and re-plan, continue, or cancel. Non-interactive
-execution (including `--yes`) stops and prints the SQL instead of modifying the
-tree. The repair never overwrites existing SQL or creates an export manifest.
+A manifest-less legacy tree is refused by two compatibility gates — one when the
+tree fails to load on the bundled engine's shadow, one when the plan's removals
+reveal legacy-implicit extensions or extension-managed objects. Both render the
+same message (`This <declarative-dir> tree looks like a legacy pg-delta export.`
+plus an indented evidence block) and both carry the staged-upgrade recipe on the
+error's suggestion, so the generic `Try rerunning the command with --debug`
+footer is **not** printed. Non-interactive execution (including `--yes`) stops
+there and modifies nothing; the only recommended recovery is regenerating into
+`<declarative-dir>-next`, reviewing it, and adopting it.
+
+In a TTY both gates additionally offer to generate that staged export
+(recommended), and — when the gap is only `pgcrypto`, `uuid-ossp`, or `pg_net` —
+to append those declarations to `<declarative-dir>/extension.sql` and re-plan, or
+to continue with the removals, or cancel. The in-place repair is an advanced
+choice (it may surface another gap on the next plan); it never overwrites
+existing SQL or creates an export manifest.
 
 ## Notes
 

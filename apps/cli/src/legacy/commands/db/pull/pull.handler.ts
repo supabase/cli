@@ -109,6 +109,15 @@ import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
 const DEPRECATION_LINE =
   "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
 
+/**
+ * Explains the in-sync non-zero exit. Go prints its generic
+ * `Try rerunning the command with --debug…` footer here, which reads like a
+ * crash for what is really a finding; the message and exit code stay Go-identical
+ * (see `docs/go-cli-divergences.md`).
+ */
+const IN_SYNC_SUGGESTION =
+  "The remote database is already in sync with your local migrations — nothing to pull.";
+
 /** Migration-file mode for the initial pg_dump seed. */
 const MIGRATION_FILE_MODE = 0o644;
 
@@ -866,6 +875,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               return yield* Effect.fail(
                 new LegacyDbPullInSyncError({
                   message: `No schema changes found (debug bundle: ${debugDir})`,
+                  suggestion: IN_SYNC_SUGGESTION,
                 }),
               );
             }
@@ -878,11 +888,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             return yield* Effect.fail(
               new LegacyDbPullInSyncError({
                 message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
+                suggestion: IN_SYNC_SUGGESTION,
               }),
             );
           }
           return yield* Effect.fail(
-            new LegacyDbPullInSyncError({ message: "No schema changes found" }),
+            new LegacyDbPullInSyncError({
+              message: "No schema changes found",
+              suggestion: IN_SYNC_SUGGESTION,
+            }),
           );
         }
 
@@ -960,7 +974,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // empty → in sync.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
             return yield* Effect.fail(
-              new LegacyDbPullInSyncError({ message: "No schema changes found" }),
+              new LegacyDbPullInSyncError({
+                message: "No schema changes found",
+                suggestion: IN_SYNC_SUGGESTION,
+              }),
             );
           }
           writtenMigrations.push({ path: migrationPath, version: timestamp });

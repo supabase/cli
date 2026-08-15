@@ -159,3 +159,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   redirect the service-role key to an attacker-controlled host. Intentional
   TS-only hardening, not a parity bug — see
   [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).
+- `db pull` in-sync (`"No schema changes found"`) keeps Go's message and its non-zero
+  exit code, but replaces the generic "Try rerunning the command with --debug to
+  troubleshoot the error." stderr footer with an explanatory suggestion line
+  ("The remote database is already in sync with your local migrations — nothing to
+  pull."). An in-sync database is a finding, not a failure to troubleshoot, so the
+  debug hint sent users chasing a non-existent bug. Message text and exit code — the
+  parts scripts depend on — are unchanged.

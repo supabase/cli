@@ -1046,10 +1046,15 @@ describe("legacy db schema declarative sync integration", () => {
       const error = failError(exit);
       expect(error).toMatchObject({
         message: expect.stringContaining("uuid-ossp"),
+        // Recovery commands ride on `suggestion` so `Output.fail` prints them
+        // instead of the generic "rerun with --debug" footer.
+        suggestion: expect.stringContaining(
+          "supabase db schema declarative generate --local --overwrite",
+        ),
       });
-      expect(JSON.stringify(error)).toContain(
-        "supabase db schema declarative generate --local --overwrite",
-      );
+      // Hand-editing extension.sql is a false trail non-interactively: each
+      // declaration only unlocks the next refusal.
+      expect(JSON.stringify(error)).not.toContain("extension.sql");
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1178,7 +1183,16 @@ describe("legacy db schema declarative sync integration", () => {
       const exit = yield* legacyDbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
       expect(failError(exit)).toMatchObject({
         _tag: "LegacyDeclarativeCompatibilityError",
-        message: expect.stringContaining("pg_cron job refresh download metrics"),
+        // Same unified template as the load-fail gate — only the evidence differs.
+        message: expect.stringContaining(
+          "This supabase/schemas tree looks like a legacy pg-delta export.",
+        ),
+        suggestion: expect.stringContaining(
+          "Upgrade without changing the active supabase/schemas tree:",
+        ),
+      });
+      expect(failError(exit)).toMatchObject({
+        message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
@@ -1221,6 +1235,48 @@ describe("legacy db schema declarative sync integration", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("repairs the active tree in place when the user picks the advanced choice", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      replannedDiffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["repair"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n',
+      );
+      expect(s.planCalls).toBe(2);
+      expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages a next export from the repair prompt without touching the tree", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["stage"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("cancels compatibility resolution without schema or migration writes", () => {
     seedDeclarative(tmp.current);

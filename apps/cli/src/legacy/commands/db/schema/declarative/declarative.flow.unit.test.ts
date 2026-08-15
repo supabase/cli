@@ -4,8 +4,9 @@ import {
   legacyClassifyDeclarativeCompatibilityGap,
   legacyClassifyDeclarativeLoadCompatibility,
   legacyExtensionDeclaration,
+  legacyFormatDeclarativeGapEvidence,
+  legacyFormatDeclarativeUpgradeGate,
   legacyFormatStagedExportAdoption,
-  legacyFormatStagedExportRecommendation,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
   legacyResolveStagedDeclarativeDir,
@@ -98,41 +99,103 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
     expect(legacyExtensionDeclaration("uuid-ossp")).toBe(
       'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";',
     );
-    const gap = classifyGap();
-    expect(
-      legacyFormatStagedExportRecommendation(gap, {
-        declarativeDir: "supabase/schemas",
-        schema: [],
-      }),
-    ).toContain(
+    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
+      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+      context: { declarativeDir: "supabase/schemas", schema: [] },
+    });
+    expect(suggestion).toContain(
       "generate --local --overwrite \\\n    --output supabase/schemas-next --experimental",
     );
   });
 
   it("derives staged-export commands from a custom declarative path", () => {
-    const recommendation = legacyFormatStagedExportRecommendation(classifyGap(), {
-      declarativeDir: "supabase/custom schema",
-      schema: [],
+    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
+      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+      context: { declarativeDir: "supabase/custom schema", schema: [] },
     });
 
-    expect(recommendation).toContain("--output 'supabase/custom schema-next'");
-    expect(recommendation).toContain(
+    expect(suggestion).toContain("--output 'supabase/custom schema-next'");
+    expect(suggestion).toContain(
       "rm -rf 'supabase/custom schema' && mv 'supabase/custom schema-next' 'supabase/custom schema'",
     );
   });
 
   it("preserves schema filters in staged-export and follow-up sync commands", () => {
-    const recommendation = legacyFormatStagedExportRecommendation(classifyGap(), {
-      declarativeDir: "supabase/schemas",
-      schema: ["app", "tenant,one"],
+    const { suggestion } = legacyFormatDeclarativeUpgradeGate({
+      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+      context: { declarativeDir: "supabase/schemas", schema: ["app", "tenant,one"] },
     });
 
-    expect(recommendation).toContain(
+    expect(suggestion).toContain(
       `--output supabase/schemas-next --schema app --schema '"tenant,one"' --experimental`,
     );
-    expect(recommendation).toContain(
+    expect(suggestion).toContain(
       `sync --no-apply --schema app --schema '"tenant,one"' --experimental`,
     );
+  });
+});
+
+describe("legacyFormatDeclarativeUpgradeGate", () => {
+  it("renders one template with indented evidence and no --debug-style guidance", () => {
+    const gate = legacyFormatDeclarativeUpgradeGate({
+      evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
+      context: { declarativeDir: "supabase/schemas", schema: [] },
+    });
+
+    expect(gate.message).toBe(
+      [
+        "This supabase/schemas tree looks like a legacy pg-delta export.",
+        "pg-delta next only loads extensions the tree declares; legacy exports omitted",
+        "platform extensions and extension-managed objects like cron jobs.",
+        "",
+        "  Legacy-implicit extensions: pgcrypto, uuid-ossp",
+        "  Extension-managed objects: pg_cron job refresh download metrics, pgmq queue emails",
+        "",
+        "Do not apply a sync generated from this tree — it can drop extensions or unschedule jobs.",
+      ].join("\n"),
+    );
+    expect(gate.suggestion).toBe(
+      [
+        "Upgrade without changing the active supabase/schemas tree:",
+        "",
+        "  supabase db schema declarative generate --local --overwrite \\",
+        "    --output supabase/schemas-next --experimental",
+        "  # review supabase/schemas-next",
+        "  rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
+        "  supabase db schema declarative sync --no-apply --experimental",
+      ].join("\n"),
+    );
+  });
+
+  it("offers no extension.sql alternative — the staged upgrade is the only recovery", () => {
+    const gate = legacyFormatDeclarativeUpgradeGate({
+      evidence: [
+        "members.sql:3 uses extensions.uuid_generate_v4(), but the tree does not declare uuid-ossp.",
+      ],
+      context: { declarativeDir: "supabase/schemas", schema: [] },
+    });
+
+    expect(`${gate.message}\n${gate.suggestion}`).not.toContain("extension.sql");
+    expect(gate.message).toContain(
+      "  members.sql:3 uses extensions.uuid_generate_v4(), but the tree does not declare uuid-ossp.",
+    );
+  });
+
+  it("reports ambiguous extension removals as their own evidence line", () => {
+    expect(
+      legacyFormatDeclarativeGapEvidence(
+        classifyGap({ removals: { extensions: ["postgis"], extensionIntents: [] } }),
+      ),
+    ).toEqual(["Extensions: postgis"]);
+  });
+
+  it("omits the evidence block entirely when there is nothing to report", () => {
+    const gate = legacyFormatDeclarativeUpgradeGate({
+      evidence: [],
+      context: { declarativeDir: "supabase/schemas", schema: [] },
+    });
+
+    expect(gate.message).not.toContain("\n\n\n");
   });
 });
 

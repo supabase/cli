@@ -33,10 +33,9 @@ import {
 } from "./declarative.errors.ts";
 import {
   legacyClassifyDeclarativeLoadCompatibility,
-  legacyExtensionDeclaration,
-  legacyFormatDeclarativeSyncCommand,
-  legacyFormatStagedExportCommands,
+  legacyFormatDeclarativeUpgradeGate,
   type LegacyDeclarativeLoadCompatibilityFinding,
+  type LegacyDeclarativeUpgradeGateText,
 } from "./declarative.flow.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
@@ -70,35 +69,17 @@ const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ m
 const formatImplicitExtensionLoadFailure = (
   findings: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>,
   run: Pick<LegacyDeclarativeRunContext, "declarativeDirDisplay" | "schema">,
-): string => {
-  const extensions = [...new Set(findings.map((finding) => finding.extension))].sort();
-  const detected = findings.map((finding) => {
-    const location =
-      finding.file === undefined
-        ? "A declarative schema file"
-        : `${finding.file}${finding.line === undefined ? "" : `:${finding.line}`}`;
-    return `${location} uses ${finding.signature}, but the tree does not declare ${finding.extension}.`;
-  });
-  return [
-    "This declarative schema looks like a legacy pg-delta export.",
-    "",
-    ...detected,
-    "",
-    "pg-delta next loads desired state onto a shadow that only has extensions you declare. Legacy generate omitted platform extensions.",
-    "",
-    "Recommended — generate a next-compatible tree, review it, then adopt:",
-    "",
-    ...legacyFormatStagedExportCommands({
-      declarativeDir: run.declarativeDirDisplay,
-      schema: run.schema,
+): LegacyDeclarativeUpgradeGateText =>
+  legacyFormatDeclarativeUpgradeGate({
+    evidence: findings.map((finding) => {
+      const location =
+        finding.file === undefined
+          ? "A declarative schema file"
+          : `${finding.file}${finding.line === undefined ? "" : `:${finding.line}`}`;
+      return `${location} uses ${finding.signature}, but the tree does not declare ${finding.extension}.`;
     }),
-    "",
-    "Alternative — add the missing extension declarations to extension.sql, then re-plan:",
-    ...extensions.map((extension) => legacyExtensionDeclaration(extension)),
-    "",
-    legacyFormatDeclarativeSyncCommand(run.schema),
-  ].join("\n");
-};
+    context: { declarativeDir: run.declarativeDirDisplay, schema: run.schema },
+  });
 
 /**
  * Computes the diff between local migrations state and the declarative schema.
@@ -162,12 +143,13 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
           diagnostics: error.diagnostics ?? [],
           files,
         });
-        return findings.length === 0
-          ? error
-          : new LegacyDeclarativeCompatibilityError({
-              message: formatImplicitExtensionLoadFailure(findings, run),
-              loadFindings: findings,
-            });
+        if (findings.length === 0) return error;
+        const gate = formatImplicitExtensionLoadFailure(findings, run);
+        return new LegacyDeclarativeCompatibilityError({
+          message: gate.message,
+          suggestion: gate.suggestion,
+          loadFindings: findings,
+        });
       }),
     );
   return {

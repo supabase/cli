@@ -1251,8 +1251,16 @@ describe("legacy db pull", () => {
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "" });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
+      // Go's message and non-zero exit are the contract; the generic
+      // "rerun with --debug" footer is replaced by an explanation instead
+      // (docs/go-cli-divergences.md).
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "LegacyDbPullInSyncError",
+        message: "No schema changes found",
+        suggestion:
+          "The remote database is already in sync with your local migrations — nothing to pull.",
+      });
     }).pipe(Effect.provide(s.layer));
   });
 

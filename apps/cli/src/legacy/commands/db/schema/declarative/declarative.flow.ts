@@ -300,6 +300,9 @@ function schemaArguments(schema: ReadonlyArray<string>): string {
 export const legacyFormatDeclarativeSyncCommand = (schema: ReadonlyArray<string>): string =>
   `  supabase db schema declarative sync --no-apply${schemaArguments(schema)} --experimental`;
 
+const adoptionCommand = (declarativeDir: string, stagedDir: string): string =>
+  `  rm -rf ${shellQuoteArgument(declarativeDir)} && mv ${shellQuoteArgument(stagedDir)} ${shellQuoteArgument(declarativeDir)}`;
+
 export function legacyFormatStagedExportAdoption({
   declarativeDir,
   schema,
@@ -307,30 +310,32 @@ export function legacyFormatStagedExportAdoption({
   const stagedDir = legacyResolveStagedDeclarativeDir(declarativeDir);
   return [
     `Review ${stagedDir}, then adopt it:`,
-    `  rm -rf ${shellQuoteArgument(declarativeDir)} && mv ${shellQuoteArgument(stagedDir)} ${shellQuoteArgument(declarativeDir)}`,
+    adoptionCommand(declarativeDir, stagedDir),
     legacyFormatDeclarativeSyncCommand(schema),
   ];
 }
 
-export function legacyFormatStagedExportCommands(
-  context: LegacyStagedExportContext,
-): ReadonlyArray<string> {
+/** The staged-upgrade recipe, as a copy-pasteable block of indented shell lines. */
+function stagedExportCommands(context: LegacyStagedExportContext): ReadonlyArray<string> {
   const stagedDir = legacyResolveStagedDeclarativeDir(context.declarativeDir);
   return [
     "  supabase db schema declarative generate --local --overwrite \\",
     `    --output ${shellQuoteArgument(stagedDir)}${schemaArguments(context.schema)} --experimental`,
-    "",
-    ...legacyFormatStagedExportAdoption(context).map((line) =>
-      line.startsWith("Review ") ? `  # review ${stagedDir}` : line,
-    ),
+    `  # review ${stagedDir}`,
+    adoptionCommand(context.declarativeDir, stagedDir),
+    legacyFormatDeclarativeSyncCommand(context.schema),
   ];
 }
 
-export function legacyFormatStagedExportRecommendation(
+/**
+ * Evidence lines for a plan that succeeded but whose removals reveal the tree is
+ * a legacy export (the plan-refuse gate). The load-fail gate builds its own
+ * evidence from the shadow-load diagnostics instead.
+ */
+export function legacyFormatDeclarativeGapEvidence(
   gap: LegacyDeclarativeCompatibilityGap,
-  context: LegacyStagedExportContext,
-): string {
-  const detected = [
+): ReadonlyArray<string> {
+  return [
     ...(gap.repairableExtensions.length > 0
       ? [`Legacy-implicit extensions: ${gap.repairableExtensions.join(", ")}`]
       : []),
@@ -345,10 +350,44 @@ export function legacyFormatStagedExportRecommendation(
         ]
       : []),
   ];
-  return [
-    "WARNING: pg-delta next manages schema state that the legacy export did not represent.",
-    ...detected,
-    "Generate a next-compatible schema into a separate directory, review it, and adopt it when ready:",
-    ...legacyFormatStagedExportCommands(context),
-  ].join("\n");
+}
+
+export interface LegacyDeclarativeUpgradeGateText {
+  readonly message: string;
+  readonly suggestion: string;
+}
+
+/**
+ * The single template both compatibility gates render. Both mean the same thing
+ * ("this declarative tree is a legacy pg-delta export"), so they must read the
+ * same; only the evidence block differs. The recovery commands live in
+ * `suggestion` so `Output.fail` prints them instead of the generic
+ * "rerun with --debug" footer — a deliberate gate is not a crash.
+ *
+ * Deliberately offers exactly ONE non-interactive recovery: the staged
+ * regenerate. Telling a non-interactive user to hand-add an extension
+ * declaration is a false trail — on a real legacy tree each declaration only
+ * unlocks the next refusal. Interactive flows still offer the repair as an
+ * advanced choice.
+ */
+export function legacyFormatDeclarativeUpgradeGate(opts: {
+  readonly evidence: ReadonlyArray<string>;
+  readonly context: LegacyStagedExportContext;
+}): LegacyDeclarativeUpgradeGateText {
+  const { declarativeDir } = opts.context;
+  return {
+    message: [
+      `This ${declarativeDir} tree looks like a legacy pg-delta export.`,
+      "pg-delta next only loads extensions the tree declares; legacy exports omitted",
+      "platform extensions and extension-managed objects like cron jobs.",
+      ...(opts.evidence.length > 0 ? ["", ...opts.evidence.map((line) => `  ${line}`)] : []),
+      "",
+      "Do not apply a sync generated from this tree — it can drop extensions or unschedule jobs.",
+    ].join("\n"),
+    suggestion: [
+      `Upgrade without changing the active ${declarativeDir} tree:`,
+      "",
+      ...stagedExportCommands(opts.context),
+    ].join("\n"),
+  };
 }

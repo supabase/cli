@@ -106,7 +106,12 @@ disables formatting without disabling safe compaction.
 | `1`  | `--project-ref` set with a resolved target other than linked; `--project-ref` combined with the `--experimental` structured-dump pull (see Notes)                                                   |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
-> exit** for `db pull`.
+> exit** for `db pull`. The message and exit code match Go, but the stderr footer
+> does not: instead of Go's generic
+> `Try rerunning the command with --debug to troubleshoot the error.`, `db pull`
+> prints
+> `The remote database is already in sync with your local migrations — nothing to pull.`
+> (deliberate divergence — see `docs/go-cli-divergences.md`).
 
 ## Output
 

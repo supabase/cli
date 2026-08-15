@@ -109,6 +109,13 @@ export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
   "LegacyDeclarativeCompatibilityError",
 )<{
   readonly message: string;
+  /**
+   * Recovery commands, printed bare on stderr by `Output.fail` INSTEAD of the
+   * generic "Try rerunning the command with --debug" footer. A compatibility
+   * gate is a deliberate refusal, not a crash, so it must never suggest
+   * troubleshooting flags (same mechanism as {@link LegacyDeclarativeApplyError}).
+   */
+  readonly suggestion?: string;
   /** Structured only for a known implicit-extension failure during shadow load. */
   readonly loadFindings?: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>;
 }> {
