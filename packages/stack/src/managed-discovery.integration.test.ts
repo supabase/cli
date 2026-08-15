@@ -2095,31 +2095,35 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(ownerAgain.stack.id).toBe(main.stack.id);
   });
 
-  it("migrates one exact ordinary-folder claim into Git without touching a tracked marker", async () => {
+  it("keeps a tracked ordinary marker inert without touching its stale claim", async () => {
     const root = makeRoot();
     const workspace = makeDirectory(root, "folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({ workspacePath: workspace, operation: "start" });
     git(workspace, "init", "-q", "-b", "main");
     git(workspace, "add", ".supabase/identity.json");
     git(workspace, "commit", "-q", "-m", "track ordinary identity");
     const beforeStatus = gitStatus(workspace);
-    const migrated = await service.resolveStack({ workspacePath: workspace, operation: "start" });
-    expect(migrated.identity).toEqual(ordinary.identity);
-    expect(migrated.stack.id).toBe(ordinary.stack.id);
+    const beforeIndex = git(workspace, "ls-files", "--stage", ".supabase/identity.json");
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await service.listStacks();
+    await expect(
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(gitStatus(workspace)).toBe(beforeStatus);
+    expect(git(workspace, "ls-files", "--stage", ".supabase/identity.json")).toBe(beforeIndex);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await service.listStacks()).toEqual(beforeStacks);
     const report = await inspect(service.repository, workspace);
-    expect(report.state).toBe("healthy");
-    expect(report.identity).toEqual(ordinary.identity);
+    expect(report.state).toBe("duplicate");
+    expect(report.identity).toEqual({});
     expect(report.ordinaryMarker?.present).toBe(true);
+    expect(report.ordinaryMarker?.tracked).toBe(true);
     expect(report.warnings).toContain(
       "Tracked ordinary-folder identity marker is inert in this Git checkout",
     );
     expect(report.folderToGitClaims).toEqual([]);
-    expect(git(workspace, "config", "--get", "supabase.projectId").trim()).toBe(
-      ordinary.identity.projectId,
-    );
   });
 
   it("moves and migrates an ordinary folder initialized as Git at its new path", async () => {
@@ -2230,8 +2234,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
     const markerPath = ordinaryWorkspaceIdentityPath(workspace);
     git(workspace, "init", "-q", "-b", "main");
-    git(workspace, "add", ".supabase/identity.json");
-    git(workspace, "commit", "-q", "-m", "track ordinary identity");
+    git(workspace, "commit", "-q", "--allow-empty", "-m", "initialize Git");
     git(workspace, "checkout", "-q", "--detach", "HEAD");
     const markerBefore = readFileSync(markerPath, "utf8");
     const indexBefore = git(workspace, "ls-files", "--stage", ".supabase/identity.json");
@@ -2306,14 +2309,21 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(source, "commit", "-q", "-m", "track ordinary identity");
     const clone = join(root, "fresh-clone");
     git(root, "clone", "-q", source, clone);
-    const cloneService = await open(root);
-    openHandles.push(cloneService);
+    rmSync(source, { recursive: true, force: true });
     const beforeStatus = gitStatus(clone);
-    const fresh = await cloneService.resolveStack({ workspacePath: clone, operation: "start" });
+    const beforeClaims = await Effect.runPromise(sourceService.repository.listIdentityClaims());
+    const staleLocation = beforeClaims.locations.find(
+      (location) => location.checkoutId === ordinary.identity.checkoutId,
+    );
+    const fresh = await sourceService.resolveStack({ workspacePath: clone, operation: "start" });
     expect(fresh.identity.projectId).not.toBe(ordinary.identity.projectId);
     expect(fresh.identity.checkoutId).not.toBe(ordinary.identity.checkoutId);
     expect(gitStatus(clone)).toBe(beforeStatus);
-    expect((await inspect(cloneService.repository, clone)).ordinaryMarker?.present).toBe(true);
+    expect(staleLocation).toBeDefined();
+    expect(
+      (await Effect.runPromise(sourceService.repository.listIdentityClaims())).locations,
+    ).toContainEqual(staleLocation);
+    expect((await inspect(sourceService.repository, clone)).ordinaryMarker?.present).toBe(true);
   });
 
   it("refuses ambiguous exact folder claims before any Git or registry write", async () => {
@@ -2466,8 +2476,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(service);
     await service.resolveStack({ workspacePath: workspace, operation: "start" });
     git(workspace, "init", "-q", "-b", "main");
-    git(workspace, "add", ".supabase/identity.json");
-    git(workspace, "commit", "-q", "-m", "track ordinary identity");
+    git(workspace, "commit", "-q", "--allow-empty", "-m", "initialize Git");
     const linked = join(root, "folder-migration-project-race-linked");
     git(workspace, "worktree", "add", "-q", linked, "-b", "linked");
     const base = service.repository;

@@ -590,7 +590,7 @@ export const discoverWorkspace = (
     // so its project scope is intentionally empty. Read the complete transition
     // set when a marker now supplies a project ID; otherwise an interrupted
     // publication would disappear from discovery instead of remaining resumable.
-    const markerIdentity = ordinaryMarker?.identity;
+    const markerIdentity = ordinaryMarker?.tracked === false ? ordinaryMarker.identity : undefined;
     const folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim> =
       inspection.kind === "git-checkout"
         ? yield* Effect.gen(function* () {
