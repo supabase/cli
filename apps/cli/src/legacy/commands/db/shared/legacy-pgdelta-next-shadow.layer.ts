@@ -364,9 +364,22 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
             peek.state === "uncachable"
               ? cache
               : { ...cache, precomputedKeyInputs: peek.keyInputs };
-          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
-          const declarativeOpts = withPeek(cacheOpts(opts, "disabled"), declarativePeek);
           const strategy = legacyResolvePlanShadowStrategy(migrationsPeek, declarativePeek);
+          // Peeked inputs are only reused where the acquire follows the peek IMMEDIATELY: the
+          // migrations acquire always does, the declarative one only under `parallel`. In the
+          // handoff (waits for the seam) and sequential (waits for the whole migrations
+          // provision) strategies the declarative acquire is DELAYED, and the key hashes
+          // mid-run-mutable inputs (`supabase/roles.sql`, remote JWKS) that the cold setup
+          // re-reads at its own time — reusing a stale peek there could publish a baseline
+          // under a key that no longer describes it (review: Codex on #6215). Re-resolving at
+          // acquire time also self-corrects a handoff whose key genuinely changed mid-run: the
+          // recomputed key misses the just-exported tar and the declarative side correctly
+          // cold-provisions with the current inputs.
+          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
+          const declarativeOpts =
+            strategy === "parallel"
+              ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
+              : cacheOpts(opts, "disabled");
 
           // In the concurrent strategies the declarative fiber's writes are buffered and
           // flushed after the join, so nothing can land between two of the migrations fiber's
