@@ -6,7 +6,7 @@
 
 **Architecture:** The existing stack runtime stays intact. New internal store, identity, lock, and control modules are introduced test-first, then the managed manager and daemon composition switch to them in one direction; the SQLite repository, operation protocol, recovery state machine, duplicate daemon, and fixture DSL are deleted after the replacement path owns every caller.
 
-**Tech Stack:** TypeScript, Effect v4, `@effect/platform-node`, `@effect/platform-bun`, Vitest/`@effect/vitest`, Node/Bun IPC and Unix sockets/Windows named pipes, pnpm/Nx.
+**Tech Stack:** TypeScript, Effect v4, `@effect/platform-node`, `@effect/platform-bun`, Vitest/`@effect/vitest`, Node/Bun IPC and loopback HTTP/SSE, pnpm/Nx.
 
 **Spec:** `docs/superpowers/specs/2026-08-16-stack-simplification-design.md`
 
@@ -19,31 +19,31 @@
 - Production code may not use TypeScript `as` casts to silence typing errors.
 - Every behavior change follows red-green-refactor; tests use real temporary files, Git worktrees, and sockets and assert observable results.
 - No migration or compatibility layer for the unreleased SQLite registry.
-- No secrets in managed JSON documents, socket paths, logs, or rendered decode errors.
-- Managed files live below `<stateRoot>/stacks/<stackId>/`; POSIX control endpoints live in short owner-only runtime directories; Windows uses named pipes.
+- No secrets in managed JSON documents, control addresses, logs, or rendered decode errors.
+- Managed files live below `<stateRoot>/stacks/<stackId>/`; control endpoints use deterministic
+  loopback addresses and never expose a user-facing service port.
 - The store is internal. Do not export a repository interface or add a second persistence adapter.
 - Use `pnpm` scripts and discover Nx targets before cross-project checks.
 - Do not run unrelated e2e suites; run only the targeted stack e2e files named by this plan.
 
 ---
 
-### Task 1: Internal stack document store and short registry lock
+### Task 1: Internal stack document store
 
 **Files:**
 - Create: `packages/stack/src/managed/document.ts`
 - Create: `packages/stack/src/managed/store.ts`
-- Create: `packages/stack/src/managed/registry-lock.ts`
 - Create: `packages/stack/src/managed-store.integration.test.ts`
 - Modify: `packages/stack/src/managed/paths.ts`
 
 **Interfaces:**
-- Produces: `ManagedStackDocument`, `ManagedStackListing`, `StackStore`, `makeStackStore(stateRoot)`, and `withRegistryLock(stateRoot, effect)`.
-- Consumes: `ManagedPortAssignment`, existing managed path safety checks, Effect `FileSystem`, `Path`, `Schema`, `Scope`, and the existing atomic-claim primitive.
+- Produces: `ManagedStackDocument`, `ManagedStackListing`, `StackStore`, and `makeStackStore(stateRoot)`.
+- Consumes: `ManagedPortAssignment`, existing managed path safety checks, and Effect `FileSystem`, `Path`, and `Schema`.
 - Later tasks rely on `StackStore.read`, `StackStore.list`, `StackStore.write`, and `StackStore.remove` being internal Effect interfaces with no public entrypoint export.
 
 - [ ] **Step 1: Write the failing file-store integration scenarios**
 
-  Add tests using a real temporary state root. The production mutations each test would catch are: a non-atomic or wrong-path write, one corrupt document poisoning the registry, and a stale lock being stolen from a live owner.
+  Add tests using a real temporary state root. The production mutations each test would catch are: a non-atomic or wrong-path write and one corrupt document poisoning the registry.
 
   ```typescript
   it.live("persists and replaces one complete stack document atomically", () =>
@@ -67,22 +67,13 @@
     }),
   );
 
-  it.live("does not reclaim an old registry lock while its owner is alive", () =>
-    withTempStateRoot((stateRoot) =>
-      Effect.gen(function* () {
-        yield* seedRegistryLock(stateRoot, { pid: process.pid, ageMs: 31_000 });
-        const exit = yield* withRegistryLock(stateRoot, Effect.void).pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-      }),
-    ),
-  );
   ```
 
 - [ ] **Step 2: Run the new integration file and verify RED**
 
   Run: `pnpm exec vitest run --project integration src/managed-store.integration.test.ts`
 
-  Expected: FAIL because `document.ts`, `store.ts`, and `registry-lock.ts` do not exist.
+  Expected: FAIL because `document.ts` and `store.ts` do not exist.
 
 - [ ] **Step 3: Implement the schema and atomic file store**
 
@@ -93,14 +84,7 @@
 
   `StackStore.write` must replace the whole document; partial field writers are forbidden.
 
-- [ ] **Step 4: Implement the short registry lock**
-
-  Acquire `registry.lock` atomically with `{ token, pid, acquiredAt }`, use `Effect.acquireRelease`,
-  compare the token before release, and reclaim only when the lock is at least 30 seconds old and
-  the owner PID is provably dead. Retry live contention with a bounded Effect `Schedule`; do not use
-  `Atomics.wait` or a Promise timer loop.
-
-- [ ] **Step 5: Run focused tests and package checks**
+- [ ] **Step 4: Run focused tests and package checks**
 
   Run:
 
@@ -113,10 +97,10 @@
 
   Expected: all commands exit 0.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
   ```bash
-  git add packages/stack/src/managed/document.ts packages/stack/src/managed/store.ts packages/stack/src/managed/registry-lock.ts packages/stack/src/managed-store.integration.test.ts packages/stack/src/managed/paths.ts
+  git add packages/stack/src/managed/document.ts packages/stack/src/managed/store.ts packages/stack/src/managed-store.integration.test.ts packages/stack/src/managed/paths.ts
   git commit -m "refactor(stack): add internal managed file store"
   ```
 
@@ -204,7 +188,7 @@
   Repair must preserve project, checkout, and context IDs; update the workspace descriptor in the
   matching `stack.json` documents while holding each stopped stack's control ownership in later task
   composition; and refuse repair when a live owner exists. At this task, expose the pure repair plan
-  and file updates under the registry lock so Task 4 can add control ownership.
+  updates as a pure repair plan so Task 4 can apply them under control ownership.
 
 - [ ] **Step 5: Retire settlement-only imports where the new identity path replaces them**
 
@@ -243,12 +227,13 @@
 
 **Interfaces:**
 - Produces: `ControlEndpoint`, `ControlOwnership`, `controlEndpointPath(runtimeRoot, stackId)`, `acquireControl(input)`, and protocol owner states `starting | running | stopping | deleting | failed` with `protocolVersion: 1`.
-- Consumes: `withRegistryLock` from Task 1 and existing validated daemon HTTP/SSE transport.
+- Consumes: existing validated daemon HTTP/SSE transport and a deterministic loopback address
+  derived from the stack ID.
 - Only `ControlOwnership` holders may call later stack-document mutation and allocation functions.
 
 - [ ] **Step 1: Write failing socket ownership scenarios**
 
-  Tests use real Unix sockets on POSIX and platform-path unit coverage for Windows:
+  Tests use real loopback listeners on every platform:
 
   ```typescript
   it.live("attaches a concurrent caller to the live owner", () =>
@@ -261,7 +246,7 @@
     ),
   );
 
-  it.live("takes over a socket left by a killed owner", () =>
+  it.live("binds after a killed owner releases the address", () =>
     withKilledControlOwner((input) =>
       Effect.gen(function* () {
         const next = yield* acquireControl(input);
@@ -289,10 +274,10 @@
 
 - [ ] **Step 3: Implement deterministic endpoint paths and scoped acquisition**
 
-  Bind before any managed mutation. On `EADDRINUSE`, connect and decode owner status. On repeated
-  connection refusal, take the registry lock, re-probe, remove only the stale POSIX path, and bind.
-  Normal close waits for Node/Bun server shutdown and pathname disappearance; it never runs stale
-  takeover. Create runtime directories with owner-only permissions.
+  Bind before any managed mutation. On `EADDRINUSE`, connect and decode owner status. A listener that
+  does not speak the expected protocol yields a typed address-conflict error; never unlink or kill
+  it. Normal close waits for Node/Bun server shutdown before rebinding. Derive the loopback host and
+  high port deterministically from the stack ID, identically on Node and Bun.
 
 - [ ] **Step 4: Extend the management transport**
 
@@ -371,11 +356,12 @@
 
 - [ ] **Step 4: Move port allocation into the owner process**
 
-  Under `withRegistryLock`, scan healthy stack documents, run the unchanged pure conflict matrix,
-  plan exact fields first, reserve all active fields, and atomically write the accepted assignment.
-  Return the scoped lease directly to the caller in the same Effect scope. Delete candidate-policy
-  injection and synthetic allocation-request recovery. No lease handoff or acquisition-release mode
-  remains.
+  Scan healthy stack documents, run the unchanged pure conflict matrix, plan exact fields first,
+  then reserve every automatic field and every active exact field before atomically writing the
+  accepted assignment. If a concurrent allocator wins a reservation, release the partial set,
+  reread the documents, and replan with a bounded Effect `Schedule`. Return the scoped lease directly
+  to the caller in the same Effect scope. Delete candidate-policy injection and synthetic
+  allocation-request recovery. No lease handoff or acquisition-release mode remains.
 
 - [ ] **Step 5: Shrink the public Effect and Promise interfaces**
 
@@ -600,8 +586,8 @@
 
 - [ ] **Step 3: Replace architecture documentation**
 
-  Rewrite the managed sections to describe deterministic identity, file documents, registry lock,
-  control ownership, one supervisor, reattachment, and lean tests. Remove historical descriptions of
+  Rewrite the managed sections to describe deterministic identity, file documents, OS-owned control
+  ownership, reservation-fenced allocation, one supervisor, reattachment, and lean tests. Remove historical descriptions of
   SQLite transactions, memory adapters, operation claims, polling, tombstones, and fixture authority.
 
 - [ ] **Step 4: Supersede ADR-0015 and add the replacement decision**

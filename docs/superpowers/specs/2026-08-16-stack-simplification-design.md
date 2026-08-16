@@ -83,7 +83,6 @@ automatic pruning on the start path.
 
 ```text
 <stateRoot>/
-  registry.lock
   stacks/<stackId>/
     stack.json
     data/
@@ -134,32 +133,34 @@ lock-free. Corrupt or incompatible documents become per-stack `corrupt` listing 
 making every stack unreadable.
 
 Every mutation of a stack document requires ownership of that stack's control endpoint. A new stack
-binds first and creates its document second. Repair binds while the stack is stopped. Port allocation
-also holds the short registry lock. This serializes whole-document writes and prevents field-group
-writers from overwriting one another.
+binds first and creates its document second. Repair binds while the stack is stopped. The owner
+reserves the complete candidate port set before publishing its whole document; a competing owner
+that loses an OS reservation rereads the documents and replans. Per-stack control ownership prevents
+same-document writers, while OS port reservations fence concurrent cross-stack allocation without a
+second coordination protocol.
 
 The store is not public and has no repository injection interface. Tests receive an explicit
 temporary `stateRoot` and use the real implementation.
 
-### Registry lock
+### No global registry lock
 
-The registry lock exists only to serialize operations that inspect several stack documents before
-writing one: automatic port allocation and the stale-control-endpoint takeover probe.
+There is deliberately no global file mutex. Making stale lock-file takeover both crash-safe and
+compare-safe requires a second election/fencing protocol, which recreates the coordination system
+this design removes.
 
-The lock file is acquired atomically and contains `{ token, pid, acquiredAt }`. Release removes it
-only when the token still matches. A lock may be reclaimed only when it is at least 30 seconds old
-and its PID is no longer alive; a live or unprobeable owner is retained. Nothing involving downloads,
-Docker, service startup, shutdown, or filesystem reclamation runs while the lock is held.
-
-This small PID check is deliberately confined to stale registry-lock recovery. It is not persisted
-stack lifecycle state and cannot wedge an individual stack operation.
+The actual invariants already have narrower owners: atomic identity claims protect identity files,
+the control endpoint serializes one stack's lifecycle and document, and bound placeholder sockets
+settle concurrent cross-stack port allocation. A port-reservation loser rereads the lock-free store
+and replans with a bounded Effect `Schedule`. Stopped automatic ownership remains visible in
+`stack.json`; exact stopped coexistence remains a pure conflict-matrix rule.
 
 ### Lifecycle ownership and reattachment
 
-Each managed stack has one deterministic control endpoint:
-
-- POSIX: `<runtimeRoot>/s-<first 12 hex of sha256(stackId)>/control.sock` in an owner-only directory;
-- Windows: `\\.\pipe\supabase-stack-<stackId>`.
+Each managed stack has one deterministic loopback control address derived from its `stackId`. The
+address uses the `127/8` loopback range plus a high port, giving roughly 38 bits of address space
+without consuming a user-facing service port. Node, Bun, POSIX, and Windows use the same transport.
+An unrelated listener or deterministic-address collision fails as a typed control-address conflict;
+it is never unlinked or taken over.
 
 Binding the endpoint grants lifecycle ownership. The endpoint also serves the existing validated
 `Stack` management transport plus a versioned owner-status response.
@@ -169,12 +170,11 @@ Acquisition behaves as follows:
 1. Bind succeeds: this process owns the stack.
 2. Address is in use and connect succeeds: a live owner exists. Start connects and awaits that
    owner's ready/failure state; status and logs attach; stop/delete send commands.
-3. Address is in use and repeated connections are refused: under the registry lock, re-probe,
-   remove the stale POSIX pathname, and bind. Windows named pipes disappear with their process.
+3. Address is in use but the endpoint does not speak the expected owner protocol: fail with a typed
+   conflict. Do not kill, unlink, or infer ownership from a PID.
 
-Normal Node and Bun server close removes a Unix socket pathname. A stop/delete caller therefore
-waits for the old server's close completion and pathname disappearance before attempting to bind.
-Stale takeover is only the crashed-owner path; it does not race a graceful close.
+The kernel releases the loopback listener on normal close and process death. A stop/delete caller
+waits for server close before attempting to bind; a killed owner needs no stale-path recovery.
 
 The control protocol carries `protocolVersion: 1`. A mismatched client fails loudly with guidance;
 there is no speculative compatibility adapter.
@@ -189,8 +189,9 @@ Startup order is normative:
 1. Resolve identity in the parent without allocating ports.
 2. Spawn the supervisor with identity, paths, serializable stack configuration, and port intents.
 3. Bind the deterministic control endpoint.
-4. Under the registry lock, read stack documents, plan exact fields first, reserve the complete port
-   set in this process, and atomically persist the allocation.
+4. Read stack documents, plan exact fields first, reserve the complete port set in this process, and
+   atomically persist the allocation. On a reservation race, release the partial set, reread, and
+   replan with a bounded Effect `Schedule`.
 5. Start services. Each `beforeSpawn` releases only its placeholder socket immediately before the
    service binds.
 6. Persist `running` runtime metadata and signal ready through fork IPC. Concurrent start losers
@@ -201,8 +202,8 @@ Startup order is normative:
 There is no `PortLease.handoff`, managed-daemon variant, operation claim, publication poll, or
 abandoned-operation reconciler.
 
-A process killed during start leaves a dead control endpoint and a `starting` document. The next
-owner derives resource cleanup from the stack ID, marks the previous attempt failed, and starts
+A process killed during start releases its control address and leaves a `starting` document. The
+next owner derives resource cleanup from the stack ID, marks the previous attempt failed, and starts
 again. A process killed during delete leaves `deleting`; the next owner completes deletion before
 allowing a fresh registration of the same deterministic identity.
 
