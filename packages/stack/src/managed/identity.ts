@@ -420,38 +420,6 @@ export const ensureGitCheckoutLocation = (
     }),
   );
 
-export const repairGitCheckoutLocation = (
-  gitDirectory: string,
-  expectedWorkspacePath: string,
-  workspacePath: string,
-): Effect.Effect<void, InvalidManagedIdentityError, FileSystem.FileSystem> =>
-  failsWithIdentity(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const markerPath = gitCheckoutLocationPath(gitDirectory);
-      const current = yield* readGitCheckoutLocation(gitDirectory);
-      if (current !== expectedWorkspacePath) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Git checkout location changed before repair",
-          }),
-        );
-      }
-      const temporary = yield* fs.makeTempFile({
-        directory: dirname(markerPath),
-        prefix: ".supabase-location-",
-      });
-      yield* Effect.acquireUseRelease(
-        Effect.succeed(temporary),
-        (path) =>
-          fs
-            .writeFileString(path, `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`)
-            .pipe(Effect.andThen(fs.rename(path, markerPath))),
-        (path) => fs.remove(path, { force: true }).pipe(Effect.catch(() => Effect.void)),
-      );
-    }),
-  );
-
 /**
  * Publish a caller-selected checkout identity into a git directory without
  * ever replacing a winner. Folder-to-Git conversion uses this primitive after

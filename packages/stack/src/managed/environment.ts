@@ -8,7 +8,6 @@ import {
   readDetachedContextIdentity,
   readGitCheckoutLocation,
   readOrdinaryWorkspaceIdentityWithFileSystem,
-  repairGitCheckoutLocation,
 } from "./identity.ts";
 import {
   ensureBranchContextId,
@@ -27,7 +26,7 @@ export interface EnvironmentIdentity {
   readonly contextId: string;
 }
 
-export type RepairReason = "moved" | "duplicate" | "adoptable" | "orphaned";
+export type RepairReason = "moved" | "duplicate";
 
 export interface WorkspaceDescriptor {
   readonly kind: "git" | "folder";
@@ -175,6 +174,33 @@ const missingFor = (
   return missing;
 };
 
+const makeRepairDiscovery = (
+  path: string,
+  workspace: WorkspaceDescriptor,
+  identity: EnvironmentIdentity,
+  missing: ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location">,
+  reason: RepairReason,
+  repair: RepairRequest,
+): RepairWorkspaceDiscovery => ({
+  state: "needsRepair",
+  reason,
+  repair,
+  path,
+  workspace,
+  identity,
+  missing,
+});
+
+const makeRegistrationDiscovery = (
+  path: string,
+  workspace: WorkspaceDescriptor,
+  identity: EnvironmentIdentity,
+  missing: ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location">,
+): HealthyWorkspaceDiscovery | UnregisteredWorkspaceDiscovery =>
+  missing.length === 0
+    ? { state: "healthy", path, workspace, identity, missing }
+    : { state: "unregistered", path, workspace, identity, missing };
+
 const discoverInternal = (
   workspacePath: string,
 ): Effect.Effect<WorkspaceDiscovery, EnvironmentError, FileSystem.FileSystem | GitConfigStore> =>
@@ -229,23 +255,9 @@ const discoverInternal = (
         identity,
         updates: [{ kind: "checkout-location", from: location, to: inspection.workspaceRoot }],
       };
-      return {
-        state: "needsRepair" as const,
-        reason,
-        repair,
-        path: canonicalPath,
-        workspace,
-        identity,
-        missing,
-      };
+      return makeRepairDiscovery(canonicalPath, workspace, identity, missing, reason, repair);
     }
-    return {
-      state: missing.length === 0 ? ("healthy" as const) : ("unregistered" as const),
-      path: canonicalPath,
-      workspace,
-      identity,
-      missing,
-    };
+    return makeRegistrationDiscovery(canonicalPath, workspace, identity, missing);
   });
 
 export const discoverEnvironment = (workspacePath: string) => discoverInternal(workspacePath);
@@ -279,28 +291,23 @@ export const ensureEnvironment = (
     return yield* discoverInternal(before.path);
   });
 
-export const repairEnvironment = (
+export const validateEnvironmentRepair = (
   request: RepairRequest,
-): Effect.Effect<WorkspaceDiscovery, EnvironmentError, FileSystem.FileSystem | GitConfigStore> =>
+): Effect.Effect<RepairRequest, EnvironmentError, FileSystem.FileSystem | GitConfigStore> =>
   Effect.gen(function* () {
-    if (request.reason !== "moved") {
+    const current = yield* discoverInternal(request.path);
+    if (request.reason === "duplicate") {
       return yield* Effect.fail(
         new InvalidManagedIdentityError({
-          message: `Repair reason ${request.reason} requires an explicit ownership decision`,
+          message: "Duplicate checkout evidence requires an explicit ownership decision",
         }),
       );
     }
-    const canonicalPath = yield* canonicalizeManagedWorkspacePathWithFileSystem(request.path);
-    const inspection = yield* inspectWorkspace(canonicalPath);
-    if (inspection.kind !== "git-checkout") {
-      return yield* Effect.fail(
-        new InvalidManagedIdentityError({ message: "Only Git checkout locations can be repaired" }),
-      );
-    }
-    const current = yield* discoverInternal(canonicalPath);
     if (
       current.state !== "needsRepair" ||
       current.reason !== request.reason ||
+      current.repair.path !== request.path ||
+      current.repair.expectedPath !== request.expectedPath ||
       current.identity.projectId !== request.identity.projectId ||
       current.identity.checkoutId !== request.identity.checkoutId ||
       current.identity.contextId !== request.identity.contextId
@@ -309,10 +316,5 @@ export const repairEnvironment = (
         new InvalidManagedIdentityError({ message: "Workspace identity changed before repair" }),
       );
     }
-    yield* repairGitCheckoutLocation(
-      inspection.gitDirectory,
-      request.expectedPath,
-      inspection.workspaceRoot,
-    );
-    return yield* discoverInternal(canonicalPath);
+    return request;
   });

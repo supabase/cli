@@ -116,7 +116,7 @@
   to compile; Task 2 must not recreate or extend those state machines.
 
 **Interfaces:**
-- Produces: `EnvironmentIdentity`, `WorkspaceDiscovery`, `RepairRequest`, `deriveStackId(identity, name)`, `discoverEnvironment(path)`, `ensureEnvironment(path)`, and `repairEnvironment(request)`.
+- Produces: `EnvironmentIdentity`, `WorkspaceDiscovery`, `RepairRequest`, `deriveStackId(identity, name)`, `discoverEnvironment(path)`, `ensureEnvironment(path)`, and `validateEnvironmentRepair(request)`.
 - Consumes: `StackStore` from Task 1, current Git config and marker primitives, and real Git workspace metadata.
 - `deriveStackId` hashes four length-prefixed UTF-8 values with SHA-256 and returns 64 lowercase hexadecimal characters.
 
@@ -162,9 +162,9 @@
         const report = yield* discoverEnvironment(workspace.movedPath);
         expect(report.state).toBe("needsRepair");
         expect(report.reason).toBe("moved");
-        const repaired = yield* repairEnvironment(report.repair);
-        expect(repaired.state).toBe("healthy");
-        expect(repaired.identity).toEqual(report.identity);
+        const repair = yield* validateEnvironmentRepair(report.repair);
+        expect(repair).toEqual(report.repair);
+        expect((yield* discoverEnvironment(workspace.movedPath)).state).toBe("needsRepair");
       }),
     ),
   );
@@ -180,15 +180,16 @@
 
   Reuse the low-level atomic marker and Git storage operations, but implement only `healthy`,
   `unregistered`, and `needsRepair`. New branch/worktree registration is the normal `ensureEnvironment`
-  path. Moved, duplicate, adoptable, and orphaned evidence returns a typed repair request and performs
-  no mutation during discovery.
+  path. Moved and duplicated checkout evidence returns a typed repair request and performs no
+  mutation during discovery. Do not retain adoptable/orphaned states from the registry design.
 
-- [ ] **Step 4: Implement explicit repair without location history**
+- [ ] **Step 4: Validate explicit repair without applying it**
 
-  Repair must preserve project, checkout, and context IDs; update the workspace descriptor in the
-  matching `stack.json` documents while holding each stopped stack's control ownership in later task
-  composition; and refuse repair when a live owner exists. At this task, expose the pure repair plan
-  updates as a pure repair plan so Task 4 can apply them under control ownership.
+  Validation must prove the request still matches current discovery and preserve project, checkout,
+  and context IDs, but it performs no marker or stack-document write. Task 4 acquires a deterministic
+  environment-repair control endpoint, refuses repair while any affected stack owner is live, then
+  applies the marker and document updates. Duplicate evidence remains a refusal until an explicit
+  ownership decision exists; do not add that decision to this task.
 
 - [ ] **Step 5: Retire settlement-only imports where the new identity path replaces them**
 
@@ -350,7 +351,9 @@
 - [ ] **Step 3: Implement the manager over the real store**
 
   Compose discovery, resolution, listing, repair, and deletion without exposing storage. Require
-  `ControlOwnership` for stack mutations. Deletion writes `deleting`, derives cleanup identity from
+  `ControlOwnership` for stack mutations. `repairWorkspace` first acquires an environment-repair
+  control endpoint, validates the plan, then updates the checkout marker and affected stopped stack
+  documents. Deletion writes `deleting`, derives cleanup identity from
   stack ID, removes data, and removes `stack.json` last. A left-behind `deleting` document is
   completed by the next owner.
 

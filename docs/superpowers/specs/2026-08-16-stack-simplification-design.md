@@ -71,13 +71,13 @@ The common path has three states:
 
 - `healthy`: identity is complete and agrees with any matching stack document;
 - `unregistered`: missing identity is atomically created for a mutating start;
-- `needsRepair`: moved, duplicate, adoptable, or orphaned identity evidence requires an explicit
-  repair operation.
+- `needsRepair`: moved or duplicated checkout evidence requires an explicit repair operation.
 
-Read-only discovery never writes. Repair preserves the identity IDs and therefore the stack ID and
-sticky ports; it updates only the workspace descriptor or selected marker ownership. There is no
-location-history state machine, transitioning state, monotonic settlement, automatic adoption, or
-automatic pruning on the start path.
+Read-only discovery never writes. Task 2 only validates a repair plan. The manager later acquires a
+deterministic environment-repair control endpoint before updating the checkout marker and every
+affected stopped stack document. Repair preserves the identity IDs and therefore the stack ID and
+sticky ports. There is no location-history state machine, transitioning state, adoptable/orphaned
+state, monotonic settlement, automatic adoption, or automatic pruning on the start path.
 
 ### Internal per-stack store
 

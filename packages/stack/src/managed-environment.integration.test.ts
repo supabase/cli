@@ -8,7 +8,7 @@ import {
   discoverEnvironment,
   deriveStackId,
   ensureEnvironment,
-  repairEnvironment,
+  validateEnvironmentRepair,
 } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 
@@ -92,9 +92,11 @@ describe("managed environment identity", () => {
         expect(report.state).toBe("needsRepair");
         if (report.state !== "needsRepair") throw new Error("expected moved checkout");
         expect(report.reason).toBe("moved");
-        const repaired = yield* repairEnvironment(report.repair);
-        expect(repaired.state).toBe("healthy");
-        expect(repaired.identity).toEqual(registered.identity);
+        const repair = yield* validateEnvironmentRepair(report.repair);
+        expect(repair).toEqual(report.repair);
+        const after = yield* discoverEnvironment(movedPath);
+        expect(after.state).toBe("needsRepair");
+        expect(after.identity).toEqual(registered.identity);
       }),
     ).pipe(Effect.provide(gitLayer)),
   );
@@ -109,7 +111,7 @@ describe("managed environment identity", () => {
         expect(report.state).toBe("needsRepair");
         if (report.state !== "needsRepair") throw new Error("expected duplicate checkout");
         expect(report.reason).toBe("duplicate");
-        const repair = yield* repairEnvironment(report.repair).pipe(Effect.exit);
+        const repair = yield* validateEnvironmentRepair(report.repair).pipe(Effect.exit);
         expect(repair._tag).toBe("Failure");
         const after = yield* discoverEnvironment(duplicatePath);
         expect(after.state).toBe("needsRepair");
