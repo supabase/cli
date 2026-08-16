@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect, Exit, FileSystem, Path } from "effect";
+import { Effect, Exit, FileSystem, Path, PlatformError } from "effect";
 import {
   decodeManagedStackDocument,
   encodeManagedStackDocument,
@@ -30,10 +30,18 @@ export interface StackStore {
   readonly stateRoot: string;
   readonly read: (
     stackId: string,
-  ) => Effect.Effect<ManagedStackDocument | undefined, InvalidManagedStackDocumentError>;
-  readonly list: () => Effect.Effect<ReadonlyArray<ManagedStackListing>>;
-  readonly write: (document: ManagedStackDocument) => Effect.Effect<void>;
-  readonly remove: (stackId: string) => Effect.Effect<void>;
+  ) => Effect.Effect<
+    ManagedStackDocument | undefined,
+    InvalidManagedStackDocumentError | PlatformError.PlatformError
+  >;
+  readonly list: () => Effect.Effect<
+    ReadonlyArray<ManagedStackListing>,
+    PlatformError.PlatformError
+  >;
+  readonly write: (
+    document: ManagedStackDocument,
+  ) => Effect.Effect<void, PlatformError.PlatformError>;
+  readonly remove: (stackId: string) => Effect.Effect<void, PlatformError.PlatformError>;
 }
 
 const prettyJson = (document: ManagedStackDocument): string => encodeManagedStackDocument(document);
@@ -44,16 +52,14 @@ const writeDocumentAtomically = (
   documentPath: string,
   stackRoot: string,
   document: ManagedStackDocument,
-): Effect.Effect<void> =>
+): Effect.Effect<void, PlatformError.PlatformError> =>
   Effect.gen(function* () {
-    yield* Effect.orDie(fs.makeDirectory(stackRoot, { recursive: true, mode: 0o700 }));
+    yield* fs.makeDirectory(stackRoot, { recursive: true, mode: 0o700 });
     const temporaryPath = path.join(stackRoot, `stack.json.tmp.${randomUUID()}`);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        yield* Effect.orDie(
-          fs.writeFileString(temporaryPath, prettyJson(document), { mode: 0o600 }),
-        );
-        yield* Effect.orDie(fs.rename(temporaryPath, documentPath));
+        yield* fs.writeFileString(temporaryPath, prettyJson(document), { mode: 0o600 });
+        yield* fs.rename(temporaryPath, documentPath);
       }),
       fs.remove(temporaryPath, { force: true }).pipe(Effect.catch(() => Effect.void)),
     );
@@ -63,9 +69,12 @@ const decodeAtPath = (
   fs: FileSystem.FileSystem,
   documentPath: string,
   stackId: string,
-): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
+): Effect.Effect<
+  ManagedStackDocument,
+  InvalidManagedStackDocumentError | PlatformError.PlatformError
+> =>
   Effect.gen(function* () {
-    const content = yield* Effect.orDie(fs.readFileString(documentPath));
+    const content = yield* fs.readFileString(documentPath);
     const document = yield* decodeManagedStackDocument(documentPath, content);
     if (document.id !== stackId) {
       return yield* new InvalidManagedStackDocumentError({ path: documentPath });
@@ -81,7 +90,7 @@ const makeListEntry = (
   const documentPath = managedStackDocumentPath(stateRoot, stackId);
   return Effect.exit(
     Effect.gen(function* () {
-      if (!(yield* Effect.orDie(fs.exists(documentPath)))) {
+      if (!(yield* fs.exists(documentPath))) {
         return yield* new InvalidManagedStackDocumentError({ path: documentPath });
       }
       return yield* decodeAtPath(fs, documentPath, stackId);
@@ -105,23 +114,29 @@ export const makeStackStore = (
 
     const read = (
       stackId: string,
-    ): Effect.Effect<ManagedStackDocument | undefined, InvalidManagedStackDocumentError> => {
+    ): Effect.Effect<
+      ManagedStackDocument | undefined,
+      InvalidManagedStackDocumentError | PlatformError.PlatformError
+    > => {
       const documentPath = managedStackDocumentPath(resolvedStateRoot, stackId);
       return Effect.gen(function* () {
-        if (!(yield* Effect.orDie(fs.exists(documentPath)))) {
+        if (!(yield* fs.exists(documentPath))) {
           return undefined;
         }
         return yield* decodeAtPath(fs, documentPath, stackId);
       });
     };
 
-    const list = (): Effect.Effect<ReadonlyArray<ManagedStackListing>> =>
+    const list = (): Effect.Effect<
+      ReadonlyArray<ManagedStackListing>,
+      PlatformError.PlatformError
+    > =>
       Effect.gen(function* () {
         const stacksRoot = managedStacksRoot(resolvedStateRoot);
-        if (!(yield* Effect.orDie(fs.exists(stacksRoot)))) {
+        if (!(yield* fs.exists(stacksRoot))) {
           return [];
         }
-        const names = [...(yield* Effect.orDie(fs.readDirectory(stacksRoot)))]
+        const names = [...(yield* fs.readDirectory(stacksRoot))]
           .filter((name) => {
             try {
               managedStackPaths(resolvedStateRoot, name);
@@ -136,7 +151,9 @@ export const makeStackStore = (
         );
       });
 
-    const write = (document: ManagedStackDocument): Effect.Effect<void> => {
+    const write = (
+      document: ManagedStackDocument,
+    ): Effect.Effect<void, PlatformError.PlatformError> => {
       const paths = managedStackPaths(resolvedStateRoot, document.id);
       return writeDocumentAtomically(
         fs,
@@ -147,10 +164,10 @@ export const makeStackStore = (
       );
     };
 
-    const remove = (stackId: string): Effect.Effect<void> => {
+    const remove = (stackId: string): Effect.Effect<void, PlatformError.PlatformError> => {
       const paths = managedStackPaths(resolvedStateRoot, stackId);
       const safeRoot = assertManagedStackRoot(resolvedStateRoot, stackId, paths.root);
-      return Effect.orDie(fs.remove(safeRoot, { recursive: true, force: true }));
+      return fs.remove(safeRoot, { recursive: true, force: true });
     };
 
     return { stateRoot: resolvedStateRoot, read, list, write, remove };

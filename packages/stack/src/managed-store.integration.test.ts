@@ -1,6 +1,17 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
-import { Duration, Effect, Exit, Layer, Schedule } from "effect";
+import {
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  PlatformError,
+  Schedule,
+} from "effect";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +31,45 @@ const CORRUPT_ID = "22222222-2222-4222-8222-222222222222";
 
 const filesystemLayer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const temporaryRoots: Array<string> = [];
+
+const failingWriteFileSystemLayer = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (fs) => ({
+    ...fs,
+    writeFileString: (
+      _path: string,
+      _data: string,
+      _options?: Parameters<FileSystem.FileSystem["writeFileString"]>[2],
+    ) =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "test",
+          method: "writeFileString",
+          description: "injected write failure",
+        }),
+      ),
+  })),
+).pipe(Layer.provide(NodeFileSystem.layer));
+
+const failingMakeDirectoryFileSystemLayer = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (fs) => ({
+    ...fs,
+    makeDirectory: (
+      _path: string,
+      _options?: Parameters<FileSystem.FileSystem["makeDirectory"]>[1],
+    ) =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "test",
+          method: "makeDirectory",
+          description: "injected directory failure",
+        }),
+      ),
+  })),
+).pipe(Layer.provide(NodeFileSystem.layer));
 
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
@@ -109,5 +159,79 @@ describe("managed stack document store", () => {
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(filesystemLayer));
+  });
+
+  it.live("serializes stale-lock reclamation before deleting a lock observed as stale", () => {
+    const stateRoot = makeRoot();
+    seedRegistryLock(stateRoot, { pid: 99_999_999, ageMs: 31_000 });
+    return Effect.gen(function* () {
+      const firstProbeEntered = Deferred.makeUnsafe<void>();
+      const releaseFirstProbe = Deferred.makeUnsafe<void>();
+      const firstAcquired = Deferred.makeUnsafe<void>();
+      const secondAcquired = Deferred.makeUnsafe<void>();
+      let deadOwnerProbes = 0;
+      const isProcessAlive = (pid: number): Effect.Effect<boolean> =>
+        pid === process.pid
+          ? Effect.succeed(true)
+          : Effect.gen(function* () {
+              deadOwnerProbes += 1;
+              if (deadOwnerProbes === 1) {
+                yield* Deferred.succeed(firstProbeEntered, undefined);
+                yield* Deferred.await(releaseFirstProbe);
+              }
+              return false;
+            });
+      const options = {
+        isProcessAlive,
+        retrySchedule: Schedule.spaced(Duration.millis(1)).pipe(Schedule.upTo({ times: 2 })),
+      };
+      const first = yield* withRegistryLock(
+        stateRoot,
+        Deferred.succeed(firstAcquired, undefined).pipe(
+          Effect.andThen(Effect.sleep(Duration.millis(100))),
+        ),
+        options,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(firstProbeEntered);
+      const second = yield* withRegistryLock(
+        stateRoot,
+        Deferred.succeed(secondAcquired, undefined).pipe(
+          Effect.andThen(Effect.sleep(Duration.millis(100))),
+        ),
+        options,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.sleep(Duration.millis(10));
+      yield* Deferred.succeed(releaseFirstProbe, undefined);
+      yield* Effect.sleep(Duration.millis(10));
+      expect(
+        (yield* Deferred.isDone(firstAcquired)) && (yield* Deferred.isDone(secondAcquired)),
+      ).toBe(false);
+      yield* Fiber.interrupt(first);
+      yield* Fiber.interrupt(second);
+    }).pipe(Effect.provide(filesystemLayer));
+  });
+
+  it.live("keeps a store filesystem failure in the typed error channel", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      const exit = yield* store.write(document()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(false);
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(failingWriteFileSystemLayer, NodePath.layer))),
+  );
+
+  it.live("keeps a registry filesystem failure in the typed error channel", () => {
+    const stateRoot = makeRoot();
+    return Effect.gen(function* () {
+      const exit = yield* withRegistryLock(stateRoot, Effect.void).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(false);
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(PlatformError.PlatformError);
+      }
+    }).pipe(Effect.provide(Layer.mergeAll(failingMakeDirectoryFileSystemLayer, NodePath.layer)));
   });
 });

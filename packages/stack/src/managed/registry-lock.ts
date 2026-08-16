@@ -1,5 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { Data, Duration, Effect, Exit, FileSystem, Path, Schedule, Schema } from "effect";
+import {
+  Cause,
+  Data,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Path,
+  PlatformError,
+  Schedule,
+  Schema,
+} from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import { resolveManagedStateRoot } from "./paths.ts";
 
@@ -24,6 +35,16 @@ export class RegistryLockBusyError extends Data.TaggedError("RegistryLockBusyErr
 }> {
   override get message(): string {
     return `Managed registry is busy: ${this.path}`;
+  }
+}
+
+export class RegistryLockClaimError extends Data.TaggedError("RegistryLockClaimError")<{
+  readonly operation: "claim" | "rename";
+  readonly path: string;
+  readonly cause: unknown;
+}> {
+  override get message(): string {
+    return `Managed registry lock claim failed (${this.path})`;
   }
 }
 
@@ -60,19 +81,15 @@ const defaultIsProcessAlive = (pid: number): Effect.Effect<boolean> =>
 const readExistingLock = (
   fs: FileSystem.FileSystem,
   lockPath: string,
-): Effect.Effect<RegistryLockDocument | undefined> =>
+): Effect.Effect<RegistryLockDocument | undefined, PlatformError.PlatformError> =>
   Effect.gen(function* () {
-    const exists = yield* Effect.exit(fs.exists(lockPath));
-    if (Exit.isFailure(exists) || !exists.value) {
+    if (!(yield* fs.exists(lockPath))) {
       return undefined;
     }
-    const content = yield* Effect.exit(fs.readFileString(lockPath));
-    if (Exit.isFailure(content)) {
-      return undefined;
-    }
+    const content = yield* fs.readFileString(lockPath);
     return yield* Effect.sync(() => {
       try {
-        return decodeRegistryLock(JSON.parse(content.value));
+        return decodeRegistryLock(JSON.parse(content));
       } catch {
         return undefined;
       }
@@ -95,18 +112,21 @@ const acquireRegistryLock = (
   fs: FileSystem.FileSystem,
   lockPath: string,
   options: RegistryLockOptions,
-): Effect.Effect<RegistryLockDocument, RegistryLockBusyError> => {
+): Effect.Effect<
+  RegistryLockDocument,
+  RegistryLockBusyError | PlatformError.PlatformError | RegistryLockClaimError
+> => {
   const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
   const tryClaim = (
     lock: RegistryLockDocument,
-  ): Effect.Effect<"claimed" | "already-exists", unknown> =>
+  ): Effect.Effect<"claimed" | "already-exists", RegistryLockClaimError> =>
     Effect.tryPromise({
       try: () =>
         claimFileAtomically(lockPath, JSON.stringify(lock) + "\n", {
           mode: 0o600,
           temporaryId: lock.token,
         }),
-      catch: (error) => error,
+      catch: (cause) => new RegistryLockClaimError({ operation: "claim", path: lockPath, cause }),
     });
 
   return Effect.gen(function* () {
@@ -115,15 +135,43 @@ const acquireRegistryLock = (
       pid: process.pid,
       acquiredAt: new Date().toISOString(),
     };
-    const outcome = yield* Effect.orDie(tryClaim(lock));
+    const outcome = yield* tryClaim(lock);
     if (outcome === "claimed") {
       return lock;
     }
 
     const existing = yield* readExistingLock(fs, lockPath);
     if (existing !== undefined && (yield* isReclaimable(existing, isProcessAlive))) {
-      yield* Effect.orDie(fs.remove(lockPath, { force: true }));
-      const reclaimed = yield* Effect.orDie(tryClaim(lock));
+      const current = yield* readExistingLock(fs, lockPath);
+      if (
+        current === undefined ||
+        current.token !== existing.token ||
+        !(yield* isReclaimable(current, isProcessAlive))
+      ) {
+        return yield* new RegistryLockBusyError({ path: lockPath });
+      }
+
+      const quarantinePath = `${lockPath}.stale.${lock.token}`;
+      const moved = yield* Effect.exit(fs.rename(lockPath, quarantinePath));
+      if (Exit.isFailure(moved)) {
+        const error = Cause.squash(moved.cause);
+        if (error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound") {
+          return yield* new RegistryLockBusyError({ path: lockPath });
+        }
+        if (error instanceof PlatformError.PlatformError) {
+          return yield* Effect.fail(error);
+        }
+        return yield* new RegistryLockClaimError({
+          operation: "rename",
+          path: lockPath,
+          cause: error,
+        });
+      }
+
+      const reclaimed = yield* Effect.ensuring(
+        tryClaim(lock),
+        fs.remove(quarantinePath, { force: true }).pipe(Effect.catch(() => Effect.void)),
+      );
       if (reclaimed === "claimed") {
         return lock;
       }
@@ -148,14 +196,18 @@ export const withRegistryLock = <A, E, R>(
   stateRoot: string,
   effect: Effect.Effect<A, E, R>,
   options: RegistryLockOptions = {},
-): Effect.Effect<A, E | RegistryLockBusyError, R | FileSystem.FileSystem | Path.Path> => {
+): Effect.Effect<
+  A,
+  E | RegistryLockBusyError | PlatformError.PlatformError | RegistryLockClaimError,
+  R | FileSystem.FileSystem | Path.Path
+> => {
   const resolvedStateRoot = resolveManagedStateRoot({ stateRoot });
   return Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const lockPath = path.join(resolvedStateRoot, "registry.lock");
-      yield* Effect.orDie(fs.makeDirectory(resolvedStateRoot, { recursive: true, mode: 0o700 }));
+      yield* fs.makeDirectory(resolvedStateRoot, { recursive: true, mode: 0o700 });
       yield* Effect.acquireRelease(
         Effect.retry(acquireRegistryLock(fs, lockPath, options), {
           while: (error) => error instanceof RegistryLockBusyError,
