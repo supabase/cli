@@ -2382,6 +2382,84 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     },
   },
   {
+    id: "ports.stopped-siblings-with-shared-exact-config-coexist",
+    title: "Stopped sibling stacks may share exact configured ports until one starts",
+    area: "ports",
+    given: [
+      {
+        kind: "checkout",
+        path: "checkout-main",
+        projectId: "project-a",
+        checkoutId: "checkout-main",
+      },
+      {
+        kind: "checkout",
+        path: "checkout-feature",
+        projectId: "project-a",
+        checkoutId: "checkout-feature",
+      },
+      { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
+      { kind: "branch", name: "feature", contextId: "context-feature", checkedOut: true },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        checkoutId: "checkout-main",
+        contextId: "context-main",
+        lifecycle: "stopped",
+      },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-feature-default",
+        checkoutId: "checkout-feature",
+        contextId: "context-feature",
+        lifecycle: "stopped",
+      },
+      { kind: "config-port", key: "api.port", intent: "exact", value: 55321, source: "local" },
+      { kind: "config-port", key: "db.port", intent: "exact", value: 55322, source: "local" },
+    ],
+    when: {
+      interface: "managed-api",
+      method: "startStack",
+      input: {
+        stackId: "stack-main-default",
+        portIntents: {
+          "api.port": { intent: "exact", port: 55321 },
+          "db.port": { intent: "exact", port: 55322 },
+        },
+      },
+    },
+    expected: {
+      outcome: "update",
+      selection: {
+        projectId: "project-a",
+        checkoutId: "checkout-main",
+        contextId: "context-main",
+        stackId: "stack-main-default",
+        stackName: "default",
+      },
+      writes: [
+        { target: "managed-state", operation: "update", id: "stack-main-default" },
+        { target: "runtime-state", operation: "start", id: "stack-main-default" },
+      ],
+      runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
+      details: {
+        stopped_siblings_coexist: true,
+        occupied_start_conflict: "EXACT_PORT_OCCUPIED",
+        assignments_unchanged_after_return: true,
+      },
+      output: {
+        api: {
+          outcome: "update",
+          stackId: "stack-main-default",
+          ports: { api: 55321, db: 55322 },
+          siblingConflictStackId: "stack-main-default",
+        },
+      },
+    },
+  },
+  {
     id: "ports.sticky-ports-reuse-on-return",
     title: "Returning to an existing target reuses its sticky automatic ports",
     area: "ports",

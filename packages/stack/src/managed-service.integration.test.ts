@@ -14,7 +14,8 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { Cause, Context, Effect, Exit, ManagedRuntime } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, ManagedRuntime } from "effect";
+import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
 import { managedStackContractFixtures } from "./managed-stack-contract.ts";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
@@ -50,6 +51,7 @@ import {
   type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./managed/model.ts";
+import { GIT_PROJECT_ID_KEY } from "./managed/git.ts";
 import type { ConfigPortKey, PortField } from "./PortCatalog.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { reservePortSet } from "./PortAllocator.ts";
@@ -206,6 +208,63 @@ const makePersistentService = (
     publicationPollMs: 1,
     ...overrides,
   });
+
+const makeClaimGatedService = async (
+  adapter: "in-memory" | "bun-sqlite",
+  root: string,
+  claimsBeforeRelease: number,
+  prepare?: (service: ManagedStackServiceHandle) => Promise<void>,
+): Promise<{
+  readonly service: ManagedStackServiceHandle;
+  readonly claimsEntered: Promise<void>;
+  readonly releaseClaims: () => void;
+  readonly closeRepository: () => Promise<void>;
+}> => {
+  const baseAndClose =
+    adapter === "in-memory"
+      ? {
+          repository: createInMemoryManagedStackRepository(),
+          close: async () => {},
+        }
+      : await openRegistry(join(root, "registry.db"));
+  const gate = Deferred.makeUnsafe<void>();
+  const entered = Deferred.makeUnsafe<void>();
+  let claimCount = 0;
+  const repository: ManagedStackRepositoryShape = {
+    ...baseAndClose.repository,
+    claimStartPorts: (input) =>
+      Effect.gen(function* () {
+        claimCount += 1;
+        if (claimCount === claimsBeforeRelease) {
+          yield* Deferred.succeed(entered, undefined);
+        }
+        yield* Deferred.await(gate);
+        return yield* baseAndClose.repository.claimStartPorts(input);
+      }),
+  };
+  if (prepare !== undefined) {
+    const preparationService = await makeManagedStackService({
+      repository: baseAndClose.repository,
+      stateRoot: join(root, "preparation-managed"),
+      publicationPollMs: 1,
+    });
+    await prepare(preparationService);
+    await preparationService.close();
+  }
+  const service = await makeManagedStackService({
+    repository,
+    stateRoot: join(root, "managed"),
+    publicationPollMs: 1,
+  });
+  return {
+    service,
+    claimsEntered: Effect.runPromise(Deferred.await(entered)),
+    releaseClaims: () => {
+      runRepo(Deferred.succeed(gate, undefined));
+    },
+    closeRepository: baseAndClose.close,
+  };
+};
 
 /**
  * Valid managed UUIDs whose lexicographic order is the reverse of the order
@@ -917,6 +976,110 @@ describe("ordinary-folder managed stack contract", () => {
     expect(runRepo(service.repository.listStacks())).toHaveLength(1);
     await service.close();
   });
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`allocates disjoint automatic ports for concurrent sibling starts with ${adapter}`, async () => {
+      const root = makeRoot();
+      const repositoryRoot = makeRepository(root);
+      git(repositoryRoot, "config", GIT_PROJECT_ID_KEY, crypto.randomUUID());
+      git(
+        repositoryRoot,
+        "worktree",
+        "add",
+        "-q",
+        join(root, "sibling-feature"),
+        "-b",
+        "feat/feature",
+      );
+      const mainWorkspace = repositoryRoot;
+      const featureWorkspace = join(root, "sibling-feature");
+      const document: ManagedPortIntentDocument = {
+        activeFields: ["apiPort", "dbPort"],
+        document: {},
+      };
+      const gated = await makeClaimGatedService(adapter, root, 2, async (preparationService) => {
+        for (const workspacePath of [mainWorkspace, featureWorkspace]) {
+          const seeded = await preparationService.resolveStack({
+            portDocument: document,
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+            operation: "start",
+            workspacePath,
+          });
+          await preparationService.updateStack(seeded.stack.id, { lifecycle: "stopped" });
+          await preparationService.deleteStack(seeded.stack.id);
+        }
+      });
+      try {
+        const mainDiscovery = await gated.service.discoverWorkspace(mainWorkspace);
+        const featureDiscovery = await gated.service.discoverWorkspace(featureWorkspace);
+        expect(mainDiscovery.workspace.checkoutKind).toBe("git");
+        expect(featureDiscovery.workspace.checkoutKind).toBe("linked-worktree");
+        const first = gated.service.resolveStack({
+          portDocument: document,
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: mainWorkspace,
+        });
+        const second = gated.service.resolveStack({
+          portDocument: document,
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: featureWorkspace,
+        });
+        await gated.claimsEntered;
+        gated.releaseClaims();
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        const firstPorts = new Set(firstResult.stack.ports.map((assignment) => assignment.port));
+        const secondPorts = new Set(secondResult.stack.ports.map((assignment) => assignment.port));
+        expect(firstResult.outcome).toBe("create");
+        expect(secondResult.outcome).toBe("create");
+        expect(firstResult.identity.projectId).toBe(secondResult.identity.projectId);
+        expect(firstResult.identity.checkoutId).not.toBe(secondResult.identity.checkoutId);
+        expect(firstResult.identity.contextId).not.toBe(secondResult.identity.contextId);
+        expect(firstPorts.size).toBe(2);
+        expect(secondPorts.size).toBe(2);
+        expect([...firstPorts].every((port) => !secondPorts.has(port))).toBe(true);
+        expect(runRepo(gated.service.repository.listPortReservations())).toHaveLength(4);
+      } finally {
+        await gated.service.close();
+        await gated.closeRepository();
+      }
+    });
+
+    it(`converges concurrent starts for one identity on one automatic assignment with ${adapter}`, async () => {
+      const root = makeRoot();
+      const gated = await makeClaimGatedService(adapter, root, 1);
+      const document: ManagedPortIntentDocument = {
+        activeFields: ["apiPort", "dbPort"],
+        document: {},
+      };
+      const workspace = makeWorkspace(root, "same-identity");
+      try {
+        const first = gated.service.resolveStack({
+          portDocument: document,
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: workspace,
+        });
+        await gated.claimsEntered;
+        const second = gated.service.resolveStack({
+          portDocument: document,
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: workspace,
+        });
+        gated.releaseClaims();
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        expect([firstResult.outcome, secondResult.outcome].sort()).toEqual(["create", "reuse"]);
+        expect(firstResult.stack.id).toBe(secondResult.stack.id);
+        expect(firstResult.stack.ports).toEqual(secondResult.stack.ports);
+        expect(await gated.service.listStacks()).toHaveLength(1);
+      } finally {
+        await gated.service.close();
+        await gated.closeRepository();
+      }
+    });
+  }
 
   it("applies the requested configuration after awaiting another caller's publication", async () => {
     const root = makeRoot();
@@ -2423,7 +2586,7 @@ describe("managed repository and lifecycle", () => {
   }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
-    it(`releases a failed runtime adoption operation with ${adapter}`, async () => {
+    it(`rejects initial creation when an exact port is already occupied with ${adapter}`, async () => {
       const root = makeRoot();
       const overrides = { isProcessAlive: () => false };
       const service =
@@ -2630,6 +2793,71 @@ describe("managed repository and lifecycle", () => {
       );
     }
     try {
+      if (fixtureId === "ports.stopped-siblings-with-shared-exact-config-coexist") {
+        const repositoryRoot = makeRepository(root, "ports-repo");
+        git(
+          repositoryRoot,
+          "worktree",
+          "add",
+          "-q",
+          join(root, "checkout-feature"),
+          "-b",
+          "feat/feature",
+        );
+        const mainWorkspace = repositoryRoot;
+        const featureWorkspace = join(root, "checkout-feature");
+        const main = await service.resolveStack({
+          workspacePath: mainWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
+        const feature = await service.resolveStack({
+          workspacePath: featureWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await service.updateStack(feature.stack.id, { lifecycle: "stopped" });
+        expect((await service.listStacks()).every((stack) => stack.lifecycle === "stopped")).toBe(
+          true,
+        );
+        expect(main.identity.projectId).toBe(feature.identity.projectId);
+        expect(main.identity.checkoutId).not.toBe(feature.identity.checkoutId);
+        expect(main.identity.contextId).not.toBe(feature.identity.contextId);
+        expect(feature.stack.ports).toEqual(main.stack.ports);
+
+        const startedMain = await service.resolveStack({
+          workspacePath: mainWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        expect(startedMain.stack.ports).toEqual(main.stack.ports);
+        const conflict = await service
+          .resolveStack({
+            workspacePath: featureWorkspace,
+            operation: "start",
+            portDocument: document,
+            initialize,
+          })
+          .catch((error: unknown) => error);
+        expect(conflict).toBeInstanceOf(ManagedExactPortOccupiedError);
+        if (conflict instanceof ManagedExactPortOccupiedError) {
+          expect(conflict.ownerStackId).toBe(main.stack.id);
+        }
+        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
+        const returnedFeature = await service.resolveStack({
+          workspacePath: featureWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        expect(returnedFeature.stack.ports).toEqual(feature.stack.ports);
+        return;
+      }
+
       if (fixtureId === "ports.explicit-free-port-is-used") {
         const exactFact = configPortFacts(literalScenario).find((fact) => fact.key === "api.port");
         if (exactFact === undefined) throw new Error("Explicit-free fixture lacks api.port fact");
@@ -2970,7 +3198,7 @@ describe("managed repository and lifecycle", () => {
       it(
         `${fixtureId} through ${adapter}`,
         () => runManagedPortFixture(adapter, fixtureId),
-        15_000,
+        fixtureId === "ports.stopped-siblings-with-shared-exact-config-coexist" ? 60_000 : 15_000,
       );
     }
   }

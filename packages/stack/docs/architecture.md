@@ -28,6 +28,11 @@ stack identity and concrete roots, ports, and runtime selection, then a caller m
 resolved values to the core runtime. The core runtime never discovers workspaces or opens the
 global registry.
 
+`createStack()` and the ordinary daemon are deliberately external, unmanaged participants. They
+use an ephemeral allocator and never read, reserve, or update managed reservations. A managed
+coordinator supplies the runtime with one complete allocation and its held lease; the runtime does
+not reselect ports or infer ownership from filesystem metadata.
+
 ```mermaid
 flowchart LR
     Input["StackConfig"] --> Resolve["StackConfigResolver"]
@@ -220,18 +225,34 @@ live state, logs, URLs, and rendered validation errors. Both `/functions/reload`
 `/edge-runtime/reload` accept validated JSON bodies over the local Unix socket. This keeps resolved
 environment values confined to an explicit request body and the ephemeral runtime file.
 
-## Port leases
+## Managed port ownership and leases
 
-Port allocation returns a `PortLease`, not just numbers. The stack reserves ports before cold asset
-preparation. The lifecycle Adapter passes:
+Managed allocation is owned by the coordinator in the process that initializes the runtime. A
+detached managed daemon performs intent resolution, candidate selection, durable publication, and
+socket leasing in the child; the parent never holds a lease that the child must reacquire. The
+runtime receives concrete ports plus the scoped `PortLease` and releases each field as its service
+binds. Failures before handoff release the complete candidate set.
 
-- `beforeStart` to reserve the service's fields again for a restart generation;
-- `beforeSpawn` to release those fields immediately before process creation;
-- a platform-factory release Effect for the public API server.
+Config-addressable fields distinguish an explicit value (`exact`) from an omitted value
+(`automatic`). Sticky automatic assignments are durable and exclusive across every non-tombstoned
+stack, including stopped and failed rows. Keyless runtime-only fields are selected by the same
+coordinator but are not durable assignments; they can relocate on a later start. Disabled services
+do not participate in allocation or hold listeners, while their existing durable rows remain
+available if the service is re-enabled.
 
-This narrows but cannot completely remove the race between releasing a reservation and the child
-binding. Supervised Docker services have a wider window because the supervisor starts before
-`docker run` binds published ports.
+The stopped/failed ownership matrix is intent-sensitive:
+
+| Existing assignment | Incoming assignment | Existing owner stopped or failed | Existing owner occupying ports |
+| ------------------- | ------------------- | -------------------------------- | ------------------------------ |
+| exact               | exact               | coexist                          | conflict                       |
+| automatic sticky    | exact               | conflict                         | conflict                       |
+| exact               | automatic sticky    | allocate elsewhere               | allocate elsewhere             |
+| automatic sticky    | automatic sticky    | allocate elsewhere               | allocate elsewhere             |
+
+Exact requests never silently relocate. An unchanged sticky automatic field reuses its persisted
+number and reports an external occupant as a conflict. A running stack is read-only with respect to
+port intent: changes, including intent-only changes where the number is unchanged, are reported as
+drift and apply only after stop/start. Direct unmanaged stacks remain external to this matrix.
 
 ## Cleanup and crash recovery
 
@@ -445,14 +466,13 @@ until normal reconciliation succeeds or the caller obtains its stack ID and toke
 `repository.listActiveOperations()` and performs a scoped forced recovery after trustworthy runtime
 inspection.
 
-Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
-retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
-`running`, or `stopping` claims those ports host-wide; a collision fails without relocating a
-sticky automatic assignment. On a stopped stack, exact configuration replaces persisted automatic
-state, while an automatic request reuses the current number and changes only its intent. Failed
-stacks follow the same non-occupying rules. Intent-only changes are accepted, and a lifecycle update
-can release a lease and change ports atomically; port-number drift is rejected only while a stack
-continues to occupy its ports.
+Port assignments encode intent as well as a number. Exact rows may coexist on stopped or failed
+sibling stacks, which allows branches that inherit the same committed `api.port` and `db.port`; the
+same rows conflict once either sibling occupies those listeners. Automatic sticky rows remain
+exclusive even while stopped or failed and may not be taken by an exact request. Removing an exact
+key preserves its number while changing the row to sticky automatic. Runtime-only keyless fields
+are never persisted and are free to relocate when unavailable on a later start. These rules are
+enforced identically by the memory and SQLite adapters.
 
 Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
 tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any

@@ -2,7 +2,6 @@ import { createServer } from "node:net";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { Context, Deferred, Effect, Fiber, ManagedRuntime } from "effect";
 import { describe, expect, it } from "vitest";
 import type { ManagedPortPlan } from "./managed/port-plan.ts";
@@ -21,7 +20,7 @@ import type {
 import { reservePortSet } from "./PortAllocator.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository } from "./managed/repository.ts";
-import { sqliteManagedStackRepositoryLayer, type ManagedSqliteDatabase } from "./managed/sqlite.ts";
+import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
 
 const freePort = async (): Promise<number> => {
   const server = createServer();
@@ -193,24 +192,6 @@ const sqlitePreparation = (root: string, id: string, operationToken: string) => 
   now: "2026-01-01T00:00:00.000Z",
   configuration: {},
 });
-
-const openNodeSqlite = (path: string): ManagedSqliteDatabase => {
-  const database = new DatabaseSync(path);
-  return {
-    exec: (sql) => database.exec(sql),
-    prepare: (sql) => {
-      const statement = database.prepare(sql);
-      return {
-        run: (parameters = []) => {
-          statement.run(...parameters);
-        },
-        get: (parameters = []) => statement.get(...parameters),
-        all: (parameters = []) => statement.all(...parameters),
-      };
-    },
-    close: () => database.close(),
-  };
-};
 
 const memoryPreparation = (root: string, id: string, operationToken: string) => ({
   identity: {
@@ -816,7 +797,7 @@ describe("managed port coordinator", () => {
   it("persists SQLite claims and preflights a second owner through the real adapter", async () => {
     const root = mkdtempSync(join(tmpdir(), "managed-port-coordinator-"));
     const runtime = ManagedRuntime.make(
-      sqliteManagedStackRepositoryLayer(() => openNodeSqlite(join(root, "registry.sqlite"))),
+      bunSqliteManagedStackRepositoryLayer(join(root, "registry.sqlite")),
     );
     const repository = Context.get(await runtime.context(), ManagedStackRepository);
     try {

@@ -16,8 +16,9 @@ use SQLite or another store, but changing storage must not change identity or li
 
 ## Decision
 
-The typed fixtures exported from `@supabase/stack/testing` are the normative executable description
-of the M1 managed-stack behavior. Each scenario records:
+The 104 typed fixtures exported from `@supabase/stack/testing` are the normative executable
+description of the current managed-stack contract, including the M1 baseline and subsequent
+lifecycle, port, runtime, and ownership behavior. Each scenario records:
 
 - explicit input state;
 - a public CLI, Git, direct-stack API, or managed-stack API action;
@@ -47,6 +48,15 @@ failed-bootstrap rollback, whose only permitted effects remove partial managed s
 2. The explicit managed surface owns system-aware discovery, identity, stack selection, ports,
    runtime persistence, bootstrap, and reclamation. It accepts an isolated state root or injected
    repository so applications and tests can use it without the CLI.
+
+Managed port ownership is intent-sensitive. Exact rows may coexist on stopped or failed sibling
+stacks, while an occupying exact row conflicts with another occupying exact row. Sticky automatic
+rows are exclusive across all non-tombstoned stacks and an exact request cannot take one, even when
+the owner is stopped. Keyless runtime-only fields are coordinated for the current runtime but are
+not durable assignments. Disabled services do not hold leases, and ordinary `createStack()` and
+the unmanaged daemon remain external participants that never consult managed reservations.
+For detached starts, the child process that initializes services also runs the coordinator and owns
+the leases through runtime handoff; no parent-held listener is transferred or reacquired.
 
 The CLI is a consumer and presentation layer. It translates arguments into managed operations and
 projects managed results into human and JSON output. It must not implement a second identity,
