@@ -567,12 +567,7 @@ export class ManagedStackService extends Context.Service<
               );
             }
             if (resolveOptions.operation === "start") {
-              const stableIdentityCandidate = {
-                ...settledReport.identity,
-                ...(settledReport.registryContextId === undefined
-                  ? {}
-                  : { contextId: settledReport.registryContextId }),
-              };
+              const stableIdentityCandidate = settledReport.identity;
               if (
                 stableIdentityCandidate.projectId !== undefined &&
                 stableIdentityCandidate.checkoutId !== undefined &&
@@ -595,10 +590,7 @@ export class ManagedStackService extends Context.Service<
                 );
                 if (
                   existingStableStack?.lifecycle === "running" &&
-                  settledReport.state !== "transitioning" &&
-                  (settledReport.state !== "duplicate" ||
-                    workspaceIdentity.branchCopyIsUnambiguous(settledReport)) &&
-                  settledReport.state !== "ambiguous"
+                  settledReport.state === "healthy"
                 ) {
                   return yield* startedResolution(
                     stablePlan,
@@ -630,7 +622,12 @@ export class ManagedStackService extends Context.Service<
                 if (
                   candidate.state === "moved" ||
                   (candidate.state === "transitioning" &&
-                    candidate.activeTransition?.kind === "rebind-checkout")
+                    candidate.activeTransition?.kind === "rebind-checkout" &&
+                    !candidate.locations.some(
+                      (location) =>
+                        location.state === "active" &&
+                        location.canonicalPath === candidate.workspace.workspaceRoot,
+                    ))
                 ) {
                   return "rebind-checkout";
                 }

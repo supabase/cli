@@ -662,10 +662,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(renamed.stack.id).toBe(feature.stack.id);
     expect(renamed.identity.contextId).toBe(feature.identity.contextId);
     expect(renamed.context).toEqual({ kind: "branch", branch: "feat/renamed" });
-    // Running reuse is intentionally read-only: the discovery projection sees
-    // the renamed branch, while the durable stack locator is unchanged until a
-    // mutating lifecycle operation.
-    expect(renamed.stack.contextLocator).toBe("feat/x");
+    // Identity reconciliation refreshes the durable context locator while
+    // leaving the running stack's runtime and port assignment untouched.
+    expect(renamed.stack.contextLocator).toBe("feat/renamed");
 
     // The repository query itself must retain the branch context predicate: the
     // main branch shares this project and checkout, but its stack is not part of
@@ -709,7 +708,7 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(recovered.context).toEqual({ kind: "branch", branch: "renamed" });
   });
 
-  it("reports drift for a moved running checkout before automatic rebind", async () => {
+  it("automatically rebinds a moved running checkout while reusing its stack", async () => {
     const root = makeRoot();
     const original = makeRepository(root, "original-running");
     const moved = join(root, "moved-running");
@@ -748,7 +747,22 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(resolved.outcome).toBe("reuse");
     expect(resolved.stack.id).toBe(first.stack.id);
     expect(initialized).toBe(0);
-    expect(await snapshot()).toEqual(before);
+    const after = await snapshot();
+    expect(after.stacks).toEqual(before.stacks);
+    expect(after.operations).toEqual(before.operations);
+    expect(after.projectId).toBe(before.projectId);
+    expect(after.branchContext).toBe(before.branchContext);
+    expect(after.locations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ canonicalPath: original, state: "superseded" }),
+        expect.objectContaining({ canonicalPath: moved, state: "active" }),
+      ]),
+    );
+    expect(after.claims.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "rebind-checkout", path: moved, phase: "finalized" }),
+      ]),
+    );
     expect(existsSync(original)).toBe(false);
     expect(existsSync(moved)).toBe(true);
   });
@@ -795,7 +809,7 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect((await service.discoverWorkspace(moved)).activeTransition).toBeUndefined();
   });
 
-  it("reports a copied-branch running stack before branch repair", async () => {
+  it("repairs a copied branch before creating its running stack", async () => {
     const root = makeRoot();
     const repository = makeRepository(root, "copied-running");
     const service = await openService(root);
@@ -829,10 +843,31 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
       },
     });
 
-    expect(resolved.outcome).toBe("reuse");
-    expect(resolved.stack.id).toBe(owner.stack.id);
-    expect(initialized).toBe(0);
-    expect(await snapshot()).toEqual(before);
+    expect(resolved.outcome).toBe("create");
+    expect(resolved.stack.id).not.toBe(owner.stack.id);
+    expect(resolved.identity.contextId).not.toBe(owner.identity.contextId);
+    expect(initialized).toBe(1);
+    const after = await snapshot();
+    expect(after.stacks.map((stack) => stack.id)).toEqual(
+      expect.arrayContaining([owner.stack.id, resolved.stack.id]),
+    );
+    expect(
+      after.locations.map(({ id, checkoutId, canonicalPath, state }) => ({
+        id,
+        checkoutId,
+        canonicalPath,
+        state,
+      })),
+    ).toEqual(
+      before.locations.map(({ id, checkoutId, canonicalPath, state }) => ({
+        id,
+        checkoutId,
+        canonicalPath,
+        state,
+      })),
+    );
+    expect(after.operations).toEqual(before.operations);
+    expect(after.copiedContext).not.toBe(before.copiedContext);
   });
 
   it("reports an adoptable running context before branch adoption", async () => {
@@ -876,7 +911,21 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(resolved.outcome).toBe("reuse");
     expect(resolved.stack.id).toBe(owner.stack.id);
     expect(initialized).toBe(0);
-    expect(await snapshot()).toEqual(before);
+    const after = await snapshot();
+    expect(after.stacks).toEqual(before.stacks);
+    expect(after.locations).toEqual(before.locations);
+    expect(after.operations).toEqual(before.operations);
+    expect(after.renamedContext).toBe(before.renamedContext);
+    expect(after.claims.contexts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ locator: "renamed-running", ownerBranch: "renamed-running" }),
+      ]),
+    );
+    expect(after.claims.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "adopt-context", path: repository, phase: "finalized" }),
+      ]),
+    );
   });
 
   it("repairs a copied branch on its first mutating start without changing the owner", async () => {
@@ -1200,6 +1249,7 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
       portDocument: defaultPortDocument,
       initialize: defaultInitialize,
     });
+    await base.updateStack(first.stack.id, { lifecycle: "stopped" });
     let raced = false;
     const racingRepository = {
       ...base.repository,
