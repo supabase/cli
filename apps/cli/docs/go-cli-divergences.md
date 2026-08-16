@@ -71,6 +71,17 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
+- `secrets set` no longer seeds the upload with `[edge_runtime.secrets]` from
+  `supabase/config.toml` (supabase/supabase#45242). Go merged config-declared secrets into every
+  bulk-create request (`internal/secrets/set/set.go`'s `ListSecrets`), so `secrets set BAR=bar`
+  silently pushed unrelated `[edge_runtime.secrets]` entries (and their `[remotes.*]` overrides)
+  to the linked project alongside the explicit ones. Uploads are now explicit-input only —
+  positional `NAME=VALUE` pairs and `--env-file` — and a bare `secrets set` always fails with
+  "No arguments found" even when config.toml declares secrets. Because the config is no longer
+  loaded at all, `secrets set` also no longer prints the
+  `Loading config override: [remotes.<name>]` stderr notice. Config-declared edge runtime
+  secrets remain the local-dev input for `functions serve`, which is unchanged. Direction taken
+  from the unmerged Go-side fix (supabase/cli#5137).
 - `test db` (and its `db test` alias) exits `1` when `pg_prove` ran no tests (CLI-2194, #6206).
   `pg_prove` prints `Result: NOTESTS` and still exits `0` for an empty run, and Go returns that
   code verbatim (`internal/db/test/test.go` → `DockerRunOnceWithConfig`), so a typo'd path, an
