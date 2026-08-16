@@ -130,7 +130,11 @@ const exactError = (
     port,
     ...(owner === undefined
       ? {}
-      : { ownerStackId: owner.stackId, ownerStackName: owner.stackName }),
+      : {
+          ownerStackId: owner.stackId,
+          ownerStackName: owner.stackName,
+          ownerKey: owner.assignment.key,
+        }),
   });
 
 const stickyError = (
@@ -145,7 +149,11 @@ const stickyError = (
     stackId,
     ...(owner === undefined
       ? {}
-      : { ownerStackId: owner.stackId, ownerStackName: owner.stackName }),
+      : {
+          ownerStackId: owner.stackId,
+          ownerStackName: owner.stackName,
+          ownerKey: owner.assignment.key,
+        }),
   });
 
 type PreflightResult =
@@ -216,30 +224,22 @@ const allocationError = (
 ): ManagedPortAllocationError =>
   new ManagedPortAllocationError({ fields: fieldsFor(requests), cause });
 
-const parseUnavailablePort = (detail: string): number | undefined => {
-  const match = /^Port (\d+) is not available$/.exec(detail);
-  return match === null ? undefined : Number(match[1]);
-};
-
 const mapAllocationError = (
   requests: ReadonlyArray<PortReservationRequest>,
   plan: ManagedPortPlan,
   stackId: string,
   error: PortAllocationError,
 ): ManagedPortStartFailure => {
-  const port = parseUnavailablePort(error.detail);
-  if (port !== undefined) {
-    const request = requests.find(
-      (candidate) => candidate.selection.kind === "exact" && candidate.selection.port === port,
-    );
+  if (error.port !== undefined) {
+    const request = requests.find((candidate) => candidate.field === error.field);
     const entry =
       request === undefined
         ? undefined
         : plan.durable.find((candidate) => candidate.field === request.field);
     if (entry !== undefined) {
       return entry.intent === "exact"
-        ? new ManagedExactPortOccupiedError({ key: entry.key, port })
-        : new ManagedStickyPortOccupiedError({ key: entry.key, port, stackId });
+        ? new ManagedExactPortOccupiedError({ key: entry.key, port: error.port })
+        : new ManagedStickyPortOccupiedError({ key: entry.key, port: error.port, stackId });
     }
   }
   return allocationError(requests, error);

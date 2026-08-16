@@ -31,7 +31,7 @@ import {
   type PortField,
   type ResolvedPorts,
 } from "./PortCatalog.ts";
-import { portFieldsForConfigInput } from "./ServicePorts.ts";
+import { portFieldsForConfigInput, serviceEnabledForConfig } from "./ServicePorts.ts";
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
 import type {
@@ -470,6 +470,11 @@ function resolvePoolerConfig(
   };
 }
 
+const enabledServiceConfig = <Config extends object>(
+  enabled: boolean,
+  config: Config | false | undefined,
+): Config | undefined => (enabled && config !== false ? config : undefined);
+
 export async function resolveConfig(
   input?: StackConfig,
   opts: ResolveConfigOptions = {},
@@ -483,29 +488,26 @@ export async function resolveConfig(
   const postgresInput = config.postgres ?? {};
   const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
   const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
-  const edgeRuntimeEnabled =
-    !(resolvedMode === "native" && config.edgeRuntime === undefined) &&
-    config.edgeRuntime !== false &&
-    (config.edgeRuntime?.enabled ?? true) !== false;
-  const realtimeEnabled = config.realtime !== undefined && config.realtime !== false;
-  const storageEnabled = config.storage !== undefined && config.storage !== false;
-  const imgproxyEnabled = config.imgproxy !== undefined && config.imgproxy !== false;
-  const mailpitEnabled = config.mailpit !== undefined && config.mailpit !== false;
-  const pgmetaEnabled = config.pgmeta !== undefined && config.pgmeta !== false;
-  const studioEnabled = config.studio !== undefined && config.studio !== false;
-  const analyticsEnabled = config.analytics !== undefined && config.analytics !== false;
-  const vectorEnabled = config.vector !== undefined && config.vector !== false;
-  const poolerEnabled = config.pooler !== undefined && config.pooler !== false;
-  const edgeRuntimeInput = edgeRuntimeEnabled ? (config.edgeRuntime ?? undefined) : undefined;
-  const realtimeInput = realtimeEnabled ? (config.realtime ?? undefined) : undefined;
-  const storageInput = storageEnabled ? (config.storage ?? undefined) : undefined;
-  const imgproxyInput = imgproxyEnabled ? (config.imgproxy ?? undefined) : undefined;
-  const mailpitInput = mailpitEnabled ? (config.mailpit ?? undefined) : undefined;
-  const pgmetaInput = pgmetaEnabled ? (config.pgmeta ?? undefined) : undefined;
-  const studioInput = studioEnabled ? (config.studio ?? undefined) : undefined;
-  const analyticsInput = analyticsEnabled ? (config.analytics ?? undefined) : undefined;
-  const vectorInput = vectorEnabled ? (config.vector ?? undefined) : undefined;
-  const poolerInput = poolerEnabled ? (config.pooler ?? undefined) : undefined;
+  const edgeRuntimeEnabled = serviceEnabledForConfig(config, "edge-runtime");
+  const realtimeEnabled = serviceEnabledForConfig(config, "realtime");
+  const storageEnabled = serviceEnabledForConfig(config, "storage");
+  const imgproxyEnabled = serviceEnabledForConfig(config, "imgproxy");
+  const mailpitEnabled = serviceEnabledForConfig(config, "mailpit");
+  const pgmetaEnabled = serviceEnabledForConfig(config, "pgmeta");
+  const studioEnabled = serviceEnabledForConfig(config, "studio");
+  const analyticsEnabled = serviceEnabledForConfig(config, "analytics");
+  const vectorEnabled = serviceEnabledForConfig(config, "vector");
+  const poolerEnabled = serviceEnabledForConfig(config, "pooler");
+  const edgeRuntimeInput = enabledServiceConfig(edgeRuntimeEnabled, config.edgeRuntime);
+  const realtimeInput = enabledServiceConfig(realtimeEnabled, config.realtime);
+  const storageInput = enabledServiceConfig(storageEnabled, config.storage);
+  const imgproxyInput = enabledServiceConfig(imgproxyEnabled, config.imgproxy);
+  const mailpitInput = enabledServiceConfig(mailpitEnabled, config.mailpit);
+  const pgmetaInput = enabledServiceConfig(pgmetaEnabled, config.pgmeta);
+  const studioInput = enabledServiceConfig(studioEnabled, config.studio);
+  const analyticsInput = enabledServiceConfig(analyticsEnabled, config.analytics);
+  const vectorInput = enabledServiceConfig(vectorEnabled, config.vector);
+  const poolerInput = enabledServiceConfig(poolerEnabled, config.pooler);
 
   const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
@@ -549,18 +551,22 @@ export async function resolveConfig(
     }
   };
 
-  const requests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(config).map(
-    (field) => {
-      const explicit = explicitPortForField(field);
-      if (explicit !== undefined) {
-        return { field, selection: { kind: "exact", port: explicit } };
-      }
-      const preferred = opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
-      return preferred === undefined
-        ? { field, selection: { kind: "automatic" } }
-        : { field, selection: { kind: "automatic", preferred } };
-    },
-  );
+  const unorderedRequests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(
+    config,
+  ).map((field) => {
+    const explicit = explicitPortForField(field);
+    if (explicit !== undefined) {
+      return { field, selection: { kind: "exact", port: explicit } };
+    }
+    const preferred = opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
+    return preferred === undefined
+      ? { field, selection: { kind: "automatic" } }
+      : { field, selection: { kind: "automatic", preferred } };
+  });
+  const requests: ReadonlyArray<PortReservationRequest> = [
+    ...unorderedRequests.filter((request) => request.selection.kind === "exact"),
+    ...unorderedRequests.filter((request) => request.selection.kind === "automatic"),
+  ];
 
   const ports = await Effect.runPromise(
     (opts.portAllocator ?? allocatePortSet)(requests, { reserved: opts.reservedPorts }),

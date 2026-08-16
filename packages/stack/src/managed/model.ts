@@ -511,8 +511,18 @@ export class ManagedExactPortOccupiedError extends Data.TaggedError(
   readonly port: number;
   readonly ownerStackId?: string;
   readonly ownerStackName?: string;
+  readonly ownerKey?: ConfigPortKey;
 }> {
   readonly code = "MANAGED_EXACT_PORT_OCCUPIED" as const;
+
+  override get message(): string {
+    const owner =
+      this.ownerStackId === undefined
+        ? "another process"
+        : `managed stack ${this.ownerStackName === undefined ? this.ownerStackId : `${this.ownerStackName} (${this.ownerStackId})`}`;
+    const ownerKey = this.ownerKey === undefined ? "" : ` through ${this.ownerKey}`;
+    return `Port ${this.port} configured by ${this.key} is occupied by ${owner}${ownerKey}`;
+  }
 }
 
 export class ManagedStickyPortOccupiedError extends Data.TaggedError(
@@ -523,8 +533,18 @@ export class ManagedStickyPortOccupiedError extends Data.TaggedError(
   readonly stackId: string;
   readonly ownerStackId?: string;
   readonly ownerStackName?: string;
+  readonly ownerKey?: ConfigPortKey;
 }> {
   readonly code = "MANAGED_STICKY_PORT_OCCUPIED" as const;
+
+  override get message(): string {
+    const owner =
+      this.ownerStackId === undefined
+        ? "another process"
+        : `managed stack ${this.ownerStackName === undefined ? this.ownerStackId : `${this.ownerStackName} (${this.ownerStackId})`}`;
+    const ownerKey = this.ownerKey === undefined ? "" : ` through ${this.ownerKey}`;
+    return `Sticky port ${this.port} for ${this.key} on managed stack ${this.stackId} is occupied by ${owner}${ownerKey}`;
+  }
 }
 
 export class ManagedPortClaimRaceError extends Data.TaggedError("ManagedPortClaimRaceError")<{
@@ -533,6 +553,10 @@ export class ManagedPortClaimRaceError extends Data.TaggedError("ManagedPortClai
   readonly ownerStackId: string;
 }> {
   readonly code = "MANAGED_PORT_CLAIM_RACE" as const;
+
+  override get message(): string {
+    return `Managed stack ${this.stackId} lost port ${this.port} to managed stack ${this.ownerStackId} while claiming its allocation`;
+  }
 }
 
 export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAllocationError")<{
@@ -540,12 +564,28 @@ export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAll
   readonly cause: unknown;
 }> {
   readonly code = "MANAGED_PORT_ALLOCATION_FAILED" as const;
+
+  override get message(): string {
+    const detail =
+      this.cause instanceof Error && this.cause.message.length > 0
+        ? this.cause.message
+        : String(this.cause);
+    return `Failed to allocate managed ports ${this.fields.join(", ")}: ${detail}`;
+  }
 }
 
 export class ManagedRuntimeStartError extends Data.TaggedError("ManagedRuntimeStartError")<{
   readonly cause: unknown;
 }> {
   readonly code = "MANAGED_RUNTIME_START_FAILED" as const;
+
+  override get message(): string {
+    const detail =
+      this.cause instanceof Error && this.cause.message.length > 0
+        ? this.cause.message
+        : String(this.cause);
+    return `Managed runtime failed to start: ${detail}`;
+  }
 }
 
 export class ManagedLegacyPortConflictError extends Data.TaggedError(
@@ -556,6 +596,11 @@ export class ManagedLegacyPortConflictError extends Data.TaggedError(
   readonly ownerId?: string;
 }> {
   readonly code = "LEGACY_SOURCE_RUNNING" as const;
+
+  override get message(): string {
+    const owner = this.ownerId === undefined ? "" : ` ${this.ownerId}`;
+    return `The matching legacy stack${owner} is still running on ${this.key} ${this.port}`;
+  }
 }
 
 export class ManagedRunningStackPortChangeError extends Data.TaggedError(

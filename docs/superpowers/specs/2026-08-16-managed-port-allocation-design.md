@@ -30,7 +30,8 @@ model without treating its runtime allocator as a managed-state integration poin
 
 ## Non-goals
 
-- CLI command output and conflict presentation, owned by CLI-2114.
+- Discovery of running legacy sources, CLI command output, and conflict presentation, owned by
+  CLI-2114. This slice accepts only the typed start-time conflict signal from that CLI bridge.
 - General translation of every project configuration field, owned by CLI-2115.
 - Legacy stack import and bootstrap, owned by CLI-2109.
 - Runtime selection and launch policy, owned by CLI-2124.

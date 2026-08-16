@@ -171,6 +171,23 @@ const waitForLifecycle = async (stateRoot: string, lifecycle: string): Promise<v
   });
 };
 
+const listStacksAndRegisterChildren = async (
+  stateRoot: string,
+): Promise<ReadonlyArray<ManagedStackProjection>> => {
+  const registry = await createManagedStackService({ stateRoot });
+  try {
+    const stacks = await registry.listStacks();
+    for (const stack of stacks) {
+      if (stack.runtimeMetadata.pid !== undefined) {
+        childPids.add(stack.runtimeMetadata.pid);
+      }
+    }
+    return stacks;
+  } finally {
+    await registry.close();
+  }
+};
+
 afterEach(async () => {
   for (const pid of childPids) await stopPid(pid);
   childPids.clear();
@@ -191,23 +208,16 @@ describe("managed daemon", () => {
     let stack: Stack["Service"] | undefined;
     try {
       stack = Context.get(await runtime.context(), Stack);
+      const stacks = await listStacksAndRegisterChildren(input.stateRoot);
       const info = await runtime.runPromise(stack.getInfo());
       const health = await fetch(`${info.url}/health`);
       expect(health.status).toBe(200);
       expect(await health.text()).toBe("OK");
-      const registry = await createManagedStackService({ stateRoot: input.stateRoot });
-      try {
-        const stacks = await registry.listStacks();
-        expect(stacks).toHaveLength(1);
-        expect(stacks[0]?.lifecycle).toBe("running");
-        expect(stacks[0]?.ports.map((assignment) => assignment.key)).toEqual(
-          expect.arrayContaining(["api.port", "db.port"]),
-        );
-        const pid = stacks[0]?.runtimeMetadata.pid;
-        if (pid !== undefined) childPids.add(pid);
-      } finally {
-        await registry.close();
-      }
+      expect(stacks).toHaveLength(1);
+      expect(stacks[0]?.lifecycle).toBe("running");
+      expect(stacks[0]?.ports.map((assignment) => assignment.key)).toEqual(
+        expect.arrayContaining(["api.port", "db.port"]),
+      );
       expect(portFieldsForConfigInput(input.config)).toEqual(["apiPort", "dbPort"]);
     } finally {
       if (stack !== undefined) {
@@ -225,32 +235,26 @@ describe("managed daemon", () => {
     const config = makeAllServicesConfig(join(root, "workspace"));
     const input = makeInput(root, config);
     await startLoopback(input);
-    const registry = await createManagedStackService({ stateRoot: input.stateRoot });
     let pid: number | undefined;
     let ports: Readonly<Record<string, number>> = {};
     let stackId = "";
-    try {
-      const stacks = await registry.listStacks();
-      expect(stacks).toHaveLength(1);
-      expect(stacks[0]?.lifecycle).toBe("running");
-      const stack = stacks[0];
-      if (stack === undefined) throw new Error("missing published stack");
-      stackId = stack.id;
-      pid = stack.runtimeMetadata.pid;
-      if (pid === undefined) throw new Error("missing managed daemon pid");
-      childPids.add(pid);
-      ports = readPortMarker(join(stack.paths.runtime, MANAGED_DAEMON_TEST_PORT_MARKER));
-      const fields = portFieldsForConfigInput(config);
-      expect(fields).toHaveLength(18);
-      expect(Object.keys(ports).sort()).toEqual([...fields].sort());
-      for (const field of fields) {
-        const port = ports[field];
-        if (port === undefined) throw new Error(`missing allocated port ${field}`);
-        await connectPort(port);
-        await assertPortHeld(port);
-      }
-    } finally {
-      await registry.close();
+    const stacks = await listStacksAndRegisterChildren(input.stateRoot);
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]?.lifecycle).toBe("running");
+    const stack = stacks[0];
+    if (stack === undefined) throw new Error("missing published stack");
+    stackId = stack.id;
+    pid = stack.runtimeMetadata.pid;
+    if (pid === undefined) throw new Error("missing managed daemon pid");
+    ports = readPortMarker(join(stack.paths.runtime, MANAGED_DAEMON_TEST_PORT_MARKER));
+    const fields = portFieldsForConfigInput(config);
+    expect(fields).toHaveLength(18);
+    expect(Object.keys(ports).sort()).toEqual([...fields].sort());
+    for (const field of fields) {
+      const port = ports[field];
+      if (port === undefined) throw new Error(`missing allocated port ${field}`);
+      await connectPort(port);
+      await assertPortHeld(port);
     }
     if (pid === undefined) throw new Error("missing managed daemon pid");
     await stopPid(pid);
@@ -258,6 +262,27 @@ describe("managed daemon", () => {
     await waitForLifecycle(input.stateRoot, "stopped");
     for (const port of Object.values(ports)) await assertPortFree(port);
     expect(stackId).toBeTruthy();
+  });
+
+  it("keeps coordinator reservations held after publication until runtime claims them", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stack-managed-daemon-reservation-"));
+    roots.push(root);
+    const config = makeAllServicesConfig(join(root, "workspace"));
+    const input = makeInput(root, config, "reservation.sock");
+    await startLoopback(input);
+    const stacks = await listStacksAndRegisterChildren(input.stateRoot);
+    const stack = stacks[0];
+    if (stack === undefined || stack.runtimeMetadata.pid === undefined) {
+      throw new Error("missing reservation daemon metadata");
+    }
+    const ports = readPortMarker(join(stack.paths.runtime, MANAGED_DAEMON_TEST_PORT_MARKER));
+
+    for (const port of Object.values(ports)) await assertPortHeld(port);
+
+    await stopPid(stack.runtimeMetadata.pid);
+    childPids.delete(stack.runtimeMetadata.pid);
+    await waitForLifecycle(input.stateRoot, "stopped");
+    for (const port of Object.values(ports)) await assertPortFree(port);
   });
 
   it("reuses an already-running managed daemon through its published socket", async () => {
@@ -278,19 +303,13 @@ describe("managed daemon", () => {
     let originalRecord: ManagedStackProjection | undefined;
     try {
       firstStack = Context.get(await firstRuntime.context(), Stack);
-      const registry = await createManagedStackService({ stateRoot: first.stateRoot });
-      try {
-        const stacks = await registry.listStacks();
-        const record = stacks[0];
-        if (record === undefined) throw new Error("missing first daemon record");
-        originalRecord = record;
-        const pid = record.runtimeMetadata.pid;
-        if (pid === undefined) throw new Error("missing first daemon pid");
-        childPids.add(pid);
-        expect(isAlive(pid)).toBe(true);
-      } finally {
-        await registry.close();
-      }
+      const stacks = await listStacksAndRegisterChildren(first.stateRoot);
+      const record = stacks[0];
+      if (record === undefined) throw new Error("missing first daemon record");
+      originalRecord = record;
+      const pid = record.runtimeMetadata.pid;
+      if (pid === undefined) throw new Error("missing first daemon pid");
+      expect(isAlive(pid)).toBe(true);
       const firstInfo = await firstRuntime.runPromise(firstStack.getInfo());
       const secondLayer = await Effect.runPromise(
         managedDaemonLayer(second).pipe(
@@ -327,7 +346,7 @@ describe("managed daemon", () => {
     roots.push(root);
     const config = makeAllServicesConfig(join(root, "workspace"));
     const input = makeInput(root, config, "failure.sock");
-    await expect(startLoopback(input)).rejects.toThrow();
+    await expect(startLoopback(input)).rejects.toThrow("loopback bootstrap failure");
     const registry = await createManagedStackService({ stateRoot: input.stateRoot });
     try {
       const stacks = await registry.listStacks();
@@ -355,12 +374,14 @@ describe("managed daemon", () => {
         const registry = await createManagedStackService({ stateRoot: input.stateRoot });
         try {
           const stacks = await registry.listStacks();
+          for (const stack of stacks) {
+            if (stack.runtimeMetadata.pid !== undefined) childPids.add(stack.runtimeMetadata.pid);
+          }
           expect(stacks).toHaveLength(1);
           const stack = stacks[0];
           if (stack === undefined || stack.runtimeMetadata.pid === undefined) {
             throw new Error("missing concurrent stack metadata");
           }
-          childPids.add(stack.runtimeMetadata.pid);
           return {
             input,
             pid: stack.runtimeMetadata.pid,

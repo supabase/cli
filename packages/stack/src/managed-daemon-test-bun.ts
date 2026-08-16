@@ -64,9 +64,11 @@ const noRuntimeDaemonServer: ManagedDaemonDependencies = {
     });
     const servers: Array<Server> = [];
     try {
-      for (const [field, port] of fieldPorts) {
-        await Effect.runPromise(allocation.lease.release([field]));
-        servers.push(await bindLoopbackPort(port));
+      if (!socketPath.includes("reservation")) {
+        for (const [field, port] of fieldPorts) {
+          await Effect.runPromise(allocation.lease.release([field]));
+          servers.push(await bindLoopbackPort(port));
+        }
       }
       loopbackServers = servers;
     } catch (error) {

@@ -232,7 +232,7 @@ export async function runManagedDaemon(
             allocation,
             socketPath: message.socketPath,
           });
-          await allocation.lease.handoff;
+          await Effect.runPromise(allocation.lease.handoff);
           return metadata;
         }
 
@@ -249,7 +249,7 @@ export async function runManagedDaemon(
         const daemonRuntime = ManagedRuntime.make(daemonLayer);
         runtimes.daemonRuntime = daemonRuntime;
         await daemonRuntime.runPromise(DaemonServer);
-        await allocation.lease.handoff;
+        await Effect.runPromise(allocation.lease.handoff);
 
         // Keep the app runtime alive for the detached process. Its lifecycle
         // owns the same lease and releases fields as services bind.
@@ -294,18 +294,19 @@ export async function runManagedDaemon(
     await service.close();
     process.exit(0);
   } catch (error) {
-    const message =
+    const errorMessage =
       error instanceof Error && error.message.length > 0
         ? error.message
         : (() => {
             try {
-              return JSON.stringify(error);
+              const serialized = JSON.stringify(error);
+              return serialized === undefined ? String(error) : serialized;
             } catch {
               return String(error);
             }
           })();
     if (!startupAcknowledged && process.connected) {
-      process.send?.({ type: "error", message });
+      process.send?.({ type: "error", message: errorMessage });
     }
     await shutdownManagedRuntime(runtimes);
     await service?.close().catch(() => {});

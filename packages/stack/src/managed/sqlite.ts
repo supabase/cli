@@ -41,7 +41,7 @@ import {
   type ManagedStackRecord,
   type ManagedStackStatus,
 } from "./model.ts";
-import type { ConfigPortKey } from "../PortCatalog.ts";
+import { isConfigPortKey, type ConfigPortKey } from "../PortCatalog.ts";
 import type {
   ClaimManagedOperationFailure,
   ClaimManagedOperationInput,
@@ -81,6 +81,7 @@ import {
   assertManagedStackUpdatable,
   decideManagedContextRegistration,
   managedPortReservationsConflict,
+  requiresManagedPortOwnershipValidation,
   ManagedStackRepository,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
@@ -772,20 +773,8 @@ const readTransaction = <A>(
   Effect.try({ try: () => runTransaction(database, "BEGIN", run), catch: neverFails });
 
 const managedPortKey = (value: string): ConfigPortKey => {
-  switch (value) {
-    case "api.port":
-    case "db.port":
-    case "edge_runtime.inspector_port":
-    case "local_smtp.port":
-    case "local_smtp.smtp_port":
-    case "local_smtp.pop3_port":
-    case "studio.port":
-    case "analytics.port":
-    case "db.pooler.port":
-      return value;
-    default:
-      throw new Error(`Unknown managed port key ${value}`);
-  }
+  if (isConfigPortKey(value)) return value;
+  throw new Error(`Unknown managed port key ${value}`);
 };
 
 const decodePort = (row: unknown): ManagedPortAssignment => ({
@@ -1067,22 +1056,46 @@ const selectPortReservations = (
       assignment: decodePort(row),
     }));
 
+const selectPortReservationsForPort = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  port: number,
+): ReadonlyArray<ManagedPortReservation> =>
+  database
+    .prepare(
+      `SELECT stacks.id AS stack_id, stacks.name AS stack_name, stacks.lifecycle,
+              ports.key, ports.port, ports.intent
+       FROM ports
+       JOIN stacks ON stacks.id = ports.stack_id
+       WHERE stacks.status != 'tombstoned' AND stacks.id != ? AND ports.port = ?
+       ORDER BY stacks.created_at, stacks.id, ports.key`,
+    )
+    .all([stackId, port])
+    .map((row) => ({
+      stackId: getString(row, "stack_id"),
+      stackName: getString(row, "stack_name"),
+      lifecycle: managedStackLifecycle(getString(row, "lifecycle")),
+      assignment: decodePort(row),
+    }));
+
 const replacePorts = (
   database: ManagedSqliteDatabase,
   stackId: string,
   ports: ReadonlyArray<ManagedPortAssignment>,
+  validateConflicts = true,
 ): void => {
   validateManagedPortAssignments(stackId, ports);
-  const owners = selectPortReservations(database).filter((owner) => owner.stackId !== stackId);
-  for (const assignment of ports) {
-    const owner = owners.find((candidate) =>
-      managedPortReservationsConflict(stackId, assignment, candidate),
-    );
-    if (owner !== undefined) {
-      throw new ManagedPortReservationError({
-        port: assignment.port,
-        ownerStackId: owner.stackId,
-      });
+  if (validateConflicts) {
+    for (const assignment of ports) {
+      const owner = selectPortReservationsForPort(database, stackId, assignment.port).find(
+        (candidate) => managedPortReservationsConflict(stackId, assignment, candidate),
+      );
+      if (owner !== undefined) {
+        throw new ManagedPortReservationError({
+          port: assignment.port,
+          ownerStackId: owner.stackId,
+        });
+      }
     }
   }
   database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
@@ -1525,7 +1538,12 @@ const updateStack = (
       input.now,
       input.stackId,
     ]);
-  replacePorts(database, input.stackId, ports);
+  replacePorts(
+    database,
+    input.stackId,
+    ports,
+    requiresManagedPortOwnershipValidation(current, ports, lifecycle),
+  );
   return requireStack(database, input.stackId);
 };
 
@@ -1600,7 +1618,12 @@ const reconcileOperation = (
     database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
     return { outcome: "discarded" };
   }
-  replacePorts(database, stackId, current.ports);
+  replacePorts(
+    database,
+    stackId,
+    current.ports,
+    requiresManagedPortOwnershipValidation(current, current.ports, lifecycle),
+  );
   database
     .prepare(
       `UPDATE stacks SET

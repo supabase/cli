@@ -17,7 +17,7 @@ import type {
   ManagedPortReservation,
   ManagedStackRepositoryShape,
 } from "./managed/repository.ts";
-import { reservePortSet } from "./PortAllocator.ts";
+import { PortAllocationError, reservePortSet } from "./PortAllocator.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository } from "./managed/repository.ts";
 import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
@@ -463,7 +463,13 @@ describe("managed port coordinator", () => {
           }),
         ),
       ),
-    ).rejects.toMatchObject({ _tag: "ManagedExactPortOccupiedError", port });
+    ).rejects.toMatchObject({
+      _tag: "ManagedExactPortOccupiedError",
+      key: "api.port",
+      port,
+      ownerStackId: "stack-a",
+      ownerKey: "db.port",
+    });
     expect(claims).toBe(0);
   });
 
@@ -689,6 +695,59 @@ describe("managed port coordinator", () => {
     } finally {
       await occupied.close();
     }
+  });
+
+  it("reports the config key for the exact field whose bind failed", async () => {
+    const port = 54_321;
+    const plan: ManagedPortPlan = {
+      durable: [
+        {
+          field: "apiPort",
+          key: "api.port",
+          intent: "exact",
+          selection: { kind: "exact", port },
+          newlyAllocatedAutomatic: false,
+        },
+        {
+          field: "dbPort",
+          key: "db.port",
+          intent: "exact",
+          selection: { kind: "exact", port },
+          newlyAllocatedAutomatic: false,
+        },
+      ],
+      runtimeOnly: [],
+      inactiveAssignments: [],
+    };
+    const coordinator = makeManagedPortCoordinatorForTesting({
+      repository: repositoryFor(),
+      binder: () =>
+        Effect.fail(
+          Object.assign(
+            new PortAllocationError({
+              detail: `Port ${port} is not available`,
+            }),
+            { field: "dbPort" as const, port },
+          ),
+        ),
+    });
+
+    await expect(
+      Effect.runPromise(
+        Effect.scoped(
+          coordinator.acquireStart({
+            stack: stack(),
+            operationToken: "operation-a",
+            plan,
+            now: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ManagedExactPortOccupiedError",
+      key: "db.port",
+      port,
+    });
   });
 
   it("uses the real in-memory repository for preferred allocation and sticky reuse", async () => {

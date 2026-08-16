@@ -516,6 +516,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
             "ManagedStickyPortOccupiedError",
             "ManagedPortClaimRaceError",
             "ManagedPortAllocationError",
+            "ManagedOperationOwnershipError",
+            "ManagedStackNotFoundError",
           ].includes(tag)
         );
       };
@@ -585,18 +587,11 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       ): Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure> =>
         Effect.scoped(
           Effect.gen(function* () {
-            const rawPlan = planManagedPorts({
+            const plan = planManagedPorts({
               activeFields: input.portDocument.activeFields,
               intents,
               persisted: stack.ports,
             });
-            const plan = {
-              ...rawPlan,
-              inactiveAssignments: rawPlan.inactiveAssignments.map((assignment) => ({
-                ...assignment,
-                intent: "automatic" as const,
-              })),
-            };
             const allocation = yield* portCoordinator.acquireStart({
               stack,
               operationToken: operation.token,
@@ -693,6 +688,14 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
                   const operation = yield* claimStartOperation(prepared.stack);
                   return yield* runStart(prepared.stack, operation, false).pipe(
                     releasingClaimOnFailure(prepared.stack.id, operation.token),
+                  );
+                }
+                if (prepared.operation.kind === "delete") {
+                  return yield* Effect.fail(
+                    new ManagedOperationInProgressError({
+                      stackId: prepared.stack.id,
+                      operation: prepared.operation,
+                    }),
                   );
                 }
                 if (

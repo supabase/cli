@@ -3,12 +3,13 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
-import { Cause, Duration, Effect, Exit } from "effect";
+import { Cause, Deferred, Duration, Effect, Exit, Fiber } from "effect";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
   InvalidManagedIdentityError,
   ManagedExactPortOccupiedError,
   ManagedLegacyPortConflictError,
+  ManagedOperationInProgressError,
   ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
   ManagedRuntimeStartError,
@@ -338,6 +339,47 @@ describe("managed stack Effect surface", () => {
 
       expect(refused).toBe("ManagedStackNotStoppedError");
       expect(survivor?.lifecycle).toBe("running");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("refuses a start while delete is stopping the running stack", () => {
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
+      yield* managed.updateStack(stack.id, { lifecycle: "running" });
+      const stopEntered = Deferred.makeUnsafe<void>();
+      const releaseStop = Deferred.makeUnsafe<void>();
+      const deletion = yield* managed
+        .deleteStack(stack.id, {
+          stop: () =>
+            Deferred.succeed(stopEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStop)),
+            ),
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(stopEntered);
+
+      const start = yield* managed
+        .resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          workspacePath: workspace,
+          operation: "start",
+        })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(start)).toBe(true);
+      if (Exit.isFailure(start)) {
+        expect(Cause.squash(start.cause)).toBeInstanceOf(ManagedOperationInProgressError);
+      }
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(deletion);
     }).pipe(Effect.provide(layer));
   });
 

@@ -341,6 +341,19 @@ describe("resolveConfig explicit keyless ports", () => {
     expect(config.ports.poolerPort).toBe(42423);
     expect(config.ports.poolerApiPort).toBe(42424);
   });
+
+  it("reserves explicit ports before omitted fields claim their preferred defaults", async () => {
+    const config = await resolveConfig({
+      mode: "native",
+      edgeRuntime: false,
+      postgrest: false,
+      auth: false,
+      analytics: { port: 54_322 },
+    });
+
+    expect(config.ports.analyticsPort).toBe(54_322);
+    expect(config.ports.dbPort).not.toBe(54_322);
+  });
 });
 
 describe("candidateCleanupTargets", () => {

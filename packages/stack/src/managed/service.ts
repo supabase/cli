@@ -111,6 +111,10 @@ interface ResolveManagedStackBaseOptions {
   readonly workspacePath: string;
   readonly stackName?: string;
   readonly portDocument: ManagedPortIntentDocument;
+  /**
+   * Start-only signal supplied by the CLI legacy-runtime bridge. Discovering
+   * legacy processes remains outside this runtime package (CLI-2114).
+   */
   readonly legacyPortConflict?: {
     readonly key: ConfigPortKey;
     readonly port: number;
@@ -544,12 +548,31 @@ export class ManagedStackService extends Context.Service<
             if (!stackNamePattern.test(stackName)) {
               return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
             }
-            if (resolveOptions.legacyPortConflict !== undefined) {
+            if (
+              resolveOptions.operation === "start" &&
+              resolveOptions.legacyPortConflict !== undefined
+            ) {
               return yield* Effect.fail(
                 new ManagedLegacyPortConflictError(resolveOptions.legacyPortConflict),
               );
             }
             const portDocument = resolveOptions.portDocument;
+            const refuseDeletingStack = (
+              stack: ManagedStackRecord,
+            ): Effect.Effect<void, ManagedOperationInProgressError> =>
+              Effect.flatMap(repository.listActiveOperations(), (operations) => {
+                const deletion = operations.find(
+                  (operation) => operation.stackId === stack.id && operation.kind === "delete",
+                );
+                return deletion === undefined
+                  ? Effect.void
+                  : Effect.fail(
+                      new ManagedOperationInProgressError({
+                        stackId: stack.id,
+                        operation: deletion,
+                      }),
+                    );
+              });
             const report = yield* workspaceIdentity.discover(resolveOptions.workspacePath);
             const settledReport =
               resolveOptions.operation === "start"
@@ -592,6 +615,7 @@ export class ManagedStackService extends Context.Service<
                   existingStableStack?.lifecycle === "running" &&
                   settledReport.state === "healthy"
                 ) {
+                  yield* refuseDeletingStack(existingStableStack);
                   return yield* startedResolution(
                     stablePlan,
                     "reuse",
@@ -752,6 +776,7 @@ export class ManagedStackService extends Context.Service<
               (candidate) => candidate.name === stackName,
             );
             if (existingStack?.lifecycle === "running") {
+              yield* refuseDeletingStack(existingStack);
               if (firstStartTransition !== undefined) {
                 yield* workspaceIdentity.finalizeFirstStart(firstStartTransition);
               }

@@ -2,7 +2,10 @@ import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
 
-const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERVICE_CATALOG) => {
+export const serviceEnabledForConfig = (
+  config: StackConfig,
+  service: keyof typeof SERVICE_CATALOG,
+) => {
   if (service === "postgres" || service === "postgrest" || service === "auth") {
     return config[service === "postgres" ? "postgres" : service] !== false;
   }
@@ -37,7 +40,7 @@ export const allocatedPortFieldsForConfig = (
       field === "apiPort" ||
       field === "dbPort" ||
       (PORT_CATALOG[field].service !== undefined &&
-        config[SERVICE_CATALOG[PORT_CATALOG[field].service].configKey] !== false),
+        serviceEnabledForConfig(config, PORT_CATALOG[field].service)),
   );
 
 export const portFieldsForService = (name: string): ReadonlyArray<PortField> => {

@@ -129,6 +129,14 @@ export const PORT_CATALOG = PORT_CATALOG_ENTRIES;
 export const PORT_FIELDS: ReadonlyArray<PortField> = Object.values(PORT_CATALOG).map(
   (entry) => entry.field,
 );
+const CONFIG_PORT_KEYS: ReadonlySet<string> = new Set(
+  PORT_FIELDS.flatMap((field) => {
+    const key = PORT_CATALOG[field].configKey;
+    return key === undefined ? [] : [key];
+  }),
+);
+export const isConfigPortKey = (value: string): value is ConfigPortKey =>
+  CONFIG_PORT_KEYS.has(value);
 export const stickyPortFields: ReadonlyArray<PortField> = PORT_FIELDS.filter(
   (field) => PORT_CATALOG[field].persistence === "sticky",
 );

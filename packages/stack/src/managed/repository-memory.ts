@@ -43,6 +43,7 @@ import {
   decideManagedContextRegistration,
   decideManagedCheckoutIdentity,
   managedPortReservationsConflict,
+  requiresManagedPortOwnershipValidation,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
   type ClaimManagedOperationFailure,
@@ -218,8 +219,17 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           })),
       );
 
-  const transitionPortOwnership = (next: ManagedStackRecord): void => {
+  const transitionPortOwnership = (
+    current: ManagedStackRecord | undefined,
+    next: ManagedStackRecord,
+  ): void => {
     validateManagedPortAssignments(next.id, next.ports);
+    if (
+      current !== undefined &&
+      !requiresManagedPortOwnershipValidation(current, next.ports, next.lifecycle)
+    ) {
+      return;
+    }
     const owners = listPortReservations().filter((owner) => owner.stackId !== next.id);
     for (const assignment of next.ports) {
       const owner = owners.find((candidate) =>
@@ -240,7 +250,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
    * the explicit abort path and by recovery's pending branch.
    */
   const discardPendingStack = (stack: ManagedStackRecord, operationToken: string): void => {
-    transitionPortOwnership({ ...stack, lifecycle: "stopped", ports: [] });
+    transitionPortOwnership(stack, { ...stack, lifecycle: "stopped", ports: [] });
     stacks.delete(stack.id);
     stackIdentities.delete(stackIdentityKey(stack.checkoutId, stack.contextId, stack.name));
     operations.delete(operationToken);
@@ -407,7 +417,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         updatedAt: input.now,
       };
       const stack = applyConfiguration(baseStack, input.configuration, input.now);
-      transitionPortOwnership(stack);
+      transitionPortOwnership(undefined, stack);
       stacks.set(stack.id, stack);
       stackIdentities.set(identityKey, stack.id);
       const claimed = claimOperation({
@@ -481,7 +491,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       const current = requireStack(input.stackId);
       assertManagedStackUpdatable(current);
       const next = applyConfiguration(current, input, input.now);
-      transitionPortOwnership(next);
+      transitionPortOwnership(current, next);
       stacks.set(current.id, next);
       return copy(next);
     });
@@ -507,7 +517,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         ports: input.ports.slice().sort((left, right) => compareManagedText(left.key, right.key)),
         updatedAt: input.now,
       };
-      transitionPortOwnership(next);
+      transitionPortOwnership(current, next);
       stacks.set(input.stackId, next);
       return copy(next);
     });
@@ -545,7 +555,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         lifecycle,
         updatedAt: now,
       };
-      transitionPortOwnership(next);
+      transitionPortOwnership(current, next);
       stacks.set(stackId, next);
       operations.set(operationToken, {
         ...operation,
@@ -573,7 +583,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       updatedAt: now,
       tombstonedAt: now,
     };
-    transitionPortOwnership(next);
+    transitionPortOwnership(current, next);
     stacks.set(stackId, next);
     stackIdentities.delete(stackIdentityKey(current.checkoutId, current.contextId, current.name));
     return copy(next);

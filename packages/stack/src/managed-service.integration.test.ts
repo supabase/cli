@@ -43,7 +43,6 @@ import {
   ManagedStickyPortOccupiedError,
   ManagedRunningStackPortChangeError,
   ManagedRuntimeStartError,
-  ManagedStackInitializationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
@@ -158,6 +157,153 @@ const temporaryRoots: Array<string> = [];
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { force: true, recursive: true });
+  }
+});
+
+describe("managed port recovery regressions", () => {
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`reconciles an unchanged stopped exact assignment while a sibling is running with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      try {
+        await withFreshExactPort(async (port) => {
+          const first = await service.resolveStack({
+            workspacePath: makeWorkspace(root, "reconcile-first"),
+            operation: "start",
+            portDocument: portDocumentFromAssignments([{ key: "api.port", port, intent: "exact" }]),
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          });
+          await service.updateStack(first.stack.id, { lifecycle: "stopped" });
+          const abandoned = runRepo(
+            service.repository.claimOperation({
+              token: crypto.randomUUID(),
+              stackId: first.stack.id,
+              kind: "start",
+              ownerPid: process.pid,
+              now: "2026-08-16T00:00:00.000Z",
+            }),
+          );
+          if (!abandoned.acquired) throw new Error("expected abandoned operation claim");
+
+          const sibling = await service.resolveStack({
+            workspacePath: makeWorkspace(root, "reconcile-sibling"),
+            operation: "start",
+            portDocument: portDocumentFromAssignments([{ key: "api.port", port, intent: "exact" }]),
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          });
+
+          const recovered = runRepo(
+            service.repository.reconcileOperation(
+              first.stack.id,
+              abandoned.operation.token,
+              "stopped",
+              "2026-08-16T00:01:00.000Z",
+            ),
+          );
+          expect(recovered).toMatchObject({
+            outcome: "recovered",
+            stack: {
+              lifecycle: "stopped",
+              ports: [{ key: "api.port", port, intent: "exact" }],
+            },
+          });
+          expect((await service.inspectStack(sibling.stack.id))?.lifecycle).toBe("running");
+        });
+      } finally {
+        await service.close();
+      }
+    });
+
+    it(`preserves a disabled service's exact assignment with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      try {
+        await withFreshExactPort(async (port) => {
+          const studioDocument: ManagedPortIntentDocument = {
+            activeFields: ["studioPort"],
+            document: { studio: { port } },
+          };
+          const firstWorkspace = makeWorkspace(root, "disabled-first");
+          const first = await service.resolveStack({
+            workspacePath: firstWorkspace,
+            operation: "start",
+            portDocument: studioDocument,
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          });
+          await service.updateStack(first.stack.id, { lifecycle: "stopped" });
+          const sibling = await service.resolveStack({
+            workspacePath: makeWorkspace(root, "disabled-sibling"),
+            operation: "start",
+            portDocument: studioDocument,
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          });
+          await service.updateStack(sibling.stack.id, { lifecycle: "stopped" });
+
+          const restarted = await service.resolveStack({
+            workspacePath: firstWorkspace,
+            operation: "start",
+            portDocument: { activeFields: [], document: {} },
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          });
+
+          expect(restarted.stack.ports).toEqual([{ key: "studio.port", port, intent: "exact" }]);
+        });
+      } finally {
+        await service.close();
+      }
+    });
+  }
+
+  it("ignores a start-only legacy conflict during status", async () => {
+    const root = makeRoot();
+    const service = await makeInMemoryService(root);
+    try {
+      const status = await service.resolveStack({
+        workspacePath: makeWorkspace(root, "legacy-status"),
+        operation: "status",
+        portDocument: { activeFields: [], document: {} },
+        legacyPortConflict: { key: "api.port", port: 54_321, ownerId: "legacy" },
+      });
+      expect(status.stack).toBeUndefined();
+    } finally {
+      await service.close();
+    }
+  });
+
+  for (const failure of [
+    (stackId: string) => new ManagedOperationOwnershipError({ stackId }),
+    (stackId: string) => new ManagedStackNotFoundError({ stackId }),
+  ]) {
+    it(`preserves ${failure("stack")._tag} raised while claiming start ports`, async () => {
+      const root = makeRoot();
+      const base = createInMemoryManagedStackRepository();
+      const repository: ManagedStackRepositoryShape = {
+        ...base,
+        claimStartPorts: (input) => Effect.fail(failure(input.stackId)),
+      };
+      const service = await makeManagedStackService({
+        repository,
+        stateRoot: join(root, "managed"),
+      });
+      try {
+        await expect(
+          service.resolveStack({
+            workspacePath: makeWorkspace(root, "claim-failure"),
+            operation: "start",
+            portDocument: { activeFields: [], document: {} },
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+          }),
+        ).rejects.toMatchObject({ _tag: failure("stack")._tag });
+      } finally {
+        await service.close();
+      }
+    });
   }
 });
 
@@ -1012,14 +1158,7 @@ describe("ordinary-folder managed stack contract", () => {
       };
       const gated = await makeClaimGatedService(adapter, root, 2, async (preparationService) => {
         for (const workspacePath of [mainWorkspace, featureWorkspace]) {
-          const seeded = await preparationService.resolveStack({
-            portDocument: document,
-            initialize: async () => ({ processIds: {}, containerIds: {} }),
-            operation: "start",
-            workspacePath,
-          });
-          await preparationService.updateStack(seeded.stack.id, { lifecycle: "stopped" });
-          await preparationService.deleteStack(seeded.stack.id);
+          await preparationService.newCheckout({ workspacePath });
         }
       });
       try {
@@ -2402,7 +2541,7 @@ describe("managed repository and lifecycle", () => {
             return { processIds: {}, containerIds: {} };
           },
         }),
-      ).rejects.toBeInstanceOf(ManagedStackInitializationError);
+      ).rejects.toBeInstanceOf(ManagedOperationOwnershipError);
 
       expect(stackRoot).toBeDefined();
       expect(dataFile).toBeDefined();
@@ -2674,7 +2813,7 @@ describe("managed repository and lifecycle", () => {
       throw new Error(`Fixture ${removedFixtureId} has no api.port intent`);
     }
     const sticky = await service.resolveStack({
-      portDocument: { activeFields: [], document: {} },
+      portDocument: { activeFields: ["apiPort"], document: {} },
       initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: join(root, "workspace"),
@@ -3164,7 +3303,7 @@ describe("managed repository and lifecycle", () => {
         const removed = await service.resolveStack({
           workspacePath: workspace,
           operation: "start",
-          portDocument: { activeFields: [], document: {} },
+          portDocument: { activeFields: ["apiPort"], document: {} },
           initialize,
         });
         expect(removed.stack.ports).toEqual([

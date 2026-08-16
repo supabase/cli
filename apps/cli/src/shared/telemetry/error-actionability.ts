@@ -919,6 +919,30 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_conflict",
   }),
+  LEGACY_SOURCE_RUNNING: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "port_conflict",
+  }),
+  MANAGED_EXACT_PORT_OCCUPIED: () => ({
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "port_conflict",
+  }),
+  MANAGED_STICKY_PORT_OCCUPIED: () => ({
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "port_conflict",
+  }),
+  MANAGED_PORT_CLAIM_RACE: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "port_conflict",
+  }),
+  MANAGED_PORT_ALLOCATION_FAILED: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "port_allocation",
+  }),
+  MANAGED_RUNTIME_START_FAILED: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "managed_initialization",
+  }),
   // The port number itself is unusable (fractional or outside 1-65535), which
   // is the user's own configured value rather than a conflict with a peer.
   MANAGED_INVALID_PORT: () => ({
@@ -1094,6 +1118,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   NoRunningStackError: () => actionability.startStack,
   StackAlreadyRunningError: () => actionability.stopStack,
   DaemonStartError: () => actionability.unknown,
+  ManagedDaemonStartError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_start",
+  }),
   DaemonStillRunningError: () => actionability.stopStack,
   // Transport failures retain the existing stack-recovery policy. An HTTP
   // status or protocol failure came from the CLI-owned daemon itself and is

@@ -45,8 +45,8 @@ export const list = Effect.fnUntraced(function* () {
   for (const stack of stacks) {
     const parts = [
       stack.running ? "running" : "stopped",
-      `API ${stack.ports.apiPort}`,
-      `DB ${stack.ports.dbPort}`,
+      `API ${stack.ports.apiPort ?? "unavailable"}`,
+      `DB ${stack.ports.dbPort ?? "unavailable"}`,
     ];
     if (stack.running && stack.startedAt !== undefined) {
       parts.push(`started ${stack.startedAt}`);

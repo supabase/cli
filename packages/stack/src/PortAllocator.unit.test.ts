@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { ResolvedPortsSchema } from "./effect.ts";
 import { allocatePortSet, PortAllocationError } from "./PortAllocator.ts";
 import { DEFAULT_PORTS, type PortField } from "./PortCatalog.ts";
@@ -80,6 +80,27 @@ describe("allocatePortSet", () => {
 
     for (const port of bPorts) {
       expect(aPorts.has(port)).toBe(false);
+    }
+  });
+
+  it("identifies the exact field that collides with an earlier request", async () => {
+    const exit = await Effect.runPromise(
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "exact", port: 22_001 } },
+          { field: "dbPort", selection: { kind: "exact", port: 22_001 } },
+        ],
+        { probe: fakePortProbe() },
+      ).pipe(Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "PortAllocationError",
+        field: "dbPort",
+        port: 22_001,
+      });
     }
   });
 

@@ -64,6 +64,10 @@ interface ResolveManagedStackRequestBase {
   readonly workspacePath: string;
   readonly stackName?: string;
   readonly portDocument: ManagedPortIntentDocument;
+  /**
+   * Start-only signal supplied by the CLI legacy-runtime bridge. Discovering
+   * legacy processes remains outside this runtime package (CLI-2114).
+   */
   readonly legacyPortConflict?: {
     readonly key: ConfigPortKey;
     readonly port: number;

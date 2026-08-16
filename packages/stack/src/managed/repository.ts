@@ -1197,6 +1197,35 @@ const portNumbersEqual = (
   });
 };
 
+const portAssignmentsEqual = (
+  left: ReadonlyArray<ManagedPortAssignment>,
+  right: ReadonlyArray<ManagedPortAssignment>,
+): boolean => {
+  if (left.length !== right.length) return false;
+  const byKey = new Map(right.map((assignment) => [assignment.key, assignment]));
+  return left.every((assignment) => {
+    const candidate = byKey.get(assignment.key);
+    return (
+      candidate !== undefined &&
+      assignment.port === candidate.port &&
+      assignment.intent === candidate.intent
+    );
+  });
+};
+
+/**
+ * Conflict checks are required when a write claims live ownership or changes
+ * the durable assignment. Re-persisting unchanged rows while stopping or
+ * failing a stack must not re-claim exact ports that another stopped sibling
+ * was allowed to share and has since started using.
+ */
+export const requiresManagedPortOwnershipValidation = (
+  current: ManagedStackRecord,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+  targetLifecycle: ManagedStackLifecycle,
+): boolean =>
+  managedStackOccupiesPorts(targetLifecycle) || !portAssignmentsEqual(current.ports, ports);
+
 export const validateManagedPortAssignments = (
   stackId: string,
   ports: ReadonlyArray<ManagedPortAssignment>,

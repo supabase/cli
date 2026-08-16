@@ -5,7 +5,13 @@ import { ResolvedPortsSchema, type PortField, type ResolvedPorts } from "./PortC
 export class PortAllocationError extends Data.TaggedError("PortAllocationError")<{
   readonly detail: string;
   readonly cause?: unknown;
-}> {}
+  readonly field?: PortField;
+  readonly port?: number;
+}> {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export type PortSelection =
   | { readonly kind: "exact"; readonly port: number }
@@ -61,7 +67,9 @@ const probeExactPort = (port: number): Effect.Effect<number, PortAllocationError
       server.close(() => resume(Effect.succeed(port)));
     });
     server.on("error", () =>
-      resume(Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))),
+      resume(
+        Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port })),
+      ),
     );
     return Effect.void;
   });
@@ -72,7 +80,7 @@ const chooseExactPort = (
   probe: PortProbe,
 ): Effect.Effect<number, PortAllocationError> =>
   exclude.has(port)
-    ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))
+    ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port }))
     : probe.exact(port);
 
 const choosePreferredPort = (
@@ -110,6 +118,7 @@ const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =
             detail:
               port === 0 ? "Failed to reserve a random port" : `Port ${port} is not available`,
             cause,
+            ...(port === 0 ? {} : { port }),
           }),
         ),
       );
@@ -192,7 +201,10 @@ const reserveReservations = (
         const port = ports[field];
         if (port === undefined) {
           return Effect.fail(
-            new PortAllocationError({ detail: `Port field ${field} was not allocated` }),
+            new PortAllocationError({
+              detail: `Port field ${field} was not allocated`,
+              field,
+            }),
           );
         }
         return Effect.tap(bindPort(port), ({ server }) =>
@@ -249,6 +261,21 @@ const resolveSelection = (
     : choosePreferredPort(selection.preferred, exclude, probe);
 };
 
+const identifyAllocationRequest = (
+  request: PortReservationRequest,
+  error: PortAllocationError,
+): PortAllocationError =>
+  new PortAllocationError({
+    detail: error.detail,
+    cause: error.cause,
+    field: request.field,
+    ...(error.port === undefined
+      ? request.selection.kind === "exact"
+        ? { port: request.selection.port }
+        : {}
+      : { port: error.port }),
+  });
+
 export const allocatePortSet = (
   requests: ReadonlyArray<PortReservationRequest>,
   options: PortAllocationOptions = {},
@@ -261,7 +288,9 @@ export const allocatePortSet = (
 
     for (const request of uniqueFields(requests)) {
       const exclude = new Set([...reserved, ...allocated]);
-      const port = yield* resolveSelection(request.selection, exclude, probe);
+      const port = yield* resolveSelection(request.selection, exclude, probe).pipe(
+        Effect.mapError((error) => identifyAllocationRequest(request, error)),
+      );
       allocated.add(port);
       partial[request.field] = port;
     }
@@ -286,7 +315,11 @@ export const reservePortSet = (
       ) =>
         Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
-            const result = yield* acquisition;
+            const result = yield* acquisition.pipe(
+              Effect.mapError((error) =>
+                identifyAllocationRequest({ field, selection: { kind: "automatic" } }, error),
+              ),
+            );
             reservations.set(field, result.server);
             yield* options.onBound?.(field, result) ?? Effect.void;
             return result;
@@ -302,6 +335,8 @@ export const reservePortSet = (
           if (exclude.has(selection.port)) {
             return yield* new PortAllocationError({
               detail: `Port ${selection.port} is not available`,
+              field: request.field,
+              port: selection.port,
             });
           }
           bound = yield* bindAndRegister(request.field, bindPort(selection.port));
