@@ -28,6 +28,7 @@ export class DaemonServer extends Context.Service<
     beforeShutdown: Effect.Effect<void> = Effect.void,
     ownerStatus: Effect.Effect<ControlOwnerStatus> = Effect.succeed({
       protocolVersion: 1,
+      ownershipId: "unbound",
       state: "running",
       ready: true,
     }),

@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
@@ -11,6 +11,7 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 
 const STACK_ID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const COLLIDING_STACK_ID = `${STACK_ID.slice(0, 10)}${"f".repeat(54)}`;
 const RUNTIME_ROOT = "/tmp/supabase-control-test";
 
 const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -156,6 +157,37 @@ describe("managed control endpoint", () => {
             state: "running",
             ready: true,
           });
+          yield* Effect.promise(() => daemonRuntime.dispose());
+        }),
+      ),
+    ),
+  );
+
+  it.live("rejects a valid owner with a colliding deterministic endpoint", () =>
+    Effect.scoped(
+      live(
+        Effect.gen(function* () {
+          const firstEndpoint = yield* controlEndpoint(STACK_ID);
+          const secondEndpoint = yield* controlEndpoint(COLLIDING_STACK_ID);
+          expect(secondEndpoint.port).toBe(firstEndpoint.port);
+          const owner = yield* acquireControl({ stackId: STACK_ID });
+          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          const daemonRuntime = ManagedRuntime.make(
+            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus).pipe(
+              Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
+              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
+            ),
+          );
+          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
+          const contender = yield* acquireControl({ stackId: COLLIDING_STACK_ID }).pipe(
+            Effect.exit,
+          );
+          expect(Exit.isFailure(contender)).toBe(true);
+          if (Exit.isFailure(contender)) {
+            expect(Cause.squash(contender.cause)).toMatchObject({
+              _tag: "ControlAddressConflictError",
+            });
+          }
           yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),

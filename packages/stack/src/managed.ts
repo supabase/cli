@@ -127,6 +127,7 @@ export type {
   ManagedStackStartResult,
   ManagedStackLifecycleUpdate,
   ManagedPortLease,
+  ManagedStackAllocationHandle,
   ManagedPortAllocation,
   ManagedDeleteResult,
   AllocateManagedPortsRequest,

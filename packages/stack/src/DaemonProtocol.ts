@@ -26,6 +26,7 @@ export type ControlOwnerState = typeof ControlOwnerStateSchema.Type;
 
 export const ControlOwnerStatusSchema = Schema.Struct({
   protocolVersion: Schema.Literal(1),
+  ownershipId: Schema.String,
   state: ControlOwnerStateSchema,
   ready: Schema.Boolean,
 });

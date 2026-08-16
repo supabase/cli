@@ -105,6 +105,7 @@ export interface ControlOwnershipInput {
 export interface ControlOwnership {
   readonly _tag: "Owned";
   readonly [controlOwnershipBrand]: true;
+  readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
   readonly server: HttpServer.HttpServer["Service"];
   readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
@@ -118,10 +119,14 @@ export type ControlOwned = ControlOwnership;
 
 export interface ControlAttached {
   readonly _tag: "Attached";
+  readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
   readonly ownerStatus: Effect.Effect<
     ControlOwnerStatus,
-    ControlTransportError | ControlProtocolError | ControlProtocolMismatchError
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError
   >;
 }
 
@@ -197,34 +202,73 @@ const decodeOwnerStatus = (
   );
 };
 
-const defaultStatus = (status: ControlOwnerStatus | undefined): ControlOwnerStatus =>
-  status ?? { protocolVersion: CONTROL_PROTOCOL_VERSION, state: "starting", ready: false };
+const defaultStatus = (
+  ownershipId: string,
+  status: ControlOwnerStatus | undefined,
+): ControlOwnerStatus =>
+  status === undefined
+    ? { protocolVersion: CONTROL_PROTOCOL_VERSION, ownershipId, state: "starting", ready: false }
+    : { ...status, ownershipId };
 
 const unavailable = (endpoint: ControlEndpoint, cause: unknown): ControlUnavailableError =>
   new ControlUnavailableError({ endpoint, cause });
 
 const attach = (
   endpoint: ControlEndpoint,
+  ownershipId: string,
   transport: ControlTransportShape,
 ): Effect.Effect<
   ControlAttached,
-  ControlTransportError | ControlProtocolError | ControlProtocolMismatchError
+  | ControlTransportError
+  | ControlProtocolError
+  | ControlProtocolMismatchError
+  | ControlAddressConflictError
 > =>
   transport
     .read(endpoint)
     .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)))
     .pipe(
+      Effect.flatMap((status) =>
+        status.ownershipId === ownershipId
+          ? Effect.succeed(status)
+          : Effect.fail(
+              new ControlAddressConflictError({
+                endpoint,
+                cause: new Error(
+                  `Control endpoint is owned by ${status.ownershipId}, not ${ownershipId}`,
+                ),
+              }),
+            ),
+      ),
+    )
+    .pipe(
       Effect.map(() => ({
         _tag: "Attached" as const,
+        ownershipId,
         endpoint,
         ownerStatus: transport
           .read(endpoint)
-          .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value))),
+          .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)))
+          .pipe(
+            Effect.flatMap((status) =>
+              status.ownershipId === ownershipId
+                ? Effect.succeed(status)
+                : Effect.fail(
+                    new ControlAddressConflictError({
+                      endpoint,
+                      cause: new Error(
+                        `Control endpoint is owned by ${status.ownershipId}, not ${ownershipId}`,
+                      ),
+                    }),
+                  ),
+            ),
+          ),
       })),
     );
 
 const makeOwned = (
   endpoint: ControlEndpoint,
+  ownershipId: string,
   listener: ControlListener,
   statusRef: Ref.Ref<ControlOwnerStatus>,
   acquiredAfterClose: boolean,
@@ -238,12 +282,18 @@ const makeOwned = (
   return Effect.succeed({
     _tag: "Owned",
     [controlOwnershipBrand]: true,
+    ownershipId,
     endpoint,
     server: listener.server,
     ownerStatus: Ref.get(statusRef),
-    setOwnerStatus: (status) => Ref.set(statusRef, status),
+    setOwnerStatus: (next) => Ref.set(statusRef, { ...next, ownershipId }),
     setState: (state, ready = state === "running") =>
-      Ref.set(statusRef, { protocolVersion: CONTROL_PROTOCOL_VERSION, state, ready }),
+      Ref.set(statusRef, {
+        protocolVersion: CONTROL_PROTOCOL_VERSION,
+        ownershipId,
+        state,
+        ready,
+      }),
     close,
     acquiredAfterClose,
   });
@@ -251,6 +301,7 @@ const makeOwned = (
 
 const acquireAtEndpoint = (
   endpoint: ControlEndpoint,
+  ownershipId: string,
   status: ControlOwnerStatus,
   transport: ControlTransportShape,
 ): Effect.Effect<
@@ -276,14 +327,14 @@ const acquireAtEndpoint = (
   > = Effect.gen(function* () {
     const bound = yield* transport.bind(endpoint).pipe(Effect.result);
     if (Result.isSuccess(bound)) {
-      const owned = yield* makeOwned(endpoint, bound.success, statusRef, hadConflict);
+      const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef, hadConflict);
       yield* Effect.addFinalizer(() => owned.close);
       return owned;
     }
     const error = bound.failure;
     if (error.reason !== "in-use") return yield* Effect.fail(error);
     hadConflict = true;
-    return yield* attach(endpoint, transport).pipe(
+    return yield* attach(endpoint, ownershipId, transport).pipe(
       Effect.mapError((cause) =>
         cause._tag === "ControlTransportError" && cause.reason === "unreachable"
           ? unavailable(endpoint, cause)
@@ -321,7 +372,12 @@ export const acquireControl = (
   Effect.gen(function* () {
     const endpoint = yield* controlEndpoint(input.stackId);
     const transport = yield* ControlTransport;
-    return yield* acquireAtEndpoint(endpoint, defaultStatus(input.initialStatus), transport);
+    return yield* acquireAtEndpoint(
+      endpoint,
+      input.stackId,
+      defaultStatus(input.stackId, input.initialStatus),
+      transport,
+    );
   });
 
 export const protocolVersion = CONTROL_PROTOCOL_VERSION;

@@ -10,6 +10,7 @@ import {
   Path,
   PlatformError,
   Schedule,
+  Scope,
 } from "effect";
 import type { PortField, PortSet } from "../PortCatalog.ts";
 import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
@@ -88,15 +89,10 @@ interface ManagedStackStartResultBase {
   readonly stack: ManagedStack;
 }
 
-export type ManagedStackStartResult =
-  | (ManagedStackStartResultBase & {
-      readonly outcome: "allocated";
-      /** The lease remains live until the caller's Effect scope closes. */
-      readonly lease: ManagedPortLease;
-    })
-  | (ManagedStackStartResultBase & {
-      readonly outcome: "already-running";
-    });
+export type ManagedStackStartResult = ManagedStackStartResultBase & {
+  /** The lease remains live until the caller's Effect scope closes. */
+  readonly lease: ManagedPortLease;
+};
 
 export interface ManagedStackLifecycleUpdate {
   readonly stackId: string;
@@ -109,6 +105,14 @@ export interface ManagedPortLease {
   readonly ports: PortSet;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
+}
+
+/** A Promise-facade allocation whose port bindings remain live until disposal. */
+export interface ManagedStackAllocationHandle extends AsyncDisposable {
+  readonly stack: ManagedStack;
+  readonly ports: PortSet;
+  readonly release: (fields: ReadonlyArray<PortField>) => Promise<void>;
+  readonly releaseAll: () => Promise<void>;
 }
 
 export type ManagedDeleteResult =
@@ -313,7 +317,7 @@ const requireOwnedForStack = (
     const endpoint = yield* controlEndpoint(stackId).pipe(
       Effect.mapError(() => new ManagedStackControlRequiredError({ stackId })),
     );
-    if (ownership.endpoint.path !== endpoint.path) {
+    if (ownership.ownershipId !== stackId || ownership.endpoint.path !== endpoint.path) {
       return yield* Effect.fail(new ManagedStackControlRequiredError({ stackId }));
     }
   });
@@ -547,54 +551,75 @@ const makeManager = (
           );
         }
         const stackName = request.stackName ?? "default";
-        const stackId = deriveStackId(discovery.identity, stackName);
-        const existing = yield* store.read(stackId);
         if (request.operation === "status") {
+          const stackId = deriveStackId(discovery.identity, stackName);
+          const existing = yield* store.read(stackId);
           if (existing === undefined) return undefined;
           const drift = stackDrift(existing, request.portDocument);
           return drift.length === 0 ? existing : { ...existing, drift };
         }
-        yield* requireOwnedForStack(request.ownership, stackId);
-        if (existing?.lifecycle === "deleting") {
-          yield* store.remove(stackId);
+        const stackId = deriveStackId(discovery.identity, stackName);
+        const repairAcquisition = yield* provideDependencies(
+          acquireControl({ stackId: deriveRepairOwnershipId(discovery.identity) }),
+        );
+        if (!isOwned(repairAcquisition)) {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              stackId: deriveRepairOwnershipId(discovery.identity),
+              reason: "Workspace repair is already owned",
+            }),
+          );
         }
-        const current = existing?.lifecycle === "deleting" ? undefined : existing;
-        if (
-          current !== undefined &&
-          (current.lifecycle === "running" || current.lifecycle === "starting")
-        ) {
-          const drift = stackDrift(current, request.portDocument);
-          return {
-            stack: drift.length === 0 ? current : { ...current, drift },
-            outcome: "already-running",
-          } satisfies ManagedStackStartResult;
-        }
-        const persisted = current?.ports;
-        const allocation = yield* allocateManagedPorts(request.ownership, {
-          stackId,
-          portDocument: request.portDocument,
-          persisted,
-        });
-        const timestamp = now();
-        const document: ManagedStackDocument = {
-          format: "supabase-stack",
-          formatVersion: 1,
-          id: stackId,
-          identity: { ...discovery.identity, name: stackName },
-          workspace: workspaceDocument(discovery),
-          ports: allocation.assignments,
-          lifecycle: request.lifecycle ?? "stopped",
-          ...(request.runtime && { runtime: request.runtime }),
-          ...(request.launch && { launch: request.launch }),
-          createdAt: current?.createdAt ?? timestamp,
-          updatedAt: timestamp,
-        };
-        yield* store.write(document);
-        return {
-          stack: document,
-          lease: allocation.lease,
-          outcome: "allocated",
-        } satisfies ManagedStackStartResult;
+        return yield* Effect.gen(function* () {
+          const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+          if (refreshed.state === "needsRepair") {
+            return yield* Effect.fail(
+              new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
+            );
+          }
+          const refreshedStackId = deriveStackId(refreshed.identity, stackName);
+          if (refreshedStackId !== stackId) {
+            return yield* Effect.fail(
+              new ManagedWorkspaceRepairConflictError({
+                reason: "Workspace identity changed while resolving the stack",
+              }),
+            );
+          }
+          yield* requireOwnedForStack(request.ownership, refreshedStackId);
+          const existing = yield* store.read(refreshedStackId);
+          if (existing?.lifecycle === "deleting") {
+            yield* store.remove(refreshedStackId);
+          }
+          let current = existing?.lifecycle === "deleting" ? undefined : existing;
+          if (
+            current !== undefined &&
+            (current.lifecycle === "running" || current.lifecycle === "starting")
+          ) {
+            current = { ...current, lifecycle: "failed", updatedAt: now() };
+            yield* store.write(current);
+          }
+          const allocation = yield* allocateManagedPorts(request.ownership, {
+            stackId: refreshedStackId,
+            portDocument: request.portDocument,
+            persisted: current?.ports,
+          });
+          const timestamp = now();
+          const document: ManagedStackDocument = {
+            format: "supabase-stack",
+            formatVersion: 1,
+            id: refreshedStackId,
+            identity: { ...refreshed.identity, name: stackName },
+            workspace: workspaceDocument(refreshed),
+            ports: allocation.assignments,
+            lifecycle: request.lifecycle ?? "stopped",
+            ...(request.runtime && { runtime: request.runtime }),
+            ...(request.launch && { launch: request.launch }),
+            createdAt: current?.createdAt ?? timestamp,
+            updatedAt: timestamp,
+          };
+          yield* store.write(document);
+          return { stack: document, lease: allocation.lease } satisfies ManagedStackStartResult;
+        }).pipe(Effect.ensuring(repairAcquisition.close));
       });
     }
 
@@ -669,7 +694,11 @@ const makeManager = (
           const affected = listings
             .filter(isHealthyDocument)
             .map((listing) => listing.document)
-            .filter((document) => document.identity.checkoutId === request.identity.checkoutId)
+            .filter(
+              (document) =>
+                document.identity.projectId === request.identity.projectId &&
+                document.identity.checkoutId === request.identity.checkoutId,
+            )
             .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
           const stackOwners: Array<ControlOwnership> = [];
           for (const document of affected) {
@@ -703,12 +732,6 @@ const makeManager = (
               }),
             );
           }
-          yield* updateGitCheckoutLocationOwned(
-            inspection.gitDirectory,
-            revalidated.expectedPath,
-            revalidated.path,
-            repairAcquisition,
-          );
           const updatedAt = now();
           for (const document of affected) {
             yield* store.write({
@@ -717,6 +740,12 @@ const makeManager = (
               updatedAt,
             });
           }
+          yield* updateGitCheckoutLocationOwned(
+            inspection.gitDirectory,
+            revalidated.expectedPath,
+            revalidated.path,
+            repairAcquisition,
+          );
           return yield* provideDependencies(discoverEnvironment(revalidated.path));
         }),
       );
@@ -771,7 +800,7 @@ export interface ManagedStackManagerHandle extends AsyncDisposable {
   readonly discoverWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
   readonly resolveStack: {
     (request: ResolveStackStatusRequest): Promise<ManagedStack | undefined>;
-    (request: ResolveStackStartRequest): Promise<ManagedStack>;
+    (request: ResolveStackStartRequest): Promise<ManagedStackAllocationHandle>;
   };
   readonly inspectStack: (stackId: string) => Promise<ManagedStack | undefined>;
   readonly listStacks: () => Promise<ReadonlyArray<ManagedStackListing>>;
@@ -793,13 +822,36 @@ export const createManagedStackManager = async (
   async function resolveStack(
     request: ResolveStackStatusRequest,
   ): Promise<ManagedStack | undefined>;
-  async function resolveStack(request: ResolveStackStartRequest): Promise<ManagedStack>;
-  async function resolveStack(request: ResolveStackRequest): Promise<ManagedStack | undefined> {
+  async function resolveStack(
+    request: ResolveStackStartRequest,
+  ): Promise<ManagedStackAllocationHandle>;
+  async function resolveStack(
+    request: ResolveStackRequest,
+  ): Promise<ManagedStack | undefined | ManagedStackAllocationHandle> {
     if (request.operation === "status") {
       return runtime.runPromise(manager.resolveStack(request));
     }
-    const result = await runtime.runPromise(Effect.scoped(manager.resolveStack(request)));
-    return result.stack;
+    const scope = await runtime.runPromise(Scope.make());
+    try {
+      const result = await runtime.runPromise(
+        manager.resolveStack(request).pipe(Effect.provideService(Scope.Scope, scope)),
+      );
+      let released: Promise<void> | undefined;
+      const closeAllocation = (): Promise<void> => {
+        released ??= runtime.runPromise(Scope.close(scope, Exit.void));
+        return released;
+      };
+      return {
+        stack: result.stack,
+        ports: result.lease.ports,
+        release: (fields) => runtime.runPromise(result.lease.release(fields)),
+        releaseAll: closeAllocation,
+        [Symbol.asyncDispose]: closeAllocation,
+      };
+    } catch (error) {
+      await runtime.runPromise(Scope.close(scope, Exit.die(error)));
+      throw error;
+    }
   }
   return {
     stateRoot: manager.stateRoot,
