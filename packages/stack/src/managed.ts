@@ -27,6 +27,15 @@ export type { EnsureOrdinaryWorkspaceIdentityResult } from "./managed/identity.t
 export * from "./managed/ids.ts";
 export * from "./managed/model.ts";
 export * from "./managed/paths.ts";
+export {
+  ManagedPortCoordinator,
+  type ManagedPortCandidateInput,
+  type ManagedPortCandidatePolicy,
+  type ManagedPortCoordinatorOptions,
+  type ManagedPortCoordinatorShape,
+  type ManagedPortStartAllocation,
+  type ManagedPortStartFailure,
+} from "./managed/port-coordinator.ts";
 export * from "./managed/service.ts";
 export type {
   ManagedBranchOwnerEvidence,

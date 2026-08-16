@@ -504,6 +504,44 @@ export class ManagedPortReservationError extends Data.TaggedError("ManagedPortRe
   }
 }
 
+export class ManagedExactPortOccupiedError extends Data.TaggedError(
+  "ManagedExactPortOccupiedError",
+)<{
+  readonly key: ConfigPortKey;
+  readonly port: number;
+  readonly ownerStackId?: string;
+  readonly ownerStackName?: string;
+}> {
+  readonly code = "MANAGED_EXACT_PORT_OCCUPIED" as const;
+}
+
+export class ManagedStickyPortOccupiedError extends Data.TaggedError(
+  "ManagedStickyPortOccupiedError",
+)<{
+  readonly key: ConfigPortKey;
+  readonly port: number;
+  readonly stackId: string;
+  readonly ownerStackId?: string;
+  readonly ownerStackName?: string;
+}> {
+  readonly code = "MANAGED_STICKY_PORT_OCCUPIED" as const;
+}
+
+export class ManagedPortClaimRaceError extends Data.TaggedError("ManagedPortClaimRaceError")<{
+  readonly stackId: string;
+  readonly port: number;
+  readonly ownerStackId: string;
+}> {
+  readonly code = "MANAGED_PORT_CLAIM_RACE" as const;
+}
+
+export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAllocationError")<{
+  readonly fields: ReadonlyArray<PortField>;
+  readonly cause: unknown;
+}> {
+  readonly code = "MANAGED_PORT_ALLOCATION_FAILED" as const;
+}
+
 export class ManagedRunningStackPortChangeError extends Data.TaggedError(
   "ManagedRunningStackPortChangeError",
 )<{
@@ -604,6 +642,10 @@ export type ManagedStackError =
   | ManagedIdentityTransitionOwnershipError
   | ManagedInaccessiblePathError
   | ManagedPendingStackUpdateError
+  | ManagedExactPortOccupiedError
+  | ManagedStickyPortOccupiedError
+  | ManagedPortClaimRaceError
+  | ManagedPortAllocationError
   | ManagedPortReservationError
   | ManagedRunningStackPortChangeError
   | ManagedStackInitializationError
@@ -668,6 +710,10 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_INACCESSIBLE_PATH",
   "MANAGED_OPERATION_REQUIRES_RECONCILIATION",
   "MANAGED_PENDING_STACK_UPDATE",
+  "MANAGED_EXACT_PORT_OCCUPIED",
+  "MANAGED_STICKY_PORT_OCCUPIED",
+  "MANAGED_PORT_CLAIM_RACE",
+  "MANAGED_PORT_ALLOCATION_FAILED",
   "MANAGED_PORT_ALREADY_RESERVED",
   "MANAGED_RUNNING_STACK_PORT_CHANGE",
   "MANAGED_STACK_INITIALIZATION_FAILED",
@@ -706,6 +752,10 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_INACCESSIBLE_PATH: "ManagedInaccessiblePathError",
   MANAGED_OPERATION_REQUIRES_RECONCILIATION: "ManagedAbandonedOperationError",
   MANAGED_PENDING_STACK_UPDATE: "ManagedPendingStackUpdateError",
+  MANAGED_EXACT_PORT_OCCUPIED: "ManagedExactPortOccupiedError",
+  MANAGED_STICKY_PORT_OCCUPIED: "ManagedStickyPortOccupiedError",
+  MANAGED_PORT_CLAIM_RACE: "ManagedPortClaimRaceError",
+  MANAGED_PORT_ALLOCATION_FAILED: "ManagedPortAllocationError",
   MANAGED_PORT_ALREADY_RESERVED: "ManagedPortReservationError",
   MANAGED_RUNNING_STACK_PORT_CHANGE: "ManagedRunningStackPortChangeError",
   MANAGED_STACK_INITIALIZATION_FAILED: "ManagedStackInitializationError",
