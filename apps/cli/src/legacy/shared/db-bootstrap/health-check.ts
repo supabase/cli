@@ -21,6 +21,7 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 import {
+  legacyGateOnExitCode,
   legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
 } from "../legacy-container-cli.ts";
@@ -287,24 +288,27 @@ function legacyStreamContainerLogsOnce(
       });
       runtime = spawned.runtime;
       const handle = spawned.handle;
-      yield* Effect.all(
+      let written = 0;
+      yield* legacyGateOnExitCode(
+        handle,
         [
           Stream.runForEach(handle.stdout, (chunk) =>
             Effect.sync(() => {
+              written += 1;
               globalThis.process.stderr.write(chunk);
               stdoutScanner.scan(chunk);
             }),
           ),
           Stream.runForEach(handle.stderr, (chunk) =>
             Effect.sync(() => {
+              written += 1;
               globalThis.process.stderr.write(chunk);
               stderrScanner.scan(chunk);
             }),
           ),
         ],
-        { concurrency: "unbounded" },
+        () => written,
       );
-      yield* handle.exitCode;
     }),
   ).pipe(
     Effect.orElseSucceed(() => undefined),

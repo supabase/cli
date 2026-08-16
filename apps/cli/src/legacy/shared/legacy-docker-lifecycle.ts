@@ -1,5 +1,5 @@
 import { isDockerDaemonDownMessage } from "@supabase/stack/effect";
-import { Data, Effect, Stream } from "effect";
+import { Data, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -9,6 +9,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import {
   LegacyContainerRuntimeNotFoundError,
+  legacyChildResult,
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "./legacy-container-cli.ts";
@@ -64,15 +65,6 @@ export class LegacyDockerLifecycleInspectError extends Data.TaggedError(
   }
 }
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
-}
-
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
   return text
     .split(/\r?\n/u)
@@ -116,19 +108,10 @@ function spawnDockerPsLines(
             }),
         ),
       );
-      // Concurrency is required, not cosmetic: sequential `Effect.all` would
-      // await `exitCode` (resolved by Node's "exit" event) before subscribing
-      // to `stdout`/`stderr` at all. Node's "exit" can fire before a fast
-      // process's stdio pipes are drained, so a late subscriber sees an
-      // already-ended, empty stream instead of the buffered bytes.
-      const [exitCode, stdout, stderr] = yield* Effect.all(
-        [
-          child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stdout, stderr } = yield* legacyChildResult(child, {
+        stdout: true,
+        stderr: true,
+      }).pipe(
         Effect.mapError(
           () => new LegacyDockerLifecycleListError({ message: "failed to list containers" }),
         ),
@@ -249,16 +232,10 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
           });
         }),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `legacyListContainersByLabel` above.
-      const [exitCode, stdout, stderr] = yield* Effect.all(
-        [
-          child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stdout, stderr } = yield* legacyChildResult(child, {
+        stdout: true,
+        stderr: true,
+      }).pipe(
         Effect.mapError(
           () =>
             new LegacyDockerLifecycleInspectError({
@@ -344,16 +321,10 @@ export const legacyListVolumesByLabel = (spawner: Spawner, projectIdFilter: stri
             }),
         ),
       );
-      // Concurrency is required, not cosmetic — see the matching comment in
-      // `legacyListContainersByLabel` above.
-      const [exitCode, stdout, stderr] = yield* Effect.all(
-        [
-          child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stdout),
-          collectByteStream(child.stderr),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stdout, stderr } = yield* legacyChildResult(child, {
+        stdout: true,
+        stderr: true,
+      }).pipe(
         Effect.mapError(
           () => new LegacyDockerLifecycleListError({ message: "failed to list volumes" }),
         ),

@@ -57,7 +57,7 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 import {
-  legacyCollectText,
+  legacyChildResult,
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
@@ -320,10 +320,7 @@ export const legacyRemoveShadowDatabase = (
           stderr: "pipe",
           extendEnv: true,
         });
-        const [exitCode, stderr] = yield* Effect.all(
-          [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-          { concurrency: "unbounded" },
-        );
+        const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true });
         return exitCode === 0 ? undefined : stderr.trim();
       }),
     ).pipe(Effect.catch((cause) => Effect.succeed(legacyDescribeContainerCliFailure(cause))));

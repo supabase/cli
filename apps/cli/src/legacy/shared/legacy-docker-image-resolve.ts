@@ -1,6 +1,11 @@
 import { Effect, Exit, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
-import { spawnContainerCli } from "./legacy-container-cli.ts";
+import {
+  legacyChildResult,
+  legacyDecodeChunks,
+  legacyGateOnExitCode,
+  spawnContainerCli,
+} from "./legacy-container-cli.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 import {
   LEGACY_SUGGEST_DOCKER_INSTALL,
@@ -43,17 +48,6 @@ const spawnError = () =>
  */
 const isImageNotFoundMessage = (message: string): boolean =>
   /no such image/iu.test(message) || /image not known/iu.test(message);
-
-const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
-  const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
-};
 
 /**
  * Builds a Docker image resolver bound to `spawner`: given an image, finds the
@@ -103,18 +97,11 @@ export function legacyMakeDockerImageResolver(
         stdout: "ignore",
         stderr: "pipe",
       }).pipe(Effect.mapError(() => spawnError()));
-      const stderrChunks: Array<Uint8Array> = [];
-      yield* Stream.runForEach(handle.stderr, (chunk) =>
-        Effect.sync(() => {
-          stderrChunks.push(chunk);
-        }),
-      ).pipe(Effect.mapError(() => spawnError()));
-      const exitCode = yield* handle.exitCode.pipe(
-        Effect.map(Number),
-        Effect.mapError(() => spawnError()),
-      );
+      const { exitCode, stderr: stderrText } = yield* legacyChildResult(handle, {
+        stderr: true,
+      }).pipe(Effect.mapError(() => spawnError()));
       if (exitCode === 0) return true;
-      const stderr = new TextDecoder().decode(concat(stderrChunks)).trim();
+      const stderr = stderrText.trim();
       // `DockerResolveImageIfNotCached` proceeds to the pull loop only when the inspect
       // error is a confirmed `errdefs.IsNotFound` — any OTHER inspect error (daemon unreachable,
       // an auth-plugin denial, an invalid reference, an API error, ...) returns immediately
@@ -164,28 +151,22 @@ export function legacyMakeDockerImageResolver(
       const stdoutChunks: Array<Uint8Array> = [];
       const stderrChunks: Array<Uint8Array> = [];
       let endedWithNewline = true;
-      yield* Effect.all(
+      const teeInto = (chunks: Array<Uint8Array>) => (chunk: Uint8Array) =>
+        Effect.sync(() => {
+          chunks.push(chunk);
+          globalThis.process.stderr.write(chunk);
+          if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
+        });
+      const { exitCode } = yield* legacyGateOnExitCode(
+        handle,
         [
-          Stream.runForEach(handle.stdout, (chunk) =>
-            Effect.sync(() => {
-              stdoutChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
-              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
-            }),
-          ),
-          Stream.runForEach(handle.stderr, (chunk) =>
-            Effect.sync(() => {
-              stderrChunks.push(chunk);
-              globalThis.process.stderr.write(chunk);
-              if (chunk.length > 0) endedWithNewline = chunk[chunk.length - 1] === 0x0a;
-            }),
-          ),
+          Stream.runForEach(handle.stdout, teeInto(stdoutChunks)),
+          Stream.runForEach(handle.stderr, teeInto(stderrChunks)),
         ],
-        { concurrency: "unbounded" },
+        () => stdoutChunks.length + stderrChunks.length,
       );
-      const exitCode = yield* handle.exitCode.pipe(Effect.map(Number));
-      const stdout = new TextDecoder().decode(concat(stdoutChunks));
-      const stderr = new TextDecoder().decode(concat(stderrChunks));
+      const stdout = legacyDecodeChunks(stdoutChunks);
+      const stderr = legacyDecodeChunks(stderrChunks);
       return {
         exitCode,
         stderr: `${stdout}${stderr}`.trim(),

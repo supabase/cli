@@ -18,7 +18,12 @@ import {
   LegacyProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
-import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import {
+  legacyChildResult,
+  legacyGateOnExitCode,
+  legacySinkCauseCapture,
+  spawnContainerCli,
+} from "../../../shared/legacy-container-cli.ts";
 import {
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
@@ -143,15 +148,6 @@ function forwardByteStream(
   return Stream.runForEach(stream, (chunk) => write(decoder.decode(chunk, { stream: true }))).pipe(
     Effect.andThen(write(decoder.decode())),
   );
-}
-
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
 // Keep these two sets in sync with the value-bearing flags on the root command
@@ -457,18 +453,30 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             });
 
             let stderrText = "";
-            const [exitCode] = yield* Effect.all(
+            let forwarded = 0;
+            // The `output.raw` sink failures are load-bearing (the generated types
+            // stream to stdout), so capture their cause out-of-band before the
+            // gate's non-fatal drain handling erases it, and re-raise after —
+            // same shape as `legacy-docker-run.layer.ts`'s `runStream`.
+            const sink = legacySinkCauseCapture<unknown>();
+            const { exitCode } = yield* legacyGateOnExitCode(
+              child,
               [
-                child.exitCode.pipe(Effect.map(Number)),
-                forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")),
-                forwardByteStream(child.stderr, (text) =>
-                  Effect.sync(() => {
-                    stderrText += text;
-                  }).pipe(Effect.andThen(output.raw(text, "stderr"))),
-                ),
+                forwardByteStream(child.stdout, (text) => {
+                  forwarded += 1;
+                  return output.raw(text, "stdout");
+                }).pipe(Effect.tapCause(sink.tap)),
+                forwardByteStream(child.stderr, (text) => {
+                  forwarded += 1;
+                  stderrText += text;
+                  return output.raw(text, "stderr");
+                }).pipe(Effect.tapCause(sink.tap)),
               ],
-              { concurrency: "unbounded" },
+              () => forwarded,
             );
+            if (sink.cause !== undefined) {
+              return yield* Effect.failCause(sink.cause);
+            }
             return { exitCode, stderrText };
           });
 
@@ -516,10 +524,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             stderr: "pipe",
           },
         );
-        const [exitCode, stderr] = yield* Effect.all([
-          child.exitCode.pipe(Effect.map(Number)),
-          collectByteStream(child.stderr),
-        ]);
+        const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true });
         if (exitCode !== 0) {
           const message = stderr.trim();
           if (message.toLowerCase().includes("no such container")) {

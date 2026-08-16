@@ -30,9 +30,11 @@
  * other `start`-service builder in this directory.
  */
 
-import { Effect, Stream } from "effect";
+import { Effect } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+
+import { legacyChildResult } from "../../../shared/legacy-container-cli.ts";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyRenderStartVectorYaml } from "../lib/template-render.ts";
@@ -195,15 +197,6 @@ export function legacyResolveVectorDockerSocketPlan(
   return { env, binds, securityOpt, isNpipe: parsed.scheme === "npipe" };
 }
 
-function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
-}
-
 /**
  * Best-effort resolution of the CURRENT docker CLI context's daemon
  * endpoint, WITHOUT reimplementing Docker's context store file format —
@@ -228,10 +221,9 @@ function legacyInspectDockerContextHost(spawner: Spawner): Effect.Effect<string,
           ),
         )
         .pipe(Effect.mapError(() => "failed to spawn docker"));
-      const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.mapError(() => "failed to read docker context inspect output"));
+      const { exitCode, stdout } = yield* legacyChildResult(child, { stdout: true }).pipe(
+        Effect.mapError(() => "failed to read docker context inspect output"),
+      );
       if (exitCode !== 0) {
         return yield* Effect.fail("docker context inspect exited non-zero");
       }

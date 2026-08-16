@@ -25,6 +25,8 @@ import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
+  legacyGateOnExitCode,
+  legacySinkCauseCapture,
   spawnContainerCli,
 } from "../../legacy/shared/legacy-container-cli.ts";
 import {
@@ -1322,21 +1324,34 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
     });
 
     let stderrText = "";
-    const [exitCode] = yield* Effect.all(
+    let forwarded = 0;
+    const sink = legacySinkCauseCapture<unknown>();
+    const { exitCode } = yield* legacyGateOnExitCode(
+      child,
       [
-        child.exitCode.pipe(Effect.map(Number)),
-        forwardByteStream(child.stdout, (text, stream) => output.raw(text, stream), "stdout"),
+        forwardByteStream(
+          child.stdout,
+          (text, stream) => {
+            forwarded += 1;
+            return output.raw(text, stream);
+          },
+          "stdout",
+        ).pipe(Effect.tapCause(sink.tap)),
         forwardByteStream(
           child.stderr,
           (text, stream) => {
+            forwarded += 1;
             stderrText = appendDiagnosticTail(stderrText, text);
             return output.raw(text, stream);
           },
           "stderr",
-        ),
+        ).pipe(Effect.tapCause(sink.tap)),
       ],
-      { concurrency: "unbounded" },
+      () => forwarded,
     );
+    if (sink.cause !== undefined) {
+      return yield* Effect.failCause(sink.cause);
+    }
 
     if (exitCode === 0) {
       const containerExitCode = yield* inspectContainerExitCode(containerId);

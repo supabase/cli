@@ -7,7 +7,10 @@
 import { resolve } from "node:path";
 import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
+import {
+  legacyGateOnExitCode,
+  spawnContainerCli,
+} from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
@@ -136,30 +139,34 @@ export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array
   return command;
 }
 
-// Decodes a byte stream to text, both accumulating the full text (returned,
-// for callers that need to post-process it, e.g. scanning stderr for
-// "invalid eszip v2") AND tee-ing each decoded chunk to `onChunk` as it
-// arrives — Go's `DockerStreamLogs`/`DockerRunOnceWithConfig` copy a
-// container's log stream live while it runs, rather than buffering the whole
-// thing until exit.
-function collectByteStream(
+// Decodes a byte stream to text, both accumulating the full text (read from
+// `text()` after the drain, for callers that need to post-process it, e.g.
+// scanning stderr for "invalid eszip v2") AND tee-ing each decoded chunk to
+// `onChunk` as it arrives — Go's `DockerStreamLogs`/`DockerRunOnceWithConfig`
+// copy a container's log stream live while it runs, rather than buffering the
+// whole thing until exit. Shaped as a collector (a void drain plus accessors)
+// so `runChildProcess` can hand the drain to `legacyGateOnExitCode` and still
+// read whatever accumulated when the gate cuts a held-open pipe off — a
+// text-returning drain would lose its partial text to the cutoff interrupt.
+function byteStreamCollector(
   stream: Stream.Stream<Uint8Array, unknown>,
   onChunk?: (chunk: string) => Effect.Effect<void>,
-): Effect.Effect<string, unknown> {
-  return Effect.suspend(() => {
-    const decoder = new TextDecoder();
-    let text = "";
-    const append = (chunk: string) => {
-      text += chunk;
-      return chunk.length > 0 && onChunk !== undefined ? onChunk(chunk) : Effect.void;
-    };
-    return Stream.runForEach(stream, (bytes) =>
-      append(decoder.decode(bytes, { stream: true })),
-    ).pipe(
-      Effect.flatMap(() => append(decoder.decode())),
-      Effect.map(() => text),
-    );
-  });
+) {
+  const decoder = new TextDecoder();
+  let text = "";
+  let chunks = 0;
+  const append = (chunk: string) => {
+    text += chunk;
+    return chunk.length > 0 && onChunk !== undefined ? onChunk(chunk) : Effect.void;
+  };
+  return {
+    drain: Stream.runForEach(stream, (bytes) => {
+      chunks += 1;
+      return append(decoder.decode(bytes, { stream: true }));
+    }),
+    text: () => text + decoder.decode(),
+    chunks: () => chunks,
+  };
 }
 
 // Runs a container CLI command and collects its output. Every caller runs
@@ -196,19 +203,28 @@ export const runChildProcess = Effect.fnUntraced(function* (
         extendEnv: opts.extendEnv ?? command === "docker",
       });
 
-      const [stdout, stderr, exitCode] = yield* Effect.all(
+      // Gate on the child's exit code rather than draining both pipes to EOF:
+      // on Windows, `docker.exe` can leave a helper process holding the
+      // inherited stdio handles open past its own exit, so an EOF-gated
+      // `Effect.all([drain, drain, exitCode])` parks forever
+      // (supabase/cli#6110). See `legacyGateOnExitCode`'s doc comment for the
+      // full mechanism; the live `onStdout`/`onStderr` tees keep firing
+      // per-chunk while the child runs, exactly as before.
+      const stdout = byteStreamCollector(child.stdout, opts.onStdout);
+      const stderr = byteStreamCollector(child.stderr, opts.onStderr);
+      const { exitCode } = yield* legacyGateOnExitCode(
+        child,
         [
-          opts.stdout === "ignore"
-            ? Effect.succeed("")
-            : collectByteStream(child.stdout, opts.onStdout),
-          opts.stderr === "ignore"
-            ? Effect.succeed("")
-            : collectByteStream(child.stderr, opts.onStderr),
-          child.exitCode.pipe(Effect.map(Number)),
+          opts.stdout === "ignore" ? Effect.void : stdout.drain,
+          opts.stderr === "ignore" ? Effect.void : stderr.drain,
         ],
-        { concurrency: "unbounded" },
+        () => stdout.chunks() + stderr.chunks(),
       );
-      return { exitCode, stdout, stderr };
+      return {
+        exitCode,
+        stdout: opts.stdout === "ignore" ? "" : stdout.text(),
+        stderr: opts.stderr === "ignore" ? "" : stderr.text(),
+      };
     }),
   );
 });

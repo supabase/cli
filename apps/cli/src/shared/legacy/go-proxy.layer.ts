@@ -293,7 +293,10 @@ export function makeGoProxyLayer(opts?: {
               });
               const handle = yield* spawner.spawn(command).pipe(Effect.orDie);
               // Drain stdout fully before awaiting exit so a full pipe buffer can't
-              // deadlock the child.
+              // deadlock the child. Deliberately NOT `legacyGateOnExitCode`: the
+              // child is supabase-go (Engine-API client), not `docker.exe`, so the
+              // held-open-handle EOF hazard that gate exists for (#6110) does not
+              // apply, and its own children never inherit this pipe.
               const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
                 Effect.orDie,
               );

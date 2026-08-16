@@ -2,7 +2,13 @@ import { Effect, Layer, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { legacyIsBitbucketPipeline } from "./legacy-bitbucket-pipeline.ts";
-import { containerCliExitCode, spawnContainerCli } from "./legacy-container-cli.ts";
+import {
+  containerCliExitCode,
+  legacyDecodeChunks,
+  legacyGateOnExitCode,
+  legacySinkCauseCapture,
+  spawnContainerCli,
+} from "./legacy-container-cli.ts";
 import { legacyMakeDockerImageResolver } from "./legacy-docker-image-resolve.ts";
 import {
   buildLegacyDockerArgs,
@@ -77,9 +83,8 @@ export const legacyDockerRunLayer: Layer.Layer<
 
             const stdoutChunks: Array<Uint8Array> = [];
             const stderrChunks: Array<Uint8Array> = [];
-            // Drain both pipes concurrently — reading stdout to completion before
-            // stderr would deadlock once the unread stderr pipe buffer fills.
-            yield* Effect.all(
+            const { exitCode } = yield* legacyGateOnExitCode(
+              handle,
               [
                 Stream.runForEach(handle.stdout, (chunk) =>
                   Effect.sync(() => {
@@ -98,18 +103,23 @@ export const legacyDockerRunLayer: Layer.Layer<
                   }),
                 ),
               ],
-              { concurrency: "unbounded" },
+              () => stdoutChunks.length + stderrChunks.length,
             ).pipe(Effect.mapError(spawnError));
-
-            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(spawnError));
             return {
               exitCode,
               stdout: concat(stdoutChunks),
-              stderr: new TextDecoder().decode(concat(stderrChunks)),
+              stderr: legacyDecodeChunks(stderrChunks),
             };
           }),
         ),
-      runStream: (opts, streamOpts) =>
+      runStream: <E>(
+        opts: LegacyDockerRunOpts,
+        streamOpts: {
+          readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+          readonly teeStderr?: boolean;
+          readonly captureStderr?: boolean;
+        },
+      ) =>
         Effect.scoped(
           Effect.gen(function* () {
             const teeStderr = streamOpts.teeStderr ?? false;
@@ -129,18 +139,18 @@ export const legacyDockerRunLayer: Layer.Layer<
             }).pipe(Effect.mapError(spawnError));
 
             const stderrChunks: Array<Uint8Array> = [];
-            // Stream stdout to the caller's sink in arrival order while draining
-            // stderr concurrently — reading one pipe to completion before the other
-            // would deadlock once the unread pipe's OS buffer fills. Go does the same
-            // via `stdcopy.StdCopy(stdout, stderr, logs)`.
-            yield* Effect.all(
+            let forwarded = 0;
+            // The caller's `onStdout` sink failure (`E`) is load-bearing — it
+            // aborts the run — so capture its typed cause out-of-band before the
+            // gate's non-fatal drain handling erases it, and re-raise it after.
+            const sink = legacySinkCauseCapture<LegacyDockerRunError | E>();
+            const { exitCode } = yield* legacyGateOnExitCode(
+              handle,
               [
-                // Map the stdout pipe's own read errors to a docker error while letting
-                // the caller's `onStdout` failure (`E`) propagate unchanged.
-                Stream.runForEach(
-                  handle.stdout.pipe(Stream.mapError(spawnError)),
-                  streamOpts.onStdout,
-                ),
+                Stream.runForEach(handle.stdout.pipe(Stream.mapError(spawnError)), (chunk) => {
+                  forwarded += 1;
+                  return streamOpts.onStdout(chunk);
+                }).pipe(Effect.tapCause(sink.tap)),
                 Stream.runForEach(handle.stderr, (chunk) =>
                   Effect.sync(() => {
                     // Retained only for the returned string — skipped when the caller
@@ -148,13 +158,14 @@ export const legacyDockerRunLayer: Layer.Layer<
                     if (captureStderr) stderrChunks.push(chunk);
                     if (teeStderr) globalThis.process.stderr.write(chunk);
                   }),
-                ).pipe(Effect.mapError(spawnError)),
+                ),
               ],
-              { concurrency: "unbounded" },
-            );
-
-            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(spawnError));
-            return { exitCode, stderr: new TextDecoder().decode(concat(stderrChunks)) };
+              () => forwarded + stderrChunks.length,
+            ).pipe(Effect.mapError(spawnError));
+            if (sink.cause !== undefined) {
+              return yield* Effect.failCause(sink.cause);
+            }
+            return { exitCode, stderr: legacyDecodeChunks(stderrChunks) };
           }),
         ),
       run: (opts) =>

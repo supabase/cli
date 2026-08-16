@@ -22,8 +22,8 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 import {
-  legacyCollectText,
   containerCliExitCode,
+  legacyChildResult,
   legacyDescribeContainerCliFailure,
   legacyRunContainerCliExpectSuccess,
   spawnContainerCli,
@@ -307,10 +307,7 @@ export function legacyEnsureNetwork(
             }),
         ),
       );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true }).pipe(
         Effect.mapError(
           () =>
             new LegacyNetworkCreateError({
@@ -382,10 +379,7 @@ export function legacyEnsureVolume(
             }),
         ),
       );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true }).pipe(
         Effect.mapError(
           () =>
             new LegacyVolumeCreateError({
@@ -467,10 +461,7 @@ export function legacyVolumeExists(
             }),
         ),
       );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true }).pipe(
         Effect.mapError(
           () => new LegacyVolumeInspectError({ message: "failed to inspect volume" }),
         ),
@@ -584,14 +575,10 @@ function legacyDockerCreateContainer(
             }),
         ),
       );
-      const [exitCode, stdout, stderr] = yield* Effect.all(
-        [
-          child.exitCode.pipe(Effect.map(Number)),
-          legacyCollectText(child.stdout),
-          legacyCollectText(child.stderr),
-        ],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stdout, stderr } = yield* legacyChildResult(child, {
+        stdout: true,
+        stderr: true,
+      }).pipe(
         Effect.mapError(
           () =>
             new LegacyContainerCreateError({
@@ -637,10 +624,7 @@ function legacyDockerStartContainer(
             }),
         ),
       );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true }).pipe(
         Effect.mapError(
           () =>
             new LegacyContainerStartError({
@@ -700,10 +684,7 @@ function legacyDockerCopyArchiveIntoContainer(
             }),
         ),
       );
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(
+      const { exitCode, stderr } = yield* legacyChildResult(child, { stderr: true }).pipe(
         Effect.mapError(
           () =>
             new LegacyContainerCreateError({
