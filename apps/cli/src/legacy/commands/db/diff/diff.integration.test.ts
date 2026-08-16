@@ -26,6 +26,7 @@ import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
+  LegacyRemoteFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -91,6 +92,8 @@ interface SetupOpts {
   // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
   // instead of silently falling back to `opts.linkedRef ?? LEGACY_VALID_REF`.
   readonly linkedFails?: boolean;
+  // `--remote <name>` global flag value (T11: db diff --use-pg-schema reject matrix).
+  readonly remoteFlag?: string;
   // --- CLI-1968 (native --use-pgadmin) ---
   // Per-differ-run `--json-diff` stdout, one entry per `runCapture` call to the differ
   // image (index 0 = the no-`--schema` run, or the 1st `--schema` run; index 1 = the
@@ -359,6 +362,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     Layer.succeed(LegacyExperimentalFlag, false),
     Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(
+      LegacyRemoteFlag,
+      opts.remoteFlag === undefined ? Option.none() : Option.some(opts.remoteFlag),
+    ),
     Layer.succeed(CliArgs, { args: [] }),
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
   );
@@ -980,6 +987,20 @@ describe("legacy db diff", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.proxyCaptureCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --remote combined with --use-pg-schema before delegating", () => {
+    // `--remote` is TS-only and the delegated Go child re-resolves its own
+    // linked ref, so it can't be forwarded either — same rationale as the
+    // --project-ref guard above (V19).
+    const s = setup(tmp.current, { remoteFlag: "staging" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbDiff(flags({ usePgSchema: Option.some(true) })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("--remote is not supported with --use-pg-schema");
       expect(s.proxyCalls).toEqual([]);
       expect(s.proxyCaptureCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));

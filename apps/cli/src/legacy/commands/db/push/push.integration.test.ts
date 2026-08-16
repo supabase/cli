@@ -15,7 +15,11 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyRemoteFlag,
+  LegacyYesFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -185,6 +189,7 @@ function setup(
     // `mockResolver` is otherwise silent, so tests pin the established output
     // ordering against this stand-in line.
     simulateInitialisingLoginRole?: boolean;
+    remoteFlag?: string;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -266,6 +271,10 @@ function setup(
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(
+      LegacyRemoteFlag,
+      opts.remoteFlag === undefined ? Option.none() : Option.some(opts.remoteFlag),
+    ),
     projectRefLayer,
     telemetry.layer,
     linkedCache.layer,
@@ -334,6 +343,41 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+    });
+  });
+
+  it.live("rejects --remote combined with --local", () => {
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--local"],
+      remoteFlag: "staging",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("only applies when targeting the linked");
+      }
+    });
+  });
+
+  it.live("rejects --remote combined with --db-url", () => {
+    const dbUrl = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push", "--db-url", dbUrl],
+      remoteFlag: "staging",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        dbUrl: Option.some(dbUrl),
+        local: false,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("only applies when targeting the linked");
+      }
     });
   });
 

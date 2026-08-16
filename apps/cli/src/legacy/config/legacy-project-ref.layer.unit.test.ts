@@ -11,6 +11,7 @@ import { afterEach, beforeEach } from "vitest";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
+import { LegacyRemoteFlag } from "../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "./legacy-project-ref.layer.ts";
@@ -60,12 +61,19 @@ function makeLayer(opts: {
     region: string;
   }>;
   promptSelectResponses?: ReadonlyArray<string>;
+  remoteFlag?: string;
 }) {
   const out = mockOutput({
     format: opts.format ?? "text",
     promptSelectResponses: opts.promptSelectResponses,
   });
-  const layer = legacyProjectRefLayer.pipe(
+  // `LegacyRemoteFlag` is read via `Effect.serviceOption` INSIDE the resolver's
+  // returned methods, which run in the CALLER's ambient context, not the
+  // layer-build context — `Layer.provide` below hides its dependency's output
+  // from downstream consumers, so nesting the flag inside that chain would make
+  // it invisible to `resolve(...)`. It must be a sibling via `Layer.mergeAll`,
+  // matching how production provides it at the CLI root.
+  const resolverLayer = legacyProjectRefLayer.pipe(
     Layer.provide(mockCliConfig(opts)),
     Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
     Layer.provide(out.layer),
@@ -76,7 +84,19 @@ function makeLayer(opts: {
     ),
     Layer.provide(BunServices.layer),
   );
+  const layer = Layer.mergeAll(
+    resolverLayer,
+    Layer.succeed(
+      LegacyRemoteFlag,
+      opts.remoteFlag === undefined ? Option.none() : Option.some(opts.remoteFlag),
+    ),
+  );
   return { layer, out };
+}
+
+function writeRemotesConfig(workdir: string, content: string) {
+  mkdirSync(join(workdir, "supabase"), { recursive: true });
+  writeFileSync(join(workdir, "supabase", "config.toml"), content);
 }
 
 let tempRoot: string;
@@ -391,6 +411,81 @@ describe("legacyProjectRefLayer", () => {
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
         }
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("--remote resolution", () => {
+    it.effect("resolves --remote <name> to its project ref and echoes Target: to stderr", () => {
+      writeRemotesConfig(tempRoot, `[remotes.staging]\nproject_id = "${VALID_REF}"\n`);
+      const { layer, out } = makeLayer({ workdir: tempRoot, remoteFlag: "staging" });
+      return Effect.gen(function* () {
+        const { resolve } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolve(Option.none());
+        expect(ref).toBe(VALID_REF);
+        expect(out.stderrText).toContain(`Target: remote "staging" (${VALID_REF})`);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("--remote wins even when SUPABASE_PROJECT_ID is also set", () => {
+      writeRemotesConfig(tempRoot, `[remotes.staging]\nproject_id = "${VALID_REF}"\n`);
+      const { layer } = makeLayer({
+        workdir: tempRoot,
+        projectId: ANOTHER_REF,
+        remoteFlag: "staging",
+      });
+      return Effect.gen(function* () {
+        const { resolve } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolve(Option.none());
+        expect(ref).toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails with a conflict when --remote and an explicit ref flag are both given", () => {
+      writeRemotesConfig(tempRoot, `[remotes.staging]\nproject_id = "${VALID_REF}"\n`);
+      const { layer } = makeLayer({ workdir: tempRoot, remoteFlag: "staging" });
+      return Effect.gen(function* () {
+        const { resolve } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(resolve(Option.some(ANOTHER_REF)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("RemoteFlagConflictError");
+        }
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails with UnknownRemoteError for a name absent from the registry", () => {
+      writeRemotesConfig(tempRoot, `[remotes.staging]\nproject_id = "${VALID_REF}"\n`);
+      const { layer } = makeLayer({ workdir: tempRoot, remoteFlag: "ghost" });
+      return Effect.gen(function* () {
+        const { resolve } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(resolve(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("UnknownRemoteError");
+        }
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails with NoProjectConfigError when no config exists at all", () => {
+      const { layer } = makeLayer({ workdir: tempRoot, remoteFlag: "staging" });
+      return Effect.gen(function* () {
+        const { resolve } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(resolve(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("NoProjectConfigError");
+        }
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("resolveOptional also honors --remote", () => {
+      writeRemotesConfig(tempRoot, `[remotes.staging]\nproject_id = "${VALID_REF}"\n`);
+      const { layer } = makeLayer({ workdir: tempRoot, remoteFlag: "staging" });
+      return Effect.gen(function* () {
+        const { resolveOptional } = yield* LegacyProjectRefResolver;
+        const ref = yield* resolveOptional(Option.none());
+        expect(ref).toEqual(Option.some(VALID_REF));
       }).pipe(Effect.provide(layer));
     });
   });

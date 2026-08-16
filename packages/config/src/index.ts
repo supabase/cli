@@ -10,7 +10,25 @@ export {
   MissingProjectConfigValueError,
   ProjectConfigParseError,
   ProjectEnvParseError,
+  RemoteBlockNotRemovableError,
+  RemoteNameConflictError,
+  RemoteNameInvalidError,
+  RemoteNotFoundError,
+  RemoteRefInvalidError,
 } from "./errors.ts";
+export {
+  type RemoteAddResult,
+  type RemoteEntry,
+  type RemoteRemoveResult,
+  REMOTE_NAME_PATTERN,
+  REMOTE_PROJECT_REF_PATTERN,
+  addRemote,
+  listRemotes,
+  listRemotesFromDocument,
+  removeRemote,
+  validateRemoteName,
+  validateRemoteRef,
+} from "./remotes.ts";
 export {
   type ConfigFormat,
   type LoadedProjectConfig,

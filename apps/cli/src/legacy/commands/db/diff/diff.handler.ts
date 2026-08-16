@@ -5,6 +5,7 @@ import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
+  legacyResolveRemoteFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
@@ -378,6 +379,16 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       return yield* Effect.fail(
         new LegacyDbDiffTargetFlagsError({
           message: "--project-ref is not supported with --use-pg-schema",
+        }),
+      );
+    }
+    // Same rationale as the --project-ref guard above: `--remote` is TS-only
+    // and the delegated Go child re-resolves its own linked ref.
+    const remoteFlag = yield* legacyResolveRemoteFlag;
+    if (usePgSchema && Option.isSome(remoteFlag)) {
+      return yield* Effect.fail(
+        new LegacyDbDiffTargetFlagsError({
+          message: "--remote is not supported with --use-pg-schema",
         }),
       );
     }

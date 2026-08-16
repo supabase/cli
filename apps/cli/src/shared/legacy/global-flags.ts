@@ -96,6 +96,30 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
 });
 
 /**
+ * Names a `[remotes.<name>]` entry in `supabase/config.{toml,json}` whose
+ * `project_id` becomes the effective ref for every command that resolves one
+ * — wired centrally into `LegacyProjectRefResolver`, NOT declared per-command, so
+ * it reaches all leaf commands from this single registration.
+ */
+export const LegacyRemoteFlag = GlobalFlag.setting("remote")({
+  flag: Flag.string("remote").pipe(
+    Flag.withDescription("target the named [remotes.<name>] entry from supabase/config.toml"),
+    Flag.optional,
+  ),
+});
+
+/**
+ * `LegacyRemoteFlag`, read via `Effect.serviceOption` so a caller that hasn't
+ * wired the global-flag context gets `None` instead of a missing-service defect,
+ * same pattern as `legacyGlobalFlagValues` above. Production always provides it
+ * through `Command.withGlobalFlags` at the CLI root (`legacy/cli/root.ts`).
+ */
+export const legacyResolveRemoteFlag = Effect.map(
+  Effect.serviceOption(LegacyRemoteFlag),
+  Option.flatten,
+);
+
+/**
  * Every global/persistent flag declared above, mirroring the set Go registers on
  * the root command (`apps/cli-go/cmd/root.go:344-354`).
  *
@@ -124,6 +148,7 @@ export const LEGACY_GLOBAL_FLAGS = [
   LegacyDnsResolverFlag,
   LegacyCreateTicketFlag,
   LegacyAgentFlag,
+  LegacyRemoteFlag,
 ] as const;
 
 /**
@@ -165,6 +190,7 @@ export const legacyGlobalFlagValues = Effect.gen(function* () {
   setIfPresent(LegacyProfileFlag.id, yield* Effect.serviceOption(LegacyProfileFlag));
   setIfPresent(LegacyWorkdirFlag.id, yield* Effect.serviceOption(LegacyWorkdirFlag));
   setIfPresent(LegacyYesFlag.id, yield* Effect.serviceOption(LegacyYesFlag));
+  setIfPresent(LegacyRemoteFlag.id, yield* Effect.serviceOption(LegacyRemoteFlag));
   return values;
 });
 

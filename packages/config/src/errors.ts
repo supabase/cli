@@ -82,3 +82,38 @@ export class DuplicateRemoteProjectIdError extends Data.TaggedError(
 export class InvalidRemoteProjectIdError extends Data.TaggedError("InvalidRemoteProjectIdError")<{
   readonly message: string;
 }> {}
+
+/** `remotes add`/`remotes remove` given a name outside the TOML-bare-key grammar. */
+export class RemoteNameInvalidError extends Data.TaggedError("RemoteNameInvalidError")<{
+  readonly name: string;
+  readonly message: string;
+}> {}
+
+/** `remotes add` given a `--project-ref` that isn't a valid 20-lowercase-letter ref. */
+export class RemoteRefInvalidError extends Data.TaggedError("RemoteRefInvalidError")<{
+  readonly ref: string;
+  readonly message: string;
+}> {}
+
+/** `remotes add <name>` where `<name>` already exists with a different `project_id`. */
+export class RemoteNameConflictError extends Data.TaggedError("RemoteNameConflictError")<{
+  readonly name: string;
+  readonly message: string;
+}> {}
+
+/** `remotes remove <name>` where `<name>` has no `[remotes.<name>]` block. */
+export class RemoteNotFoundError extends Data.TaggedError("RemoteNotFoundError")<{
+  readonly name: string;
+  readonly message: string;
+}> {}
+
+/**
+ * `remotes remove <name>` where the block declares keys beyond `project_id`,
+ * removing it would silently drop remote-specific config the user authored by
+ * hand, so the CLI refuses rather than deleting it.
+ */
+export class RemoteBlockNotRemovableError extends Data.TaggedError("RemoteBlockNotRemovableError")<{
+  readonly name: string;
+  readonly extraKeys: ReadonlyArray<string>;
+  readonly message: string;
+}> {}

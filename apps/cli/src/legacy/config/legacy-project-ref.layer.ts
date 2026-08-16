@@ -1,8 +1,12 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { emitRemoteTarget } from "../../shared/remotes/emit-remote-target.ts";
+import { resolveRemoteRef } from "../../shared/remotes/remote-lookup.ts";
+import { resolveRequestedRemoteName } from "../../shared/remotes/resolve-remote-selection.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
+import { legacyResolveRemoteFlag } from "../../shared/legacy/global-flags.ts";
 import { legacyReadProjectRefFile } from "../shared/legacy-temp-paths.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import {
@@ -37,6 +41,40 @@ export const legacyProjectRefLayer = Layer.effect(
     const platformApi = yield* LegacyPlatformApiFactory;
 
     const readRefFile = legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+
+    /**
+     * Resolves `--remote`/`SUPABASE_REMOTE` ahead of every other resolution
+     * method's own flag-value precedence, and — when a remote was requested
+     * — substitutes its ref in place of `flagValue`, so the rest of each
+     * method's existing chain (env → ref file → prompt) runs completely
+     * unchanged. This is the ONE place `--remote` plugs into ref resolution
+     * (`shared/legacy/global-flags.ts`'s `LegacyRemoteFlag` doc comment) —
+     * every one of the leaf commands that call `LegacyProjectRefResolver`
+     * gets `--remote` support from this single file, never a per-command edit.
+     * `--remote` + an explicit `flagValue` (the command's own `--project-ref`)
+     * is a conflict; prints the `Target:` echo before returning.
+     */
+    const resolveEffectiveFlagValue = Effect.fnUntraced(function* (
+      flagValue: Option.Option<string>,
+    ) {
+      const remoteFlag = yield* legacyResolveRemoteFlag;
+      const requested = yield* resolveRequestedRemoteName({
+        remoteFlag,
+        remoteEnv: process.env["SUPABASE_REMOTE"],
+        conflictingRefFlagExplicit: Option.isSome(flagValue) && flagValue.value.length > 0,
+      });
+      if (Option.isNone(requested)) {
+        return flagValue;
+      }
+      // `resolveRemoteRef`/`emitRemoteTarget` independently require FileSystem/Path/Output
+      // re-provide the SAME instances this layer already captured above.
+      const ref = yield* resolveRemoteRef(cliConfig.workdir, requested.value).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+      yield* emitRemoteTarget(requested.value, ref).pipe(Effect.provideService(Output, output));
+      return Option.some(ref);
+    });
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const api = yield* platformApi.make.pipe(
@@ -79,8 +117,9 @@ export const legacyProjectRefLayer = Layer.effect(
     });
 
     return LegacyProjectRefResolver.of({
-      resolve: (flagValue) =>
+      resolve: (rawFlagValue) =>
         Effect.gen(function* () {
+          const flagValue = yield* resolveEffectiveFlagValue(rawFlagValue);
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }
@@ -99,8 +138,9 @@ export const legacyProjectRefLayer = Layer.effect(
             new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
           );
         }),
-      resolveForLink: (flagValue) =>
+      resolveForLink: (rawFlagValue) =>
         Effect.gen(function* () {
+          const flagValue = yield* resolveEffectiveFlagValue(rawFlagValue);
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }
@@ -118,8 +158,9 @@ export const legacyProjectRefLayer = Layer.effect(
             }),
           );
         }),
-      resolveOptional: (flagValue) =>
+      resolveOptional: (rawFlagValue) =>
         Effect.gen(function* () {
+          const flagValue = yield* resolveEffectiveFlagValue(rawFlagValue);
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return Option.some(flagValue.value);
           }
@@ -132,8 +173,9 @@ export const legacyProjectRefLayer = Layer.effect(
           // hard `resolve`/`loadProjectRef` paths, which surface it).
           return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
         }),
-      loadProjectRef: (flagValue) =>
+      loadProjectRef: (rawFlagValue) =>
         Effect.gen(function* () {
+          const flagValue = yield* resolveEffectiveFlagValue(rawFlagValue);
           // Resolution order: flag → env → ref file → hard "not linked"
           // failure, with format validation, and NO interactive prompt.
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {

@@ -2,7 +2,10 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
-import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
+import {
+  legacyResolveRemoteFlag,
+  legacyResolveYesWithProjectEnv,
+} from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -71,6 +74,18 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
         new LegacyDbPushTargetFlagsError({
           message:
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
+    // Same rationale as the --project-ref guard above: `--remote` only ever
+    // resolves a linked-project ref, so it's meaningless on --local/--db-url.
+    const remoteFlag = yield* legacyResolveRemoteFlag;
+    if (Option.isSome(remoteFlag) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbPushTargetFlagsError({
+          message:
+            "--remote only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         }),
       );
     }

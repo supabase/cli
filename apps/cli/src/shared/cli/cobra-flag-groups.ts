@@ -118,6 +118,7 @@ export const PERSISTENT_VALUE_FLAG_NAMES: ReadonlySet<string> = new Set([
   "dns-resolver",
   "agent",
   "output-format",
+  "remote",
 ]);
 
 /**

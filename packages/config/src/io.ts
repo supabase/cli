@@ -869,7 +869,14 @@ const resolveSaveFormat = Effect.fnUntraced(function* (
   return "json" as const;
 });
 
-function writeFileAtomic(
+/**
+ * Writes `content` to `filePath` via a same-directory tmp file + rename, so a
+ * crash mid-write never leaves `filePath` partially written. Exported for
+ * `remotes.ts`, which needs the identical atomicity guarantee for its
+ * append-only TOML / structural JSON registry edits without going through
+ * `saveProjectConfig`'s full schema re-serialize.
+ */
+export function writeFileAtomic(
   filePath: string,
   content: string,
 ): Effect.Effect<void, never, FileSystem.FileSystem> {

@@ -39,6 +39,11 @@ describe("extractCommandPath", () => {
     ).toEqual(["functions", "serve"]);
   });
 
+  // Without this, `--remote staging db push` would wrongly resolve "staging" as command path.
+  it("skips --remote and its value", () => {
+    expect(extractCommandPath(["--remote", "staging", "db", "push"])).toEqual(["db", "push"]);
+  });
+
   it("treats --flag=value as a single token", () => {
     expect(extractCommandPath(["--output-format=json", "functions", "serve"])).toEqual([
       "functions",

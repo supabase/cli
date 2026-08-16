@@ -1004,6 +1004,11 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   MissingProjectConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
+  RemoteNameInvalidError: () => actionability.invalidInput,
+  RemoteRefInvalidError: () => actionability.invalidInput,
+  RemoteNameConflictError: () => actionability.invalidConfig,
+  RemoteNotFoundError: () => actionability.provideFlags,
+  RemoteBlockNotRemovableError: () => actionability.invalidConfig,
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.

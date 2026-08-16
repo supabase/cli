@@ -11,6 +11,7 @@ import {
   LegacyNetworkIdFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
+  LegacyRemoteFlag,
   LegacyWorkdirFlag,
   LegacyYesFlag,
   legacyGlobalFlagValues,
@@ -30,6 +31,7 @@ describe("legacyGlobalFlagValues", () => {
         Layer.succeed(LegacyNetworkIdFlag, Option.some("my-network")),
         Layer.succeed(LegacyOutputFlag, Option.some("json" as const)),
         Layer.succeed(LegacyProfileFlag, "custom-profile"),
+        Layer.succeed(LegacyRemoteFlag, Option.some("staging")),
         Layer.succeed(LegacyWorkdirFlag, Option.some("/tmp/project")),
         Layer.succeed(LegacyYesFlag, true),
       );
@@ -53,6 +55,7 @@ describe("legacyGlobalFlagValues", () => {
               "network-id": Option.some("my-network"),
               output: Option.some("json"),
               profile: "custom-profile",
+              remote: Option.some("staging"),
               workdir: Option.some("/tmp/project"),
               yes: true,
             });

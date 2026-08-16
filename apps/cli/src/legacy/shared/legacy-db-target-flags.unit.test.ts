@@ -8,6 +8,12 @@ import {
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "./legacy-db-target-flags.ts";
 
+describe("VALUE_CONSUMING_LONG_FLAGS", () => {
+  it("includes remote", () => {
+    expect(VALUE_CONSUMING_LONG_FLAGS.has("remote")).toBe(true);
+  });
+});
+
 describe("resolveLegacyDbTargetFlags", () => {
   it("returns empty setFlags and undefined connType when no args", () => {
     const result = resolveLegacyDbTargetFlags([]);

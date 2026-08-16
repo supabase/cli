@@ -3,6 +3,7 @@ import { StateManager, projectStateManagerPathsFromRoot } from "@supabase/stack/
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
+import { resolveEffectiveProjectRefFlag } from "../../config/resolve-project-ref.ts";
 import {
   ProjectLinkRemote,
   formatLinkedProjectLabel,
@@ -43,8 +44,9 @@ const promptForAccessibleProject = Effect.fnUntraced(function* () {
   );
 });
 
-const chooseProjectRef = Effect.fnUntraced(function* (flagProjectRef: Option.Option<string>) {
+const chooseProjectRef = Effect.fnUntraced(function* (rawFlagProjectRef: Option.Option<string>) {
   const output = yield* Output;
+  const flagProjectRef = yield* resolveEffectiveProjectRefFlag(rawFlagProjectRef);
 
   if (Option.isSome(flagProjectRef)) {
     return flagProjectRef.value.trim();

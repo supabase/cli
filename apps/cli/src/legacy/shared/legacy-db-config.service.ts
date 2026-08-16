@@ -24,6 +24,18 @@ import type {
   LegacyDbConfigUnbanStatusError,
 } from "./legacy-db-config.errors.ts";
 import type { LegacyDbConfigFlags, LegacyResolvedDbConfig } from "./legacy-db-config.types.ts";
+import type {
+  DuplicateRemoteProjectIdError,
+  InvalidRemoteProjectIdError,
+  ProjectConfigParseError,
+  ProjectEnvParseError,
+} from "@supabase/config";
+import type { PlatformError } from "effect/PlatformError";
+import type {
+  NoProjectConfigError,
+  RemoteFlagConflictError,
+  UnknownRemoteError,
+} from "../../shared/remotes/remotes.errors.ts";
 
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type LegacyDbConfigError =
@@ -54,7 +66,17 @@ export type LegacyDbConfigError =
   | LegacyPlatformApiFactoryError
   // The lazy linked runtime rebuilds `legacyCliConfigLayer`, whose strict
   // profile resolution can fail inside the resolver effect the same way.
-  | LegacyProfileLoadError;
+  | LegacyProfileLoadError
+  // `--remote`/`SUPABASE_REMOTE`, resolved centrally ahead of every
+  // `LegacyProjectRefResolver` method (`legacy-project-ref.layer.ts`).
+  | RemoteFlagConflictError
+  | UnknownRemoteError
+  | NoProjectConfigError
+  | DuplicateRemoteProjectIdError
+  | InvalidRemoteProjectIdError
+  | ProjectConfigParseError
+  | ProjectEnvParseError
+  | PlatformError;
 
 // The `--linked` path builds a lazy Management API runtime (so `--local` /
 // `--db-url` never resolve an access token) and provides ALL of its own

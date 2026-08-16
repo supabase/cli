@@ -15,12 +15,12 @@ import {
   ProjectNotLinkedError,
   type ProjectLinkStateValue,
 } from "../../../config/project-link-state.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import {
   emptyEnv,
   mockOutput,
+  mockProjectHome,
   mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
@@ -294,6 +294,7 @@ function setup(
     childLayer?: ReturnType<typeof mockChildProcessSpawner>["layer"];
   } = {},
 ) {
+  const projectRoot = opts.projectRoot ?? cwd;
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
   const api = mockDownloadApi(opts);
   const proxy = mockLegacyGoProxy();
@@ -304,7 +305,7 @@ function setup(
     proxy.layer,
     mockRuntimeInfo({ cwd }),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
-    mockProjectHome(opts.projectRoot ?? cwd),
+    mockProjectHome({ projectRoot }),
     Stdio.layerTest({
       args: Effect.succeed(opts.rawArgs ?? ["functions", "download"]),
     }),
@@ -339,26 +340,6 @@ function mockLegacyGoProxy() {
       return captureCalls;
     },
   };
-}
-
-function mockProjectHome(projectRoot: string) {
-  const projectHomeDir = join(projectRoot, ".supabase");
-  return Layer.succeed(
-    ProjectHome,
-    ProjectHome.of({
-      projectRoot,
-      supabaseDir: join(projectRoot, "supabase"),
-      projectHomeDir,
-      projectLinkPath: join(projectHomeDir, "project.json"),
-      projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-      ensureProjectHomeDir: Effect.void,
-      stackDir: (name) => join(projectHomeDir, "stacks", name),
-      stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-      stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-      stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-      stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
-    }),
-  );
 }
 
 describe("functions download", () => {

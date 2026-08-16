@@ -16,7 +16,6 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
 import type { ProjectLinkStateValue } from "../../../config/project-link-state.service.ts";
 import {
   ConflictingFunctionDeployFlagsError,
@@ -24,6 +23,7 @@ import {
 } from "../../../../shared/functions/deploy.errors.ts";
 import {
   mockOutput,
+  mockProjectHome,
   mockProjectLinkState,
   mockRuntimeInfo,
   mockStdin,
@@ -134,26 +134,6 @@ function cliConfigLayer() {
       telemetryDebug: Option.none(),
       telemetryDisabled: Option.none(),
       doNotTrack: Option.none(),
-    }),
-  );
-}
-
-function mockProjectHome(projectRoot: string) {
-  const projectHomeDir = join(projectRoot, ".supabase");
-  return Layer.succeed(
-    ProjectHome,
-    ProjectHome.of({
-      projectRoot,
-      supabaseDir: join(projectRoot, "supabase"),
-      projectHomeDir,
-      projectLinkPath: join(projectHomeDir, "project.json"),
-      projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-      ensureProjectHomeDir: Effect.void,
-      stackDir: (name) => join(projectHomeDir, "stacks", name),
-      stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-      stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-      stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-      stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
     }),
   );
 }
@@ -457,6 +437,7 @@ function setup(
     readonly stdinInput?: string;
   } = {},
 ) {
+  const projectRoot = opts.projectRoot ?? cwd;
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
   const api = mockDeployApi(opts.api);
   const layer = Layer.mergeAll(
@@ -465,7 +446,7 @@ function setup(
     api.layer,
     cliConfigLayer(),
     mockRuntimeInfo({ cwd }),
-    mockProjectHome(opts.projectRoot ?? cwd),
+    mockProjectHome({ projectRoot }),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
     Stdio.layerTest({
       args: Effect.succeed(opts.rawArgs ?? ["functions", "deploy"]),

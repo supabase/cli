@@ -27,6 +27,7 @@ import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
+  LegacyRemoteFlag,
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -89,6 +90,8 @@ interface SetupOpts {
   readonly pipedAnswers?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly experimental?: boolean;
+  // `--remote <name>` global flag value (T11: db pull --experimental reject matrix).
+  readonly remoteFlag?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly resolvedRef?: string;
   // Fail the first edge-runtime run with this message (the second succeeds with
@@ -327,6 +330,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(
+      LegacyRemoteFlag,
+      opts.remoteFlag === undefined ? Option.none() : Option.some(opts.remoteFlag),
+    ),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
@@ -502,6 +509,21 @@ describe("legacy db pull", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain(
         "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+      );
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.proxyCaptureCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --remote combined with --experimental before delegating", () => {
+    // Same rationale as the --project-ref guard above (V19): `--remote` is
+    // TS-only and the delegated Go child re-resolves its own linked ref.
+    const s = setup(tmp.current, { experimental: true, remoteFlag: "staging" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({})).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--remote is not supported with the --experimental structured-dump pull; use --declarative instead",
       );
       expect(s.proxyCalls).toEqual([]);
       expect(s.proxyCaptureCalls).toEqual([]);

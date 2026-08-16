@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
+import { OutputFormatFlag, RemoteFlag } from "../../shared/cli/global-flags.ts";
 import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
 import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
@@ -15,6 +15,7 @@ import { loginCommand } from "../commands/login/login.command.ts";
 import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { logsCommand } from "../commands/logs/logs.command.ts";
 import { apiCommand } from "../commands/platform/api.command.ts";
+import { remotesCommand } from "../commands/remotes/remotes.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
 import { startCommand } from "../commands/start/start.command.ts";
 import { statusCommand } from "../commands/status/status.command.ts";
@@ -49,6 +50,7 @@ export const nextRoot = Command.make("supabase").pipe(
     statusCommand,
     logsCommand,
     apiCommand,
+    remotesCommand,
   ]),
   Command.provide(
     Layer.unwrap(
@@ -67,5 +69,5 @@ export const nextRoot = Command.make("supabase").pipe(
       }),
     ),
   ),
-  Command.withGlobalFlags([OutputFormatFlag]),
+  Command.withGlobalFlags([OutputFormatFlag, RemoteFlag]),
 );

@@ -55,6 +55,7 @@ const globalFlagsWithValues = new Set([
   "--network-id",
   "--dns-resolver",
   "--agent",
+  "--remote",
 ]);
 
 // Commands that run their own foreground signal loop (serve/start daemons) and must

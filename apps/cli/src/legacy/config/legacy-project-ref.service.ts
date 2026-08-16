@@ -1,6 +1,18 @@
 import type { Effect, Option } from "effect";
 import { Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
+import type {
+  DuplicateRemoteProjectIdError,
+  InvalidRemoteProjectIdError,
+  ProjectConfigParseError,
+  ProjectEnvParseError,
+} from "@supabase/config";
+import type {
+  NoProjectConfigError,
+  RemoteFlagConflictError,
+  UnknownRemoteError,
+} from "../../shared/remotes/remotes.errors.ts";
 import type { LegacyProjectRefReadError } from "../shared/legacy-temp-paths.ts";
 import type {
   LegacyInvalidProjectRefError,
@@ -8,12 +20,35 @@ import type {
   LegacyProjectRefRequiredError,
 } from "./legacy-project-ref.errors.ts";
 
+/**
+ * Every resolution method's error channel additionally carries the
+ * `--remote`/`SUPABASE_REMOTE` errors — resolved centrally, ahead of the
+ * method's own flag-value precedence, by `legacy-project-ref.layer.ts`. See
+ * that file's `resolveEffectiveFlagValue` for why this lives in exactly one
+ * place instead of on all leaf commands. The `@supabase/config` pair is
+ * `listRemotes`'s own static error surface — never actually raised on the default,
+ * non-`goViperCompat` load path this seam uses, but part of the function's
+ * declared type regardless of the runtime option value.
+ */
+type LegacyRemoteResolutionError =
+  | RemoteFlagConflictError
+  | UnknownRemoteError
+  | NoProjectConfigError
+  | DuplicateRemoteProjectIdError
+  | InvalidRemoteProjectIdError
+  | ProjectConfigParseError
+  | ProjectEnvParseError
+  | PlatformError;
+
 interface LegacyProjectRefResolverShape {
   readonly resolve: (
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
     string,
-    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefReadError,
+    | LegacyProjectNotLinkedError
+    | LegacyInvalidProjectRefError
+    | LegacyProjectRefReadError
+    | LegacyRemoteResolutionError,
     never
   >;
   /**
@@ -30,7 +65,10 @@ interface LegacyProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
     string,
-    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefRequiredError,
+    | LegacyProjectNotLinkedError
+    | LegacyInvalidProjectRefError
+    | LegacyProjectRefRequiredError
+    | LegacyRemoteResolutionError,
     never
   >;
   /**
@@ -49,7 +87,7 @@ interface LegacyProjectRefResolverShape {
    */
   readonly resolveOptional: (
     flagValue: Option.Option<string>,
-  ) => Effect.Effect<Option.Option<string>, never, never>;
+  ) => Effect.Effect<Option.Option<string>, LegacyRemoteResolutionError, never>;
   /**
    * Non-prompting resolution chain (flag -> `cliConfig.projectId` -> ref file)
    * that **fails hard** with `LegacyProjectNotLinkedError` when nothing
@@ -66,7 +104,10 @@ interface LegacyProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<
     string,
-    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefReadError,
+    | LegacyProjectNotLinkedError
+    | LegacyInvalidProjectRefError
+    | LegacyProjectRefReadError
+    | LegacyRemoteResolutionError,
     never
   >;
   /**

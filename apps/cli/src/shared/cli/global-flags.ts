@@ -1,3 +1,4 @@
+import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 /**
@@ -18,3 +19,23 @@ export const OutputFormatFlag = GlobalFlag.setting("output-format")({
     Flag.optional,
   ),
 });
+
+/**
+ * `next`-shell counterpart of `LegacyRemoteFlag` same CLI flag name and semantics,
+ * but a distinct `GlobalFlag.setting` instance because `legacy/` and `next/`
+ * command trees are fully isolated and each registers its own global-flag set via
+ * `Command.withGlobalFlags`. Wired into `next/config/resolve-project-ref.ts`.
+ */
+export const RemoteFlag = GlobalFlag.setting("remote")({
+  flag: Flag.string("remote").pipe(
+    Flag.withDescription("target the named [remotes.<name>] entry from supabase/config.toml"),
+    Flag.optional,
+  ),
+});
+
+/**
+ * `RemoteFlag`, read via `Effect.serviceOption` so a caller that hasn't
+ * wired the global-flag context gets `None` instead of a missing-service defect.
+ * Production always provides it through `Command.withGlobalFlags` at the CLI root.
+ */
+export const resolveRemoteFlag = Effect.map(Effect.serviceOption(RemoteFlag), Option.flatten);

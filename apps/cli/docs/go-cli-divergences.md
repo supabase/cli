@@ -10,13 +10,14 @@ something the old Go CLI didn't — it is not a compatibility promise.
 
 These commands exist in the TS CLI today but have no direct top-level equivalent in the old Go CLI reference.
 
-| TS command        | TS path                                                                                                            | Notes                                                                                                                                                                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`             | `planned`                                                                                                          | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges.        |
-| `logs`            | [`../src/next/commands/logs/logs.command.ts`](../src/next/commands/logs/logs.command.ts)                           | Streams local stack logs. No top-level `logs` command exists in the old Go CLI reference.                                                                                                     |
-| `api`             | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                     | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`. |
-| `stack`           | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                               | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.               |
-| `branches switch` | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts) | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                 |
+| TS command                  | TS path                                                                                                                                                                                                        | Notes                                                                                                                                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`                       | `planned`                                                                                                                                                                                                      | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges.                                  |
+| `logs`                      | [`../src/next/commands/logs/logs.command.ts`](../src/next/commands/logs/logs.command.ts)                                                                                                                       | Streams local stack logs. No top-level `logs` command exists in the old Go CLI reference.                                                                                                                               |
+| `api`                       | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                                                                                                                 | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`.                           |
+| `stack`                     | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                                                                                                                           | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.                                         |
+| `branches switch`           | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts)                                                                                             | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                                           |
+| `remotes {list,add,remove}` | [`../src/legacy/commands/remotes/remotes.command.ts`](../src/legacy/commands/remotes/remotes.command.ts), [`../src/next/commands/remotes/remotes.command.ts`](../src/next/commands/remotes/remotes.command.ts) | TS-only, no Go equivalent. CRUD over the existing `[remotes.<name>]` config block (`packages/config`'s `RemotesSchema` — previously write-only via hand-editing `config.toml`). Shared handlers, native in both shells. |
 
 ## Flag divergences from the Go reference
 
@@ -55,6 +56,20 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `POST /v1/projects` accepts them (restored via `packages/api/scripts/openapi-overrides.json`,
   CLI-2180). Both flags are hidden and gated behind `--experimental` (or `SUPABASE_EXPERIMENTAL`)
   until PROD-548 exposes them officially; omitting them matches Go exactly.
+- Both shells have a TS-only GLOBAL `--remote <name>` flag (`SUPABASE_REMOTE`
+  env fallback), no Go equivalent. Resolves the named `[remotes.<name>]`
+  entry's `project_id` and feeds it into the existing ref-resolution chain at
+  the same point an explicit `--project-ref` would — legacy: all 4
+  `LegacyProjectRefResolver` methods, from one central injection in
+  `legacy-project-ref.layer.ts`, so every command that resolves a linked ref
+  gets it without a per-command flag edit; next: `resolveProjectRef`/`link`'s
+  `chooseProjectRef` via `next/config/resolve-project-ref.ts`. Exits nonzero when
+  combined with an explicit `--project-ref`, with `--local`/`--db-url` on `db push`,
+  or with the two remaining Go-delegate paths (`db pull --experimental`,
+  `db diff --use-pg-schema`) — those delegated children re-resolve their own
+  ref and know nothing of `--remote`. Prints `Target: remote "<name>" (<ref>)`
+  on stderr before any mutation/network write. Never persists a "current
+  remote" — resolved fresh on every invocation.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
   `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
   project ref shape is always treated as a ref; any other non-empty value is resolved to its

@@ -874,7 +874,7 @@ export function mockProjectContext(
   );
 }
 
-function mockProjectHome(
+export function mockProjectHome(
   opts: {
     projectRoot?: string;
     supabaseDir?: string;

@@ -11,6 +11,14 @@ import {
 
 const COMMAND_PATH = ["functions", "deploy"] as const;
 
+describe("PERSISTENT_VALUE_FLAG_NAMES", () => {
+  // `--remote` is a value-taking global flag and must be scanned like `--workdir`/`--project-ref`,
+  // or a bare `--remote staging` would have its value mistaken for a positional operand.
+  test("includes remote", () => {
+    expect(PERSISTENT_VALUE_FLAG_NAMES.has("remote")).toBe(true);
+  });
+});
+
 describe("hasExplicitLongFlag", () => {
   test("finds a bare flag after the command path", () => {
     expect(hasExplicitLongFlag(["functions", "deploy", "--use-api"], COMMAND_PATH, "use-api")).toBe(

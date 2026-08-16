@@ -6,6 +6,7 @@ import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
   legacyResolveExperimentalWithProjectEnv,
+  legacyResolveRemoteFlag,
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -293,6 +294,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         new LegacyDbPullTargetFlagsError({
           message:
             "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+        }),
+      );
+    }
+
+    // Same rationale as the --project-ref guard just above: the delegated Go
+    // child re-resolves its own linked ref and knows nothing of `--remote`
+    // (TS-only, no Go equivalent).
+    const remoteFlag = yield* legacyResolveRemoteFlag;
+    if (Option.isSome(remoteFlag) && delegatesExperimentalPull) {
+      return yield* Effect.fail(
+        new LegacyDbPullTargetFlagsError({
+          message:
+            "--remote is not supported with the --experimental structured-dump pull; use --declarative instead",
         }),
       );
     }
