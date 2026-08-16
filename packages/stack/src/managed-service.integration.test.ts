@@ -2270,253 +2270,257 @@ describe("managed repository and lifecycle", () => {
     await service.close();
   });
 
-  it("drives every ports.* contract fixture through the Promise lifecycle surface", async () => {
-    for (const adapter of ["in-memory", "bun-sqlite"] as const) {
-      for (const fixtureId of managedPortFixtureIds) {
-        const root = makeRoot();
-        const service =
-          adapter === "in-memory"
-            ? await makeInMemoryService(root)
-            : await makePersistentService(root);
-        const apiPort = await freeTcpPort();
-        const dbPort =
-          fixtureId === "ports.env-and-remote-values-remain-exact"
-            ? await freeTcpPort()
-            : apiPort + 1;
-        const workspace = makeWorkspace(root, "workspace");
-        const initialize = async () => ({ processIds: {}, containerIds: {} });
-        const document = portFixtureDocument(fixtureId, apiPort, dbPort);
-        try {
-          if (fixtureId === "ports.running-legacy-source-fails-before-allocation") {
-            await expect(
-              service.resolveStack({
-                workspacePath: workspace,
-                operation: "start",
-                portDocument: document,
-                initialize,
-                legacyPortConflict: { key: "api.port", port: apiPort, ownerId: "legacy" },
-              }),
-            ).rejects.toBeInstanceOf(ManagedLegacyPortConflictError);
-            expect(await service.listStacks()).toEqual([]);
-            continue;
-          }
-
-          if (fixtureId === "ports.explicit-port-conflict-fails") {
-            const held = await holdTcpPort(apiPort);
-            try {
-              await expect(
-                service.resolveStack({
-                  workspacePath: workspace,
-                  operation: "start",
-                  portDocument: document,
-                  initialize,
-                }),
-              ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
-              expect(await service.listStacks()).toEqual([]);
-            } finally {
-              await new Promise<void>((resolve) => held.close(() => resolve()));
-            }
-            continue;
-          }
-
-          if (fixtureId === "ports.explicit-port-conflict-with-sibling-fails") {
-            await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: document,
-              initialize,
-            });
-            await expect(
-              service.resolveStack({
-                workspacePath: makeWorkspace(root, "sibling"),
-                operation: "start",
-                portDocument: document,
-                initialize,
-              }),
-            ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
-            expect(await service.listStacks()).toHaveLength(1);
-            continue;
-          }
-
-          if (fixtureId === "ports.later-sticky-port-collision-fails") {
-            const created = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: document,
-              initialize,
-            });
-            const stickyPort = created.stack.ports[0]?.port;
-            if (stickyPort === undefined)
-              throw new Error("Automatic fixture did not persist a port");
-            await service.updateStack(created.stack.id, { lifecycle: "stopped" });
-            const held = await holdTcpPort(stickyPort);
-            try {
-              await expect(
-                service.resolveStack({
-                  workspacePath: workspace,
-                  operation: "start",
-                  portDocument: document,
-                  initialize,
-                }),
-              ).rejects.toBeInstanceOf(ManagedStickyPortOccupiedError);
-            } finally {
-              await new Promise<void>((resolve) => held.close(() => resolve()));
-            }
-            continue;
-          }
-
-          if (fixtureId === "ports.config-change-on-running-stack-reports-drift") {
-            const created = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: portFixtureDocument(fixtureId, apiPort),
-              initialize,
-            });
-            const before = {
-              stack: await service.inspectStack(created.stack.id),
-              operations: runRepo(service.repository.listActiveOperations()),
-              claims: runRepo(service.repository.listIdentityClaims()),
-            };
-            let initialized = 0;
-            const changedPort = await freeTcpPort();
-            const resolved = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: portFixtureDocument(fixtureId, changedPort),
-              initialize: async () => {
-                initialized += 1;
-                return initialize();
-              },
-            });
-            expect(resolved.outcome).toBe("reuse");
-            expect(resolved.portDrift).toEqual([
-              expect.objectContaining({
-                key: "api.port",
-                actualPort: apiPort,
-                configuredPort: changedPort,
-              }),
-            ]);
-            expect(initialized).toBe(0);
-            expect(await service.inspectStack(created.stack.id)).toEqual(before.stack);
-            expect(runRepo(service.repository.listActiveOperations())).toEqual(before.operations);
-            expect(runRepo(service.repository.listIdentityClaims())).toEqual(before.claims);
-            continue;
-          }
-
-          if (fixtureId === "ports.config-change-on-stopped-stack-applies") {
-            const first = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: portFixtureDocument(fixtureId, apiPort),
-              initialize,
-            });
-            await service.updateStack(first.stack.id, { lifecycle: "stopped" });
-            const changedPort = await freeTcpPort();
-            const changed = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: portFixtureDocument(fixtureId, changedPort),
-              initialize,
-            });
-            expect(changed.stack.ports).toEqual([
-              { key: "api.port", port: changedPort, intent: "exact" },
-            ]);
-            continue;
-          }
-
-          if (fixtureId === "ports.removing-exact-key-keeps-current-port-sticky") {
-            const first = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: document,
-              initialize,
-            });
-            await service.updateStack(first.stack.id, { lifecycle: "stopped" });
-            const removed = await service.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument: { activeFields: [], document: {} },
-              initialize,
-            });
-            expect(removed.stack.ports).toEqual([
-              { key: "api.port", port: apiPort, intent: "automatic" },
-            ]);
-            continue;
-          }
-
-          const started = await service.resolveStack({
+  const runManagedPortFixture = async (
+    adapter: "in-memory" | "bun-sqlite",
+    fixtureId: (typeof managedPortFixtureIds)[number],
+  ): Promise<void> => {
+    const root = makeRoot();
+    const service =
+      adapter === "in-memory" ? await makeInMemoryService(root) : await makePersistentService(root);
+    const apiPort = await freeTcpPort();
+    const dbPort =
+      fixtureId === "ports.env-and-remote-values-remain-exact" ? await freeTcpPort() : apiPort + 1;
+    const workspace = makeWorkspace(root, "workspace");
+    const initialize = async () => ({ processIds: {}, containerIds: {} });
+    const document = portFixtureDocument(fixtureId, apiPort, dbPort);
+    try {
+      if (fixtureId === "ports.running-legacy-source-fails-before-allocation") {
+        await expect(
+          service.resolveStack({
             workspacePath: workspace,
             operation: "start",
             portDocument: document,
             initialize,
-          });
-          expect(started.state).toBe("running");
-          expect(started.stack.lifecycle).toBe("running");
-          expect(started.stack.ports.length).toBeGreaterThan(0);
-          if (fixtureId === "ports.exact-default-value-differs-from-omitted-default") {
-            expect(started.stack.ports).toEqual([
-              { key: "api.port", port: apiPort, intent: "exact" },
-              expect.objectContaining({ key: "db.port", intent: "automatic" }),
-            ]);
-          }
-          if (fixtureId === "ports.env-and-remote-values-remain-exact") {
-            expect(started.stack.ports).toEqual([
-              { key: "api.port", port: apiPort, intent: "exact" },
-              { key: "db.port", port: dbPort, intent: "exact" },
-            ]);
-          }
-          if (
-            fixtureId === "ports.new-target-allocates-and-persists-omitted-ports" ||
-            fixtureId === "ports.sibling-targets-allocate-independent-ports" ||
-            fixtureId === "ports.sticky-ports-reuse-on-return"
-          ) {
-            expect(
-              started.stack.ports.every((assignment) => assignment.intent === "automatic"),
-            ).toBe(true);
-          }
-          if (fixtureId === "ports.sticky-ports-reuse-on-return") {
-            const stickyPort = started.stack.ports[0]?.port;
-            await service.updateStack(started.stack.id, { lifecycle: "stopped" });
-            const returned = await service.resolveStack({
+            legacyPortConflict: { key: "api.port", port: apiPort, ownerId: "legacy" },
+          }),
+        ).rejects.toBeInstanceOf(ManagedLegacyPortConflictError);
+        expect(await service.listStacks()).toEqual([]);
+        return;
+      }
+
+      if (fixtureId === "ports.explicit-port-conflict-fails") {
+        const held = await holdTcpPort(apiPort);
+        try {
+          await expect(
+            service.resolveStack({
               workspacePath: workspace,
               operation: "start",
               portDocument: document,
               initialize,
-            });
-            expect(returned.stack.ports[0]?.port).toBe(stickyPort);
-          }
-          if (fixtureId === "ports.sibling-targets-allocate-independent-ports") {
-            const sibling = await service.resolveStack({
-              workspacePath: makeWorkspace(root, "sibling"),
+            }),
+          ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
+          expect(await service.listStacks()).toEqual([]);
+        } finally {
+          await new Promise<void>((resolve) => held.close(() => resolve()));
+        }
+        return;
+      }
+
+      if (fixtureId === "ports.explicit-port-conflict-with-sibling-fails") {
+        await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await expect(
+          service.resolveStack({
+            workspacePath: makeWorkspace(root, "sibling"),
+            operation: "start",
+            portDocument: document,
+            initialize,
+          }),
+        ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
+        expect(await service.listStacks()).toHaveLength(1);
+        return;
+      }
+
+      if (fixtureId === "ports.later-sticky-port-collision-fails") {
+        const created = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        const stickyPort = created.stack.ports[0]?.port;
+        if (stickyPort === undefined) throw new Error("Automatic fixture did not persist a port");
+        await service.updateStack(created.stack.id, { lifecycle: "stopped" });
+        const held = await holdTcpPort(stickyPort);
+        try {
+          await expect(
+            service.resolveStack({
+              workspacePath: workspace,
               operation: "start",
               portDocument: document,
               initialize,
-            });
-            expect(sibling.stack.ports[0]?.port).not.toBe(started.stack.ports[0]?.port);
-          }
-          if (fixtureId === "ports.new-target-allocates-and-persists-omitted-ports") {
-            const failed = await service
-              .resolveStack({
-                workspacePath: makeWorkspace(root, "failed-runtime"),
-                operation: "start",
-                portDocument: document,
-                initialize: async () => {
-                  throw new ManagedRuntimeStartError({ cause: "fixture runtime failure" });
-                },
-              })
-              .catch((error: unknown) => error);
-            expect(failed).toBeInstanceOf(ManagedRuntimeStartError);
-            const failedStack = (await service.listStacks()).find(
-              (stack) => stack.lifecycle === "failed",
-            );
-            expect(failedStack?.ports.length).toBe(2);
-          }
+            }),
+          ).rejects.toBeInstanceOf(ManagedStickyPortOccupiedError);
         } finally {
-          await service.close();
+          await new Promise<void>((resolve) => held.close(() => resolve()));
         }
+        return;
       }
+
+      if (fixtureId === "ports.config-change-on-running-stack-reports-drift") {
+        const created = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: portFixtureDocument(fixtureId, apiPort),
+          initialize,
+        });
+        const before = {
+          stack: await service.inspectStack(created.stack.id),
+          operations: runRepo(service.repository.listActiveOperations()),
+          claims: runRepo(service.repository.listIdentityClaims()),
+        };
+        let initialized = 0;
+        const changedPort = await freeTcpPort();
+        const resolved = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: portFixtureDocument(fixtureId, changedPort),
+          initialize: async () => {
+            initialized += 1;
+            return initialize();
+          },
+        });
+        expect(resolved.outcome).toBe("reuse");
+        expect(resolved.portDrift).toEqual([
+          expect.objectContaining({
+            key: "api.port",
+            actualPort: apiPort,
+            configuredPort: changedPort,
+          }),
+        ]);
+        expect(initialized).toBe(0);
+        expect(await service.inspectStack(created.stack.id)).toEqual(before.stack);
+        expect(runRepo(service.repository.listActiveOperations())).toEqual(before.operations);
+        expect(runRepo(service.repository.listIdentityClaims())).toEqual(before.claims);
+        return;
+      }
+
+      if (fixtureId === "ports.config-change-on-stopped-stack-applies") {
+        const first = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: portFixtureDocument(fixtureId, apiPort),
+          initialize,
+        });
+        await service.updateStack(first.stack.id, { lifecycle: "stopped" });
+        const changedPort = await freeTcpPort();
+        const changed = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: portFixtureDocument(fixtureId, changedPort),
+          initialize,
+        });
+        expect(changed.stack.ports).toEqual([
+          { key: "api.port", port: changedPort, intent: "exact" },
+        ]);
+        return;
+      }
+
+      if (fixtureId === "ports.removing-exact-key-keeps-current-port-sticky") {
+        const first = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await service.updateStack(first.stack.id, { lifecycle: "stopped" });
+        const removed = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: { activeFields: [], document: {} },
+          initialize,
+        });
+        expect(removed.stack.ports).toEqual([
+          { key: "api.port", port: apiPort, intent: "automatic" },
+        ]);
+        return;
+      }
+
+      const started = await service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: document,
+        initialize,
+      });
+      expect(started.state).toBe("running");
+      expect(started.stack.lifecycle).toBe("running");
+      expect(started.stack.ports.length).toBeGreaterThan(0);
+      if (fixtureId === "ports.exact-default-value-differs-from-omitted-default") {
+        expect(started.stack.ports).toEqual([
+          { key: "api.port", port: apiPort, intent: "exact" },
+          expect.objectContaining({ key: "db.port", intent: "automatic" }),
+        ]);
+      }
+      if (fixtureId === "ports.env-and-remote-values-remain-exact") {
+        expect(started.stack.ports).toEqual([
+          { key: "api.port", port: apiPort, intent: "exact" },
+          { key: "db.port", port: dbPort, intent: "exact" },
+        ]);
+      }
+      if (
+        fixtureId === "ports.new-target-allocates-and-persists-omitted-ports" ||
+        fixtureId === "ports.sibling-targets-allocate-independent-ports" ||
+        fixtureId === "ports.sticky-ports-reuse-on-return"
+      ) {
+        expect(started.stack.ports.every((assignment) => assignment.intent === "automatic")).toBe(
+          true,
+        );
+      }
+      if (fixtureId === "ports.sticky-ports-reuse-on-return") {
+        const stickyPort = started.stack.ports[0]?.port;
+        await service.updateStack(started.stack.id, { lifecycle: "stopped" });
+        const returned = await service.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        expect(returned.stack.ports[0]?.port).toBe(stickyPort);
+      }
+      if (fixtureId === "ports.sibling-targets-allocate-independent-ports") {
+        const sibling = await service.resolveStack({
+          workspacePath: makeWorkspace(root, "sibling"),
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        expect(sibling.stack.ports[0]?.port).not.toBe(started.stack.ports[0]?.port);
+      }
+      if (fixtureId === "ports.new-target-allocates-and-persists-omitted-ports") {
+        const failed = await service
+          .resolveStack({
+            workspacePath: makeWorkspace(root, "failed-runtime"),
+            operation: "start",
+            portDocument: document,
+            initialize: async () => {
+              throw new ManagedRuntimeStartError({ cause: "fixture runtime failure" });
+            },
+          })
+          .catch((error: unknown) => error);
+        expect(failed).toBeInstanceOf(ManagedRuntimeStartError);
+        const failedStack = (await service.listStacks()).find(
+          (stack) => stack.lifecycle === "failed",
+        );
+        expect(failedStack?.ports.length).toBe(2);
+      }
+    } finally {
+      await service.close();
     }
-  }, 120_000);
+  };
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    for (const fixtureId of managedPortFixtureIds) {
+      it(
+        `${fixtureId} through ${adapter}`,
+        () => runManagedPortFixture(adapter, fixtureId),
+        15_000,
+      );
+    }
+  }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
     it(`allows failed-stack recovery and intent-only updates with ${adapter}`, async () => {
