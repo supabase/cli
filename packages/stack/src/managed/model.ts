@@ -542,6 +542,22 @@ export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAll
   readonly code = "MANAGED_PORT_ALLOCATION_FAILED" as const;
 }
 
+export class ManagedRuntimeStartError extends Data.TaggedError("ManagedRuntimeStartError")<{
+  readonly cause: unknown;
+}> {
+  readonly code = "MANAGED_RUNTIME_START_FAILED" as const;
+}
+
+export class ManagedLegacyPortConflictError extends Data.TaggedError(
+  "ManagedLegacyPortConflictError",
+)<{
+  readonly key: ConfigPortKey;
+  readonly port: number;
+  readonly ownerId?: string;
+}> {
+  readonly code = "LEGACY_SOURCE_RUNNING" as const;
+}
+
 export class ManagedRunningStackPortChangeError extends Data.TaggedError(
   "ManagedRunningStackPortChangeError",
 )<{
@@ -646,6 +662,8 @@ export type ManagedStackError =
   | ManagedStickyPortOccupiedError
   | ManagedPortClaimRaceError
   | ManagedPortAllocationError
+  | ManagedRuntimeStartError
+  | ManagedLegacyPortConflictError
   | ManagedPortReservationError
   | ManagedRunningStackPortChangeError
   | ManagedStackInitializationError
@@ -714,6 +732,8 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_STICKY_PORT_OCCUPIED",
   "MANAGED_PORT_CLAIM_RACE",
   "MANAGED_PORT_ALLOCATION_FAILED",
+  "MANAGED_RUNTIME_START_FAILED",
+  "LEGACY_SOURCE_RUNNING",
   "MANAGED_PORT_ALREADY_RESERVED",
   "MANAGED_RUNNING_STACK_PORT_CHANGE",
   "MANAGED_STACK_INITIALIZATION_FAILED",
@@ -756,6 +776,8 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_STICKY_PORT_OCCUPIED: "ManagedStickyPortOccupiedError",
   MANAGED_PORT_CLAIM_RACE: "ManagedPortClaimRaceError",
   MANAGED_PORT_ALLOCATION_FAILED: "ManagedPortAllocationError",
+  MANAGED_RUNTIME_START_FAILED: "ManagedRuntimeStartError",
+  LEGACY_SOURCE_RUNNING: "ManagedLegacyPortConflictError",
   MANAGED_PORT_ALREADY_RESERVED: "ManagedPortReservationError",
   MANAGED_RUNNING_STACK_PORT_CHANGE: "ManagedRunningStackPortChangeError",
   MANAGED_STACK_INITIALIZATION_FAILED: "ManagedStackInitializationError",

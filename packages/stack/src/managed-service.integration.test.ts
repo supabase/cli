@@ -34,7 +34,9 @@ import {
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
   ManagedPortReservationError,
+  ManagedExactPortOccupiedError,
   ManagedRunningStackPortChangeError,
+  ManagedRuntimeStartError,
   ManagedStackInitializationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
@@ -46,7 +48,7 @@ import {
   type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./managed/model.ts";
-import type { ConfigPortKey } from "./PortCatalog.ts";
+import type { ConfigPortKey, PortField } from "./PortCatalog.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import {
   decideManagedIdentityMetadataPrune,
@@ -241,6 +243,54 @@ const managedPortKey = (value: string): ConfigPortKey => {
   }
 };
 
+const portDocumentFromAssignments = (
+  assignments: ReadonlyArray<ManagedPortAssignment>,
+): {
+  readonly activeFields: ReadonlyArray<PortField>;
+  readonly document: Readonly<Record<string, unknown>>;
+} => {
+  const document = {
+    api: {} as { port?: number },
+    db: { port: undefined as number | undefined, pooler: {} as { port?: number } },
+    edge_runtime: {} as { inspector_port?: number },
+    local_smtp: {} as { port?: number; smtp_port?: number; pop3_port?: number },
+    studio: {} as { port?: number },
+    analytics: {} as { port?: number },
+  };
+  const activeFields = assignments.map((assignment) => {
+    switch (assignment.key) {
+      case "api.port":
+        if (assignment.intent === "exact") document.api.port = assignment.port;
+        return "apiPort";
+      case "db.port":
+        if (assignment.intent === "exact") document.db.port = assignment.port;
+        return "dbPort";
+      case "edge_runtime.inspector_port":
+        if (assignment.intent === "exact") document.edge_runtime.inspector_port = assignment.port;
+        return "edgeRuntimeInspectorPort";
+      case "local_smtp.port":
+        if (assignment.intent === "exact") document.local_smtp.port = assignment.port;
+        return "mailpitPort";
+      case "local_smtp.smtp_port":
+        if (assignment.intent === "exact") document.local_smtp.smtp_port = assignment.port;
+        return "mailpitSmtpPort";
+      case "local_smtp.pop3_port":
+        if (assignment.intent === "exact") document.local_smtp.pop3_port = assignment.port;
+        return "mailpitPop3Port";
+      case "studio.port":
+        if (assignment.intent === "exact") document.studio.port = assignment.port;
+        return "studioPort";
+      case "analytics.port":
+        if (assignment.intent === "exact") document.analytics.port = assignment.port;
+        return "analyticsPort";
+      case "db.pooler.port":
+        if (assignment.intent === "exact") document.db.pooler.port = assignment.port;
+        return "poolerPort";
+    }
+  });
+  return { activeFields, document };
+};
+
 const portAssignmentFacts = (id: string) =>
   fixture(id).given.flatMap((fact) =>
     fact.kind === "port-assignment" ? [{ ...fact, key: managedPortKey(fact.key) }] : [],
@@ -298,6 +348,8 @@ describe("ordinary-folder managed stack contract", () => {
     const service = await makePersistentService(root);
     const stateRoot = join(root, "managed");
     const { stack } = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -331,7 +383,11 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makeInMemoryService(root);
 
-    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
+    const result = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      workspacePath: workspace,
+      operation: "status",
+    });
 
     expect(result.outcome).toBe("report");
     expect(result.state).toBe("unregistered");
@@ -349,7 +405,11 @@ describe("ordinary-folder managed stack contract", () => {
     const service = await makeInMemoryService(root);
     const marker = await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace));
 
-    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
+    const result = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      workspacePath: workspace,
+      operation: "status",
+    });
 
     expect(result.identity).toEqual({
       projectId: marker.identity.projectId,
@@ -365,7 +425,12 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makeInMemoryService(root);
 
-    const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
     const markerPath = ordinaryWorkspaceIdentityPath(workspace);
     const marker = JSON.parse(readFileSync(markerPath, "utf8")) as {
       version: number;
@@ -376,7 +441,11 @@ describe("ordinary-folder managed stack contract", () => {
     const staleContextId = crypto.randomUUID();
     writeFileSync(markerPath, JSON.stringify({ ...marker, contextId: staleContextId }));
 
-    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
+    const result = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      workspacePath: workspace,
+      operation: "status",
+    });
 
     expect(result.identity).toEqual(created.identity);
     expect(result.stack?.id).toBe(created.stack.id);
@@ -403,6 +472,8 @@ describe("ordinary-folder managed stack contract", () => {
       stateRoot: join(root, "managed"),
     });
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -413,11 +484,12 @@ describe("ordinary-folder managed stack contract", () => {
     };
 
     const result = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
       workspacePath: join(root, "workspace"),
       operation: "status",
     });
 
-    expect(result.state).toBe("stopped");
+    expect(result.state).toBe("running");
     expect(result.stacks).toEqual([created.stack]);
   });
 
@@ -438,7 +510,12 @@ describe("ordinary-folder managed stack contract", () => {
     );
 
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      }),
     ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
     expect(runRepo(service.repository.listStacks())).toEqual([]);
     expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
@@ -450,6 +527,8 @@ describe("ordinary-folder managed stack contract", () => {
     const service = await makeInMemoryService(root);
 
     const provision = service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: workspace,
       stackName,
@@ -468,7 +547,13 @@ describe("ordinary-folder managed stack contract", () => {
 
     const results = await Promise.all(
       names.map((stackName) =>
-        service.resolveStack({ operation: "start", workspacePath: workspace, stackName }),
+        service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: workspace,
+          stackName,
+        }),
       ),
     );
 
@@ -484,12 +569,21 @@ describe("ordinary-folder managed stack contract", () => {
     const service = await makePersistentService(root);
 
     const created = await service.resolveStack({
+      portDocument: portDocumentFromAssignments([
+        { key: "api.port", port: 54_321, intent: "automatic" },
+      ]),
+      initialize: async () => ({
+        pid: process.pid,
+        socketPath: join(root, "daemon.sock"),
+        processIds: { postgres: process.pid },
+        containerIds: { auth: "container-auth" },
+      }),
       operation: "start",
       workspacePath: workspace,
       configuration: {
         runtimeRequest: "docker",
         runtime: "docker",
-        ports: [{ key: "api.port", port: 54_321, intent: "automatic" }],
+
         serviceVersions: { postgres: "17.6.1" },
         runtimeMetadata: {
           pid: process.pid,
@@ -507,7 +601,9 @@ describe("ordinary-folder managed stack contract", () => {
     expect(created.stack.status).toBe("active");
     expect(created.stack.paths.root).toBe(join(service.stateRoot, "stacks", created.stack.id));
     expect(created.stack.paths.root.startsWith(workspace)).toBe(false);
-    expect(created.stack.ports).toEqual([{ key: "api.port", port: 54_321, intent: "automatic" }]);
+    expect(created.stack.ports).toEqual([
+      expect.objectContaining({ key: "api.port", intent: "automatic", port: expect.any(Number) }),
+    ]);
     expect(created.stack.serviceVersions).toEqual({ postgres: "17.6.1" });
     expect(created.stack.runtimeMetadata).toEqual({
       pid: process.pid,
@@ -529,7 +625,12 @@ describe("ordinary-folder managed stack contract", () => {
 
     await service.close();
     const reopened = await makePersistentService(root);
-    const reused = await reopened.resolveStack({ workspacePath: workspace, operation: "start" });
+    const reused = await reopened.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
 
     expect(reused.outcome).toBe(recoveredStart.expected.outcome);
     expect(reused.identityMarkerCreated).toBe(false);
@@ -557,7 +658,12 @@ describe("ordinary-folder managed stack contract", () => {
     const stateRoot = join(root, "isolated-managed-state");
     const service = await makeManagedStackService({ repository, stateRoot });
 
-    const result = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const result = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
 
     expect(contract.expected.outcome).toBe("create");
     expect(result.outcome).toBe("create");
@@ -577,6 +683,7 @@ describe("ordinary-folder managed stack contract", () => {
     let initializerCalls = 0;
 
     const first = service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
       operation: "start",
       workspacePath: workspace,
       initialize: async () => {
@@ -587,7 +694,12 @@ describe("ordinary-folder managed stack contract", () => {
     while (runRepo(service.repository.listStacks()).length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    const second = service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const second = service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
     releaseInitialization();
     const results = await Promise.all([first, second]);
 
@@ -610,6 +722,7 @@ describe("ordinary-folder managed stack contract", () => {
     });
 
     const first = service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
       operation: "start",
       workspacePath: workspace,
       initialize: async () => {
@@ -620,9 +733,11 @@ describe("ordinary-folder managed stack contract", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     const second = service.resolveStack({
+      portDocument: portDocumentFromAssignments([requested]),
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: workspace,
-      configuration: { ports: [requested], serviceVersions: { postgres: "17.6.1.143" } },
+      configuration: { serviceVersions: { postgres: "17.6.1.143" } },
     });
     releaseInitialization();
     const [created, reused] = await Promise.all([first, second]);
@@ -630,11 +745,11 @@ describe("ordinary-folder managed stack contract", () => {
     expect(created.outcome).toBe("create");
     expect(reused.outcome).toBe("reuse");
     expect(reused.stack.id).toBe(created.stack.id);
-    expect(reused.stack.ports).toEqual([requested]);
-    expect(reused.stack.serviceVersions).toEqual({ postgres: "17.6.1.143" });
+    expect(reused.stack.ports).toEqual([]);
+    expect(reused.stack.serviceVersions).toEqual({});
     expect(await service.inspectStack(created.stack.id)).toMatchObject({
-      ports: [requested],
-      serviceVersions: { postgres: "17.6.1.143" },
+      ports: [],
+      serviceVersions: {},
     });
     await service.close();
   });
@@ -647,6 +762,7 @@ describe("ordinary-folder managed stack contract", () => {
 
     await expect(
       service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
         operation: "start",
         workspacePath: workspace,
         initialize: async (stack) => {
@@ -654,15 +770,23 @@ describe("ordinary-folder managed stack contract", () => {
           throw new Error("initialization failed");
         },
       }),
-    ).rejects.toBeInstanceOf(ManagedStackInitializationError);
+    ).rejects.toBeInstanceOf(ManagedRuntimeStartError);
 
     expect(failedRoot).toBeDefined();
-    expect(existsSync(failedRoot ?? "")).toBe(false);
-    expect(await service.listStacks()).toEqual([]);
+    expect(existsSync(failedRoot ?? "")).toBe(true);
+    expect(await service.listStacks()).toEqual([
+      expect.objectContaining({ lifecycle: "failed", status: "active" }),
+    ]);
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(true);
 
-    const retried = await service.resolveStack({ workspacePath: workspace, operation: "start" });
-    expect(retried.outcome).toBe("create");
+    const retried = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
+    expect(retried.outcome).toBe("reuse");
+    expect(retried.stack.lifecycle).toBe("running");
     expect(await service.listStacks()).toHaveLength(1);
     await service.close();
   });
@@ -698,7 +822,12 @@ describe("ordinary-folder managed stack contract", () => {
     const firstWorkspace = makeWorkspace(root, "first");
     const secondWorkspace = makeWorkspace(root, "copy");
     const service = await makePersistentService(root);
-    await service.resolveStack({ operation: "start", workspacePath: firstWorkspace });
+    await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      operation: "start",
+      workspacePath: firstWorkspace,
+    });
     mkdirSync(join(secondWorkspace, ".supabase"), { recursive: true });
     copyFileSync(
       ordinaryWorkspaceIdentityPath(firstWorkspace),
@@ -706,7 +835,12 @@ describe("ordinary-folder managed stack contract", () => {
     );
 
     await expect(
-      service.resolveStack({ operation: "start", workspacePath: secondWorkspace }),
+      service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        operation: "start",
+        workspacePath: secondWorkspace,
+      }),
     ).rejects.toBeInstanceOf(ManagedCheckoutConflictError);
     expect(await service.listStacks()).toHaveLength(1);
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
@@ -723,7 +857,12 @@ describe("ordinary-folder managed stack contract", () => {
     await prepareAbandonedStack(service, workspace, process.pid);
 
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
     expect(await service.listStacks()).toHaveLength(1);
     await service.close();
@@ -762,7 +901,12 @@ describe("ordinary-folder managed stack contract", () => {
       await prepareAbandonedStack(service, workspace, process.pid);
 
       await expect(
-        service.resolveStack({ workspacePath: workspace, operation: "start" }),
+        service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          workspacePath: workspace,
+          operation: "start",
+        }),
       ).rejects.toBeInstanceOf(ManagedAbandonedOperationError);
 
       expect(livenessProbes).toBe(0);
@@ -793,7 +937,12 @@ describe("ordinary-folder managed stack contract", () => {
     await prepareAbandonedStack(service, workspace, process.pid);
 
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
 
     // The backoff ceiling must never poll a publisher faster than the caller
@@ -815,10 +964,103 @@ describe("ordinary-folder managed stack contract", () => {
     });
 
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      }),
     ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
     expect(existsSync(join(root, "outside"))).toBe(false);
     expect(await service.listStacks()).toEqual([]);
+  });
+});
+
+describe("managed port lifecycle integration", () => {
+  it("passes one concrete allocation to initialization and reports intent-only running drift", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = await makeInMemoryService(root);
+    let allocatedPort: number | undefined;
+    const exactDocument = {
+      activeFields: ["apiPort"] as const,
+      document: {},
+    };
+    const started = await service.resolveStack({
+      operation: "start",
+      workspacePath: workspace,
+      portDocument: exactDocument,
+      initialize: async (_stack, allocation) => {
+        allocatedPort = allocation.ports.apiPort;
+        expect(allocation.lease.ports.apiPort).toBe(allocatedPort);
+        return { processIds: {}, containerIds: {} };
+      },
+    });
+    expect(started.stack.lifecycle).toBe("running");
+    expect(allocatedPort).toBeDefined();
+
+    const drift = await service.resolveStack({
+      operation: "status",
+      workspacePath: workspace,
+      portDocument: {
+        activeFields: ["apiPort"],
+        document: { api: { port: allocatedPort } },
+      },
+    });
+    expect(drift.portDrift).toEqual([
+      {
+        key: "api.port",
+        actualIntent: "automatic",
+        actualPort: allocatedPort,
+        configuredIntent: "exact",
+        configuredPort: allocatedPort,
+      },
+    ]);
+    expect((await service.inspectStack(started.stack.id))?.lifecycle).toBe("running");
+    await service.close();
+  });
+
+  it("retains accepted durable ports when runtime initialization fails", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = await makeInMemoryService(root);
+    await expect(
+      service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        portDocument: { activeFields: ["apiPort"], document: {} },
+        initialize: async () => {
+          throw new Error("runtime unavailable");
+        },
+      }),
+    ).rejects.toBeInstanceOf(ManagedRuntimeStartError);
+    const stacks = await service.listStacks();
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]?.lifecycle).toBe("failed");
+    expect(stacks[0]?.ports).toHaveLength(1);
+    await service.close();
+  });
+
+  it("rejects legacy running conflicts before workspace identity mutation", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = await makeInMemoryService(root);
+    await expect(
+      service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        portDocument: { activeFields: ["apiPort"], document: {} },
+        legacyPortConflict: { key: "api.port", port: 54321, ownerId: "legacy-project" },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+      }),
+    ).rejects.toMatchObject({
+      _tag: "ManagedLegacyPortConflictError",
+      key: "api.port",
+      port: 54321,
+      ownerId: "legacy-project",
+    });
+    expect(await service.listStacks()).toEqual([]);
+    await service.close();
   });
 });
 
@@ -911,6 +1153,7 @@ describe("managed service options", () => {
     ) as unknown as Promise<void>;
 
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
       operation: "start",
       workspacePath: makeWorkspace(root),
       initialize: () => thenable,
@@ -940,6 +1183,8 @@ describe("managed service options", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const { stack } = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -967,6 +1212,8 @@ describe("managed service options", () => {
       await using service = await makePersistentService(root);
       acquired = service;
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
       });
@@ -1004,10 +1251,14 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
       const first = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "Projects"),
       });
       const second = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "apps"),
       });
@@ -1037,8 +1288,18 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
 
-      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
-      const reused = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+      const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
+      const reused = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
 
       expect(contract.expected.outcome).toBe("report");
       expect(created.outcome).toBe("create");
@@ -1063,19 +1324,26 @@ describe("managed repository and lifecycle", () => {
             });
       const workspace = makeWorkspace(root, "scoped");
       const first = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: workspace,
         stackName: "first",
       });
       const second = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: workspace,
         stackName: "second",
       });
       await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "foreign"),
       });
+      await service.updateStack(first.stack.id, { lifecycle: "stopped" });
       await service.deleteStack(first.stack.id);
 
       const identity = {
@@ -1119,13 +1387,22 @@ describe("managed repository and lifecycle", () => {
 
       await expect(
         service.resolveStack({
+          portDocument: portDocumentFromAssignments([
+            { key: "api.port", port: 54_321.5, intent: "exact" },
+          ]),
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
           operation: "start",
           workspacePath: workspace,
-          configuration: { ports: [{ key: "api.port", port: 54_321.5, intent: "exact" }] },
+          configuration: {},
         }),
       ).rejects.toBeInstanceOf(InvalidManagedPortError);
 
-      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+      const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
       await expect(
         service.updateStack(created.stack.id, {
           ports: [{ key: "api.port", port: 70_000, intent: "exact" }],
@@ -1151,9 +1428,11 @@ describe("managed repository and lifecycle", () => {
 
       const provisionFailure = await service
         .resolveStack({
+          portDocument: portDocumentFromAssignments(duplicateKeyPorts),
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
           operation: "start",
           workspacePath: workspace,
-          configuration: { ports: duplicateKeyPorts },
+          configuration: {},
         })
         .catch((error: unknown) => error);
       expect(provisionFailure).toBeInstanceOf(DuplicateManagedPortKeyError);
@@ -1161,7 +1440,12 @@ describe("managed repository and lifecycle", () => {
         "MANAGED_DUPLICATE_PORT_KEY",
       );
 
-      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+      const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
       const updateFailure = await service
         .updateStack(created.stack.id, { ports: duplicateKeyPorts })
         .catch((error: unknown) => error);
@@ -1178,13 +1462,18 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const first = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root, "first"),
     });
     const second = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root, "second"),
     });
+    await service.updateStack(first.stack.id, { lifecycle: "stopped" });
 
     const configured = await service.updateStack(first.stack.id, {
       runtimeRequest: "native",
@@ -1217,7 +1506,7 @@ describe("managed repository and lifecycle", () => {
         lifecycle: "starting",
         ports: [{ key: "db.port", port: 54_322, intent: "exact" }],
       }),
-    ).rejects.toBeInstanceOf(ManagedPortReservationError);
+    ).rejects.toBeInstanceOf(ManagedRunningStackPortChangeError);
     expect((await service.inspectStack(second.stack.id))?.ports).toEqual([]);
     await service.close();
   });
@@ -1226,29 +1515,37 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root);
     await service.resolveStack({
+      portDocument: portDocumentFromAssignments([
+        { key: "api.port", port: 54_321, intent: "exact" },
+      ]),
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root, "first"),
       configuration: {
         lifecycle: "running",
-        ports: [{ key: "api.port", port: 54_321, intent: "exact" }],
       },
     });
     const secondWorkspace = makeWorkspace(root, "second");
 
     await expect(
       service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 54_321, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: secondWorkspace,
         configuration: {
           lifecycle: "starting",
-          ports: [{ key: "api.port", port: 54_321, intent: "exact" }],
         },
       }),
-    ).rejects.toBeInstanceOf(ManagedPortReservationError);
-    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
+    ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
+    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(2);
     expect(await service.listStacks()).toHaveLength(1);
 
     const retried = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: secondWorkspace,
     });
@@ -1260,9 +1557,12 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root, { isProcessAlive: () => false });
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
+    await service.updateStack(created.stack.id, { lifecycle: "stopped" });
     const claimed = runRepo(
       service.repository.claimOperation({
         token: crypto.randomUUID(),
@@ -1320,7 +1620,12 @@ describe("managed repository and lifecycle", () => {
     expect(existsSync(pending.stack.paths.root)).toBe(false);
     expect(await service.listStacks()).toEqual([]);
 
-    const retried = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const retried = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
     expect(retried.outcome).toBe("create");
     expect(retried.stack.id).not.toBe(pending.stack.id);
     await service.close();
@@ -1341,7 +1646,12 @@ describe("managed repository and lifecycle", () => {
     expect(reconciled.abortedStackIds).toEqual([]);
     expect(reconciled.recovered).toHaveLength(1);
     expect(reconciled.recovered[0]).toMatchObject({ status: "active", lifecycle: "running" });
-    const reused = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const reused = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
+      workspacePath: workspace,
+      operation: "start",
+    });
     expect(reused.outcome).toBe("reuse");
     expect(reused.stack.id).toBe(pending.stack.id);
     await service.close();
@@ -1526,6 +1836,7 @@ describe("managed repository and lifecycle", () => {
 
       await expect(
         service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
           operation: "start",
           workspacePath: makeWorkspace(root),
           initialize: async (stack) => {
@@ -1548,9 +1859,7 @@ describe("managed repository and lifecycle", () => {
             );
           },
         }),
-      ).rejects.toMatchObject({
-        cleanupErrors: [expect.any(ManagedOperationOwnershipError)],
-      });
+      ).rejects.toBeInstanceOf(ManagedStackInitializationError);
 
       expect(stackRoot).toBeDefined();
       expect(dataFile).toBeDefined();
@@ -1660,10 +1969,14 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root, { isProcessAlive: () => false });
     const first = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root, "first"),
     });
     const second = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root, "second"),
     });
@@ -1719,11 +2032,14 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
       const owner = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_409, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "owner"),
         configuration: {
           lifecycle: "running",
-          ports: [{ key: "api.port", port: 55_409, intent: "exact" }],
         },
       });
       await expect(
@@ -1747,22 +2063,27 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
       await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_410, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "owner"),
         configuration: {
           lifecycle: "running",
-          ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
         },
       });
       await expect(
         service.resolveStack({
+          portDocument: portDocumentFromAssignments([
+            { key: "api.port", port: 55_410, intent: "exact" },
+          ]),
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
           operation: "start",
           workspacePath: makeWorkspace(root, "blocked"),
-          configuration: {
-            ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
-          },
+          configuration: {},
         }),
-      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      ).rejects.toBeInstanceOf(ManagedExactPortOccupiedError);
       expect(await service.listStacks()).toHaveLength(1);
       await service.close();
     });
@@ -1778,32 +2099,38 @@ describe("managed repository and lifecycle", () => {
     }
     const root = makeRoot();
     const service = await makePersistentService(root);
-    await service.resolveStack({
+    const initial = await service.resolveStack({
+      portDocument: portDocumentFromAssignments([
+        { key: previous.key, port: previous.port, intent: previous.intent },
+      ]),
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
-      configuration: {
-        ports: [{ key: previous.key, port: previous.port, intent: previous.intent }],
-      },
+      configuration: {},
     });
+    await service.updateStack(initial.stack.id, { lifecycle: "stopped" });
 
     const changed = await service.resolveStack({
+      portDocument: portDocumentFromAssignments([requested]),
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: join(root, "workspace"),
-      configuration: { ports: [requested] },
+      configuration: {},
     });
     expect(changed.outcome).toBe("reuse");
     expect(changed.stack.ports).toEqual([requested]);
+    await service.updateStack(changed.stack.id, { lifecycle: "stopped" });
 
     const removed = portFacts(removedFixtureId).find((fact) => fact.key === "api.port");
     if (removed === undefined) {
       throw new Error(`Fixture ${removedFixtureId} has no api.port intent`);
     }
     const sticky = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: join(root, "workspace"),
-      configuration: {
-        ports: [{ key: managedPortKey(removed.key), port: 60_000, intent: removed.intent }],
-      },
+      configuration: {},
     });
     expect(sticky.outcome).toBe("reuse");
     expect(sticky.stack.ports).toEqual([{ ...requested, intent: "automatic" }]);
@@ -1820,11 +2147,14 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const created = await service.resolveStack({
+      portDocument: portDocumentFromAssignments([
+        { key: previous.key, port: previous.port, intent: previous.intent },
+      ]),
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
       configuration: {
         lifecycle: "running",
-        ports: [{ key: previous.key, port: previous.port, intent: previous.intent }],
       },
     });
 
@@ -1845,13 +2175,17 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const failed = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_401, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "failed"),
         configuration: {
           lifecycle: "failed",
-          ports: [{ key: "api.port", port: 55_401, intent: "exact" }],
         },
       });
+      await service.updateStack(failed.stack.id, { lifecycle: "failed" });
 
       const restarted = await service.updateStack(failed.stack.id, {
         lifecycle: "starting",
@@ -1863,11 +2197,14 @@ describe("managed repository and lifecycle", () => {
       });
 
       const running = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_403, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "running"),
         configuration: {
           lifecycle: "running",
-          ports: [{ key: "api.port", port: 55_403, intent: "automatic" }],
         },
       });
       const pinned = await service.updateStack(running.stack.id, {
@@ -1895,51 +2232,50 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const first = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_501, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "first"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_501, intent: "exact" }],
-        },
+        configuration: {},
       });
       const second = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_502, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "second"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_501, intent: "exact" }],
-        },
+        configuration: {},
       });
 
       expect(
         runRepo(service.repository.listPortReservations()).filter(
           (reservation) => reservation.assignment.port === 55_501,
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(1);
 
       await service.updateStack(first.stack.id, {
         lifecycle: "running",
       });
-      await expect(
-        service.updateStack(second.stack.id, {
-          lifecycle: "starting",
-        }),
-      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      await service.updateStack(second.stack.id, { lifecycle: "starting" });
       expect((await service.inspectStack(first.stack.id))?.ports).toEqual([
         { key: "api.port", port: 55_501, intent: "exact" },
       ]);
       expect((await service.inspectStack(second.stack.id))?.ports).toEqual([
-        { key: "api.port", port: 55_501, intent: "exact" },
+        { key: "api.port", port: 55_502, intent: "exact" },
       ]);
       await service.updateStack(first.stack.id, { lifecycle: "stopped" });
-      await expect(
-        service.updateStack(second.stack.id, {
-          ports: [{ key: "api.port", port: 55_501, intent: "automatic" }],
-        }),
-      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      const unchanged = await service.updateStack(second.stack.id, {
+        ports: [{ key: "api.port", port: 55_501, intent: "automatic" }],
+      });
+      expect(unchanged.ports).toEqual([{ key: "api.port", port: 55_502, intent: "automatic" }]);
       expect((await service.inspectStack(first.stack.id))?.ports).toEqual([
         { key: "api.port", port: 55_501, intent: "exact" },
       ]);
       expect((await service.inspectStack(second.stack.id))?.ports).toEqual([
-        { key: "api.port", port: 55_501, intent: "exact" },
+        { key: "api.port", port: 55_502, intent: "automatic" },
       ]);
       await service.close();
     });
@@ -1953,11 +2289,14 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const owner = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_507, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "owner"),
         configuration: {
           lifecycle: "running",
-          ports: [{ key: "api.port", port: 55_507, intent: "exact" }],
         },
       });
       const pending = await prepareAbandonedStack(
@@ -2007,12 +2346,15 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const stopped = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_509, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "stopped"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_509, intent: "exact" }],
-        },
+        configuration: {},
       });
+      await service.updateStack(stopped.stack.id, { lifecycle: "stopped" });
       const operation = runRepo(
         service.repository.claimOperation({
           token: crypto.randomUUID(),
@@ -2046,13 +2388,17 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const failed = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_511, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "failed"),
         configuration: {
           lifecycle: "failed",
-          ports: [{ key: "api.port", port: 55_511, intent: "exact" }],
         },
       });
+      await service.updateStack(failed.stack.id, { lifecycle: "failed" });
       const operation = runRepo(
         service.repository.claimOperation({
           token: crypto.randomUUID(),
@@ -2086,12 +2432,15 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const stopped = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_513, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "missing-operation"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_513, intent: "exact" }],
-        },
+        configuration: {},
       });
+      await service.updateStack(stopped.stack.id, { lifecycle: "stopped" });
 
       await expect(
         Effect.runPromise(
@@ -2119,12 +2468,15 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const stopped = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_515, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "wrong-operation"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_515, intent: "exact" }],
-        },
+        configuration: {},
       });
+      await service.updateStack(stopped.stack.id, { lifecycle: "stopped" });
       const operation = runRepo(
         service.repository.claimOperation({
           token: crypto.randomUUID(),
@@ -2162,19 +2514,31 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const owner = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_517, intent: "automatic" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "automatic-owner"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_517, intent: "automatic" }],
-        },
+        configuration: {},
       });
       const target = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_518, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "automatic-target"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_518, intent: "exact" }],
-        },
+        configuration: {},
       });
+      await service.updateStack(owner.stack.id, { lifecycle: "stopped" });
+      await service.updateStack(owner.stack.id, {
+        ports: [{ key: "api.port", port: 55_517, intent: "exact" }],
+      });
+      await service.updateStack(owner.stack.id, {
+        ports: [{ key: "api.port", port: 55_517, intent: "automatic" }],
+      });
+      await service.updateStack(target.stack.id, { lifecycle: "stopped" });
       const operation = runRepo(
         service.repository.claimOperation({
           token: crypto.randomUUID(),
@@ -2215,29 +2579,41 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const automatic = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_502, intent: "automatic" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "automatic"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_502, intent: "automatic" }],
-        },
+        configuration: {},
       });
       const exact = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_503, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "exact"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_503, intent: "exact" }],
-        },
+        configuration: {},
       });
+      await service.updateStack(automatic.stack.id, { lifecycle: "stopped" });
+      await service.updateStack(automatic.stack.id, {
+        ports: [{ key: "api.port", port: 55_502, intent: "exact" }],
+      });
+      await service.updateStack(automatic.stack.id, {
+        ports: [{ key: "api.port", port: 55_502, intent: "automatic" }],
+      });
+      await service.updateStack(exact.stack.id, { lifecycle: "stopped" });
 
-      await expect(
-        service.resolveStack({
-          operation: "start",
-          workspacePath: makeWorkspace(root, "automatic-again"),
-          configuration: {
-            ports: [{ key: "api.port", port: 55_502, intent: "automatic" }],
-          },
-        }),
-      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      const automaticAgain = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_502, intent: "automatic" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
+        operation: "start",
+        workspacePath: makeWorkspace(root, "automatic-again"),
+      });
+      expect(automaticAgain.outcome).toBe("create");
 
       await expect(
         service.updateStack(exact.stack.id, {
@@ -2262,29 +2638,48 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const failedAutomatic = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_504, intent: "automatic" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "failed-automatic"),
         configuration: {
           lifecycle: "failed",
-          ports: [{ key: "api.port", port: 55_504, intent: "automatic" }],
         },
       });
+      await service.updateStack(failedAutomatic.stack.id, { lifecycle: "failed" });
+      await service.updateStack(failedAutomatic.stack.id, {
+        lifecycle: "failed",
+        ports: [{ key: "api.port", port: 55_504, intent: "exact" }],
+      });
+      await service.updateStack(failedAutomatic.stack.id, {
+        ports: [{ key: "api.port", port: 55_504, intent: "automatic" }],
+      });
       const failedExact = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_505, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "failed-exact"),
         configuration: {
           lifecycle: "failed",
-          ports: [{ key: "api.port", port: 55_505, intent: "exact" }],
         },
       });
+      await service.updateStack(failedExact.stack.id, { lifecycle: "failed" });
       const failedExactSibling = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_505, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "failed-exact-sibling"),
         configuration: {
           lifecycle: "failed",
-          ports: [{ key: "api.port", port: 55_505, intent: "exact" }],
         },
       });
+      await service.updateStack(failedExactSibling.stack.id, { lifecycle: "failed" });
 
       await expect(
         service.updateStack(failedExact.stack.id, {
@@ -2312,11 +2707,13 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const created = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([
+          { key: "api.port", port: 55_506, intent: "exact" },
+        ]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_506, intent: "exact" }],
-        },
+        configuration: {},
       });
       expect(
         runRepo(service.repository.listPortReservations()).map(
@@ -2324,6 +2721,7 @@ describe("managed repository and lifecycle", () => {
         ),
       ).toContain(created.stack.id);
 
+      await service.updateStack(created.stack.id, { lifecycle: "stopped" });
       await service.deleteStack(created.stack.id);
       expect(
         runRepo(service.repository.listPortReservations()).map(
@@ -2338,6 +2736,8 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -2359,9 +2759,12 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root);
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
+    await service.updateStack(created.stack.id, { lifecycle: "stopped" });
     const claimed = runRepo(
       service.repository.claimOperation({
         token: crypto.randomUUID(),
@@ -2394,6 +2797,8 @@ describe("managed repository and lifecycle", () => {
       ).rejects.toBeInstanceOf(ManagedStackNotFoundError);
 
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
       });
@@ -2433,9 +2838,11 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const deleted = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([reserved]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "deleted"),
-        configuration: { lifecycle: "running", ports: [reserved] },
+        configuration: { lifecycle: "running" },
       });
       await service.deleteStack(deleted.stack.id, { stop: async () => {} });
 
@@ -2451,9 +2858,11 @@ describe("managed repository and lifecycle", () => {
       expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
 
       const successor = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([reserved]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "successor"),
-        configuration: { lifecycle: "running", ports: [reserved] },
+        configuration: { lifecycle: "running" },
       });
       expect(successor.stack.ports).toEqual([reserved]);
       await service.close();
@@ -2475,6 +2884,8 @@ describe("managed repository and lifecycle", () => {
             ? await makeInMemoryService(root, overrides)
             : await makePersistentService(root, overrides);
         const created = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
           operation: "start",
           workspacePath: makeWorkspace(root),
         });
@@ -2551,6 +2962,8 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
       });
@@ -2625,6 +3038,8 @@ describe("managed repository and lifecycle", () => {
         isProcessAlive: () => false,
       });
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
       });
@@ -2686,9 +3101,11 @@ describe("managed repository and lifecycle", () => {
       const sorted = [api, db, studio];
 
       const created = await service.resolveStack({
+        portDocument: portDocumentFromAssignments([studio, api, db]),
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
-        configuration: { ports: [studio, api, db] },
+        configuration: {},
       });
 
       expect(created.stack.ports).toEqual(sorted);
@@ -2718,6 +3135,8 @@ describe("managed repository and lifecycle", () => {
       const tokens: Array<string> = [];
       for (const name of ["first", "second", "third"]) {
         const created = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
           operation: "start",
           workspacePath: makeWorkspace(root, name),
         });
@@ -2756,6 +3175,8 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root, "claimed"),
       });
@@ -2822,6 +3243,8 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const created = await service.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: makeWorkspace(root),
         configuration: { lifecycle: "running" },
@@ -2887,6 +3310,8 @@ describe("managed repository and lifecycle", () => {
       stateRoot: join(root, "managed"),
     });
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -2910,21 +3335,27 @@ describe("managed repository and lifecycle", () => {
     const repository = createInMemoryManagedStackRepository();
     const racingRepository: ManagedStackRepositoryShape = {
       ...repository,
-      finishOperation: (stackId, operationToken, outcome, now, error) =>
-        outcome === "completed"
+      finishOperation: (stackId, operationToken, outcome, now, error) => {
+        const operation = runRepo(repository.listActiveOperations()).find(
+          (candidate) => candidate.token === operationToken,
+        );
+        return operation?.kind === "delete" && outcome === "completed"
           ? Effect.fail(new ManagedOperationOwnershipError({ stackId }))
-          : repository.finishOperation(stackId, operationToken, outcome, now, error),
+          : repository.finishOperation(stackId, operationToken, outcome, now, error);
+      },
     };
     const service = await makeManagedStackService({
       repository: racingRepository,
       stateRoot: join(root, "managed"),
     });
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
 
-    const deleted = await service.deleteStack(created.stack.id);
+    const deleted = await service.deleteStack(created.stack.id, { stop: async () => {} });
 
     expect(deleted).toMatchObject({
       outcome: "delete",
@@ -2939,6 +3370,8 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
       configuration: { lifecycle: "running" },
@@ -2995,10 +3428,12 @@ describe("managed repository and lifecycle", () => {
       stateRoot: join(root, "managed"),
     });
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
-    await service.deleteStack(created.stack.id);
+    await service.deleteStack(created.stack.id, { stop: async () => {} });
     forgePath = true;
 
     const repeated = await service.deleteStack(created.stack.id);
@@ -3018,6 +3453,8 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -3040,6 +3477,8 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const created = await service.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }),
       operation: "start",
       workspacePath: makeWorkspace(root),
     });
@@ -3093,11 +3532,11 @@ describe("managed repository and lifecycle", () => {
       const firstService = await createManagedStackService({ stateRoot });
       assert.equal(runRepo(firstService.repository.getStack(randomUUID())), undefined);
       const first = await firstService.resolveStack({
+        portDocument: { activeFields: ["apiPort"], document: { api: { port: 55431 } } },
+        initialize: async () => ({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath,
-        configuration: {
-          ports: [{ key: "api.port", port: 55431, intent: "exact" }],
-        },
+        configuration: {},
       });
       const starting = await firstService.updateStack(first.stack.id, { lifecycle: "starting" });
       assert.equal(starting.ports[0]?.port, 55431);
@@ -3116,7 +3555,9 @@ describe("managed repository and lifecycle", () => {
       assert.equal(recovery.failures.length, 0);
       await firstService.close();
       const secondService = await createManagedStackService({ stateRoot });
-      const second = await secondService.resolveStack({ workspacePath, operation: "start" });
+      const second = await secondService.resolveStack({
+      portDocument: { activeFields: [], document: {} },
+      initialize: async () => ({ processIds: {}, containerIds: {} }), workspacePath, operation: "start" });
       assert.equal(first.outcome, "create");
       assert.equal(second.outcome, "reuse");
       assert.equal(second.stack.id, first.stack.id);
@@ -3139,6 +3580,7 @@ describe("managed repository and lifecycle", () => {
         "completed",
         new Date().toISOString(),
       ));
+      await secondService.updateStack(second.stack.id, { lifecycle: "stopped" });
       const deleted = await secondService.deleteStack(second.stack.id);
       const repeated = await secondService.deleteStack(second.stack.id);
       assert.equal(deleted.outcome, "delete");

@@ -1,10 +1,15 @@
 import { Cause, Duration, Effect, Exit, FileSystem, Option, Schedule } from "effect";
+import type { PortLease } from "../PortAllocator.ts";
+import type { ResolvedPorts } from "../PortCatalog.ts";
 import {
   InvalidManagedIdentityError,
+  InvalidManagedPortError,
+  DuplicateManagedPortKeyError,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
   ManagedStackInitializationError,
+  ManagedRuntimeStartError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
@@ -15,6 +20,8 @@ import {
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedStackConfiguration,
+  type ManagedPortIntentDocument,
+  type ManagedRuntimeMetadata,
   type ManagedStackLifecycle,
   type ManagedStackRecord,
 } from "./model.ts";
@@ -31,6 +38,9 @@ import {
 } from "./repository.ts";
 import { assertManagedUuid } from "./ids.ts";
 import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
+import { resolvePortIntents } from "./port-intent.ts";
+import { planManagedPorts } from "./port-plan.ts";
+import type { ManagedPortCoordinatorShape, ManagedPortStartFailure } from "./port-coordinator.ts";
 
 export interface StackLifecycleDependencies {
   readonly repository: ManagedStackRepositoryShape;
@@ -42,6 +52,12 @@ export interface StackLifecycleDependencies {
   readonly publicationTimeoutMs: number;
   readonly publicationPollMs: number;
   readonly probeProcessAlive: (pid: number) => Effect.Effect<boolean, unknown>;
+  readonly portCoordinator: ManagedPortCoordinatorShape;
+}
+
+export interface ManagedRuntimePortAllocation {
+  readonly ports: ResolvedPorts;
+  readonly lease: PortLease;
 }
 
 export interface RegisterManagedStackInput {
@@ -51,7 +67,16 @@ export interface RegisterManagedStackInput {
   readonly context: ManagedContextDescriptor;
   readonly stackName: string;
   readonly configuration?: ManagedStackConfiguration;
-  readonly initialize?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
+  readonly portDocument: ManagedPortIntentDocument;
+  readonly legacyPortConflict?: {
+    readonly key: import("../PortCatalog.ts").ConfigPortKey;
+    readonly port: number;
+    readonly ownerId?: string;
+  };
+  readonly initialize?: (
+    stack: ManagedStackRecord,
+    allocation: ManagedRuntimePortAllocation,
+  ) => Effect.Effect<ManagedRuntimeMetadata, ManagedRuntimeStartError>;
   readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
 }
 
@@ -158,6 +183,8 @@ type RegisterManagedStackFailure =
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
   | ManagedStackInitializationError
+  | ManagedRuntimeStartError
+  | ManagedPortStartFailure
   | ManagedStackNotFoundError
   | ManagedStackPublicationTimeoutError
   | PrepareStackFailure
@@ -237,6 +264,7 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
     publicationTimeoutMs,
     publicationPollMs,
     probeProcessAlive,
+    portCoordinator,
   } = dependencies;
 
   const requireManagedUuid = (
@@ -420,14 +448,6 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
         );
     });
 
-  const applyRequestedConfiguration = (
-    stack: ManagedStackRecord,
-    configuration: ManagedStackConfiguration | undefined,
-  ): Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure> =>
-    configuration === undefined || Object.keys(configuration).length === 0
-      ? Effect.succeed(stack)
-      : updateStackRecord(stack.id, configuration);
-
   const registerStack = (
     input: RegisterManagedStackInput,
   ): Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure> =>
@@ -439,6 +459,210 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
         try: () => managedStackPaths(stateRoot, stackId),
         catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
       });
+      const intents = resolvePortIntents(input.portDocument);
+      const seenIntentKeys = new Set<string>();
+      for (const intent of intents) {
+        if (seenIntentKeys.has(intent.key)) {
+          return yield* Effect.fail(new DuplicateManagedPortKeyError({ key: intent.key }));
+        }
+        seenIntentKeys.add(intent.key);
+        if (
+          intent.intent === "exact" &&
+          (!Number.isInteger(intent.port) || intent.port < 1 || intent.port > 65_535)
+        ) {
+          return yield* Effect.fail(
+            new InvalidManagedPortError({ key: intent.key, port: intent.port }),
+          );
+        }
+      }
+      const configurationWithoutPorts =
+        input.configuration === undefined
+          ? undefined
+          : (() => {
+              const { ports: _ports, ...rest } = input.configuration;
+              return rest;
+            })();
+      const prepareConfiguration: ManagedStackConfiguration = {
+        ...configurationWithoutPorts,
+        // Port rows are accepted only by claimStartPorts after the coordinator
+        // has bound the complete candidate. Preparation must never publish a
+        // caller-supplied or stale port set.
+        ports: undefined,
+      };
+      const emptyRuntimeMetadata: ManagedRuntimeMetadata = {
+        processIds: {},
+        containerIds: {},
+      };
+
+      const applyRequestedConfiguration = (
+        stack: ManagedStackRecord,
+      ): Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure> =>
+        configurationWithoutPorts === undefined ||
+        Object.keys(configurationWithoutPorts).length === 0
+          ? Effect.succeed(stack)
+          : updateStackRecord(stack.id, configurationWithoutPorts);
+
+      const isPortFailure = (error: unknown): error is ManagedPortStartFailure => {
+        if (!(error instanceof Error) || !("_tag" in error)) return false;
+        const tag = error._tag;
+        return (
+          typeof tag === "string" &&
+          [
+            "DuplicateManagedPortKeyError",
+            "InvalidManagedPortError",
+            "ManagedPortReservationError",
+            "ManagedRunningStackPortChangeError",
+            "ManagedExactPortOccupiedError",
+            "ManagedStickyPortOccupiedError",
+            "ManagedPortClaimRaceError",
+            "ManagedPortAllocationError",
+          ].includes(tag)
+        );
+      };
+
+      const claimStartOperation = (
+        stack: ManagedStackRecord,
+      ): Effect.Effect<ManagedOperationRecord, RequireManagedOperationFailure> =>
+        Effect.flatMap(
+          repository.claimOperation({
+            token: operationToken,
+            stackId: stack.id,
+            kind: "start",
+            ownerPid,
+            now: now(),
+          }),
+          (claimed) =>
+            claimed.acquired
+              ? Effect.succeed(claimed.operation)
+              : Effect.fail(
+                  new ManagedOperationInProgressError({
+                    stackId: stack.id,
+                    operation: claimed.operation,
+                  }),
+                ),
+        );
+
+      const settleExistingFailure = (
+        stack: ManagedStackRecord,
+        operation: ManagedOperationRecord,
+        pending: boolean,
+        cause: Cause.Cause<unknown>,
+      ): Effect.Effect<never, RegisterManagedStackFailure> =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const error = String(Cause.squash(cause));
+            let failureOperation = operation;
+            if (pending) {
+              yield* repository.publishPendingStack(stack.id, operation.token, now());
+              failureOperation = yield* requireOperation(stack.id, "start");
+            }
+            yield* repository.updateStack({
+              stackId: stack.id,
+              operationToken: failureOperation.token,
+              lifecycle: "failed",
+              runtimeMetadata: emptyRuntimeMetadata,
+              now: now(),
+            });
+            yield* repository.finishOperation(
+              stack.id,
+              failureOperation.token,
+              "failed",
+              now(),
+              error,
+            );
+            return yield* Effect.fail(new ManagedRuntimeStartError({ cause: Cause.squash(cause) }));
+          }),
+        );
+
+      const runStart = (
+        stack: ManagedStackRecord,
+        operation: ManagedOperationRecord,
+        pending: boolean,
+      ): Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure> =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const rawPlan = planManagedPorts({
+              activeFields: input.portDocument.activeFields,
+              intents,
+              persisted: stack.ports,
+            });
+            const plan = {
+              ...rawPlan,
+              inactiveAssignments: rawPlan.inactiveAssignments.map((assignment) => ({
+                ...assignment,
+                intent: "automatic" as const,
+              })),
+            };
+            const allocation = yield* portCoordinator.acquireStart({
+              stack,
+              operationToken: operation.token,
+              plan,
+              now: now(),
+            });
+            const initialize = input.initialize;
+            const runtimeResult: Effect.Effect<ManagedRuntimeMetadata, ManagedRuntimeStartError> =
+              initialize === undefined
+                ? Effect.succeed(emptyRuntimeMetadata)
+                : initialize(allocation.stack, {
+                    ports: allocation.ports,
+                    lease: allocation.lease,
+                  }).pipe(
+                    Effect.mapError((error) =>
+                      error instanceof ManagedRuntimeStartError
+                        ? error
+                        : new ManagedRuntimeStartError({ cause: error }),
+                    ),
+                    Effect.map((metadata) => metadata ?? emptyRuntimeMetadata),
+                  );
+            const initialized = yield* runtimeResult.pipe(
+              Effect.flatMap((runtimeMetadata) =>
+                input.validate === undefined
+                  ? Effect.succeed(runtimeMetadata)
+                  : input.validate(allocation.stack).pipe(
+                      Effect.as(runtimeMetadata),
+                      Effect.mapError((error) => new ManagedRuntimeStartError({ cause: error })),
+                    ),
+              ),
+              Effect.catchCause((cause) =>
+                settleExistingFailure(allocation.stack, operation, pending, cause),
+              ),
+            );
+
+            if (pending) {
+              // Publication closes the pending operation. Finish the runtime
+              // transition with a fresh short update claim so the published
+              // row is atomically observable as running.
+              yield* repository.publishPendingStack(stack.id, operation.token, now());
+              const transition = yield* requireOperation(stack.id, "start");
+              const running = yield* repository.updateStack({
+                stackId: stack.id,
+                operationToken: transition.token,
+                lifecycle: "running",
+                runtimeMetadata: initialized,
+                now: now(),
+              });
+              yield* repository.finishOperation(stack.id, transition.token, "completed", now());
+              return {
+                outcome: "create" as const,
+                stack: yield* applyRequestedConfiguration(running),
+              };
+            }
+
+            const running = yield* repository.updateStack({
+              stackId: stack.id,
+              operationToken: operation.token,
+              lifecycle: "running",
+              runtimeMetadata: initialized,
+              now: now(),
+            });
+            yield* repository.finishOperation(stack.id, operation.token, "completed", now());
+            return {
+              outcome: "reuse" as const,
+              stack: yield* applyRequestedConfiguration(running),
+            };
+          }),
+        );
+
       // The mask starts before prepareStack creates the claim, so interruption
       // cannot strand a pending row or its operation token without cleanup.
       return yield* Effect.uninterruptibleMask((restore) =>
@@ -455,29 +679,18 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
             operationToken,
             ownerPid,
             now: now(),
-            configuration: input.configuration ?? {},
+            configuration: prepareConfiguration,
           });
           if (prepared.outcome === "existing") {
             return yield* restore(
               Effect.gen(function* () {
-                if (prepared.stack.status === "active") {
-                  if (prepared.operation !== undefined) {
-                    return yield* Effect.fail(
-                      new ManagedOperationInProgressError({
-                        stackId: prepared.stack.id,
-                        operation: prepared.operation,
-                      }),
-                    );
-                  }
-                  const stack = yield* applyRequestedConfiguration(
-                    prepared.stack,
-                    input.configuration,
-                  );
-                  return { outcome: "reuse" as const, stack };
-                }
                 if (prepared.operation === undefined) {
-                  return yield* Effect.fail(
-                    new ManagedAbandonedOperationError({ stackId: prepared.stack.id }),
+                  if (prepared.stack.lifecycle === "running") {
+                    return { outcome: "reuse" as const, stack: prepared.stack };
+                  }
+                  const operation = yield* claimStartOperation(prepared.stack);
+                  return yield* runStart(prepared.stack, operation, false).pipe(
+                    releasingClaimOnFailure(prepared.stack.id, operation.token),
                   );
                 }
                 if (
@@ -489,8 +702,13 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
                   );
                 }
                 const awaited = yield* awaitPublication(prepared.stack);
-                const stack = yield* applyRequestedConfiguration(awaited, input.configuration);
-                return { outcome: "reuse" as const, stack };
+                if (awaited.lifecycle === "running") {
+                  return { outcome: "reuse" as const, stack: awaited };
+                }
+                const operation = yield* claimStartOperation(awaited);
+                return yield* runStart(awaited, operation, false).pipe(
+                  releasingClaimOnFailure(awaited.id, operation.token),
+                );
               }),
             );
           }
@@ -502,43 +720,38 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
               yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
               yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
               yield* fs.makeDirectory(pending.paths.runtime, { recursive: true, mode: 0o700 });
-              if (input.initialize !== undefined) {
-                yield* input.initialize(pending);
-              }
-              if (input.validate !== undefined) {
-                yield* input.validate(pending);
-              }
-              const published = yield* repository.publishPendingStack(
-                pending.id,
-                operation.token,
-                now(),
-              );
-              return { outcome: "create" as const, stack: published };
+              return yield* runStart(pending, operation, true);
             }),
           ).pipe(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 const cleanupErrors: Array<unknown> = [];
-                const aborted = yield* Effect.exit(
-                  repository.abortPendingStack(pending.id, operation.token),
-                );
-                if (Exit.isFailure(aborted)) {
-                  cleanupErrors.push(Cause.squash(aborted.cause));
-                } else {
-                  const reclaimed = yield* Effect.exit(removeStackState(pending));
-                  if (Exit.isFailure(reclaimed)) {
-                    cleanupErrors.push(Cause.squash(reclaimed.cause));
+                const current = yield* repository.getStack(pending.id);
+                if (current?.status === "pending") {
+                  const aborted = yield* Effect.exit(
+                    repository.abortPendingStack(pending.id, operation.token),
+                  );
+                  if (Exit.isFailure(aborted)) {
+                    cleanupErrors.push(Cause.squash(aborted.cause));
+                  } else {
+                    const reclaimed = yield* Effect.exit(removeStackState(pending));
+                    if (Exit.isFailure(reclaimed)) {
+                      cleanupErrors.push(Cause.squash(reclaimed.cause));
+                    }
                   }
                 }
-                return yield* Cause.hasInterruptsOnly(cause)
-                  ? Effect.interrupt
-                  : Effect.fail(
-                      new ManagedStackInitializationError({
-                        stackId: pending.id,
-                        cause: Cause.squash(cause),
-                        cleanupErrors,
-                      }),
-                    );
+                if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
+                const error = Cause.squash(cause);
+                if (error instanceof ManagedRuntimeStartError || isPortFailure(error)) {
+                  return yield* Effect.fail(error);
+                }
+                return yield* Effect.fail(
+                  new ManagedStackInitializationError({
+                    stackId: pending.id,
+                    cause: error,
+                    cleanupErrors,
+                  }),
+                );
               }),
             ),
           );

@@ -11,6 +11,8 @@ import {
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
   ManagedStackInitializationError,
+  ManagedRuntimeStartError,
+  ManagedLegacyPortConflictError,
   ManagedStackNotFoundError,
   ManagedStackPublicationTimeoutError,
   UnsafeManagedStackPathError,
@@ -21,6 +23,9 @@ import {
   type ManagedStackProjection,
   type ManagedStackRecord,
   type ManagedStackSelection,
+  type ManagedPortDrift,
+  type ManagedPortIntentDocument,
+  type ManagedRuntimeMetadata,
 } from "./model.ts";
 import { GitConfigStore } from "./git.ts";
 import { createManagedUuid } from "./ids.ts";
@@ -64,6 +69,12 @@ import {
   type ResolvedManagedWorkspace,
   type ResolvedWorkspacePlan,
 } from "./workspace-identity.ts";
+import { ManagedPortCoordinator } from "./port-coordinator.ts";
+import type { ManagedPortStartFailure } from "./port-coordinator.ts";
+import { resolvePortIntents } from "./port-intent.ts";
+import type { ConfigPortKey } from "../PortCatalog.ts";
+import type { ManagedRuntimePortAllocation } from "./stack-lifecycle.ts";
+export type { ManagedRuntimePortAllocation } from "./stack-lifecycle.ts";
 
 export type {
   ManagedCheckoutRecoveryRequest,
@@ -94,20 +105,42 @@ export interface ManagedStackServiceOptions {
  */
 export type ResolveManagedStackOperation = "start" | "status";
 
-export interface ResolveManagedStackOptions {
+type ManagedStackResolveConfiguration = Omit<ManagedStackConfiguration, "ports">;
+
+interface ResolveManagedStackBaseOptions {
   readonly workspacePath: string;
-  readonly operation: ResolveManagedStackOperation;
   readonly stackName?: string;
-  readonly configuration?: ManagedStackConfiguration;
+  readonly portDocument: ManagedPortIntentDocument;
+  readonly legacyPortConflict?: {
+    readonly key: ConfigPortKey;
+    readonly port: number;
+    readonly ownerId?: string;
+  };
+  readonly configuration?: ManagedStackResolveConfiguration;
+}
+
+export interface ResolveManagedStackStatusOptions extends ResolveManagedStackBaseOptions {
+  readonly operation: "status";
+  readonly initialize?: never;
+}
+
+export interface ResolveManagedStackStartOptions extends ResolveManagedStackBaseOptions {
+  readonly operation: "start";
   /**
-   * Provisioning steps a caller owns. Their failures never reach the caller as
-   * themselves: whatever they fail with becomes the `cause` of a
-   * {@link ManagedStackInitializationError} once the pending stack is rolled
-   * back, so the error channel here is deliberately open.
+   * Provisioning steps a caller owns. A runtime failure is wrapped as a typed
+   * {@link ManagedRuntimeStartError} after the accepted durable assignment has
+   * been settled as a failed stack.
    */
-  readonly initialize?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
+  readonly initialize: (
+    stack: ManagedStackRecord,
+    allocation: ManagedRuntimePortAllocation,
+  ) => Effect.Effect<ManagedRuntimeMetadata | void, ManagedRuntimeStartError>;
   readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
 }
+
+export type ResolveManagedStackOptions =
+  | ResolveManagedStackStartOptions
+  | ResolveManagedStackStatusOptions;
 
 /** Explicit metadata records selected for safe, non-destructive pruning. */
 export type ManagedPruneRequest = LifecycleManagedPruneRequest;
@@ -134,6 +167,7 @@ export interface ManagedStackResolution {
   readonly stacks: ReadonlyArray<ManagedStackProjection>;
   /** Whether this call published a checkout identity that did not exist yet. */
   readonly identityMarkerCreated: boolean;
+  readonly portDrift: ReadonlyArray<ManagedPortDrift>;
 }
 
 /**
@@ -166,6 +200,9 @@ export type ResolveManagedStackFailure =
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
   | ManagedStackInitializationError
+  | ManagedRuntimeStartError
+  | ManagedLegacyPortConflictError
+  | ManagedPortStartFailure
   | ManagedStackNotFoundError
   | ManagedStackPublicationTimeoutError
   | PrepareStackFailure
@@ -234,10 +271,10 @@ export interface ManagedStackServiceShape extends Pick<
    */
   readonly resolveStack: {
     (
-      options: ResolveManagedStackOptions & { readonly operation: "start" },
+      options: ResolveManagedStackStartOptions,
     ): Effect.Effect<StartedManagedStackResolution, ResolveManagedStackFailure>;
     (
-      options: ResolveManagedStackOptions,
+      options: ResolveManagedStackStatusOptions,
     ): Effect.Effect<ManagedStackResolution, ResolveManagedStackFailure>;
   };
 }
@@ -350,6 +387,7 @@ export class ManagedStackService extends Context.Service<
           publicationTimeoutMs,
           publicationPollMs,
           probeProcessAlive,
+          portCoordinator: ManagedPortCoordinator.make({ repository }),
         });
 
         const workspaceIdentity = makeWorkspaceIdentity({
@@ -389,6 +427,32 @@ export class ManagedStackService extends Context.Service<
               : Effect.succeed(projection),
           );
 
+        const portDriftFor = (
+          stack: ManagedStackRecord,
+          portDocument: ManagedPortIntentDocument,
+        ): ReadonlyArray<ManagedPortDrift> => {
+          const configured = new Map(
+            resolvePortIntents(portDocument).map((request) => [request.key, request]),
+          );
+          return stack.ports.flatMap((assignment) => {
+            const request = configured.get(assignment.key);
+            const configuredIntent = request?.intent ?? "automatic";
+            const configuredPort = request?.intent === "exact" ? request.port : undefined;
+            return assignment.intent !== configuredIntent ||
+              (configuredIntent === "exact" && assignment.port !== configuredPort)
+              ? [
+                  {
+                    key: assignment.key,
+                    actualIntent: assignment.intent,
+                    actualPort: assignment.port,
+                    configuredIntent,
+                    ...(configuredPort === undefined ? {} : { configuredPort }),
+                  },
+                ]
+              : [];
+          });
+        };
+
         /**
          * A settled mutating resolve. The identity is read back off the stack
          * rather than off the plan: a checkout-scoped context the registry already
@@ -399,6 +463,7 @@ export class ManagedStackService extends Context.Service<
           plan: ResolvedWorkspacePlan,
           outcome: "create" | "reuse",
           stack: ManagedStackProjection,
+          portDocument: ManagedPortIntentDocument,
         ): Effect.Effect<StartedManagedStackResolution> =>
           Effect.map(
             contextStacks({
@@ -422,6 +487,7 @@ export class ManagedStackService extends Context.Service<
               stack,
               stacks,
               identityMarkerCreated: plan.identityMarkerCreated,
+              portDrift: portDriftFor(stack, portDocument),
             }),
           );
 
@@ -434,6 +500,7 @@ export class ManagedStackService extends Context.Service<
         const reportResolution = (
           plan: ResolvedWorkspacePlan,
           stackName: string,
+          portDocument: ManagedPortIntentDocument,
         ): Effect.Effect<ManagedStackResolution> =>
           Effect.gen(function* () {
             const { projectId, checkoutId, contextId } = plan.identity;
@@ -454,6 +521,7 @@ export class ManagedStackService extends Context.Service<
               stack,
               stacks,
               identityMarkerCreated: false,
+              portDrift: stack === undefined ? [] : portDriftFor(stack, portDocument),
             };
           });
 
@@ -476,6 +544,12 @@ export class ManagedStackService extends Context.Service<
             if (!stackNamePattern.test(stackName)) {
               return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
             }
+            if (resolveOptions.legacyPortConflict !== undefined) {
+              return yield* Effect.fail(
+                new ManagedLegacyPortConflictError(resolveOptions.legacyPortConflict),
+              );
+            }
+            const portDocument = resolveOptions.portDocument;
             const report = yield* workspaceIdentity.discover(resolveOptions.workspacePath);
             const settledReport =
               resolveOptions.operation === "start"
@@ -600,7 +674,7 @@ export class ManagedStackService extends Context.Service<
               );
             }
             if (resolveOptions.operation === "status") {
-              return yield* reportResolution(plan, stackName);
+              return yield* reportResolution(plan, stackName, portDocument);
             }
             if (
               recoveryReportForStart.state === "duplicate" &&
@@ -627,6 +701,7 @@ export class ManagedStackService extends Context.Service<
                     );
             const settledPlan = firstStartResolution.plan;
             const firstStartTransition = firstStartResolution.transition;
+            const initialize = resolveOptions.initialize;
             const registrationInput: RegisterManagedStackInput = {
               identity: yield* requireResolvedIdentity(settledPlan),
               checkoutKind: settledPlan.workspace.checkoutKind,
@@ -634,7 +709,15 @@ export class ManagedStackService extends Context.Service<
               context: settledPlan.contextDescriptor,
               stackName,
               configuration: resolveOptions.configuration,
-              initialize: resolveOptions.initialize,
+              portDocument,
+              legacyPortConflict: resolveOptions.legacyPortConflict,
+              initialize:
+                initialize === undefined
+                  ? undefined
+                  : (stack, allocation) =>
+                      initialize(stack, allocation).pipe(
+                        Effect.map((metadata) => metadata ?? { processIds: {}, containerIds: {} }),
+                      ),
               validate: resolveOptions.validate,
             };
             const registered: RegisterManagedStackResult =
@@ -646,6 +729,7 @@ export class ManagedStackService extends Context.Service<
               settledPlan,
               registered.outcome,
               yield* requireProjection(registered.stack),
+              portDocument,
             );
           });
         }

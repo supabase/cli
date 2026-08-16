@@ -1,13 +1,20 @@
 import { Context, Effect, Layer, ManagedRuntime, type FileSystem } from "effect";
 import { fromCallback, isFinished } from "./callback.ts";
-import { IncompatibleManagedRegistryError, UnsafeManagedStackPathError } from "./model.ts";
+import {
+  IncompatibleManagedRegistryError,
+  ManagedRuntimeStartError,
+  UnsafeManagedStackPathError,
+} from "./model.ts";
 import type {
   InvalidManagedOwnerPidError,
   ManagedOperationRecord,
   ManagedStackConfiguration,
   ManagedStackProjection,
   ManagedStackRecord,
+  ManagedPortIntentDocument,
+  ManagedRuntimeMetadata,
 } from "./model.ts";
+import type { ConfigPortKey } from "../PortCatalog.ts";
 import { failsWith } from "./failure.ts";
 import { gitConfigStoreLayer } from "./git.ts";
 import {
@@ -26,12 +33,12 @@ import {
   type ManagedStackResolution,
   type ManagedStackServiceOptions,
   type ReconcileAbandonedOperationsResult,
-  type ResolveManagedStackOperation,
   type ManagedCheckoutRecoveryRequest,
   type ManagedIdentityTransitionAbandonRequest,
   type StartedManagedStackResolution,
   type ManagedPruneRequest,
   type ManagedPruneResult,
+  type ManagedRuntimePortAllocation,
 } from "./service.ts";
 import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 
@@ -53,14 +60,35 @@ export interface CreateManagedStackServiceOptions {
   readonly isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
 }
 
-export interface ResolveManagedStackRequest {
+interface ResolveManagedStackRequestBase {
   readonly workspacePath: string;
-  readonly operation: ResolveManagedStackOperation;
   readonly stackName?: string;
-  readonly configuration?: ManagedStackConfiguration;
-  readonly initialize?: (stack: ManagedStackRecord) => Promise<void>;
+  readonly portDocument: ManagedPortIntentDocument;
+  readonly legacyPortConflict?: {
+    readonly key: ConfigPortKey;
+    readonly port: number;
+    readonly ownerId?: string;
+  };
+  readonly configuration?: Omit<ManagedStackConfiguration, "ports">;
+}
+
+interface ResolveManagedStackStatusRequest extends ResolveManagedStackRequestBase {
+  readonly operation: "status";
+  readonly initialize?: never;
+}
+
+interface ResolveManagedStackStartRequest extends ResolveManagedStackRequestBase {
+  readonly operation: "start";
+  readonly initialize: (
+    stack: ManagedStackRecord,
+    allocation: ManagedRuntimePortAllocation,
+  ) => Promise<ManagedRuntimeMetadata | void>;
   readonly validate?: (stack: ManagedStackRecord) => Promise<void>;
 }
+
+export type ResolveManagedStackRequest =
+  | ResolveManagedStackStartRequest
+  | ResolveManagedStackStatusRequest;
 
 export type ReconcileAbandonedOperationsRequest = {
   readonly inspectRuntime: (
@@ -89,9 +117,7 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   readonly repository: ManagedStackRepositoryShape;
   /** A `start` always settles on a stack, which the narrower overload reports. */
   discoverWorkspace(workspacePath: string): Promise<ManagedWorkspaceDiscovery>;
-  resolveStack(
-    options: ResolveManagedStackRequest & { readonly operation: "start" },
-  ): Promise<StartedManagedStackResolution>;
+  resolveStack(options: ResolveManagedStackStartRequest): Promise<StartedManagedStackResolution>;
   resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
   newCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
@@ -176,22 +202,38 @@ const managedStackServiceHandle = async <ER>(
   ): Promise<StartedManagedStackResolution>;
   function resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
   function resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution> {
+    const common = {
+      workspacePath: options.workspacePath,
+      operation: options.operation,
+      stackName: options.stackName,
+      portDocument: options.portDocument,
+      legacyPortConflict: options.legacyPortConflict,
+      configuration: options.configuration,
+    };
+    if (options.operation === "status") {
+      return run(service.resolveStack({ ...common, operation: "status" }));
+    }
     const initialize = options.initialize;
-    const validate = options.validate;
     return run(
       service.resolveStack({
-        workspacePath: options.workspacePath,
-        operation: options.operation,
-        stackName: options.stackName,
-        configuration: options.configuration,
-        initialize:
-          initialize === undefined
-            ? undefined
-            : (stack) => fromCallback(() => initialize(stack), isFinished),
+        ...common,
+        operation: "start",
+        initialize: (stack, allocation) =>
+          fromCallback(
+            async () => {
+              const metadata = await initialize(stack, allocation);
+              return metadata ?? { processIds: {}, containerIds: {} };
+            },
+            (value): value is ManagedRuntimeMetadata =>
+              typeof value === "object" &&
+              value !== null &&
+              "processIds" in value &&
+              "containerIds" in value,
+          ).pipe(Effect.mapError((error) => new ManagedRuntimeStartError({ cause: error }))),
         validate:
-          validate === undefined
+          options.validate === undefined
             ? undefined
-            : (stack) => fromCallback(() => validate(stack), isFinished),
+            : (stack) => fromCallback(() => options.validate?.(stack), isFinished),
       }),
     );
   }

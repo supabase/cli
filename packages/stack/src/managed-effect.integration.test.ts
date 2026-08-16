@@ -9,6 +9,7 @@ import {
   InvalidManagedIdentityError,
   ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
+  ManagedRuntimeStartError,
 } from "./managed/model.ts";
 import { managedRegistryPath, managedStackPaths } from "./managed/paths.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
@@ -118,8 +119,18 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const created = yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
-      const reused = yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
+      const created = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
+      const reused = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
 
       expect(created.outcome).toBe("create");
       expect(reused.outcome).toBe("reuse");
@@ -133,15 +144,22 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
+      yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+        workspacePath: workspace,
+        operation: "start",
+      });
       const reused = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         operation: "start",
         workspacePath: workspace,
         configuration: { runtimeRequest: "docker" },
       });
 
       expect(reused.outcome).toBe("reuse");
-      expect(reused.stack.runtimeRequest).toBe("docker");
+      expect(reused.stack.runtimeRequest).toBe("auto");
     }).pipe(Effect.provide(layer));
   });
 
@@ -149,17 +167,27 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const before = yield* managed.resolveStack({ workspacePath: workspace, operation: "status" });
+      const before = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        workspacePath: workspace,
+        operation: "status",
+      });
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
-      const after = yield* managed.resolveStack({ workspacePath: workspace, operation: "status" });
+      const after = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        workspacePath: workspace,
+        operation: "status",
+      });
 
       expect(before.state).toBe("unregistered");
       expect(before.identity).toEqual({});
       expect(before.stacks).toEqual([]);
-      expect(after.state).toBe("stopped");
+      expect(after.state).toBe("running");
       expect(after.selection?.stackId).toBe(stack.id);
       expect(after.stacks.map((candidate) => candidate.id)).toEqual([stack.id]);
     }).pipe(Effect.provide(layer));
@@ -186,7 +214,13 @@ describe("managed stack Effect surface", () => {
       // The failure is in the effect's error channel, so the recovery is typed:
       // `catchTag` narrows to the one failure and its payload without a cast.
       const outcome = yield* managed
-        .resolveStack({ operation: "start", workspacePath: workspace, stackName: "Not A Name" })
+        .resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: workspace,
+          stackName: "Not A Name",
+        })
         .pipe(
           Effect.catchTag("InvalidManagedStackNameError", (error) =>
             Effect.succeed(`rejected ${error.stackName}`),
@@ -204,6 +238,8 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -226,11 +262,13 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
 
-      const deleted = yield* managed.deleteStack(stack.id);
+      const deleted = yield* managed.deleteStack(stack.id, { stop: () => Effect.void });
       const repeated = yield* managed.deleteStack(stack.id);
 
       expect(deleted.outcome).toBe("delete");
@@ -249,6 +287,8 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -278,6 +318,8 @@ describe("managed stack Effect surface", () => {
         const managed = yield* ManagedStackService;
         const repository = yield* ManagedStackRepository;
         const { stack } = yield* managed.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
           workspacePath: workspace,
           operation: "start",
         });
@@ -289,7 +331,12 @@ describe("managed stack Effect surface", () => {
 
       const reopened = yield* Effect.gen(function* () {
         const managed = yield* ManagedStackService;
-        return yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
+        return yield* managed.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          workspacePath: workspace,
+          operation: "start",
+        });
       }).pipe(Effect.provide(openRegistry()));
 
       expect(reopened.outcome).toBe("reuse");
@@ -311,6 +358,7 @@ describe("managed stack Effect surface", () => {
 
       const exit = yield* managed
         .resolveStack({
+          portDocument: { activeFields: [], document: {} },
           operation: "start",
           workspacePath: workspace,
           initialize: () => Effect.sleep(Duration.seconds(5)),
@@ -348,7 +396,12 @@ describe("managed stack Effect surface", () => {
     const layer = managedLayer(stateRoot, { repository: slowToAnswer });
     return Effect.gen(function* () {
       const exit = yield* Effect.flatMap(ManagedStackService, (managed) =>
-        managed.resolveStack({ operation: "start", workspacePath: workspace }),
+        managed.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath: workspace,
+        }),
       ).pipe(Effect.timeout(Duration.millis(5)), Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
@@ -379,6 +432,8 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -399,6 +454,8 @@ describe("managed stack Effect surface", () => {
       const managed = yield* ManagedStackService;
       const repository = yield* ManagedStackRepository;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -440,6 +497,8 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -468,6 +527,8 @@ describe("managed stack Effect surface", () => {
       const managed = yield* ManagedStackService;
       const repository = yield* ManagedStackRepository;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -513,6 +574,8 @@ describe("managed stack Effect surface", () => {
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const { stack } = yield* managed.resolveStack({
+        portDocument: { activeFields: [], document: {} },
+        initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
         workspacePath: workspace,
         operation: "start",
       });
@@ -557,7 +620,12 @@ describe("managed stack Effect surface", () => {
       const pending = yield* stagePendingStack(workspace, stateRoot);
 
       const timedOut = yield* managed
-        .resolveStack({ workspacePath: workspace, operation: "start" })
+        .resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          workspacePath: workspace,
+          operation: "start",
+        })
         .pipe(
           Effect.catchTag("ManagedStackPublicationTimeoutError", (error) => Effect.succeed(error)),
         );
@@ -581,5 +649,25 @@ describe("managed stack Effect surface", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
     });
+  });
+
+  it.effect("settles a failed runtime with durable ports on the Effect surface", () => {
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const exit = yield* managed
+        .resolveStack({
+          operation: "start",
+          workspacePath: workspace,
+          portDocument: { activeFields: ["apiPort"], document: {} },
+          initialize: () => Effect.fail(new ManagedRuntimeStartError({ cause: "boot failed" })),
+        })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const stack = yield* managed.listStacks();
+      expect(stack).toHaveLength(1);
+      expect(stack[0]?.lifecycle).toBe("failed");
+      expect(stack[0]?.ports).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
   });
 });

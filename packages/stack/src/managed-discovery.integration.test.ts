@@ -53,6 +53,9 @@ const adapters = [
   ],
 ] as const;
 
+const defaultPortDocument = { activeFields: [] } as const;
+const defaultInitialize = async (): Promise<void> => {};
+
 const inspect = async (repository: ManagedStackRepositoryShape, workspacePath: string) => {
   const runtime = ManagedRuntime.make(
     Layer.mergeAll(
@@ -210,6 +213,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
               const start = serviceB.resolveStack({
                 workspacePath: workspaceB,
                 operation: "start",
+
+                portDocument: defaultPortDocument,
+                initialize: defaultInitialize,
               });
               injectedStart = start;
               yield* Effect.promise(() => start).pipe(Effect.asVoid);
@@ -236,6 +242,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
               const start = serviceB.resolveStack({
                 workspacePath: workspaceB,
                 operation: "start",
+
+                portDocument: defaultPortDocument,
+                initialize: defaultInitialize,
               });
               injectedStart = start;
               yield* Effect.promise(() => start).pipe(Effect.asVoid);
@@ -251,7 +260,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     }
     openHandles.push(serviceA, serviceB);
 
-    const startedA = await serviceA.resolveStack({ workspacePath: workspaceA, operation: "start" });
+    const startedA = await serviceA.resolveStack({
+      workspacePath: workspaceA,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(injected).toBe(true);
     expect(injectedStart).toBeDefined();
     await injectedStart;
@@ -265,14 +279,24 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const service = await open(root);
     openHandles.push(service);
 
-    const branch = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const branch = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const branchReport = await inspect(service.repository, repository);
     expect(branchReport.state).toBe("healthy");
     expect(branchReport.identity).toEqual(branch.identity);
     expect(branchReport.stacks.map((stack) => stack.id)).toContain(branch.stack.id);
 
     git(repository, "checkout", "-q", "--detach", "HEAD");
-    const detached = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const detached = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const detachedReport = await inspect(service.repository, repository);
     expect(detachedReport.state).toBe("healthy");
     expect(detachedReport.identity).toEqual(detached.identity);
@@ -283,6 +307,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const ordinaryStarted = await service.resolveStack({
       workspacePath: ordinary,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     const ordinaryHealthy = await inspect(service.repository, ordinary);
     expect(ordinaryHealthy.state).toBe("healthy");
@@ -291,7 +318,11 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     symlinkSync(ordinary, alias, "dir");
     const aliasReport = await inspect(service.repository, alias);
     expect(aliasReport.workspace.canonicalPath).toBe(ordinary);
-    const status = await service.resolveStack({ workspacePath: alias, operation: "status" });
+    const status = await service.resolveStack({
+      workspacePath: alias,
+      operation: "status",
+      portDocument: defaultPortDocument,
+    });
     expect(status.identity).toEqual(ordinaryStarted.identity);
   });
 
@@ -301,7 +332,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "moved-checkout");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
 
     const report = await inspect(service.repository, next);
@@ -310,7 +346,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       { operation: "rebindCheckout", checkoutId: first.identity.checkoutId, path: next },
     ]);
 
-    const rebound = await service.resolveStack({ workspacePath: next, operation: "start" });
+    const rebound = await service.resolveStack({
+      workspacePath: next,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(rebound.identity).toEqual(first.identity);
     expect(rebound.stack.id).toBe(first.stack.id);
     const claims = await Effect.runPromise(service.repository.listIdentityClaims());
@@ -337,13 +378,28 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const service = await open(root);
     openHandles.push(service);
 
-    const original = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const original = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
-    const rebound = await service.resolveStack({ workspacePath: next, operation: "start" });
+    const rebound = await service.resolveStack({
+      workspacePath: next,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(rebound.identity).toEqual(original.identity);
 
     git(root, "clone", "-q", next, previous);
-    const fresh = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const fresh = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(fresh.identity.checkoutId).not.toBe(original.identity.checkoutId);
     expect(fresh.identity.projectId).not.toBe(original.identity.projectId);
@@ -360,9 +416,17 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const original = await service.resolveStack({
       workspacePath: originalPath,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     renameSync(originalPath, movedPath);
-    const moved = await service.resolveStack({ workspacePath: movedPath, operation: "start" });
+    const moved = await service.resolveStack({
+      workspacePath: movedPath,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(moved.identity).toEqual(original.identity);
 
     renameSync(movedPath, originalPath);
@@ -376,6 +440,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const returned = await service.resolveStack({
       workspacePath: originalPath,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
 
     expect(returned.identity).toEqual(original.identity);
@@ -402,7 +469,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const staleId = "00000000-0000-7000-8000-000000000097";
     const stalePath = join(root, "stale-history");
     let stalePresent = true;
@@ -472,7 +544,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(published.identity.projectId).toBeDefined();
     expect(published.identity.checkoutId).toBeDefined();
     expect(await service.listStacks()).toEqual([]);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(started.identity).toEqual(published.identity);
   });
 
@@ -503,6 +580,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       service.resolveStack({
         workspacePath: workspace,
         operation: "start",
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
 
@@ -538,7 +618,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(recovering);
 
     await expect(
-      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+      recovering.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect((await inspect(base.repository, workspace)).activeTransition).toMatchObject({
       kind: "new-checkout",
@@ -547,7 +632,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
 
     await expect(
-      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+      recovering.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).resolves.toMatchObject({ outcome: "reuse" });
     expect((await inspect(base.repository, workspace)).activeTransition).toBeUndefined();
   });
@@ -709,7 +799,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     openHandles.push(starting, explicit);
 
-    const startAttempt = starting.resolveStack({ workspacePath: repository, operation: "start" });
+    const startAttempt = starting.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await startDiscoveryPaused;
     const explicitAttempt = explicit.newCheckout({ workspacePath: repository });
     await explicitReservationMade;
@@ -725,7 +820,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(explicitResult).toMatchObject({ status: "fulfilled", value: { state: "healthy" } });
     const claims = await Effect.runPromise(base.repository.listIdentityClaims());
     expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
-    const retry = await starting.resolveStack({ workspacePath: repository, operation: "start" });
+    const retry = await starting.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(retry.identity).toEqual(
       explicitResult.status === "fulfilled" ? explicitResult.value.identity : undefined,
     );
@@ -783,7 +883,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-m", "renamed");
     const inspection = await inspect(service.repository, repository);
     await Effect.runPromise(
@@ -1016,7 +1121,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const branch = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const branch = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "checkout", "-q", "--detach", "HEAD");
 
     const before = await inspect(service.repository, repository);
@@ -1038,11 +1148,21 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "recycled-checkout");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     makeDirectory(root, previous.slice(root.length + 1));
     await expect(
-      service.resolveStack({ workspacePath: next, operation: "start" }),
+      service.resolveStack({
+        workspacePath: next,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({
       _tag: "ManagedCheckoutConflictError",
     });
@@ -1057,7 +1177,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "explicit-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
 
     const rebound = await service.rebindCheckout({
@@ -1079,6 +1204,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const owner = await service.resolveStack({
       workspacePath: ownerWorkspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     cpSync(ownerWorkspace, copiedWorkspace, { recursive: true });
     git(copiedWorkspace, "config", "--unset", GIT_PROJECT_ID_KEY);
@@ -1119,6 +1247,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const owner = await service.resolveStack({
       workspacePath: ownerWorkspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     cpSync(ownerWorkspace, copiedWorkspace, { recursive: true });
     git(copiedWorkspace, "checkout", "-q", "--detach", "HEAD");
@@ -1131,7 +1262,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     expect(report.state).toBe("duplicate");
     await expect(
-      service.resolveStack({ workspacePath: copiedWorkspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: copiedWorkspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(claimsBefore);
   });
@@ -1141,7 +1277,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "config", "--unset", GIT_PROJECT_ID_KEY);
     const configPath = gitConfigPath(join(repository, ".git"));
     const markerPath = gitCheckoutIdentityPath(join(repository, ".git"));
@@ -1178,7 +1319,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const alias = join(root, "canonical-recovery-alias");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     symlinkSync(next, alias, "dir");
 
@@ -1200,9 +1346,19 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "historical-reappearance");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
-    await service.resolveStack({ workspacePath: next, operation: "start" });
+    await service.resolveStack({
+      workspacePath: next,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     symlinkSync(next, previous, "dir");
 
     for (const workspacePath of [next, previous]) {
@@ -1210,7 +1366,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       expect(report.state).toBe("duplicate");
       expect(report.identity.checkoutId).toBe(first.identity.checkoutId);
       await expect(
-        service.resolveStack({ workspacePath, operation: "start" }),
+        service.resolveStack({
+          workspacePath,
+          operation: "start",
+          portDocument: defaultPortDocument,
+          initialize: defaultInitialize,
+        }),
       ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     }
   });
@@ -1221,9 +1382,19 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "shared-historical-path");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
-    await service.resolveStack({ workspacePath: next, operation: "start" });
+    await service.resolveStack({
+      workspacePath: next,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const base = service.repository;
     const wrapped: ManagedStackRepositoryShape = {
       ...base,
@@ -1259,7 +1430,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "resumable-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1289,7 +1465,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "abandon-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     const reserved = await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1319,7 +1500,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "ordinary-after-rebind");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     const reserved = await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1424,7 +1610,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const moved = join(root, "recycled-transition");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: original, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: original,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(original, moved);
     const reserved = await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1454,7 +1645,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     renameSync(checkoutA, path);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: path, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: path,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const movedA = join(root, "checkout-a-moved");
     renameSync(path, movedA);
     await Effect.runPromise(
@@ -1517,7 +1713,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       openHandles.push(service);
       const started =
         kind === "adopt-context"
-          ? await service.resolveStack({ workspacePath: path, operation: "start" })
+          ? await service.resolveStack({
+              workspacePath: path,
+              operation: "start",
+              portDocument: defaultPortDocument,
+              initialize: defaultInitialize,
+            })
           : undefined;
       if (kind === "adopt-context") git(path, "branch", "-m", "renamed");
       const replacement = makeRepository(root, `${kind}-replacement`);
@@ -1570,7 +1771,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "phase-order-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1614,7 +1820,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "inaccessible-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     writeFileSync(previous, "not a checkout\n");
     await Effect.runPromise(
@@ -1643,7 +1854,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "interrupted-reappearance");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -1677,7 +1893,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "apply-race-reappearance");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     const beforeStacks = await Effect.runPromise(service.repository.listStacks());
     let injected = false;
@@ -1728,7 +1949,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "concurrent-recovery");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
 
     let arrivals = 0;
@@ -1786,7 +2012,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
         id: "00000000-0000-7000-8000-000000000001",
@@ -1801,7 +2032,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.activeTransition?.phase).toBe("reserved");
     expect(report.recoveryOperations).toEqual([]);
     await expect(
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
+      service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
   });
 
@@ -1810,7 +2046,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
         id: "00000000-0000-7000-8000-000000000002",
@@ -1836,12 +2077,21 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     openHandles.push(guarded);
     await expect(
-      guarded.resolveStack({ workspacePath: repository, operation: "status" }),
+      guarded.resolveStack({
+        workspacePath: repository,
+        operation: "status",
+        portDocument: defaultPortDocument,
+      }),
     ).resolves.toMatchObject({
       operation: "status",
     });
     await expect(
-      guarded.resolveStack({ workspacePath: repository, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(calls.count).toBe(0);
     expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
@@ -1859,7 +2109,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const calls = { count: 0 };
     const guarded = mutationDenied(service.repository, calls);
     let injected = false;
@@ -1897,7 +2152,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     openHandles.push(racingService);
     await expect(
-      racingService.resolveStack({ workspacePath: repository, operation: "start" }),
+      racingService.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(calls.count).toBe(0);
     const afterClaims = await Effect.runPromise(service.repository.listIdentityClaims());
@@ -1923,10 +2183,19 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: repository, operation: "start" });
+    await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     writeFileSync(join(repository, ".git", "supabase-checkout.json"), "not-json\n");
     await expect(
-      service.resolveStack({ workspacePath: repository, operation: "status" }),
+      service.resolveStack({
+        workspacePath: repository,
+        operation: "status",
+        portDocument: defaultPortDocument,
+      }),
     ).rejects.toMatchObject({
       _tag: "InvalidManagedIdentityError",
     });
@@ -1939,7 +2208,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(repository, "worktree", "add", "-q", linked, "-b", "linked");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: linked, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: linked,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const nested = makeDirectory(linked, "nested");
     const report = await inspect(service.repository, nested);
     expect(report.workspace.workspaceRoot).toBe(linked);
@@ -1951,7 +2225,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "contradiction");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const markerPath = ordinaryWorkspaceIdentityPath(workspace);
     const marker = JSON.parse(readFileSync(markerPath, "utf8")) as { contextId: string };
     marker.contextId = "00000000-0000-7000-8000-000000000099";
@@ -1962,7 +2241,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.registryContextId).toBe(started.identity.contextId);
     expect(report.recoveryOperations).toEqual([]);
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
   });
 
@@ -1975,6 +2259,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const owner = await service.resolveStack({
       workspacePath: ownerWorkspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     const ownerMarker = JSON.parse(
       readFileSync(ordinaryWorkspaceIdentityPath(ownerWorkspace), "utf8"),
@@ -2008,7 +2295,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.state).toBe("duplicate");
     expect(report.recoveryOperations).toEqual([]);
     await expect(
-      service.resolveStack({ workspacePath: conflictingWorkspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: conflictingWorkspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
     expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
@@ -2028,10 +2320,16 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const checkoutOwner = await service.resolveStack({
       workspacePath: workspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     const contextOwner = await service.resolveStack({
       workspacePath: contextWorkspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(contextOwner.identity.projectId).not.toBe(checkoutOwner.identity.projectId);
     git(workspace, "config", GIT_PROJECT_ID_KEY, contextOwner.identity.projectId);
@@ -2060,7 +2358,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.state).toBe("duplicate");
     expect(report.recoveryOperations).toEqual([]);
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     expect(calls.count).toBe(0);
     expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
@@ -2076,7 +2379,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "history");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const claims = await Effect.runPromise(service.repository.listIdentityClaims());
     const old = claims.locations.find(
       (location) => location.checkoutId === started.identity.checkoutId,
@@ -2100,7 +2408,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       },
     ]);
 
-    const recovered = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const recovered = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(recovered.identity).toEqual(started.identity);
     expect(recovered.stack.id).toBe(started.stack.id);
 
@@ -2121,8 +2434,18 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(workspace, "init", "-q");
     const service = await open(root);
     openHandles.push(service);
-    const first = await service.resolveStack({ workspacePath: workspace, operation: "start" });
-    const second = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    const second = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(second.identity).toEqual(first.identity);
     expect(second.stack.id).toBe(first.stack.id);
   });
@@ -2133,7 +2456,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const nested = makeDirectory(workspace, "nested-transition");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
         id: "00000000-0000-7000-8000-000000000097",
@@ -2153,7 +2481,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const main = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await Effect.runPromise(
       service.repository.refreshContextOwner({
         contextId: main.identity.contextId,
@@ -2169,7 +2502,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(repository, "checkout", "-q", "copy");
     const report = await inspect(service.repository, repository);
     expect(report.state).toBe("duplicate");
-    const copied = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const copied = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(copied.outcome).toBe("create");
     expect(copied.identity.contextId).not.toBe(main.identity.contextId);
     expect(copied.stack.id).not.toBe(main.stack.id);
@@ -2177,6 +2515,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const ownerAgain = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(ownerAgain.outcome).toBe("reuse");
     expect(ownerAgain.identity.contextId).toBe(main.identity.contextId);
@@ -2188,7 +2529,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     git(workspace, "add", ".supabase/identity.json");
     git(workspace, "commit", "-q", "-m", "track ordinary identity");
@@ -2197,7 +2543,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
     const beforeStacks = await service.listStacks();
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(gitStatus(workspace)).toBe(beforeStatus);
     expect(git(workspace, "ls-files", "--stage", ".supabase/identity.json")).toBe(beforeIndex);
@@ -2220,11 +2571,21 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "moved-folder-to-git-next");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     git(next, "init", "-q", "-b", "main");
 
-    const migrated = await service.resolveStack({ workspacePath: next, operation: "start" });
+    const migrated = await service.resolveStack({
+      workspacePath: next,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(migrated.identity).toEqual(ordinary.identity);
     expect(migrated.stack.id).toBe(ordinary.stack.id);
@@ -2251,7 +2612,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const next = join(root, "malformed-carried-marker-next");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: previous, operation: "start" });
+    await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(previous, next);
     writeFileSync(ordinaryWorkspaceIdentityPath(next), "{not-json\n");
     git(next, "init", "-q", "-b", "main");
@@ -2260,7 +2626,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const stacksBefore = await service.listStacks();
 
     await expect(
-      service.resolveStack({ workspacePath: next, operation: "start" }),
+      service.resolveStack({
+        workspacePath: next,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
 
     expect(readFileSync(gitConfigPath(join(next, ".git")), "utf8")).toBe(configBefore);
@@ -2273,7 +2644,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "recycled-folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const beforeStacks = await service.listStacks();
     const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
 
@@ -2292,7 +2668,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       ]),
     );
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(await service.listStacks()).toEqual(beforeStacks);
     expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
@@ -2304,16 +2685,31 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const nested = makeDirectory(workspace, "nested");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     git(workspace, "init", "-q", "-b", "main");
-    const migrated = await service.resolveStack({ workspacePath: nested, operation: "start" });
+    const migrated = await service.resolveStack({
+      workspacePath: nested,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(migrated.identity).toEqual(ordinary.identity);
     expect(migrated.identityMarkerCreated).toBe(true);
     expect(migrated.stack.id).toBe(ordinary.stack.id);
     expect((await inspect(service.repository, nested)).state).toBe("healthy");
-    const reused = await service.resolveStack({ workspacePath: nested, operation: "start" });
+    const reused = await service.resolveStack({
+      workspacePath: nested,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(reused.identityMarkerCreated).toBe(false);
   });
 
@@ -2322,7 +2718,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "detached-folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const markerPath = ordinaryWorkspaceIdentityPath(workspace);
     git(workspace, "init", "-q", "-b", "main");
     git(workspace, "commit", "-q", "--allow-empty", "-m", "initialize Git");
@@ -2349,7 +2750,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(recovering);
 
     await expect(
-      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+      recovering.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     const interruptedClaims = await Effect.runPromise(service.repository.listIdentityClaims());
     expect(
@@ -2369,6 +2775,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const migrated = await recovering.resolveStack({
       workspacePath: workspace,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(migrated.identity).toEqual(ordinary.identity);
     expect(migrated.stack.id).toBe(ordinary.stack.id);
@@ -2394,6 +2803,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const ordinary = await sourceService.resolveStack({
       workspacePath: source,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     git(source, "init", "-q", "-b", "main");
     git(source, "add", ".supabase/identity.json");
@@ -2406,7 +2818,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const staleLocation = beforeClaims.locations.find(
       (location) => location.checkoutId === ordinary.identity.checkoutId,
     );
-    const fresh = await sourceService.resolveStack({ workspacePath: clone, operation: "start" });
+    const fresh = await sourceService.resolveStack({
+      workspacePath: clone,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(fresh.identity.projectId).not.toBe(ordinary.identity.projectId);
     expect(fresh.identity.checkoutId).not.toBe(ordinary.identity.checkoutId);
     expect(gitStatus(clone)).toBe(beforeStatus);
@@ -2422,7 +2839,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "ambiguous-folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const base = service.repository;
     const claimTime = new Date().toISOString();
@@ -2469,7 +2891,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const before = gitStatus(workspace);
     const beforeStacks = await guarded.listStacks();
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({
       _tag: "ManagedCheckoutConflictError",
     });
@@ -2482,7 +2909,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "git-written-missing-targets");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const transitionId = "00000000-0000-7000-8000-000000000091";
     await Effect.runPromise(
@@ -2510,7 +2942,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     );
     const beforeConfig = readFileSync(join(workspace, ".git", "config"), "utf8");
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(readFileSync(join(workspace, ".git", "config"), "utf8")).toBe(beforeConfig);
     expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
@@ -2521,7 +2958,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "git-config-winner");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const competingProject = "00000000-0000-7000-8000-000000000102";
     const competingContext = "00000000-0000-7000-8000-000000000103";
@@ -2550,7 +2992,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const beforeStatus = gitStatus(workspace);
     const beforeStacks = await guarded.listStacks();
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(readFileSync(join(workspace, ".git", "config"), "utf8")).not.toBe(beforeConfig);
     expect(gitStatus(workspace)).toBe(beforeStatus);
@@ -2565,7 +3012,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "folder-migration-project-race");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     git(workspace, "commit", "-q", "--allow-empty", "-m", "initialize Git");
     const linked = join(root, "folder-migration-project-race-linked");
@@ -2592,7 +3044,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(guarded);
 
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(siblingIdentity?.projectId).toBeDefined();
     expect(git(workspace, "config", GIT_PROJECT_ID_KEY).trim()).toBe(siblingIdentity?.projectId);
@@ -2606,7 +3063,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "branch-binding-mismatch");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const transitionId = "00000000-0000-7000-8000-000000000092";
     await Effect.runPromise(
@@ -2624,7 +3086,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       }),
     );
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
   });
@@ -2634,7 +3101,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "duplicate-current-path");
     const service = await open(root);
     openHandles.push(service);
-    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const base = service.repository;
     const foreignCheckoutId = "00000000-0000-7000-8000-000000000093";
@@ -2664,7 +3136,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const beforeConfig = readFileSync(join(workspace, ".git", "config"), "utf8");
     const beforeStacks = await guarded.listStacks();
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
     expect(readFileSync(join(workspace, ".git", "config"), "utf8")).toBe(beforeConfig);
     expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
@@ -2676,7 +3153,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "claim-race");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     let reserved = false;
     const base = service.repository;
@@ -2708,7 +3190,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(guarded);
     const beforeConfig = readFileSync(join(workspace, ".git", "config"), "utf8");
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(readFileSync(join(workspace, ".git", "config"), "utf8")).toBe(beforeConfig);
     expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
@@ -2719,7 +3206,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeRepository(root, "complete-git");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const base = service.repository;
     const foreignCheckoutId = "00000000-0000-7000-8000-000000000095";
     const foreignProjectId = "00000000-0000-7000-8000-000000000096";
@@ -2773,7 +3265,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       expect.objectContaining({ checkoutId: foreignCheckoutId, canonicalPath: workspace }),
     ]);
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     expect(readFileSync(join(workspace, ".git", "config"), "utf8")).toBe(beforeConfig);
     expect(await guarded.listStacks()).toEqual(beforeStacks);
@@ -2786,7 +3283,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeRepository(root, "global-path-collision");
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const foreignProjectId = "00000000-0000-7000-8000-000000000201";
     const foreignCheckoutId = "00000000-0000-7000-8000-000000000202";
     const foreignContextId = "00000000-0000-7000-8000-000000000203";
@@ -2844,7 +3346,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       expect.objectContaining({ checkoutId: foreignCheckoutId, canonicalPath: workspace }),
     ]);
     await expect(
-      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+      guarded.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({
       _tag: "ManagedCheckoutConflictError",
     });
@@ -2860,7 +3367,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "crash-after-registry");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     const gitDirectory = join(workspace, ".git");
     git(workspace, "config", GIT_PROJECT_ID_KEY, ordinary.identity.projectId);
@@ -2912,7 +3424,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         now: new Date().toISOString(),
       }),
     );
-    const resumed = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const resumed = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(resumed.outcome).toBe("reuse");
     expect(resumed.identity).toEqual(ordinary.identity);
     expect((await inspect(service.repository, workspace)).activeTransition).toBeUndefined();
@@ -2923,7 +3440,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "interrupted-folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -2942,7 +3464,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     );
     const interrupted = await inspect(service.repository, workspace);
     expect(interrupted.state).toBe("transitioning");
-    const resumed = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const resumed = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(resumed.identity).toEqual(ordinary.identity);
     expect(resumed.stack.id).toBe(ordinary.stack.id);
     expect((await inspect(service.repository, workspace)).activeTransition).toBeUndefined();
@@ -2953,7 +3480,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const workspace = makeDirectory(root, "replaced-interrupted-folder-to-git");
     const service = await open(root);
     openHandles.push(service);
-    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const ordinary = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(workspace, "init", "-q", "-b", "main");
     await Effect.runPromise(
       service.repository.reserveIdentityTransition({
@@ -2976,7 +3508,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(workspace, "init", "-q", "-b", "main");
 
     await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
 
     expect(
@@ -2994,7 +3531,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const ownerless: ManagedStackRepositoryShape = {
       ...service.repository,
       listIdentityClaims: (projectId) =>
@@ -3024,7 +3566,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const main = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await Effect.runPromise(
       service.repository.refreshContextOwner({
         contextId: main.identity.contextId,
@@ -3045,7 +3592,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-m", "renamed");
     let interrupt = true;
     const wrapped: ManagedStackRepositoryShape = {
@@ -3096,7 +3648,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-m", "renamed");
     let interrupt = true;
     const wrapped: ManagedStackRepositoryShape = {
@@ -3143,7 +3700,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const started = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-m", "renamed");
     let interrupt = true;
     const wrapped: ManagedStackRepositoryShape = {
@@ -3200,7 +3762,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       const repository = makeRepository(root);
       const service = await open(root);
       openHandles.push(service);
-      const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      const started = await service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      });
       git(repository, "branch", "-m", "renamed");
       const linkedContextId = started.identity.contextId;
       let race = true;
@@ -3254,7 +3821,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       const replacement = join(root, "adopt-linked-replacement");
       const service = await open(root);
       openHandles.push(service);
-      const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      const main = await service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      });
       git(repository, "worktree", "add", "-q", linked, "-b", "linked");
       git(repository, "config", "branch.linked.supabaseContextId", main.identity.contextId);
       const linkedCheckoutId = "00000000-0000-7000-8000-000000000301";
@@ -3331,6 +3903,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         const resolved = await recovering.resolveStack({
           workspacePath: replacement,
           operation: "start",
+
+          portDocument: defaultPortDocument,
+          initialize: defaultInitialize,
         });
         expect(resolved).toMatchObject({
           outcome: "create",
@@ -3344,7 +3919,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         expect((await inspect(service.repository, replacement)).activeTransition).toBeUndefined();
       } else {
         await expect(
-          recovering.resolveStack({ workspacePath: replacement, operation: "start" }),
+          recovering.resolveStack({
+            workspacePath: replacement,
+            operation: "start",
+            portDocument: defaultPortDocument,
+            initialize: defaultInitialize,
+          }),
         ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
         expect((await inspect(service.repository, replacement)).activeTransition).toMatchObject({
           kind: "adopt-context",
@@ -3364,7 +3944,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       const replacement = join(root, "adopt-race-replacement");
       const service = await open(root);
       openHandles.push(service);
-      const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      const main = await service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      });
       git(repository, "worktree", "add", "-q", linked, "-b", "linked");
       git(repository, "config", "branch.linked.supabaseContextId", main.identity.contextId);
       const linkedCheckoutId = "00000000-0000-7000-8000-000000000311";
@@ -3425,7 +4010,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       git(repository, "worktree", "add", "-q", replacement, "linked");
 
       await expect(
-        recovering.resolveStack({ workspacePath: replacement, operation: "start" }),
+        recovering.resolveStack({
+          workspacePath: replacement,
+          operation: "start",
+          portDocument: defaultPortDocument,
+          initialize: defaultInitialize,
+        }),
       ).rejects.toMatchObject({ _tag: "ManagedCopiedBranchConflictError" });
       const afterRace = await inspect(service.repository, replacement);
       expect(afterRace.activeTransition).toMatchObject({
@@ -3448,7 +4038,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       const repository = makeRepository(root);
       const service = await open(root);
       openHandles.push(service);
-      const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      const started = await service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      });
       git(repository, "branch", "-m", "renamed");
       const wrapped: ManagedStackRepositoryShape = {
         ...service.repository,
@@ -3482,7 +4077,12 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const repository = makeRepository(root);
     const service = await open(root);
     openHandles.push(service);
-    const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const main = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-m", "renamed");
     const report = await service.discoverWorkspace(repository);
     expect(report.state).toBe("adoptable");

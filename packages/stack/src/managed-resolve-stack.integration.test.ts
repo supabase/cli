@@ -68,6 +68,9 @@ const adapters = [
   ],
 ] as const;
 
+const defaultPortDocument = { activeFields: [] } as const;
+const defaultInitialize = async (): Promise<void> => {};
+
 describe("resolveStack identity publication", () => {
   it("accepts a monotonic partial identity published between discovery passes", async () => {
     const root = makeRoot();
@@ -97,6 +100,9 @@ describe("resolveStack identity publication", () => {
     const resolved = await service.resolveStack({
       workspacePath: repositoryPath,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
 
     expect(injected).toBe(true);
@@ -117,9 +123,10 @@ const invalidStackNames = managedStackContractFixtures
   );
 
 /** A running stack, so port reservations and stop paths are actually exercised. */
-const running = (port: number): ResolveManagedStackRequest["configuration"] => ({
-  lifecycle: "running",
-  ports: [{ key: "api.port", port, intent: "exact" }],
+const running = (): ResolveManagedStackRequest["configuration"] => ({ lifecycle: "running" });
+const portDocumentFor = (port: number) => ({
+  activeFields: ["apiPort"] as const,
+  document: { api: { port } },
 });
 
 describe.each(adapters)("resolveStack over git workspaces with the %s adapter", (_name, make) => {
@@ -180,10 +187,20 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     });
     openHandles.push(serviceA, serviceB);
 
-    const firstAttempt = serviceA.resolveStack({ workspacePath, operation: "start" });
+    const firstAttempt = serviceA.resolveStack({
+      workspacePath,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     await reservationObserved;
     const secondAttempt = serviceB
-      .resolveStack({ workspacePath, operation: "start" })
+      .resolveStack({
+        workspacePath,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      })
       .finally(() => releaseReservation());
     return { service: serviceA, firstAttempt, secondAttempt };
   };
@@ -198,10 +215,16 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const first = await service.resolveStack({
       workspacePath: join(root, "wt-a"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     const second = await service.resolveStack({
       workspacePath: join(root, "wt-b"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
 
     expect(second.identity.projectId).toBe(first.identity.projectId);
@@ -235,8 +258,18 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const nested = makeDirectory(repository, join("apps", "web"));
     const service = await openService(root);
 
-    const fromRoot = await service.resolveStack({ workspacePath: repository, operation: "start" });
-    const fromNested = await service.resolveStack({ workspacePath: nested, operation: "start" });
+    const fromRoot = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    const fromNested = await service.resolveStack({
+      workspacePath: nested,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(fromNested.outcome).toBe("reuse");
     expect(fromNested.stack.id).toBe(fromRoot.stack.id);
@@ -258,13 +291,22 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const nested = makeDirectory(repository, join("packages", "api"));
     const service = await openService(root);
 
-    const created = await service.resolveStack({ workspacePath: nested, operation: "start" });
+    const created = await service.resolveStack({
+      workspacePath: nested,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(created.outcome).toBe("create");
     expect(created.stack.canonicalPath).toBe(repository);
     // A subdirectory recorded as the checkout's location would be permanent, so
     // the checkout's own root must still resolve to the stack it registered.
-    const reported = await service.resolveStack({ workspacePath: repository, operation: "status" });
+    const reported = await service.resolveStack({
+      workspacePath: repository,
+      operation: "status",
+      portDocument: defaultPortDocument,
+    });
     expect(reported.selection?.stackId).toBe(created.stack.id);
     expect(reported.identity).toEqual(created.identity);
   });
@@ -275,10 +317,18 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     git(repository, "worktree", "add", "-q", "-f", "--checkout", join(root, "wt-main"), "main");
     const service = await openService(root);
 
-    const primary = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const primary = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const forced = await service.resolveStack({
       workspacePath: join(root, "wt-main"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
 
     // Git owns the branch context, so both worktrees resolve the same one...
@@ -303,10 +353,16 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const first = await service.resolveStack({
       workspacePath: join(root, "bare-a"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     const second = await service.resolveStack({
       workspacePath: join(root, "bare-b"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
 
     expect(second.identity.projectId).toBe(first.identity.projectId);
@@ -335,7 +391,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
           workspacePath: repository,
           operation: "start",
           stackName,
-          configuration: running(54_400 + index),
+          configuration: running(),
+          portDocument: portDocumentFor(54_400 + index),
+          initialize: defaultInitialize,
         }),
       );
     }
@@ -363,7 +421,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
         workspacePath: repository,
         operation: "start",
         stackName: "conflicting",
-        configuration: running(54_401),
+        configuration: running(),
+        portDocument: portDocumentFor(54_401),
+        initialize: defaultInitialize,
       }),
     ).rejects.toBeInstanceOf(ManagedPortReservationError);
   });
@@ -376,7 +436,13 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
 
     for (const stackName of invalidStackNames) {
       await expect(
-        service.resolveStack({ workspacePath: repository, operation: "start", stackName }),
+        service.resolveStack({
+          workspacePath: repository,
+          operation: "start",
+          stackName,
+          portDocument: defaultPortDocument,
+          initialize: defaultInitialize,
+        }),
       ).rejects.toBeInstanceOf(InvalidManagedStackNameError);
 
       expect(existsSync(gitCheckoutIdentityPath(gitDirectory))).toBe(false);
@@ -395,7 +461,11 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const gitDirectory = join(repository, ".git");
     const service = await openService(root);
 
-    const result = await service.resolveStack({ workspacePath: repository, operation: "status" });
+    const result = await service.resolveStack({
+      workspacePath: repository,
+      operation: "status",
+      portDocument: defaultPortDocument,
+    });
 
     expect(result.outcome).toBe("report");
     expect(result.state).toBe("unregistered");
@@ -429,7 +499,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     git(repository, "checkout", "-q", firstCommit);
     const service = await openService(root);
 
-    const parked = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const parked = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(parked.context).toEqual({ kind: "detached", commit: firstCommit });
     expect(parked.stack.contextKind).toBe("detached");
     expect(parked.stack.contextLocator).toBeUndefined();
@@ -437,7 +512,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     // A different commit in the same checkout is the same development context:
     // keying one per commit would strand a stack on every checkout.
     git(repository, "checkout", "-q", secondCommit);
-    const moved = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const moved = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(moved.context.commit).toBe(secondCommit);
     expect(moved.identity.contextId).toBe(parked.identity.contextId);
     expect(moved.outcome).toBe("reuse");
@@ -448,6 +528,8 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const reported = await service.resolveStack({
       workspacePath: repository,
       operation: "status",
+
+      portDocument: defaultPortDocument,
     });
     expect(reported.identity.contextId).toBe(parked.identity.contextId);
     expect(reported.selection?.stackId).toBe(parked.stack.id);
@@ -456,6 +538,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const sibling = await service.resolveStack({
       workspacePath: join(root, "wt-detached"),
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(sibling.identity.contextId).not.toBe(parked.identity.contextId);
     expect(sibling.stack.id).not.toBe(parked.stack.id);
@@ -501,20 +586,40 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const service = await openService(root);
 
     git(repository, "checkout", "-q", "-b", "feat/x");
-    const feature = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const feature = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "checkout", "-q", "main");
-    const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const main = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(main.stack.id).not.toBe(feature.stack.id);
 
     git(repository, "checkout", "-q", "feat/x");
-    const returned = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const returned = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(returned.outcome).toBe("reuse");
     expect(returned.stack.id).toBe(feature.stack.id);
 
     // A rename is git's own operation on the context it owns, so the stack
     // survives it and only the name it is displayed under is refreshed.
     git(repository, "branch", "-m", "feat/x", "feat/renamed");
-    const renamed = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const renamed = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(renamed.outcome).toBe("reuse");
     expect(renamed.stack.id).toBe(feature.stack.id);
     expect(renamed.identity.contextId).toBe(feature.identity.contextId);
@@ -541,12 +646,22 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const original = makeRepository(root, "original");
     const moved = join(root, "moved");
     const service = await openService(root);
-    const first = await service.resolveStack({ workspacePath: original, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: original,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     git(original, "branch", "-m", "main", "renamed");
     renameSync(original, moved);
 
-    const recovered = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    const recovered = await service.resolveStack({
+      workspacePath: moved,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(recovered.outcome).toBe("reuse");
     expect(recovered.stack.id).toBe(first.stack.id);
     expect(recovered.identity).toEqual(first.identity);
@@ -558,7 +673,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const repository = makeRepository(root);
     const service = await openService(root);
 
-    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-c", "main", "copied");
     git(repository, "checkout", "-q", "copied");
 
@@ -567,7 +687,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(conflict.ownerEvidence?.authoritativeOwnerBranch).toBe("main");
     expect(conflict.recoveryOperations).toEqual([]);
 
-    const copied = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const copied = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(copied.outcome).toBe("create");
     expect(copied.identity.projectId).toBe(owner.identity.projectId);
     expect(copied.identity.checkoutId).toBe(owner.identity.checkoutId);
@@ -578,6 +703,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const ownerAgain = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(ownerAgain.identity.contextId).toBe(owner.identity.contextId);
     expect(ownerAgain.stack.id).toBe(owner.stack.id);
@@ -591,9 +719,19 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const original = makeRepository(root, "original");
     const moved = join(root, "moved");
     const service = await openService(root);
-    const owner = await service.resolveStack({ workspacePath: original, operation: "start" });
+    const owner = await service.resolveStack({
+      workspacePath: original,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     renameSync(original, moved);
-    const rebound = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    const rebound = await service.resolveStack({
+      workspacePath: moved,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(rebound.identity).toEqual(owner.identity);
 
     const reboundReport = await service.discoverWorkspace(moved);
@@ -606,7 +744,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     git(moved, "branch", "-c", "main", "feature");
     git(moved, "checkout", "-q", "feature");
 
-    const feature = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    const feature = await service.resolveStack({
+      workspacePath: moved,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(feature.outcome).toBe("create");
     expect(feature.identity.projectId).toBe(owner.identity.projectId);
     expect(feature.identity.checkoutId).toBe(owner.identity.checkoutId);
@@ -633,7 +776,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const repository = makeRepository(root, "owner");
     const copiedRepository = join(root, "copied");
     const service = await openService(root);
-    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     cpSync(repository, copiedRepository, { recursive: true });
     git(copiedRepository, "branch", "-c", "main", "feature");
     git(copiedRepository, "checkout", "-q", "feature");
@@ -650,7 +798,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(report.state).toBe("duplicate");
     expect(report.recoveryOperations).toEqual([]);
     await expect(
-      service.resolveStack({ workspacePath: copiedRepository, operation: "start" }),
+      service.resolveStack({
+        workspacePath: copiedRepository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
 
     expect(readFileSync(copiedConfig, "utf8")).toBe(beforeConfig);
@@ -674,7 +827,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const root = makeRoot();
     const repository = makeRepository(root);
     const base = await openService(root);
-    const owner = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    const owner = await base.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-c", "main", "copy-after-advance-failure");
     git(repository, "checkout", "-q", "copy-after-advance-failure");
     let failAfterGitWrite = true;
@@ -701,9 +859,19 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     openHandles.push(racing);
 
     await expect(
-      racing.resolveStack({ workspacePath: repository, operation: "start" }),
+      racing.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
-    const resumed = await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    const resumed = await racing.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(resumed.outcome).toBe("create");
     expect(resumed.identity.contextId).not.toBe(owner.identity.contextId);
     expect(
@@ -720,7 +888,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const linked = join(root, "copy-original");
     const replacement = join(root, "copy-replacement");
     const service = await openService(root);
-    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "worktree", "add", "-q", linked, "-b", "linked");
     git(repository, "config", "branch.linked.supabaseContextId", owner.identity.contextId);
     const linkedCheckoutId = "00000000-0000-7000-8000-000000000401";
@@ -760,7 +933,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     openHandles.push(recovering);
 
     await expect(
-      recovering.resolveStack({ workspacePath: linked, operation: "start" }),
+      recovering.resolveStack({
+        workspacePath: linked,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     const interrupted = await Effect.runPromise(
       service.repository.listIdentityClaims(owner.identity.projectId),
@@ -785,6 +963,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const resolved = await recovering.resolveStack({
       workspacePath: replacement,
       operation: "start",
+
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
     });
     expect(resolved.outcome).toBe("create");
     expect(resolved.identity.projectId).toBe(owner.identity.projectId);
@@ -802,7 +983,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const root = makeRoot();
     const repository = makeRepository(root);
     const base = await openService(root);
-    const first = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    const first = await base.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     let raced = false;
     const racingRepository = {
       ...base.repository,
@@ -827,7 +1013,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
       publicationPollMs: 1,
     });
     openHandles.push(racing);
-    await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    await racing.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const claims = await Effect.runPromise(
       base.repository.listIdentityClaims(first.identity.projectId),
     );
@@ -840,7 +1031,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const root = makeRoot();
     const repository = makeRepository(root);
     const service = await openService(root);
-    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "branch", "-c", "main", "copy");
     git(repository, "checkout", "-q", "copy");
     await Effect.runPromise(
@@ -861,7 +1057,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
       gitBranchContextIdKey("copy"),
     );
     await expect(
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
+      service.resolveStack({
+        workspacePath: repository,
+        operation: "start",
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
+      }),
     ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
     expect(
       storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copy")),
@@ -874,7 +1075,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const service = await openService(root);
 
     git(repository, "checkout", "-q", "-b", "original");
-    const original = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const original = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     git(repository, "checkout", "-q", "main");
     git(repository, "branch", "-D", "original");
     git(repository, "checkout", "-q", "-b", "renamed");
@@ -891,7 +1097,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(adopted.state).toBe("healthy");
     expect(adopted.ownerEvidence?.authoritativeOwnerBranch).toBe("renamed");
 
-    const reused = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const reused = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(reused.outcome).toBe("reuse");
     expect(reused.identity.contextId).toBe(original.identity.contextId);
     expect(reused.stack.id).toBe(original.stack.id);
@@ -903,19 +1114,34 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const service = await openService(root);
 
     git(repository, "checkout", "-q", "-b", "lifecycle");
-    const first = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const first = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     const firstCommit = git(repository, "rev-parse", "HEAD").trim();
     git(repository, "commit", "-q", "--allow-empty", "-m", "move");
     git(repository, "reset", "-q", "--hard", firstCommit);
     git(repository, "update-ref", "refs/heads/lifecycle", firstCommit);
-    const moved = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const moved = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(moved.identity.contextId).toBe(first.identity.contextId);
     expect(moved.stack.id).toBe(first.stack.id);
 
     git(repository, "checkout", "-q", "main");
     git(repository, "branch", "-D", "lifecycle");
     git(repository, "checkout", "-q", "-b", "lifecycle");
-    const recreated = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const recreated = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(recreated.identity.contextId).not.toBe(first.identity.contextId);
     expect(recreated.stack.id).not.toBe(first.stack.id);
   });
@@ -925,7 +1151,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const workspace = makeDirectory(root, "workspace");
     const service = await openService(root);
 
-    const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const created = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
 
     expect(created.outcome).toBe("create");
     expect(created.identityMarkerCreated).toBe(true);
@@ -935,7 +1166,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(created.stack.contextKind).toBe("workspace");
     expect(created.stack.canonicalPath).toBe(workspace);
 
-    const reused = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const reused = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
     expect(reused.outcome).toBe("reuse");
     expect(reused.identityMarkerCreated).toBe(false);
     expect(reused.stack.id).toBe(created.stack.id);
@@ -960,18 +1196,24 @@ describe.each(adapters)("managed stack isolation with the %s adapter", (_name, m
     const primary = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
-      configuration: running(54_410),
+      configuration: running(),
+      portDocument: portDocumentFor(54_410),
+      initialize: defaultInitialize,
     });
     const named = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
       stackName: "review",
-      configuration: running(54_411),
+      configuration: running(),
+      portDocument: portDocumentFor(54_411),
+      initialize: defaultInitialize,
     });
     const worktree = await service.resolveStack({
       workspacePath: join(root, "wt-b"),
       operation: "start",
-      configuration: running(54_412),
+      configuration: running(),
+      portDocument: portDocumentFor(54_412),
+      initialize: defaultInitialize,
     });
     return { repository, primary, named, worktree };
   };
@@ -1002,6 +1244,8 @@ describe.each(adapters)("managed stack isolation with the %s adapter", (_name, m
     const remaining = await service.resolveStack({
       workspacePath: repository,
       operation: "status",
+
+      portDocument: defaultPortDocument,
     });
     expect(remaining.state).toBe("unregistered");
     expect(remaining.stacks.map((stack) => stack.id)).toEqual([named.stack.id]);

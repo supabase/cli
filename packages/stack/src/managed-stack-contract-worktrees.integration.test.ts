@@ -90,6 +90,9 @@ const adapters = [
   ],
 ] as const;
 
+const defaultPortDocument = { activeFields: ["apiPort"] } as const;
+const defaultInitialize = async (): Promise<void> => {};
+
 const runRepo = Effect.runSync;
 
 const fixture = (id: string): ManagedStackContractScenario => {
@@ -572,10 +575,8 @@ const currentBranch = (repository: string): string =>
  * A running stack on a port of its own, so a start reserves what a start
  * reserves and siblings have something observably theirs to keep apart.
  */
-let nextPort = 54_600;
 const running = (): ResolveManagedStackRequest["configuration"] => ({
   lifecycle: "running",
-  ports: [{ key: "api.port", port: nextPort++, intent: "exact" }],
 });
 
 const stoppedConfiguration: ResolveManagedStackRequest["configuration"] = {
@@ -635,6 +636,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -679,6 +683,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: sibling.name,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       const checkoutA = checkoutFact(scenario, first.path);
       bindings.bind(checkoutA.projectId, existing.identity.projectId);
@@ -698,6 +705,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       // Git owns the branch context, so both worktrees resolve the one context —
@@ -746,6 +756,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: sibling.name,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       const checkoutA = checkoutFact(scenario, first.path);
       bindings.bind(checkoutA.projectId, existing.identity.projectId);
@@ -763,6 +776,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -820,6 +836,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: sibling.name,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       bindings.bind(checkout.projectId, existing.identity.projectId);
       bindings.bind(checkout.checkoutId, existing.identity.checkoutId);
@@ -832,6 +851,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -877,6 +899,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -916,6 +941,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: existing.name,
         configuration,
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       bindings.bind(checkout.projectId, created.identity.projectId);
       bindings.bind(checkout.checkoutId, created.identity.checkoutId);
@@ -933,6 +961,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration,
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -973,6 +1004,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: existing.name,
         configuration,
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       bindings.bind(checkout.projectId, parked.identity.projectId);
       bindings.bind(checkout.checkoutId, parked.identity.checkoutId);
@@ -992,6 +1026,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: call.stackName,
         configuration,
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
@@ -1023,11 +1060,21 @@ describe.each(adapters)(
       expectAbsentClaims(scenario, locations);
       const before = await stateWitness(service, locations);
 
-      const result = await service.resolveStack({
-        workspacePath: repository,
-        operation: call.operation,
-        stackName: call.stackName,
-      });
+      const result =
+        call.operation === "start"
+          ? await service.resolveStack({
+              workspacePath: repository,
+              operation: "start",
+              stackName: call.stackName,
+              portDocument: defaultPortDocument,
+              initialize: defaultInitialize,
+            })
+          : await service.resolveStack({
+              workspacePath: repository,
+              operation: "status",
+              stackName: call.stackName,
+              portDocument: defaultPortDocument,
+            });
 
       expect(result.outcome).toBe(scenario.expected.outcome);
       // `registered: false` is an absent identity, not an absent classification:
@@ -1066,7 +1113,13 @@ describe.each(adapters)(
         }
         for (const stackName of stackNames(scenario)) {
           const rejection = await service
-            .resolveStack({ workspacePath: repository, operation: "start", stackName })
+            .resolveStack({
+              workspacePath: repository,
+              operation: "start",
+              stackName,
+              portDocument: defaultPortDocument,
+              initialize: defaultInitialize,
+            })
             .then(
               () => undefined,
               (error: unknown) => error,
@@ -1114,6 +1167,9 @@ describe.each(adapters)(
           operation: "start",
           stackName,
           configuration: running(),
+
+          portDocument: defaultPortDocument,
+          initialize: defaultInitialize,
         });
         bindings.bind(checkout.projectId, created.identity.projectId);
         bindings.bind(checkout.checkoutId, created.identity.checkoutId);
@@ -1133,6 +1189,8 @@ describe.each(adapters)(
             workspacePath: repository,
             operation: "status",
             stackName,
+
+            portDocument: defaultPortDocument,
           });
 
           expect(reported.outcome, `round ${round}`).toBe(scenario.expected.outcome);
@@ -1166,6 +1224,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: orphan.name,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       bindings.bind(orphan.stackId, created.stack.id);
       expect(created.stack.lifecycle).toBe(orphan.lifecycle);
@@ -1234,6 +1295,9 @@ describe.each(adapters)(
         operation: "start",
         stackName: orphaned.name,
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       bindings.bind(checkout.projectId, created.identity.projectId);
       bindings.bind(checkout.checkoutId, created.identity.checkoutId);
@@ -1285,17 +1349,26 @@ describe.each(adapters)(
         workspacePath: repository,
         operation: "start",
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       const reviewA = await service.resolveStack({
         workspacePath: repository,
         operation: "start",
         stackName: "review",
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       const defaultB = await service.resolveStack({
         workspacePath: worktree,
         operation: "start",
         configuration: running(),
+
+        portDocument: defaultPortDocument,
+        initialize: defaultInitialize,
       });
       const siblings = [defaultA, reviewA, defaultB];
 
@@ -1342,6 +1415,8 @@ describe.each(adapters)(
         const reported = await service.resolveStack({
           workspacePath: workspace,
           operation: "status",
+
+          portDocument: defaultPortDocument,
         });
         expect(reported.selection?.stackId).toBe(survivor.stack.id);
         expect(reported.identity.projectId).toBe(defaultA.identity.projectId);
