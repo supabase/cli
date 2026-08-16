@@ -1132,7 +1132,7 @@ export class ManagedStackRepository extends Context.Service<
   ManagedStackRepositoryShape
 >()("stack/managed/ManagedStackRepository") {}
 
-const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
+export const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
   lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
 
 /**

@@ -91,6 +91,8 @@ export interface ManagedPortAssignment {
 
 export interface ManagedPortIntentDocument {
   readonly activeFields: ReadonlyArray<PortField>;
+  /** Services omitted from activeFields but intentionally retaining their prior intent. */
+  readonly disabledFields?: ReadonlyArray<PortField>;
   readonly document?: Readonly<Record<string, unknown>>;
   readonly valueOrigins?: ReadonlyArray<{
     readonly path: ReadonlyArray<string>;

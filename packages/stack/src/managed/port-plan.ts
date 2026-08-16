@@ -19,6 +19,7 @@ export interface ManagedPortPlan {
 
 export interface ManagedPortPlanInput {
   readonly activeFields: ReadonlyArray<PortField>;
+  readonly disabledFields?: ReadonlyArray<PortField>;
   readonly intents: ReadonlyArray<ManagedPortRequest>;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
 }
@@ -75,9 +76,19 @@ export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan =
     }
   }
 
+  const disabledKeys = new Set(
+    (input.disabledFields ?? []).flatMap((field) => {
+      const key = PORT_CATALOG[field].configKey;
+      return key === undefined ? [] : [key];
+    }),
+  );
   return {
     durable,
     runtimeOnly,
-    inactiveAssignments: persisted.filter((assignment) => !activeKeys.has(assignment.key)),
+    inactiveAssignments: persisted
+      .filter((assignment) => !activeKeys.has(assignment.key))
+      .map((assignment) =>
+        disabledKeys.has(assignment.key) ? assignment : { ...assignment, intent: "automatic" },
+      ),
   };
 };

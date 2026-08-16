@@ -106,3 +106,31 @@ export type {
   ManagedPruneResult,
   ManagedIdentityTransitionAbandonRequest,
 } from "./managed/service.ts";
+
+// Lean document-store manager. The store and repository adapters remain
+// internal implementation details; only the manager capability is exported.
+export {
+  ManagedStackManager,
+  managedStackManagerLayer,
+  makeManagedStackManager,
+  createManagedStackManager,
+  deriveRepairOwnershipId,
+  ManagedStackControlRequiredError,
+  ManagedStackAttachedError,
+  ManagedWorkspaceRepairConflictError,
+} from "./managed/manager.ts";
+export type {
+  ManagedStack,
+  ManagedStackManagerShape,
+  ManagedStackManagerError,
+  ManagedStackManagerHandle,
+  ManagedStackStartResult,
+  ManagedStackLifecycleUpdate,
+  ManagedPortLease,
+  ManagedPortAllocation,
+  ManagedDeleteResult,
+  AllocateManagedPortsRequest,
+  ResolveStackRequest,
+  ResolveStackStartRequest,
+  ResolveStackStatusRequest,
+} from "./managed/manager.ts";

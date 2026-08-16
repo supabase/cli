@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
@@ -20,6 +20,7 @@ import {
   gitDetachedContextIdentityPath,
   ordinaryWorkspaceIdentityPath,
 } from "./paths.ts";
+import type { ControlOwnership } from "./control.ts";
 
 /**
  * The marker's own failures are the only ones this module reports. Every
@@ -415,6 +416,41 @@ export const ensureGitCheckoutLocation = (
         if (outcome === "claimed") return { workspacePath, created: true };
         const winner = decodeLocation(await readFile(markerPath, "utf8"));
         return { workspacePath: winner, created: false };
+      },
+      catch: asRaised,
+    }),
+  );
+
+/** Replace a moved checkout marker while holding the opaque repair authority. */
+export const updateGitCheckoutLocationOwned = (
+  gitDirectory: string,
+  expectedPath: string,
+  workspacePath: string,
+  ownership: ControlOwnership,
+): Effect.Effect<{ readonly workspacePath: string }, InvalidManagedIdentityError> =>
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        void ownership;
+        const markerPath = gitCheckoutLocationPath(gitDirectory);
+        const current = decodeLocation(await readFile(markerPath, "utf8"));
+        if (current !== expectedPath) {
+          throw new InvalidManagedIdentityError({
+            message: "Git checkout location changed before repair publication",
+          });
+        }
+        const temporaryPath = `${markerPath}.tmp.${randomUUID()}`;
+        await writeFile(
+          temporaryPath,
+          `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        try {
+          await rename(temporaryPath, markerPath);
+        } finally {
+          await unlink(temporaryPath).catch(() => undefined);
+        }
+        return { workspacePath };
       },
       catch: asRaised,
     }),

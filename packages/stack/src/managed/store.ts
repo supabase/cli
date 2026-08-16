@@ -167,7 +167,18 @@ export const makeStackStore = (
     const remove = (stackId: string): Effect.Effect<void, PlatformError.PlatformError> => {
       const paths = managedStackPaths(resolvedStateRoot, stackId);
       const safeRoot = assertManagedStackRoot(resolvedStateRoot, stackId, paths.root);
-      return fs.remove(safeRoot, { recursive: true, force: true });
+      return Effect.gen(function* () {
+        if (!(yield* fs.exists(safeRoot))) return;
+        const entries = yield* fs.readDirectory(safeRoot);
+        for (const entry of entries) {
+          if (entry === "stack.json") continue;
+          yield* fs.remove(path.join(safeRoot, entry), { recursive: true, force: true });
+        }
+        yield* fs.remove(managedStackDocumentPath(resolvedStateRoot, stackId), {
+          force: true,
+        });
+        yield* fs.remove(safeRoot, { recursive: true, force: true });
+      });
     };
 
     return { stateRoot: resolvedStateRoot, read, list, write, remove };
