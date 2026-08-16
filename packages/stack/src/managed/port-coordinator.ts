@@ -259,21 +259,11 @@ const claimRace = (
   });
 
 const retryableClaimRace = (
-  stackId: string,
   assignments: ReadonlyArray<ManagedPortAssignment>,
   plan: ManagedPortPlan,
   error: ManagedPortReservationError,
-  reservations: ReadonlyArray<ManagedPortReservation>,
 ): boolean => {
-  const conflicting = assignments.filter((assignment) => {
-    if (assignment.port !== error.port) return false;
-    const owner = reservations.find(
-      (reservation) =>
-        reservation.stackId === error.ownerStackId &&
-        managedPortReservationsConflict(stackId, assignment, reservation),
-    );
-    return owner !== undefined || assignment.port === error.port;
-  });
+  const conflicting = assignments.filter((assignment) => assignment.port === error.port);
   if (conflicting.length === 0) return false;
   const newlyAutomatic = new Set(
     plan.durable.filter((entry) => entry.newlyAllocatedAutomatic).map((entry) => entry.key),
@@ -369,7 +359,7 @@ const makeCoordinator = (
           }
           if (
             attemptNumber < retryLimit &&
-            retryableClaimRace(input.stack.id, durableAssignments, input.plan, cause, reservations)
+            retryableClaimRace(durableAssignments, input.plan, cause)
           ) {
             return yield* attempt(attemptNumber + 1);
           }

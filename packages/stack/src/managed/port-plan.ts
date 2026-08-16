@@ -21,7 +21,6 @@ export interface ManagedPortPlanInput {
   readonly activeFields: ReadonlyArray<PortField>;
   readonly intents: ReadonlyArray<ManagedPortRequest>;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
-  readonly persistedAssignments?: ReadonlyArray<ManagedPortAssignment>;
 }
 
 const automaticSelection = (preferred: number | undefined): PortSelection =>
@@ -29,7 +28,7 @@ const automaticSelection = (preferred: number | undefined): PortSelection =>
 
 /** Build sticky durable selections and runtime-only requests from resolved intent. */
 export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan => {
-  const persisted = input.persisted ?? input.persistedAssignments ?? [];
+  const persisted = input.persisted ?? [];
   const persistedByKey = new Map(persisted.map((assignment) => [assignment.key, assignment]));
   const intentsByField = new Map(input.intents.map((request) => [request.field, request]));
   const activeKeys = new Set<ManagedPortAssignment["key"]>();

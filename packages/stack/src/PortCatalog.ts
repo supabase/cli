@@ -136,19 +136,27 @@ export const runtimeOnlyPortFields: ReadonlyArray<PortField> = PORT_FIELDS.filte
   (field) => PORT_CATALOG[field].persistence === "runtime",
 );
 
-export const DEFAULT_API_PORT = 54321;
-export const DEFAULT_DB_PORT = 54322;
+const preferredPort = (field: PortField): number => {
+  const preferred = PORT_CATALOG[field].preferred;
+  if (preferred === undefined) {
+    throw new Error(`Port catalog field ${field} has no preferred port`);
+  }
+  return preferred;
+};
+
+export const DEFAULT_API_PORT = preferredPort("apiPort");
+export const DEFAULT_DB_PORT = preferredPort("dbPort");
 export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
-  apiPort: DEFAULT_API_PORT,
-  dbPort: DEFAULT_DB_PORT,
-  edgeRuntimePort: 54341,
-  edgeRuntimeInspectorPort: 54342,
-  mailpitPort: 54324,
-  mailpitSmtpPort: 54325,
-  mailpitPop3Port: 54326,
-  studioPort: 54323,
-  analyticsPort: 54327,
-  poolerPort: 54329,
+  apiPort: preferredPort("apiPort"),
+  dbPort: preferredPort("dbPort"),
+  edgeRuntimePort: preferredPort("edgeRuntimePort"),
+  edgeRuntimeInspectorPort: preferredPort("edgeRuntimeInspectorPort"),
+  mailpitPort: preferredPort("mailpitPort"),
+  mailpitSmtpPort: preferredPort("mailpitSmtpPort"),
+  mailpitPop3Port: preferredPort("mailpitPop3Port"),
+  studioPort: preferredPort("studioPort"),
+  analyticsPort: preferredPort("analyticsPort"),
+  poolerPort: preferredPort("poolerPort"),
 };
 
 export const AllocatedPortsSchema = Schema.Struct({
