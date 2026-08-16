@@ -10,6 +10,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import {
   mockLegacyCliConfig,
   mockLegacyShadowContainerCliSpawner,
+  useLegacyShadowCacheDisabled,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -176,6 +177,11 @@ function setup(
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
+
+// The baseline PGDATA cache is ON by default and roots its tar directory at the ambient
+// `SUPABASE_HOME` — which this suite does not pin — so a cold provision here would read from, and
+// publish into, the developer's real `~/.supabase`. This suite's subject is not the cache.
+useLegacyShadowCacheDisabled();
 
 describe("legacyDeclarativeSeamLayer.exportCatalog", () => {
   it.effect(

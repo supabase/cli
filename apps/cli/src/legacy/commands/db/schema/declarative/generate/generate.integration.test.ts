@@ -26,6 +26,7 @@ import {
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  useLegacyShadowCacheDisabled,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -309,6 +310,11 @@ const flags = (
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
+
+// The baseline PGDATA cache is ON by default and roots its tar directory at the ambient
+// `SUPABASE_HOME` — which this suite does not pin — so a cold provision here would read from, and
+// publish into, the developer's real `~/.supabase`. This suite's subject is not the cache.
+useLegacyShadowCacheDisabled();
 
 describe("legacy db schema declarative generate integration", () => {
   const tmp = useLegacyTempWorkdir();

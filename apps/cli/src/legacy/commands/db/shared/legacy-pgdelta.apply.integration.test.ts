@@ -16,6 +16,7 @@ import {
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import { legacyApplyDeclarativePgDelta } from "./legacy-pgdelta.apply.ts";
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
+import { useLegacyShadowCacheDisabled } from "../../../../../tests/helpers/legacy-mocks.ts";
 
 const CTX: LegacyPgDeltaContext = {
   projectId: "ref",
@@ -51,6 +52,11 @@ function makeDeclarativeDir(): string {
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
+
+// The baseline PGDATA cache is ON by default and roots its tar directory at the ambient
+// `SUPABASE_HOME` — which this suite does not pin — so a cold provision here would read from, and
+// publish into, the developer's real `~/.supabase`. This suite's subject is not the cache.
+useLegacyShadowCacheDisabled();
 
 describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
