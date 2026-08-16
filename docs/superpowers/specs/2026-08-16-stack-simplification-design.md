@@ -1,0 +1,308 @@
+# `@supabase/stack` Simplification Design
+
+**Status:** approved for implementation
+**Date:** 2026-08-16
+**Baseline:** PR #6218 at `bb502dfa7971d44f41a30d402fd08a54d7a2c6dd`
+
+## Purpose
+
+Simplify `@supabase/stack` around the five capabilities the package actually needs:
+
+1. run several local Supabase stacks concurrently for worktree-based development;
+2. run a stack detached from the CLI and reconnect to it later;
+3. keep automatically selected ports sticky for the environment that first launched the stack;
+4. run services through Docker or native binaries according to platform availability; and
+5. remain a self-contained, programmatically usable package.
+
+The current runtime core already provides most of this. The redesign removes the managed control
+plane that grew around it: dual daemon paths, repository substitution, relational identity state,
+operation claims, owner tokens, publication polling, tombstones, reconciliation, and a parallel
+fixture language.
+
+## Non-goals
+
+- Do not redesign `ServiceCatalog`, `StackBuilder`, `StackPreparation`, `LocalStack`, `ApiProxy`, or
+  the `@supabase/process-compose` orchestration model.
+- Do not change exact-versus-automatic port intent or the approved port-conflict matrix.
+- Do not make direct `createStack()` participate in the host-wide managed registry. It remains an
+  isolated, foreground, ephemeral programmatic primitive.
+- Do not add compatibility shims or migrations for the unreleased SQLite managed registry.
+- Do not persist resolved Functions environment values, JWTs, API keys, or other secrets.
+
+## Design principles
+
+- One mechanism per invariant. A live control endpoint proves lifecycle ownership; there is no
+  second operation row that tries to describe the same fact.
+- One real adapter earns a seam. The file store is internal until a second production persistence
+  adapter exists.
+- The process that reserves ports is the process that launches services. Port reservations never
+  cross a process, callback, or Promise seam.
+- Rare, human-initiated workspace anomalies fail with precise repair guidance. Normal startup does
+  not run a general recovery engine.
+- Tests exercise public Effect or Promise interfaces with real temporary files and sockets. They do
+  not validate a second declarative implementation of the behavior.
+
+## Target module map
+
+### Runtime core (kept)
+
+`StackConfigResolver`, `StackPreparation`, `StackBuilder`, `LocalStack`, `ApiProxy`, and the
+`Stack` / `RemoteStack` interfaces continue to own service configuration, artifact selection,
+native-versus-Docker adapters, topology, lifecycle, projection, and transport.
+
+### Managed identity
+
+An environment is exactly:
+
+```text
+projectId + checkoutId + contextId + stackName
+```
+
+- `projectId` is stored in common local Git config for Git workspaces.
+- `checkoutId` is stored beneath the checkout-specific Git directory.
+- Branch `contextId` is stored in branch-local Git config; branch rename therefore carries it.
+- Detached contexts are checkout-scoped and stored beside the checkout marker.
+- Ordinary folders keep their project, checkout, and context IDs in
+  `.supabase/identity.json` using the existing atomic claim primitive.
+- `stackId` is the lowercase SHA-256 hex digest of the four length-delimited identity values. It is
+  deterministic and requires no registration row or random-ID publication protocol.
+
+The common path has three states:
+
+- `healthy`: identity is complete and agrees with any matching stack document;
+- `unregistered`: missing identity is atomically created for a mutating start;
+- `needsRepair`: moved, duplicate, adoptable, or orphaned identity evidence requires an explicit
+  repair operation.
+
+Read-only discovery never writes. Repair preserves the identity IDs and therefore the stack ID and
+sticky ports; it updates only the workspace descriptor or selected marker ownership. There is no
+location-history state machine, transitioning state, monotonic settlement, automatic adoption, or
+automatic pruning on the start path.
+
+### Internal per-stack store
+
+```text
+<stateRoot>/
+  registry.lock
+  stacks/<stackId>/
+    stack.json
+    data/
+    logs/
+```
+
+`stack.json` is an Effect Schema document with:
+
+```typescript
+interface StackDocument {
+  readonly format: "supabase-stack";
+  readonly formatVersion: 1;
+  readonly id: string;
+  readonly identity: {
+    readonly projectId: string;
+    readonly checkoutId: string;
+    readonly contextId: string;
+    readonly name: string;
+  };
+  readonly workspace: {
+    readonly kind: "git" | "folder";
+    readonly checkoutKind: "primary" | "worktree" | "bare" | "folder";
+    readonly path: string;
+    readonly branch?: string;
+  };
+  readonly ports: ReadonlyArray<ManagedPortAssignment>;
+  readonly lifecycle: "stopped" | "starting" | "running" | "deleting" | "failed";
+  readonly runtime?: {
+    readonly pid: number;
+    readonly controlEndpoint: string;
+    readonly protocolVersion: 1;
+  };
+  readonly launch?: {
+    readonly mode: "native" | "auto" | "docker";
+    readonly versions: Readonly<Record<string, string>>;
+  };
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+```
+
+The document contains no secrets. Docker containers and native runtime resources use `stackId` as
+their deterministic name/label input so crash cleanup can be derived rather than stored as a large
+cleanup plan.
+
+All writes use a sibling temporary file, fsync where supported, and atomic rename. Reads are
+lock-free. Corrupt or incompatible documents become per-stack `corrupt` listing entries rather than
+making every stack unreadable.
+
+Every mutation of a stack document requires ownership of that stack's control endpoint. A new stack
+binds first and creates its document second. Repair binds while the stack is stopped. Port allocation
+also holds the short registry lock. This serializes whole-document writes and prevents field-group
+writers from overwriting one another.
+
+The store is not public and has no repository injection interface. Tests receive an explicit
+temporary `stateRoot` and use the real implementation.
+
+### Registry lock
+
+The registry lock exists only to serialize operations that inspect several stack documents before
+writing one: automatic port allocation and the stale-control-endpoint takeover probe.
+
+The lock file is acquired atomically and contains `{ token, pid, acquiredAt }`. Release removes it
+only when the token still matches. A lock may be reclaimed only when it is at least 30 seconds old
+and its PID is no longer alive; a live or unprobeable owner is retained. Nothing involving downloads,
+Docker, service startup, shutdown, or filesystem reclamation runs while the lock is held.
+
+This small PID check is deliberately confined to stale registry-lock recovery. It is not persisted
+stack lifecycle state and cannot wedge an individual stack operation.
+
+### Lifecycle ownership and reattachment
+
+Each managed stack has one deterministic control endpoint:
+
+- POSIX: `<runtimeRoot>/s-<first 12 hex of sha256(stackId)>/control.sock` in an owner-only directory;
+- Windows: `\\.\pipe\supabase-stack-<stackId>`.
+
+Binding the endpoint grants lifecycle ownership. The endpoint also serves the existing validated
+`Stack` management transport plus a versioned owner-status response.
+
+Acquisition behaves as follows:
+
+1. Bind succeeds: this process owns the stack.
+2. Address is in use and connect succeeds: a live owner exists. Start connects and awaits that
+   owner's ready/failure state; status and logs attach; stop/delete send commands.
+3. Address is in use and repeated connections are refused: under the registry lock, re-probe,
+   remove the stale POSIX pathname, and bind. Windows named pipes disappear with their process.
+
+Normal Node and Bun server close removes a Unix socket pathname. A stop/delete caller therefore
+waits for the old server's close completion and pathname disappearance before attempting to bind.
+Stale takeover is only the crashed-owner path; it does not race a graceful close.
+
+The control protocol carries `protocolVersion: 1`. A mismatched client fails loudly with guidance;
+there is no speculative compatibility adapter.
+
+### One supervisor
+
+There is one Effect-native supervisor program for detached stacks. Runtime-specific Node and Bun
+files only provide platform layers and invoke `Effect.runPromise(main)` at the outer edge.
+
+Startup order is normative:
+
+1. Resolve identity in the parent without allocating ports.
+2. Spawn the supervisor with identity, paths, serializable stack configuration, and port intents.
+3. Bind the deterministic control endpoint.
+4. Under the registry lock, read stack documents, plan exact fields first, reserve the complete port
+   set in this process, and atomically persist the allocation.
+5. Start services. Each `beforeSpawn` releases only its placeholder socket immediately before the
+   service binds.
+6. Persist `running` runtime metadata and signal ready through fork IPC. Concurrent start losers
+   attach to the control endpoint and await the same result.
+7. On interruption or shutdown, scoped finalizers stop services, release remaining placeholders,
+   close the control server, and persist `stopped` or `failed` as appropriate.
+
+There is no `PortLease.handoff`, managed-daemon variant, operation claim, publication poll, or
+abandoned-operation reconciler.
+
+A process killed during start leaves a dead control endpoint and a `starting` document. The next
+owner derives resource cleanup from the stack ID, marks the previous attempt failed, and starts
+again. A process killed during delete leaves `deleting`; the next owner completes deletion before
+allowing a fresh registration of the same deterministic identity.
+
+### Public managed interface
+
+The public managed interface is deliberately smaller:
+
+```typescript
+interface ManagedStackManager {
+  readonly stateRoot: string;
+  readonly discoverWorkspace: (path: string) => Effect.Effect<WorkspaceDiscovery, DiscoveryError>;
+  readonly resolveStack: (request: ResolveStackRequest) => Effect.Effect<ManagedStack, ResolveError>;
+  readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStack | undefined>;
+  readonly listStacks: () => Effect.Effect<ReadonlyArray<ManagedStackListing>>;
+  readonly deleteStack: (stackId: string) => Effect.Effect<DeleteResult, DeleteError>;
+  readonly repairWorkspace: (request: RepairRequest) => Effect.Effect<WorkspaceDiscovery, RepairError>;
+}
+```
+
+`resolveStack` owns managed selection and port intent but does not accept repository, initialization,
+liveness, polling, or runtime-inspection callbacks. Detached launch composition remains in
+`managedDaemonLayer`, which returns the existing `RemoteStack` interface. A Promise facade wraps the
+same Effect layer for non-Effect callers.
+
+Removed public concepts include `ManagedStackRepository`, repository access from the Promise handle,
+`newCheckout`, `rebindCheckout`, `adoptContext`, `abandonIdentityTransition`, `prune`,
+`reconcileAbandonedOperations`, owner PID options, and publication timing options. Repair replaces
+the relevant recovery operations behind one explicit interface.
+
+## Port invariants
+
+1. A present config key is exact: use it or fail; never relocate it.
+2. An omitted key receives a sticky automatic assignment persisted for its stack identity.
+3. An unavailable persisted sticky port fails; it is not silently moved.
+4. Exact fields are planned and reserved before automatic or runtime-only fields.
+5. Exact assignments may coexist on stopped sibling stacks. A running owner conflicts.
+6. Automatic assignments remain exclusive while stopped or failed.
+7. Running configuration drift is reported and applies only after stop/start.
+8. Removing an exact key preserves its number as automatic; disabling a service preserves its
+   existing assignment and intent unchanged.
+9. Errors name the port, requesting key, and owning stack, including self-owned retired keys.
+10. Direct `createStack()` stays ephemeral and registry-blind.
+
+## Lean test strategy
+
+The integration suite is the primary protection. Each test drives a public manager or daemon
+interface using real temporary state roots, real Git worktrees where identity matters, real JSON
+documents, and real control sockets. Stateful Effect layers replace only expensive external service
+startup when the test is about management rather than runtime artifacts.
+
+Required managed integration scenarios:
+
+1. First start in a Git checkout registers identity, allocates ports, and writes one stack document;
+   stop/start reuses the same stack ID and automatic ports.
+2. Two sibling worktrees start independently and concurrently; their automatic ports differ.
+3. Two stopped siblings may share exact ports; a live owner produces an actionable conflict.
+4. Automatic ports remain exclusive across stopped stacks and external occupation fails without
+   relocation.
+5. Running drift is reported; stop/start applies changes; removed exact keys and disabled services
+   retain the approved intent semantics.
+6. Concurrent starts of one identity produce one owner and one attached caller.
+7. Killing the supervisor during start and during delete permits the next operation to recover
+   without registry surgery.
+8. A later manager process lists and reattaches to a detached stack, reads status/logs, and stops it.
+9. Moved or duplicated workspace evidence returns `needsRepair`; explicit repair preserves stack ID
+   and ports.
+10. One corrupt document is reported as corrupt without hiding healthy stacks.
+11. Control-protocol mismatch fails with explicit guidance.
+
+Unit tests remain only for pure port planning/conflict rules, deterministic identity derivation, and
+schema decoding branches structurally unreachable through integration setup.
+
+E2E coverage remains limited to:
+
+- one detached start/status/stop golden path through a real subprocess;
+- one parallel-worktree golden path;
+- one native-or-Docker full-stack smoke path where the actual runtime seam is the behavior.
+
+The typed contract fixture corpus, fixture validator, repository conformance matrix, source-shape
+tests, export-key snapshots, golden error strings, and branch-by-branch state-machine tests are
+deleted. Any scenario not protecting an observable workflow is deleted rather than translated.
+
+## Documentation and decision replacement
+
+This design supersedes ADR-0015's decisions to make typed fixtures normative, expose repository
+injection, and require conformance against memory and persistent adapters. ADR-0015 is updated to
+`superseded` and links here. `packages/stack/docs/architecture.md`, detach-mode documentation, and
+the package README describe only the resulting design; they do not retain a historical walkthrough
+of the removed machinery.
+
+## Acceptance criteria
+
+- One detached supervisor implementation, with thin Node and Bun runtime entrypoints.
+- No managed operation rows, owner tokens, tombstones, publication polling, forced reconciliation,
+  or port-lease handoff.
+- No SQLite or in-memory managed repository implementation and no public repository seam.
+- Managed persistence is per-stack, secret-free JSON written atomically.
+- Normal workspace resolution has only `healthy`, `unregistered`, and `needsRepair` outcomes.
+- The required integration scenarios above pass; low-value implementation tests and fixture DSL are
+  removed.
+- `packages/stack` and `apps/cli` unit/integration suites pass.
+- `pnpm check:all` passes in `packages/stack`; all relevant `apps/cli` checks pass.
+- Source and test line counts are materially lower than the PR #6218 baseline.
