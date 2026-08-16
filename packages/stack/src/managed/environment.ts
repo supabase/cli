@@ -303,6 +303,18 @@ export const validateEnvironmentRepair = (
         }),
       );
     }
+    const currentUpdates = current.state === "needsRepair" ? current.repair.updates : [];
+    const requestedUpdates = request.updates;
+    const currentUpdate = currentUpdates[0];
+    const requestedUpdate = requestedUpdates[0];
+    const updatesMatch =
+      currentUpdates.length === 1 &&
+      requestedUpdates.length === 1 &&
+      currentUpdate !== undefined &&
+      requestedUpdate !== undefined &&
+      requestedUpdate.kind === currentUpdate.kind &&
+      requestedUpdate.from === currentUpdate.from &&
+      requestedUpdate.to === currentUpdate.to;
     if (
       current.state !== "needsRepair" ||
       current.reason !== request.reason ||
@@ -310,11 +322,12 @@ export const validateEnvironmentRepair = (
       current.repair.expectedPath !== request.expectedPath ||
       current.identity.projectId !== request.identity.projectId ||
       current.identity.checkoutId !== request.identity.checkoutId ||
-      current.identity.contextId !== request.identity.contextId
+      current.identity.contextId !== request.identity.contextId ||
+      !updatesMatch
     ) {
       return yield* Effect.fail(
         new InvalidManagedIdentityError({ message: "Workspace identity changed before repair" }),
       );
     }
-    return request;
+    return current.repair;
   });

@@ -101,6 +101,27 @@ describe("managed environment identity", () => {
     ).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("rejects a forged nested update in a moved repair plan", () =>
+    withGitWorkspace((workspace) =>
+      Effect.gen(function* () {
+        const original = workspace.primary;
+        yield* ensureEnvironment(original);
+        const movedPath = `${workspace.root}/moved-forged`;
+        renameSync(original, movedPath);
+        const report = yield* discoverEnvironment(movedPath);
+        if (report.state !== "needsRepair") throw new Error("expected moved checkout");
+        const update = report.repair.updates[0];
+        if (update === undefined) throw new Error("expected one moved repair update");
+        const forged = {
+          ...report.repair,
+          updates: [{ ...update, to: update.from }],
+        };
+        const result = yield* validateEnvironmentRepair(forged).pipe(Effect.exit);
+        expect(result._tag).toBe("Failure");
+      }),
+    ).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("classifies a duplicated checkout as repair-required without rewriting it", () =>
     withGitWorkspace((workspace) =>
       Effect.gen(function* () {
