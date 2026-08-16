@@ -33,6 +33,19 @@ export class LegacyTestDbRunError extends Data.TaggedError("LegacyTestDbRunError
 }
 
 /**
+ * `pg_prove` ran but found nothing to execute. It reports that as `Result: NOTESTS`
+ * and still exits 0, so without this the command reports success for a run that
+ * executed zero tests (CLI-2194).
+ */
+export class LegacyTestDbNoTestsError extends Data.TaggedError("LegacyTestDbNoTestsError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
  * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
  * cobra's `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` error from
  * `apps/cli-go/cmd/db.go:485`, byte-for-byte.

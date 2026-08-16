@@ -7,7 +7,7 @@ delegated to [`@supabase/process-compose`](../../process-compose/docs/architectu
 
 ## Public entrypoints
 
-The package exposes three levels of Interface:
+The package exposes four levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
@@ -15,8 +15,9 @@ The package exposes three levels of Interface:
   Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
 - `@supabase/stack/managed` selects the Node or Bun SQLite Adapter and exposes managed identity,
   discovery, persistence, and lifecycle coordination. Its repository can be replaced by a caller.
-- `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
-  consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
+- `@supabase/stack/testing` exposes test-only tags plus contract fixtures, validators, the
+  in-memory repository seam, and transport helpers. Runtime implementation tags do not leak
+  through the root or Effect barrels.
 
 Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
 socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
@@ -590,9 +591,9 @@ than incidental:
   build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
   file is created and hardened, and a cold start may have to wait out another
   process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
-  blank state root, an owner PID that could never be probed, and a registry written by an
-  option failures reject with typed error instances, so a caller has one failure channel instead of a
-  throw plus a rejection.
+  blank state root, an owner PID that could never be probed, an incompatible registry, or invalid
+  options reject with typed error instances, so a caller has one failure channel instead of a throw
+  plus a rejection.
 - **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
   inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
   and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain

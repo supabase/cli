@@ -106,7 +106,9 @@ function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
 
 describe("Output", () => {
   describe("text layer", () => {
-    const layer = textOutputLayer.pipe(Layer.provide(mockTty({ stdoutIsTty: true })));
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), mockStdio().layer)),
+    );
 
     it.effect("task uses clack spinner and can resolve into info", () =>
       Effect.gen(function* () {
@@ -327,6 +329,21 @@ describe("Output", () => {
         });
         expect(result).toBe("good input");
       }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("raw and rawBytes write unframed through the stdio sink", () => {
+      const mock = mockStdio();
+      const sunk = textOutputLayer.pipe(
+        Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), mock.layer)),
+      );
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("plain text\n");
+        yield* out.rawBytes(new TextEncoder().encode("raw bytes\n"));
+        yield* out.raw("to stderr\n", "stderr");
+        expect(mock.stdout).toEqual(["plain text\n", "raw bytes\n"]);
+        expect(mock.stderr).toEqual(["to stderr\n"]);
+      }).pipe(Effect.provide(sunk));
     });
 
     it.effect("promptText interrupts on cancel", () => {

@@ -99,12 +99,18 @@ interface LegacyDockerRunShape {
    * propagates as `E`. `teeStderr` mirrors `runCapture` (Go's
    * `io.MultiWriter(os.Stderr, errBuf)`). Returns the exit code + captured stderr; the
    * stdout bytes are not retained.
+   *
+   * `captureStderr` (default `true`) buffers stderr for that returned string. Callers
+   * that only tee it and never read the result should pass `false` — retaining it
+   * grows with the container's total stderr, which the inherited-stdio `run` never did
+   * (`test db`, whose pgTAP suites can emit unbounded psql notices).
    */
   readonly runStream: <E>(
     opts: LegacyDockerRunOpts,
     streamOpts: {
       readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
       readonly teeStderr?: boolean;
+      readonly captureStderr?: boolean;
     },
   ) => Effect.Effect<
     { readonly exitCode: number; readonly stderr: string },

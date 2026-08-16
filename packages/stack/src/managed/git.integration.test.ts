@@ -572,6 +572,26 @@ describe("git-stored identity", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("collapses duplicated equal branch context values during replacement", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const inspection = yield* inspectCheckout(repository);
+      const expected = "00000000-0000-7000-8000-000000000304";
+      const target = "00000000-0000-7000-8000-000000000305";
+      const config = gitConfigPath(inspection.commonDirectory);
+      git(repository, "config", gitBranchContextIdKey("main"), expected);
+      git(repository, "config", "--add", gitBranchContextIdKey("main"), expected);
+
+      yield* replaceBranchContextId(inspection, "main", expected, target);
+
+      expect(storedConfigValue(config, gitBranchContextIdKey("main"))).toBe(target);
+      expect(git(repository, "config", "--get-all", gitBranchContextIdKey("main"))).toBe(
+        `${target}\n`,
+      );
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("gives sibling linked worktrees one project and separate checkouts", () =>
     Effect.gen(function* () {
       const root = makeRoot();

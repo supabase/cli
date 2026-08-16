@@ -124,7 +124,6 @@ describe("@supabase/stack entrypoints", () => {
       "assertManagedStackRoot",
       "assertManagedUuid",
       "bunSqliteManagedStackRepositoryLayer",
-      "canonicalizeManagedWorkspacePath",
       "createManagedStackService",
       "createManagedUuid",
       "ensureBranchContextId",

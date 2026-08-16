@@ -104,6 +104,12 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `supabase start`, `db start`, `--from-backup`, and shadow containers (the last is why the
   shadow baseline cache's cold export can stop/start in ~1s). Timing is not part of the
   Go-parity surface (ADR 0016).
+- `test db` (and its `db test` alias) exits `1` when `pg_prove` ran no tests (CLI-2194, #6206).
+  `pg_prove` prints `Result: NOTESTS` and still exits `0` for an empty run, and Go returns that
+  code verbatim (`internal/db/test/test.go` → `DockerRunOnceWithConfig`), so a typo'd path, an
+  empty tests directory, or a bind the daemon resolved against a different filesystem than the
+  CLI's (a sibling-container Docker socket) all reported a green build that ran zero tests. The
+  TAP stream on stdout is unchanged; the diagnostic goes to stderr like every other failure.
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

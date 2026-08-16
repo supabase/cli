@@ -20,7 +20,6 @@ export type {
   EnsureGitCheckoutIdentityResult,
 } from "./managed/git.ts";
 export {
-  canonicalizeManagedWorkspacePath,
   ensureOrdinaryWorkspaceIdentity,
   readOrdinaryWorkspaceIdentity,
 } from "./managed/identity.ts";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { beforeEach, vi } from "vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stdio } from "effect";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { Output } from "../../shared/output/output.service.ts";
@@ -65,7 +65,7 @@ beforeEach(() => {
 
 describe("legacyQuietProgressTextOutputLayer", () => {
   const layer = legacyQuietProgressTextOutputLayer.pipe(
-    Layer.provide(mockTty({ stdoutIsTty: true })),
+    Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), Stdio.layerTest({}))),
   );
 
   it.effect("never starts a spinner, even after the spinner delay elapses", () =>
