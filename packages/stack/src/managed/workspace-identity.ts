@@ -33,7 +33,7 @@ import {
   type GitCheckoutInspection,
 } from "./git.ts";
 import { assertManagedUuid } from "./ids.ts";
-import { ordinaryWorkspaceIdentityPath, gitConfigPath } from "./paths.ts";
+import { gitConfigPath } from "./paths.ts";
 import {
   ManagedStackRepository,
   type AbandonManagedIdentityTransitionResult,
@@ -48,6 +48,12 @@ import {
   newCheckoutTopologyMatches,
 } from "./topology.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
+import { workspaceMetadata } from "./workspace-metadata.ts";
+import {
+  concurrentIdentityPublication,
+  identityPublicationIsMonotonic,
+  sameManagedWorkspaceTopology,
+} from "./workspace-settlement.ts";
 
 export interface WorkspaceIdentityDependencies {
   readonly repository: ManagedStackRepositoryShape;
@@ -173,50 +179,6 @@ const observationMatches = (
     report.context.commit === commit
   );
 };
-
-const sameManagedWorkspaceTopology = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  report.workspace.checkoutKind === freshReport.workspace.checkoutKind &&
-  report.workspace.workspaceRoot === freshReport.workspace.workspaceRoot &&
-  report.workspace.projectIdentityLocation === freshReport.workspace.projectIdentityLocation &&
-  report.workspace.checkoutIdentityLocation === freshReport.workspace.checkoutIdentityLocation &&
-  report.context.kind === freshReport.context.kind &&
-  report.context.branch === freshReport.context.branch &&
-  report.context.commit === freshReport.context.commit;
-
-const identityPublicationIsMonotonic = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  (report.identity.projectId === undefined ||
-    report.identity.projectId === freshReport.identity.projectId) &&
-  (report.identity.checkoutId === undefined ||
-    report.identity.checkoutId === freshReport.identity.checkoutId) &&
-  (report.identity.contextId === undefined ||
-    report.identity.contextId === freshReport.identity.contextId);
-
-const identityPublicationAdvanced = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  (report.identity.projectId === undefined && freshReport.identity.projectId !== undefined) ||
-  (report.identity.checkoutId === undefined && freshReport.identity.checkoutId !== undefined) ||
-  (report.identity.contextId === undefined && freshReport.identity.contextId !== undefined);
-
-/** A same-topology start may have published part of the Git identity meanwhile. */
-const concurrentIdentityPublication = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  report.state === "unregistered" &&
-  freshReport.state === "unregistered" &&
-  freshReport.conflicts.length === 0 &&
-  freshReport.activeTransition === undefined &&
-  sameManagedWorkspaceTopology(report, freshReport) &&
-  identityPublicationIsMonotonic(report, freshReport) &&
-  identityPublicationAdvanced(report, freshReport);
 
 const newCheckoutTransitionMatches = (
   transition: ManagedIdentityTransitionRecord | undefined,
@@ -363,9 +325,9 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
+      const metadata = workspaceMetadata(inspection);
 
       if (inspection.kind === "ordinary-folder") {
-        const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
         const marker =
           targetIdentity === undefined
             ? yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory)
@@ -382,15 +344,7 @@ export const makeWorkspaceIdentity = ({
         return {
           // A folder keeps all three identities in one marker, so that
           // marker is both identity locations.
-          workspace: {
-            checkoutKind: "ordinary",
-            canonicalPath,
-            workspaceRoot: canonicalPath,
-            projectIdentityLocation: markerPath,
-            checkoutIdentityLocation: markerPath,
-          },
-          context: { kind: "workspace" },
-          contextDescriptor: { kind: "workspace" },
+          ...metadata,
           identity: {
             projectId: identity?.projectId,
             checkoutId: identity?.checkoutId,
@@ -433,23 +387,8 @@ export const makeWorkspaceIdentity = ({
             targetIdentity.contextId,
           );
         }
-        const head = inspection.head;
         return {
-          workspace: {
-            checkoutKind: checkoutKindOf(inspection),
-            canonicalPath: inspection.canonicalPath,
-            workspaceRoot: inspection.workspaceRoot,
-            projectIdentityLocation: inspection.commonDirectory,
-            checkoutIdentityLocation: inspection.gitDirectory,
-          },
-          context:
-            head.kind === "detached"
-              ? { kind: "detached", commit: head.commit }
-              : { kind: "branch", branch: head.branch },
-          contextDescriptor:
-            head.kind === "detached"
-              ? { kind: "detached" }
-              : { kind: "branch", locator: head.branch },
+          ...metadata,
           identity: targetIdentity,
           identityMarkerCreated: checkoutIdentityCreated,
         };
@@ -460,24 +399,10 @@ export const makeWorkspaceIdentity = ({
       const checkoutId = claimed.checkoutId;
       const head = inspection.head;
       return {
-        workspace: {
-          checkoutKind: checkoutKindOf(inspection),
-          canonicalPath: inspection.canonicalPath,
-          workspaceRoot: inspection.workspaceRoot,
-          projectIdentityLocation: inspection.commonDirectory,
-          checkoutIdentityLocation: inspection.gitDirectory,
-        },
+        ...metadata,
         // An unborn branch names a context exactly as a born one does: it is
         // the state a fresh repository starts in, and a first start there
         // must not be treated as a detached `HEAD`.
-        context:
-          head.kind === "detached"
-            ? { kind: "detached", commit: head.commit }
-            : { kind: "branch", branch: head.branch },
-        contextDescriptor:
-          head.kind === "detached"
-            ? { kind: "detached" }
-            : { kind: "branch", locator: head.branch },
         identity: {
           projectId: claimed.projectId,
           checkoutId,
@@ -2287,8 +2212,5 @@ export const makeWorkspaceIdentity = ({
     repairCopiedBranch,
     adoptContext,
     abandonIdentityTransition,
-    sameManagedWorkspaceTopology,
-    identityPublicationIsMonotonic,
-    concurrentIdentityPublication,
   };
 };

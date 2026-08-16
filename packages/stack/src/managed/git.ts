@@ -658,6 +658,9 @@ const runGitConfig = (
     });
   });
 
+const gitLockRetrySchedule = () =>
+  Schedule.exponential(Duration.millis(10)).pipe(Schedule.upTo({ duration: Duration.millis(400) }));
+
 /**
  * `git config` does not wait for another process' config lock — it refuses
  * immediately — so waiting is this store's job. Every claim in a repository with
@@ -679,9 +682,7 @@ const gitConfig = (
         ),
         {
           while: (error) => error.kind === "retryable",
-          schedule: Schedule.exponential(Duration.millis(10)).pipe(
-            Schedule.upTo({ duration: Duration.millis(400) }),
-          ),
+          schedule: gitLockRetrySchedule(),
         },
       ),
       (error) =>
@@ -764,9 +765,7 @@ const gitConfigReplaceExpected = (
     const acquireLock = fs.writeFileString(lockPath, "", { flag: "wx" }).pipe(
       Effect.retry({
         while: (error) => error.reason._tag === "AlreadyExists",
-        schedule: Schedule.exponential(Duration.millis(10)).pipe(
-          Schedule.upTo({ duration: Duration.millis(400) }),
-        ),
+        schedule: gitLockRetrySchedule(),
       }),
     );
     yield* Effect.acquireUseRelease(
