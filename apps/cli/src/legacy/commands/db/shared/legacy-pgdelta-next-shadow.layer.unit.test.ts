@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { describe, expect, it as vitestIt } from "vitest";
 
 import {
-  legacyAllowSameDatabaseIdentityForRestoredShadows,
+  legacyAllowSameDatabaseIdentityForPlanShadows,
   legacyPreparePgDeltaNextDeclarativeBaseline,
 } from "./legacy-pgdelta-next-shadow.layer.ts";
 
@@ -46,20 +46,25 @@ describe("legacyPreparePgDeltaNextDeclarativeBaseline", () => {
   });
 });
 
-describe("legacyAllowSameDatabaseIdentityForRestoredShadows", () => {
+describe("legacyAllowSameDatabaseIdentityForPlanShadows", () => {
   vitestIt.each([
-    { migrations: true, declarative: true, expected: true },
-    { migrations: true, declarative: false, expected: false },
-    { migrations: false, declarative: true, expected: false },
-    { migrations: false, declarative: false, expected: false },
+    // A declarative shadow restored from the migrations side's own snapshot key IS a physical
+    // clone of that cluster — whether the migrations side warm-restored from the tar or
+    // cold-exported it this run (the baseline handoff) — so the guard must be bypassed.
+    { restored: true, sameKey: true, expected: true },
+    // Restored from a DIFFERENT key's tar: a different originating cluster, own identity.
+    { restored: true, sameKey: false, expected: false },
+    // A freshly initdb'd declarative shadow always carries a brand-new identity.
+    { restored: false, sameKey: true, expected: false },
+    { restored: false, sameKey: false, expected: false },
   ])(
-    "returns $expected for migrations=$migrations and declarative=$declarative",
-    ({ migrations, declarative, expected }) => {
+    "returns $expected for restored=$restored and sameKey=$sameKey",
+    ({ restored, sameKey, expected }) => {
       expect(
-        legacyAllowSameDatabaseIdentityForRestoredShadows(
-          { restoredFromPgDataSnapshot: migrations },
-          { restoredFromPgDataSnapshot: declarative },
-        ),
+        legacyAllowSameDatabaseIdentityForPlanShadows({
+          declarativeRestoredFromPgDataSnapshot: restored,
+          sameSnapshotKey: sameKey,
+        }),
       ).toBe(expected);
     },
   );
