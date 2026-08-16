@@ -9,6 +9,7 @@ import {
   ControlProtocolError,
   ControlTransport,
   ControlTransportError,
+  type ControlOwnerStatus,
   type ControlEndpoint,
 } from "./managed/control.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -39,7 +40,7 @@ const errorCode = (cause: unknown): string | undefined => {
 };
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint) =>
+  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
     // constructor yields to register its scope finalizer. Keep only this
     // acquisition window uninterruptible; request handling and listener close
@@ -52,6 +53,15 @@ const controlTransport: ControlTransport["Service"] = {
           hostname: endpoint.hostname,
           port: endpoint.port,
           disablePreemptiveShutdown: true,
+          routes: {
+            [CONTROL_STATUS_PATH]: {
+              GET: () =>
+                new Response(JSON.stringify(ownerStatus()), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+            },
+          },
         }).pipe(
           Scope.provide(serverScope),
           Effect.catchDefect((cause) =>

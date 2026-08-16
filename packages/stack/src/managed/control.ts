@@ -85,6 +85,7 @@ export interface ControlListener {
 export interface ControlTransportShape {
   readonly bind: (
     endpoint: ControlEndpoint,
+    ownerStatus: () => ControlOwnerStatus,
   ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
   readonly read: (
     endpoint: ControlEndpoint,
@@ -325,7 +326,9 @@ const acquireAtEndpoint = (
     | ControlUnavailableError,
     import("effect/Scope").Scope
   > = Effect.gen(function* () {
-    const bound = yield* transport.bind(endpoint).pipe(Effect.result);
+    const bound = yield* transport
+      .bind(endpoint, () => Ref.getUnsafe(statusRef))
+      .pipe(Effect.result);
     if (Result.isSuccess(bound)) {
       const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef, hadConflict);
       yield* Effect.addFinalizer(() => owned.close);

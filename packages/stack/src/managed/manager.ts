@@ -13,7 +13,12 @@ import {
   Scope,
 } from "effect";
 import type { PortField, PortSet } from "../PortCatalog.ts";
-import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
+import {
+  reservePortSet,
+  type PortAllocationError,
+  type PortLease,
+  type PortReservationRequest,
+} from "../PortAllocator.ts";
 import {
   acquireControl,
   controlEndpoint,
@@ -103,6 +108,7 @@ export interface ManagedStackLifecycleUpdate {
 
 export interface ManagedPortLease {
   readonly ports: PortSet;
+  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
 }
@@ -173,6 +179,12 @@ export interface ManagedStackManagerShape {
   readonly discoverWorkspace: (
     path: string,
   ) => Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError>;
+  readonly ensureWorkspace: (
+    path: string,
+  ) => Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError>;
+  readonly acquireControl: (
+    stackId: string,
+  ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
   readonly resolveStack: {
     (
       request: ResolveStackStatusRequest,
@@ -207,6 +219,7 @@ export interface ManagedStackManagerShape {
   ) => Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError>;
   readonly deleteStack: (
     stackId: string,
+    ownership: ControlOwnership,
   ) => Effect.Effect<ManagedDeleteResult, ManagedStackManagerError>;
 }
 
@@ -487,6 +500,14 @@ const makeManager = (
           const assignments = yield* managedAssignments(plan, ports);
           const lease: ManagedPortLease = {
             ports,
+            reserve: (fields) =>
+              Effect.all(
+                [
+                  exactLease?.reserve(fields) ?? Effect.void,
+                  automaticLease?.reserve(fields) ?? Effect.void,
+                ],
+                { discard: true },
+              ),
             release: (fields) =>
               Effect.all(
                 [
@@ -752,10 +773,11 @@ const makeManager = (
 
     const deleteStack = (
       stackId: string,
+      ownedBy: ControlOwnership,
     ): Effect.Effect<ManagedDeleteResult, ManagedStackManagerError> =>
       Effect.scoped(
         Effect.gen(function* () {
-          const acquisition = yield* provideDependencies(acquireControl({ stackId }));
+          const acquisition = ownedBy;
           if (!isOwned(acquisition)) {
             return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
           }
@@ -774,6 +796,8 @@ const makeManager = (
     return {
       stateRoot: store.stateRoot,
       discoverWorkspace: (path) => provideDependencies(discoverEnvironment(path)),
+      ensureWorkspace: (path) => provideDependencies(ensureEnvironment(path)),
+      acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
       resolveStack,
       inspectStack,
       listStacks,
@@ -798,6 +822,7 @@ export const makeManagedStackManager = (
 export interface ManagedStackManagerHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly discoverWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
+  readonly ensureWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
   readonly resolveStack: {
     (request: ResolveStackStatusRequest): Promise<ManagedStack | undefined>;
     (request: ResolveStackStartRequest): Promise<ManagedStackAllocationHandle>;
@@ -856,13 +881,25 @@ export const createManagedStackManager = async (
   return {
     stateRoot: manager.stateRoot,
     discoverWorkspace: (path) => runtime.runPromise(manager.discoverWorkspace(path)),
+    ensureWorkspace: (path) => runtime.runPromise(manager.ensureWorkspace(path)),
     resolveStack,
     inspectStack: (stackId) => runtime.runPromise(manager.inspectStack(stackId)),
     listStacks: () => runtime.runPromise(manager.listStacks()),
     recordLifecycle: (ownership, update) =>
       runtime.runPromise(manager.recordLifecycle(ownership, update)),
     repairWorkspace: (request) => runtime.runPromise(manager.repairWorkspace(request)),
-    deleteStack: (stackId) => runtime.runPromise(manager.deleteStack(stackId)),
+    deleteStack: (stackId) =>
+      runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const acquisition = yield* manager.acquireControl(stackId);
+            if (!isOwned(acquisition)) {
+              return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
+            }
+            return yield* manager.deleteStack(stackId, acquisition);
+          }),
+        ),
+      ),
     [Symbol.asyncDispose]: close,
   };
 };

@@ -12,6 +12,7 @@ import {
   ControlProtocolError,
   ControlTransport,
   ControlTransportError,
+  type ControlOwnerStatus,
   type ControlEndpoint,
 } from "./managed/control.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
@@ -123,8 +124,12 @@ const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
   });
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint) => {
-    const rawServer = createServer();
+  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus) => {
+    const rawServer = createServer((request, response) => {
+      if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") return;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(ownerStatus()));
+    });
     return NodeHttpServer.make(() => rawServer, {
       host: endpoint.hostname,
       port: endpoint.port,

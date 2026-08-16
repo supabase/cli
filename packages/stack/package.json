@@ -52,9 +52,7 @@
       "scripts/**/*.ts",
       "src/**/*.test.ts",
       "src/daemon-node.ts",
-      "src/managed-daemon-node.ts",
-      "src/managed-daemon-bun.ts",
-      "src/managed-daemon-test-bun.ts",
+      "src/daemon-bun.ts",
       "tests/**/*.ts"
     ],
     "ignoreDependencies": [

@@ -107,7 +107,9 @@ describe("managed control endpoint", () => {
           const started = { value: false };
           const stackLayer = Layer.succeed(Stack, makeStack(started));
           const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus).pipe(
+            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
+              includeOwnerRoute: false,
+            }).pipe(
               Layer.provide(stackLayer),
               Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
             ),
@@ -132,6 +134,38 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.live("publishes owner status before and after DaemonServer uses the same listener", () =>
+    Effect.scoped(
+      live(
+        Effect.gen(function* () {
+          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
+          expect(before.status).toBe(200);
+          expect(yield* Effect.promise(() => before.json())).toMatchObject({ state: "starting" });
+          const daemonRuntime = ManagedRuntime.make(
+            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
+              includeOwnerRoute: false,
+            }).pipe(
+              Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
+              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
+            ),
+          );
+          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
+          const status = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/status`));
+          expect(status.status).toBe(200);
+          yield* owner.setState("running");
+          const after = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
+          expect(yield* Effect.promise(() => after.json())).toMatchObject({
+            state: "running",
+            ready: true,
+          });
+          yield* Effect.promise(() => daemonRuntime.dispose());
+        }),
+      ),
+    ),
+  );
+
   it.live("attaches a concurrent caller to the live owner", () =>
     Effect.scoped(
       live(
@@ -139,7 +173,9 @@ describe("managed control endpoint", () => {
           const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
           const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus).pipe(
+            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
+              includeOwnerRoute: false,
+            }).pipe(
               Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
               Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
             ),
@@ -173,7 +209,9 @@ describe("managed control endpoint", () => {
           const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
           const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus).pipe(
+            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
+              includeOwnerRoute: false,
+            }).pipe(
               Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
               Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
             ),

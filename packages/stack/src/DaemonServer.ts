@@ -32,6 +32,7 @@ export class DaemonServer extends Context.Service<
       state: "running",
       ready: true,
     }),
+    options: { readonly includeOwnerRoute?: boolean } = {},
   ): Layer.Layer<DaemonServer, never, Stack | HttpServer.HttpServer> =>
     Layer.effect(
       this,
@@ -121,18 +122,23 @@ export class DaemonServer extends Context.Service<
             },
           );
 
+        const ownerRoutes =
+          options.includeOwnerRoute === false
+            ? []
+            : [
+                HttpRouter.route(
+                  "GET",
+                  "/owner",
+                  ownerStatus.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status))),
+                ),
+              ];
         const routes = [
+          ...ownerRoutes,
           // Health check
           HttpRouter.route("GET", "/health", HttpServerResponse.text("OK", { status: 200 })),
 
           // Versioned lifecycle ownership/readiness status. The remaining
           // routes are the existing Stack management transport.
-          HttpRouter.route(
-            "GET",
-            "/owner",
-            ownerStatus.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status))),
-          ),
-
           // Status: connection info + all service states
           HttpRouter.route(
             "GET",

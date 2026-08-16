@@ -14,8 +14,11 @@ import {
 import type { ManagedStackRepository } from "./managed/repository.ts";
 import type { ManagedStackService } from "./managed/service.ts";
 import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
-import { managedDaemonLayer as managedDaemonLayerForPlatform } from "./managed-daemon.ts";
-import { managedDaemonEntryPoint } from "./managed-daemon-bun.ts";
+import {
+  managedDaemonLayer as managedDaemonLayerForPlatform,
+  type ManagedDaemonStartInput,
+} from "./supervisor.ts";
+import { daemonEntryPoint as managedDaemonEntryPoint } from "./platform-bun.ts";
 import {
   createManagedStackManager as createManagedStackManagerCore,
   managedStackManagerLayer as managedStackManagerLayerCore,
@@ -27,7 +30,7 @@ import { controlTransportLayer } from "./platform-bun.ts";
 export * from "./managed.ts";
 export { bunSqliteManagedStackRepositoryLayer };
 export { managedDaemonEntryPoint };
-export { ManagedDaemonStartError, type ManagedDaemonStartInput } from "./managed-daemon.ts";
+export { ManagedDaemonStartError, type ManagedDaemonStartInput } from "./supervisor.ts";
 
 export const managedStackManagerLayer = (options: { readonly stateRoot: string }) =>
   managedStackManagerLayerCore(options).pipe(
@@ -57,6 +60,6 @@ export const makeManagedStackService = (
 ): Promise<ManagedStackServiceHandle> => makeManagedStackServiceWith(BunFileSystem.layer, options);
 
 export const managedDaemonLayer = (
-  input: import("./managed-daemon.ts").ManagedDaemonStartInput,
+  input: ManagedDaemonStartInput,
 ): ReturnType<typeof managedDaemonLayerForPlatform> =>
   managedDaemonLayerForPlatform(input, managedDaemonEntryPoint);
