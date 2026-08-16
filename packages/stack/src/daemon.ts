@@ -3,8 +3,7 @@ import { HttpServer } from "effect/unstable/http";
 import { ApiProxy } from "./ApiProxy.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
-import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
-import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
+import { reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { runningServiceVersionsForConfig } from "./StackMetadata.ts";
 import { foregroundDaemonLayer } from "./layers.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
@@ -56,8 +55,8 @@ export async function runDaemon(
 
   try {
     const config = await resolveDaemonConfig(msg.config, {
-      portAllocator: (input, options) =>
-        reservePorts(input, options).pipe(
+      portAllocator: (requests, options) =>
+        reservePortSet(requests, options).pipe(
           Effect.tap((lease) =>
             Effect.sync(() => {
               portLease = lease;
@@ -69,11 +68,6 @@ export async function runDaemon(
     if (portLease === undefined) {
       throw new Error("Daemon port allocation completed without a port lease");
     }
-    const activeFields = new Set(allocatedPortFieldsForConfig(config));
-    await Effect.runPromise(
-      portLease.release(PORT_FIELDS.filter((field) => !activeFields.has(field))),
-    );
-
     // Build the app layer (Stack + ApiProxy)
     const appLayer = foregroundDaemonLayer(config, platformFactory, portLease);
 

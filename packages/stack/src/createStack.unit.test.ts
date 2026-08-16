@@ -6,7 +6,7 @@ import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import { runForegroundOperation, type StackHandle } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts } from "./PortCatalog.ts";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   projectKeyForProjectDir,
@@ -218,10 +218,10 @@ describe("createStack types", () => {
 
       expect(config.ports.apiPort).toBe(54321);
       expect(config.ports.dbPort).toBe(54322);
-      expect(config.ports.studioPort).toBe(54323);
-      expect(config.ports.mailpitPort).toBe(54324);
-      expect(config.ports.analyticsPort).toBe(54327);
-      expect(config.ports.poolerPort).toBe(54329);
+      expect(config.ports.studioPort).toBeUndefined();
+      expect(config.ports.mailpitPort).toBeUndefined();
+      expect(config.ports.analyticsPort).toBeUndefined();
+      expect(config.ports.poolerPort).toBeUndefined();
     });
   });
 
@@ -265,7 +265,15 @@ describe("createStack types", () => {
         cwd: "/Users/test/Code/myapp",
       });
 
-      expect(config.ports).toEqual(savedPorts);
+      expect(config.ports).toEqual({
+        apiPort: savedPorts.apiPort,
+        dbPort: savedPorts.dbPort,
+        authPort: savedPorts.authPort,
+        postgrestPort: savedPorts.postgrestPort,
+        postgrestAdminPort: savedPorts.postgrestAdminPort,
+        edgeRuntimePort: savedPorts.edgeRuntimePort,
+        edgeRuntimeInspectorPort: savedPorts.edgeRuntimeInspectorPort,
+      });
       expect(config.apiPort).toBe(savedPorts.apiPort);
       expect(config.dbPort).toBe(savedPorts.dbPort);
     });

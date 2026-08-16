@@ -6,7 +6,7 @@ import {
   postgrestAssetName,
   type PlatformInfo,
 } from "./Platform.ts";
-import type { PortField } from "./PortAllocator.ts";
+import type { PortField } from "./PortCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
 type ArtifactOwnership = "supabase" | "upstream";

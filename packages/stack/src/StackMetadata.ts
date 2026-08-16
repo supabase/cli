@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { CleanupTargetsSchema, type CleanupTargets } from "./CleanupTargets.ts";
-import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
+import { ResolvedPortsSchema, type ResolvedPorts } from "./PortCatalog.ts";
 import { serviceMetadata } from "./ServiceCatalog.ts";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { SERVICE_NAMES, type ServiceName, type VersionManifest } from "./versions.ts";
@@ -63,7 +63,7 @@ type StackLaunch = Schema.Schema.Type<typeof StackLaunchSchema>;
 export const StackMetadataSchema = Schema.Struct({
   schemaVersion: Schema.Number,
   updatedAt: Schema.String,
-  ports: AllocatedPortsSchema,
+  ports: ResolvedPortsSchema,
   services: VersionManifestSchema,
   launch: Schema.optionalKey(StackLaunchSchema),
   cleanupTargets: Schema.optionalKey(CleanupTargetsSchema),
@@ -90,7 +90,7 @@ export function runningServiceVersionsForConfig(
 }
 
 export function stackMetadata(args: {
-  readonly ports: AllocatedPorts;
+  readonly ports: ResolvedPorts;
   readonly services: VersionManifest;
   readonly launch: StackLaunch;
   readonly cleanupTargets?: CleanupTargets;

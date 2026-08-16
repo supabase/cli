@@ -39,19 +39,33 @@ export {
 
 export type {
   AllocatedPorts,
+  ConfigPortKey,
+  PortCatalogEntry,
   PortField,
-  PortInput,
+  ResolvedPorts,
+} from "./PortCatalog.ts";
+export type {
   PortLease,
+  PortReservationRequest,
+  PortSelection,
   PortSelectionOptions,
 } from "./PortAllocator.ts";
+export { allocatePortSet, PortAllocationError, reservePortSet } from "./PortAllocator.ts";
 export {
-  allocatePorts,
+  AllocatedPortsSchema,
   DEFAULT_API_PORT,
   DEFAULT_DB_PORT,
-  PortAllocationError,
-  reserveAllocatedPorts,
-  reservePorts,
-} from "./PortAllocator.ts";
+  DEFAULT_PORTS,
+  PORT_CATALOG,
+  PORT_FIELDS,
+  runtimeOnlyPortFields,
+  stickyPortFields,
+} from "./PortCatalog.ts";
+export {
+  allocatedPortFieldsForConfig,
+  portFieldsForConfigInput,
+  portFieldsForService,
+} from "./ServicePorts.ts";
 
 export type {
   AnalyticsConfig,

@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { afterEach } from "vitest";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts } from "./PortCatalog.ts";
 import {
   StateClaimError,
   StateManager,
@@ -78,6 +78,30 @@ describe("StateManager claim", () => {
       expect(error).toBeInstanceOf(StateClaimError);
       expect(error.reason).toBe("already-claimed");
       expect((yield* manager.read("claim-test")).pid).toBe(100);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("persists only the active resolved port fields", () => {
+    const root = mkdtempSync(join(tmpdir(), "stack-state-partial-"));
+    tempRoots.push(root);
+    const stackRoot = join(root, "stacks", "partial-test");
+    const layer = StateManager.make(
+      singleStackStateManagerPaths(stackRoot, join(root, "runtime"), "partial-test"),
+    ).pipe(Layer.provide(NodeServices.layer));
+    const partialState: StackState = {
+      ...state(100),
+      name: "partial-test",
+      ports: { apiPort: ports.apiPort, dbPort: ports.dbPort },
+    };
+
+    return Effect.gen(function* () {
+      const manager = yield* StateManager;
+      yield* manager.write(partialState);
+      const content = readFileSync(join(stackRoot, "state.json"), "utf8");
+      expect(JSON.parse(content).ports).toEqual({
+        apiPort: ports.apiPort,
+        dbPort: ports.dbPort,
+      });
     }).pipe(Effect.provide(layer));
   });
 });

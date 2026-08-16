@@ -9,7 +9,7 @@ import {
   singleStackStateManagerPaths,
   type StackState,
 } from "./StateManager.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts } from "./PortCatalog.ts";
 import { stackMetadata } from "./StackMetadata.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 

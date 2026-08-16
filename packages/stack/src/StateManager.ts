@@ -3,7 +3,7 @@ import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { claimFileAtomically } from "./managed/atomic-claim.ts";
-import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
+import { ResolvedPortsSchema, type ResolvedPorts } from "./PortCatalog.ts";
 import {
   PartialVersionManifestSchema,
   STACK_METADATA_SCHEMA_VERSION,
@@ -28,7 +28,7 @@ export interface StackState {
   readonly projectDir: string;
   readonly apiPort: number;
   readonly dbPort: number;
-  readonly ports: AllocatedPorts;
+  readonly ports: ResolvedPorts;
   readonly socketPath: string;
   readonly startedAt: string;
   readonly url: string;
@@ -47,7 +47,7 @@ export const StackStateSchema = Schema.Struct({
   projectDir: Schema.String,
   apiPort: Schema.Number,
   dbPort: Schema.Number,
-  ports: AllocatedPortsSchema,
+  ports: ResolvedPortsSchema,
   socketPath: Schema.String,
   startedAt: Schema.String,
   url: Schema.String,

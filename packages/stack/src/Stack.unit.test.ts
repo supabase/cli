@@ -12,7 +12,8 @@ import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { StackBuildError } from "./errors.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { functionsRuntimeConfigPath, type ResolvedFunctionsBundle } from "./functions.ts";
-import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
+import type { AllocatedPorts, PortField, ResolvedPorts } from "./PortCatalog.ts";
+import type { PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
 import { localStackLayer } from "./LocalStack.ts";
@@ -124,7 +125,7 @@ const functionsBundle = (root: string, value: string): ResolvedFunctionsBundle =
   ],
 });
 
-const noopPortLease = (ports: AllocatedPorts): PortLease => ({
+const noopPortLease = (ports: ResolvedPorts): PortLease => ({
   ports,
   reserve: () => Effect.void,
   release: () => Effect.void,

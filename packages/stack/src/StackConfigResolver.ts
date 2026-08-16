@@ -19,14 +19,19 @@ import {
   shortTempPrefixRoot,
 } from "./paths.ts";
 import {
-  allocatePorts,
-  DEFAULT_PORTS,
-  PORT_FIELDS,
-  type AllocatedPorts,
+  allocatePortSet,
+  type PortReservationRequest,
   type PortAllocationError,
-  type PortInput,
   type PortSelectionOptions,
 } from "./PortAllocator.ts";
+import {
+  DEFAULT_PORTS,
+  PORT_CATALOG,
+  PORT_FIELDS,
+  type PortField,
+  type ResolvedPorts,
+} from "./PortCatalog.ts";
+import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { StackMetadataSchema } from "./StackMetadata.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
 import type {
@@ -70,12 +75,12 @@ export function defaultManagedStackName(_cwd: string): string {
 export interface ResolveConfigOptions {
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
-  readonly preferredPorts?: Partial<AllocatedPorts>;
+  readonly preferredPorts?: ResolvedPorts;
   readonly reservedPorts?: ReadonlySet<number>;
   readonly portAllocator?: (
-    input: PortInput,
+    requests: ReadonlyArray<PortReservationRequest>,
     options: PortSelectionOptions,
-  ) => Effect.Effect<AllocatedPorts, PortAllocationError>;
+  ) => Effect.Effect<ResolvedPorts, PortAllocationError>;
 }
 
 interface ResolvedRoots {
@@ -123,6 +128,17 @@ const resolveDataDir = (
   suffix: string,
 ): string => explicitDir ?? join(stackRoot, "data", suffix);
 
+const requiredPort = (ports: ResolvedPorts, field: PortField): number => {
+  const port = ports[field];
+  if (port === undefined) {
+    throw new StackBuildError({
+      detail: `Missing resolved port for active field ${field}`,
+      reason: "invalid_config",
+    });
+  }
+  return port;
+};
+
 async function readStackMetadataFile(filePath: string) {
   try {
     const content = await readFile(filePath, "utf8");
@@ -132,7 +148,7 @@ async function readStackMetadataFile(filePath: string) {
   }
 }
 
-async function readOwnedPorts(stackRoot: string): Promise<AllocatedPorts | undefined> {
+async function readOwnedPorts(stackRoot: string): Promise<ResolvedPorts | undefined> {
   const metadata = await readStackMetadataFile(join(stackRoot, "stack.json"));
   return metadata?.ports;
 }
@@ -181,7 +197,8 @@ async function readReservedPorts(
           }
 
           for (const field of PORT_FIELDS) {
-            reserved.add(ports[field]);
+            const port = ports[field];
+            if (port !== undefined) reserved.add(port);
           }
         }),
       );
@@ -221,7 +238,8 @@ async function readReservedPortsInStacksRoot(
       }
 
       for (const field of PORT_FIELDS) {
-        reserved.add(ports[field]);
+        const port = ports[field];
+        if (port !== undefined) reserved.add(port);
       }
     }),
   );
@@ -232,13 +250,13 @@ async function readReservedPortsInStacksRoot(
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
   raw: PostgrestConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedPostgrestConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.postgrestPort,
-    adminPort: ports.postgrestAdminPort,
+    port: requiredPort(ports, "postgrestPort"),
+    adminPort: requiredPort(ports, "postgrestAdminPort"),
     schemas: cfg.schemas ?? ["public", "graphql_public"],
     extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
     maxRows: cfg.maxRows ?? 1000,
@@ -249,13 +267,13 @@ function resolvePostgrestConfig(
 function resolveAuthConfig(
   input: AuthConfig | undefined,
   raw: AuthConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
   apiPort: number,
 ): ResolvedAuthConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.authPort,
+    port: requiredPort(ports, "authPort"),
     siteUrl: cfg.siteUrl ?? "http://localhost:3000",
     jwtExpiry: cfg.jwtExpiry ?? 3600,
     externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
@@ -266,12 +284,12 @@ function resolveAuthConfig(
 function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
   raw: RealtimeConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedRealtimeConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.realtimePort,
+    port: requiredPort(ports, "realtimePort"),
     version: cfg.version ?? DEFAULT_VERSIONS.realtime,
     tenantId: cfg.tenantId ?? "realtime-dev",
     encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
@@ -284,14 +302,14 @@ function resolveRealtimeConfig(
 function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
   raw: EdgeRuntimeConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedEdgeRuntimeConfig | false {
   if (raw === false || raw?.enabled === false) return false;
   const cfg = input ?? {};
   return {
     enabled: cfg.enabled ?? true,
-    port: ports.edgeRuntimePort,
-    inspectorPort: ports.edgeRuntimeInspectorPort,
+    port: requiredPort(ports, "edgeRuntimePort"),
+    inspectorPort: requiredPort(ports, "edgeRuntimeInspectorPort"),
     policy: cfg.policy ?? "per_worker",
     version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
     env: cfg.env ?? {},
@@ -333,13 +351,13 @@ function resolveInstanceId(instanceId: string | undefined): string | undefined {
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
   opts: ResolveConfigOptions,
 ): ResolvedStorageConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.storagePort,
+    port: requiredPort(ports, "storagePort"),
     version: cfg.version ?? DEFAULT_VERSIONS.storage,
     dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
     fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
@@ -350,12 +368,12 @@ function resolveStorageConfig(
 function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
   raw: ImgproxyConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedImgproxyConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.imgproxyPort,
+    port: requiredPort(ports, "imgproxyPort"),
     version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
   };
 }
@@ -363,14 +381,14 @@ function resolveImgproxyConfig(
 function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedMailpitConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.mailpitPort,
-    smtpPort: ports.mailpitSmtpPort,
-    pop3Port: ports.mailpitPop3Port,
+    port: requiredPort(ports, "mailpitPort"),
+    smtpPort: requiredPort(ports, "mailpitSmtpPort"),
+    pop3Port: requiredPort(ports, "mailpitPop3Port"),
     version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
     adminEmail: cfg.adminEmail ?? "admin@email.com",
     senderName: cfg.senderName ?? "Admin",
@@ -380,12 +398,12 @@ function resolveMailpitConfig(
 function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
   raw: PgmetaConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedPgmetaConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.pgmetaPort,
+    port: requiredPort(ports, "pgmetaPort"),
     version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
   };
 }
@@ -393,13 +411,13 @@ function resolvePgmetaConfig(
 function resolveStudioConfig(
   input: StudioConfig | undefined,
   raw: StudioConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
   apiPort: number,
 ): ResolvedStudioConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.studioPort,
+    port: requiredPort(ports, "studioPort"),
     version: cfg.version ?? DEFAULT_VERSIONS.studio,
     apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
   };
@@ -408,12 +426,12 @@ function resolveStudioConfig(
 function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
   raw: AnalyticsConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedAnalyticsConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.analyticsPort,
+    port: requiredPort(ports, "analyticsPort"),
     version: cfg.version ?? DEFAULT_VERSIONS.analytics,
     backend: cfg.backend ?? "postgres",
     apiKey: cfg.apiKey ?? "api-key",
@@ -434,13 +452,13 @@ function resolveVectorConfig(
 function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
-  ports: AllocatedPorts,
+  ports: ResolvedPorts,
 ): ResolvedPoolerConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
   return {
-    port: ports.poolerPort,
-    apiPort: ports.poolerApiPort,
+    port: requiredPort(ports, "poolerPort"),
+    apiPort: requiredPort(ports, "poolerApiPort"),
     mode: cfg.mode ?? "transaction",
     version: cfg.version ?? DEFAULT_VERSIONS.pooler,
     tenantId: cfg.tenantId ?? "pooler-dev",
@@ -491,33 +509,60 @@ export async function resolveConfig(
 
   const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
+  const explicitPortForField = (field: PortField): number | undefined => {
+    switch (field) {
+      case "apiPort":
+        return config.port;
+      case "dbPort":
+        return postgresInput.port;
+      case "authPort":
+        return authInput?.port;
+      case "edgeRuntimePort":
+        return edgeRuntimeInput?.port;
+      case "edgeRuntimeInspectorPort":
+        return edgeRuntimeInput?.inspectorPort;
+      case "realtimePort":
+        return realtimeInput?.port;
+      case "storagePort":
+        return storageInput?.port;
+      case "imgproxyPort":
+        return imgproxyInput?.port;
+      case "mailpitPort":
+        return mailpitInput?.port;
+      case "mailpitSmtpPort":
+        return mailpitInput?.smtpPort;
+      case "mailpitPop3Port":
+        return mailpitInput?.pop3Port;
+      case "pgmetaPort":
+        return pgmetaInput?.port;
+      case "studioPort":
+        return studioInput?.port;
+      case "analyticsPort":
+        return analyticsInput?.port;
+      case "poolerPort":
+        return poolerInput?.port;
+      case "postgrestPort":
+      case "postgrestAdminPort":
+      case "poolerApiPort":
+        return undefined;
+    }
+  };
+
+  const requests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(config).map(
+    (field) => {
+      const explicit = explicitPortForField(field);
+      if (explicit !== undefined) {
+        return { field, selection: { kind: "exact", port: explicit } };
+      }
+      const preferred = opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
+      return preferred === undefined
+        ? { field, selection: { kind: "automatic" } }
+        : { field, selection: { kind: "automatic", preferred } };
+    },
+  );
+
   const ports = await Effect.runPromise(
-    (opts.portAllocator ?? allocatePorts)(
-      {
-        apiPort: config.port,
-        dbPort: postgresInput.port,
-        authPort: authInput?.port,
-        postgrestPort: undefined,
-        postgrestAdminPort: undefined,
-        edgeRuntimePort: edgeRuntimeInput?.port,
-        edgeRuntimeInspectorPort: edgeRuntimeInput?.inspectorPort,
-        realtimePort: realtimeInput?.port,
-        storagePort: storageInput?.port,
-        imgproxyPort: imgproxyInput?.port,
-        mailpitPort: mailpitInput?.port,
-        mailpitSmtpPort: mailpitInput?.smtpPort,
-        mailpitPop3Port: mailpitInput?.pop3Port,
-        pgmetaPort: pgmetaInput?.port,
-        studioPort: studioInput?.port,
-        analyticsPort: analyticsInput?.port,
-        poolerPort: poolerInput?.port,
-        poolerApiPort: poolerInput?.apiPort,
-      },
-      {
-        preferred: opts.preferredPorts,
-        reserved: opts.reservedPorts,
-      },
-    ),
+    (opts.portAllocator ?? allocatePortSet)(requests, { reserved: opts.reservedPorts }),
   ).catch((error: unknown) => {
     throw toStackError(error);
   });
@@ -525,6 +570,8 @@ export async function resolveConfig(
   const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
   const anonJwt = generateJwt(jwtSecret, "anon");
   const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
+  const apiPort = requiredPort(ports, "apiPort");
+  const dbPort = requiredPort(ports, "dbPort");
 
   return {
     instanceId,
@@ -538,8 +585,8 @@ export async function resolveConfig(
     readinessSource: config.readiness === undefined ? "default" : "configured",
     jwtSecret,
     ports,
-    apiPort: ports.apiPort,
-    dbPort: ports.dbPort,
+    apiPort,
+    dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
     secretKey: config.secretKey ?? defaultSecretKey,
     functions,
@@ -547,13 +594,13 @@ export async function resolveConfig(
     anonJwt,
     serviceRoleJwt,
     postgres: {
-      port: ports.dbPort,
+      port: dbPort,
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
       autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
-    auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),
+    auth: resolveAuthConfig(authInput, config.auth, ports, apiPort),
     edgeRuntime: edgeRuntimeEnabled
       ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
       : false,
@@ -571,9 +618,7 @@ export async function resolveConfig(
       : false,
     mailpit: mailpitEnabled ? resolveMailpitConfig(mailpitInput, config.mailpit, ports) : false,
     pgmeta: pgmetaEnabled ? resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports) : false,
-    studio: studioEnabled
-      ? resolveStudioConfig(studioInput, config.studio, ports, ports.apiPort)
-      : false,
+    studio: studioEnabled ? resolveStudioConfig(studioInput, config.studio, ports, apiPort) : false,
     analytics: analyticsEnabled
       ? resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
       : false,
