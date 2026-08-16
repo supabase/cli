@@ -14,6 +14,31 @@ const StackBuildReasonSchema = Schema.Literals([
   "asset_preparation",
 ]);
 
+export const ControlOwnerStateSchema = Schema.Literals([
+  "starting",
+  "running",
+  "stopping",
+  "deleting",
+  "failed",
+]);
+
+export type ControlOwnerState = typeof ControlOwnerStateSchema.Type;
+
+export const ControlOwnerStatusSchema = Schema.Struct({
+  protocolVersion: Schema.Literal(1),
+  state: ControlOwnerStateSchema,
+  ready: Schema.Boolean,
+});
+
+export type ControlOwnerStatus = typeof ControlOwnerStatusSchema.Type;
+
+// Daemon-prefixed aliases keep the protocol vocabulary discoverable alongside
+// the existing DaemonErrorResponse and DaemonMessage schemas.
+export const DaemonOwnerStateSchema = ControlOwnerStateSchema;
+export type DaemonOwnerState = ControlOwnerState;
+export const DaemonOwnerStatusSchema = ControlOwnerStatusSchema;
+export type DaemonOwnerStatus = ControlOwnerStatus;
+
 export const DaemonErrorResponseSchema = Schema.Struct({
   code: DaemonErrorCodeSchema,
   error: Schema.String,

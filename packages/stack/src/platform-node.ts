@@ -6,6 +6,16 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { Effect, Layer } from "effect";
 import type { PlatformFactory } from "./createStack.ts";
+import {
+  CONTROL_STATUS_PATH,
+  ControlBindError,
+  ControlProtocolError,
+  ControlTransport,
+  ControlTransportError,
+  type ControlEndpoint,
+  type ControlListener,
+  type ControlOwnerStatus,
+} from "./managed/control.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
 const mergeBodyHeaders = (
@@ -76,7 +86,9 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
         return await new Promise<Response>((resolve, reject) => {
           const request = Http.request(
             {
-              socketPath,
+              ...(typeof socketPath === "string"
+                ? { socketPath }
+                : { hostname: socketPath.hostname, port: socketPath.port }),
               path,
               method: init?.method ?? "GET",
               headers,
@@ -94,6 +106,128 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
       catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
     }),
 });
+
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+  const code = cause.code;
+  return typeof code === "string" ? code : undefined;
+};
+
+const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
+  Effect.callback<void>((resume) => {
+    if (!server.listening) {
+      resume(Effect.void);
+      return Effect.void;
+    }
+    server.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)));
+    return Effect.void;
+  });
+
+const controlTransport: ControlTransport["Service"] = {
+  bind: (endpoint: ControlEndpoint, status: () => ControlOwnerStatus) =>
+    Effect.callback<ControlListener, ControlBindError>((resume) => {
+      const server = createServer((request, response) => {
+        if (request.method !== "GET" || request.url !== CONTROL_STATUS_PATH) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: "not found" }));
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify(status()));
+      });
+      let fallbackBind = false;
+      const onError = (cause: unknown) => {
+        if (errorCode(cause) === "EADDRNOTAVAIL" && !fallbackBind) {
+          fallbackBind = true;
+          server.listen({ host: "127.0.0.1", port: endpoint.port }, () => {
+            server.off("error", onError);
+            resume(Effect.succeed({ close: closeControlServer(server) }));
+          });
+          return;
+        }
+        server.off("error", onError);
+        resume(
+          Effect.fail(
+            new ControlBindError({
+              endpoint,
+              reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+              cause,
+            }),
+          ),
+        );
+      };
+      server.on("error", onError);
+      server.listen({ host: endpoint.hostname, port: endpoint.port }, () => {
+        server.off("error", onError);
+        resume(Effect.succeed({ close: closeControlServer(server) }));
+      });
+      return Effect.sync(() => {
+        server.off("error", onError);
+        if (server.listening) server.close();
+      });
+    }),
+  read: (endpoint: ControlEndpoint) =>
+    Effect.tryPromise({
+      try: async () => {
+        const requestStatus = (host: string) =>
+          new Promise<unknown>((resolve, reject) => {
+            const request = Http.request(
+              {
+                host,
+                port: endpoint.port,
+                path: CONTROL_STATUS_PATH,
+                method: "GET",
+              },
+              (response) => {
+                let body = "";
+                response.setEncoding("utf8");
+                response.on("data", (chunk: string) => {
+                  body += chunk;
+                });
+                response.on("end", () => {
+                  if ((response.statusCode ?? 500) < 200 || (response.statusCode ?? 500) >= 300) {
+                    reject(
+                      new Error(`Control status request returned ${response.statusCode ?? 500}`),
+                    );
+                    return;
+                  }
+                  try {
+                    resolve(JSON.parse(body));
+                  } catch (cause) {
+                    reject(cause);
+                  }
+                });
+              },
+            );
+            request.setTimeout(25, () =>
+              request.destroy(new Error("Control status request timed out")),
+            );
+            request.once("error", reject);
+            request.end();
+          });
+        // macOS does not route every 127/8 alias unless explicitly configured;
+        // the bind operation applies the same fallback, so connect through it.
+        return await requestStatus("127.0.0.1");
+      },
+      catch: (cause) => {
+        const code = errorCode(cause);
+        if (
+          code === "ECONNREFUSED" ||
+          code === "ECONNRESET" ||
+          code === "EHOSTUNREACH" ||
+          (cause instanceof Error && cause.message === "Control status request timed out")
+        ) {
+          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+        }
+        if (cause instanceof Error && cause.message.startsWith("Control status request returned")) {
+          return new ControlProtocolError({ endpoint, cause });
+        }
+        return new ControlTransportError({ endpoint, reason: "transport", cause });
+      },
+    }),
+};
+
+export const controlTransportLayer = Layer.succeed(ControlTransport, controlTransport);
 
 export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
   Layer.mergeAll(

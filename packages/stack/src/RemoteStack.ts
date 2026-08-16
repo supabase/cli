@@ -7,7 +7,7 @@ import { StackBuildError, StackReadinessError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
-import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+import { UnixHttpClient, UnixHttpClientError, type HttpTransportTarget } from "./UnixHttpClient.ts";
 import { SERVICE_NAMES } from "./versions.ts";
 
 // ---------------------------------------------------------------------------
@@ -82,11 +82,11 @@ function makeRequest(path: string, init?: RequestInit) {
 }
 
 /** Make a fetch request to the daemon Unix socket. */
-function unixFetch(socketPath: string, path: string, init?: RequestInit) {
+function unixFetch(socketPath: HttpTransportTarget, path: string, init?: RequestInit) {
   return Effect.flatMap(UnixHttpClient, (client) => client.request(socketPath, path, init));
 }
 
-function unixResponse(socketPath: string, path: string, init?: RequestInit) {
+function unixResponse(socketPath: HttpTransportTarget, path: string, init?: RequestInit) {
   const request = makeRequest(path, init);
   return Effect.map(unixFetch(socketPath, path, init), (response) =>
     HttpClientResponse.fromWeb(request, response),
@@ -95,7 +95,7 @@ function unixResponse(socketPath: string, path: string, init?: RequestInit) {
 
 /** Preserve daemon RPC identity when an HTTP status or body cannot be decoded. */
 function dieOnNonOkStatus<A>(
-  socketPath: string,
+  socketPath: HttpTransportTarget,
   path: string,
   effect: Effect.Effect<A, HttpClientError.HttpClientError>,
 ) {
@@ -108,7 +108,7 @@ function dieOnNonOkStatus<A>(
 }
 
 function dieOnBodyDecodeError<A, E, R>(
-  socketPath: string,
+  socketPath: HttpTransportTarget,
   path: string,
   effect: Effect.Effect<A, E, R>,
 ) {
@@ -131,7 +131,7 @@ function withAbortSignal<A, E, R>(
 }
 
 const failDaemonResponse = (
-  socketPath: string,
+  socketPath: HttpTransportTarget,
   path: string,
   response: HttpClientResponse.HttpClientResponse,
   fallbackName: string,
@@ -169,7 +169,7 @@ const failDaemonResponse = (
   });
 
 const expectDaemonOk = (
-  socketPath: string,
+  socketPath: HttpTransportTarget,
   path: string,
   response: HttpClientResponse.HttpClientResponse,
   fallbackName: string,
@@ -182,7 +182,7 @@ const expectDaemonOk = (
     : failDaemonResponse(socketPath, path, response, fallbackName);
 
 /** Fetch JSON from the daemon, dying on HTTP errors. */
-function fetchStatus(socketPath: string, path: string, method = "GET") {
+function fetchStatus(socketPath: HttpTransportTarget, path: string, method = "GET") {
   return Effect.gen(function* () {
     const response = yield* unixResponse(socketPath, path, { method });
     const okResponse = yield* dieOnNonOkStatus(
@@ -198,7 +198,7 @@ function fetchStatus(socketPath: string, path: string, method = "GET") {
   });
 }
 
-function fetchLogEntries(socketPath: string, path: string) {
+function fetchLogEntries(socketPath: HttpTransportTarget, path: string) {
   return Effect.gen(function* () {
     const response = yield* unixResponse(socketPath, path);
     const okResponse = yield* dieOnNonOkStatus(
@@ -233,7 +233,7 @@ function encodeSearchParams(
 }
 
 /** Convert a ReadableStream SSE body into an Effect Stream of parsed events. */
-function sseStream<A>(socketPath: string, path: string, parse: (data: string) => A) {
+function sseStream<A>(socketPath: HttpTransportTarget, path: string, parse: (data: string) => A) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const controller = new AbortController();
@@ -312,7 +312,7 @@ function toServiceState(
  * between foreground (in-process) and detached (daemon) modes.
  */
 export const RemoteStack = {
-  layer: (socketPath: string): Layer.Layer<Stack, never, UnixHttpClient> =>
+  layer: (socketPath: HttpTransportTarget): Layer.Layer<Stack, never, UnixHttpClient> =>
     Layer.effect(
       Stack,
       Effect.gen(function* () {

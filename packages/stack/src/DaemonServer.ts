@@ -7,7 +7,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
-import type { DaemonErrorResponse } from "./DaemonProtocol.ts";
+import type { ControlOwnerStatus, DaemonErrorResponse } from "./DaemonProtocol.ts";
 import { FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
@@ -26,6 +26,11 @@ export class DaemonServer extends Context.Service<
 >()("stack/DaemonServer") {
   static layerWithShutdown = (
     beforeShutdown: Effect.Effect<void> = Effect.void,
+    ownerStatus: Effect.Effect<ControlOwnerStatus> = Effect.succeed({
+      protocolVersion: 1,
+      state: "running",
+      ready: true,
+    }),
   ): Layer.Layer<DaemonServer, never, Stack | HttpServer.HttpServer> =>
     Layer.effect(
       this,
@@ -118,6 +123,14 @@ export class DaemonServer extends Context.Service<
         const routes = [
           // Health check
           HttpRouter.route("GET", "/health", HttpServerResponse.text("OK", { status: 200 })),
+
+          // Versioned lifecycle ownership/readiness status. The remaining
+          // routes are the existing Stack management transport.
+          HttpRouter.route(
+            "GET",
+            "/owner",
+            ownerStatus.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status))),
+          ),
 
           // Status: connection info + all service states
           HttpRouter.route(
