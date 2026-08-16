@@ -2757,12 +2757,17 @@ describe("managed repository and lifecycle", () => {
       }
 
       if (fixtureId === "ports.config-change-on-running-stack-reports-drift") {
-        const created = await service.resolveStack({
-          workspacePath: workspace,
-          operation: "start",
-          portDocument: portFixtureDocument(fixtureId, apiPort),
-          initialize,
-        });
+        const created = await withFreshExactPort((exactPort) =>
+          service.resolveStack({
+            workspacePath: workspace,
+            operation: "start",
+            portDocument: portFixtureDocument(fixtureId, exactPort),
+            initialize,
+          }),
+        );
+        const actualPort = created.stack.ports.find(({ key }) => key === "api.port")?.port;
+        if (actualPort === undefined)
+          throw new Error("Running drift fixture did not persist api.port");
         const before = {
           stack: await service.inspectStack(created.stack.id),
           operations: runRepo(service.repository.listActiveOperations()),
@@ -2783,7 +2788,7 @@ describe("managed repository and lifecycle", () => {
         expect(resolved.portDrift).toEqual([
           expect.objectContaining({
             key: "api.port",
-            actualPort: apiPort,
+            actualPort,
             configuredPort: changedPort,
           }),
         ]);

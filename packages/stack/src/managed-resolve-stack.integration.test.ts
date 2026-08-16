@@ -418,8 +418,8 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(new Set(resolved.map(({ stack }) => stack.id)).size).toBe(names.length);
     expect(new Set(resolved.map(({ stack }) => stack.paths.root)).size).toBe(names.length);
     expect(
-      new Set(resolved.flatMap(({ stack }) => stack.ports.map((port) => port.port))),
-    ).toHaveLength(names.length);
+      new Set(resolved.flatMap(({ stack }) => stack.ports.map((port) => port.port))).size,
+    ).toBe(names.length);
 
     const listed = await service.listStacks();
     expect(listed.map((stack) => stack.name).sort()).toEqual([...names].sort());

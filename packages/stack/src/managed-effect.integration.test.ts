@@ -826,11 +826,15 @@ describe("managed stack Effect surface", () => {
             return;
           }
           if (scenario === "running-drift") {
-            const started = yield* managed.resolveStack({
-              workspacePath: workspace,
-              operation: "start",
-              portDocument,
-              initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+            let startedApiPort = apiPort;
+            const started = yield* withFreshEffectExactPortPair((freshApiPort, _freshDbPort) => {
+              startedApiPort = freshApiPort;
+              return managed.resolveStack({
+                workspacePath: workspace,
+                operation: "start",
+                portDocument: effectPortDocument(fixtureId, freshApiPort),
+                initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+              });
             });
             let initialized = 0;
             const changedPort = yield* freeEffectPort();
@@ -848,7 +852,7 @@ describe("managed stack Effect surface", () => {
             expect(drifted.portDrift).toEqual([
               expect.objectContaining({
                 key: "api.port",
-                actualPort: apiPort,
+                actualPort: startedApiPort,
                 configuredPort: changedPort,
               }),
             ]);
@@ -857,15 +861,15 @@ describe("managed stack Effect surface", () => {
             return;
           }
           if (scenario === "failure-retention") {
-            const failed = yield* managed
-              .resolveStack({
+            const failed = yield* withFreshEffectExactPortPair((freshApiPort, _freshDbPort) =>
+              managed.resolveStack({
                 workspacePath: workspace,
                 operation: "start",
-                portDocument,
+                portDocument: effectPortDocument(fixtureId, freshApiPort),
                 initialize: () =>
                   Effect.fail(new ManagedRuntimeStartError({ cause: "fixture failure" })),
-              })
-              .pipe(Effect.exit);
+              }),
+            ).pipe(Effect.exit);
             expect(Exit.isFailure(failed)).toBe(true);
             const stacks = yield* managed.listStacks();
             expect(stacks[0]?.lifecycle).toBe("failed");
