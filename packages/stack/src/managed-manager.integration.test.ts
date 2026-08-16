@@ -157,7 +157,7 @@ describe("managed stack journeys", () => {
     );
   });
 
-  it.live("runs sibling worktrees with independent automatic ports", () => {
+  it.live("starts sibling worktrees concurrently with independent automatic ports", () => {
     const { layer } = setup();
     const siblingRoot = mkdtempSync(join(tmpdir(), "managed-sibling-test-"));
     roots.push(siblingRoot);
@@ -169,10 +169,25 @@ describe("managed stack journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const first = yield* startWithOwner(manager, firstWorkspace, automaticDocument());
-        const second = yield* startWithOwner(manager, secondWorkspace, automaticDocument());
+        const [first, second] = yield* Effect.all(
+          [
+            startWithOwner(manager, firstWorkspace, automaticDocument()),
+            startWithOwner(manager, secondWorkspace, automaticDocument()),
+          ],
+          { concurrency: "unbounded" },
+        );
         expect(first.stack.id).not.toBe(second.stack.id);
-        expect(first.stack.ports[0]?.port).not.toBe(second.stack.ports[0]?.port);
+        const firstPorts = new Set(first.stack.ports.map((assignment) => assignment.port));
+        expect(second.stack.ports.some((assignment) => firstPorts.has(assignment.port))).toBe(
+          false,
+        );
+        const listings = yield* manager.listStacks();
+        expect(listings).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: first.stack.id, status: "healthy" }),
+            expect.objectContaining({ id: second.stack.id, status: "healthy" }),
+          ]),
+        );
         yield* releaseLease(first);
         yield* releaseLease(second);
       }),

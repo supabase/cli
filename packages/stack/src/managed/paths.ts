@@ -94,9 +94,6 @@ export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): 
   return resolveManagedStateRoot({ stateRoot });
 };
 
-export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry.sqlite3");
-
 export const managedStacksRoot = (stateRoot: string): string => join(stateRoot, "stacks");
 
 const SHA256_STACK_ID_PATTERN = /^[0-9a-f]{64}$/i;

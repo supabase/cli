@@ -20,6 +20,7 @@ const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 interface ChildHandle {
   readonly child: ChildProcess;
   readonly started: Promise<SupervisorStartedMessage>;
+  readonly attachedBeforeReady: Promise<void>;
 }
 
 const workspace = (): { readonly root: string; readonly stateRoot: string } => {
@@ -103,8 +104,29 @@ const spawnChild = (input: SupervisorStartMessage): ChildHandle => {
     child.once("error", onError);
     child.once("exit", onExit);
   });
+  const attachedBeforeReady = new Promise<void>((resolve) => {
+    const onMessage = (value: unknown) => {
+      if (
+        typeof value === "object" &&
+        value !== null &&
+        "type" in value &&
+        value.type === "test-stage" &&
+        "stage" in value &&
+        value.stage === "attached-before-ready"
+      ) {
+        cleanup();
+        resolve();
+      }
+    };
+    const cleanup = () => {
+      child.off("message", onMessage);
+      child.off("exit", cleanup);
+    };
+    child.on("message", onMessage);
+    child.once("exit", cleanup);
+  });
   child.send(input);
-  return { child, started };
+  return { child, started, attachedBeforeReady };
 };
 
 const kill = (child: ChildProcess): Promise<void> =>
@@ -313,6 +335,30 @@ describe("detached supervisor child journeys", () => {
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("waits for a starting owner before reporting terminal attach failure", async () => {
+    const roots = workspace();
+    const input = messageFor(roots, { testMode: "hold-start" });
+    const owner = spawnChild(input);
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    try {
+      const document = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
+      expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
+
+      contender = spawnChild(input);
+      await contender.attachedBeforeReady;
+
+      await kill(owner.child);
+      await expect(owner.started).rejects.toThrow();
+      await expect(contender.started).rejects.toThrow();
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
     }
   });

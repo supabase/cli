@@ -2,6 +2,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertManagedUuid } from "./managed/ids.ts";
 import { InvalidManagedIdentityError, UnsafeManagedStackPathError } from "./managed/model.ts";
+import * as managedPathsModule from "./managed/paths.ts";
 import {
   assertManagedStackRoot,
   managedStackPaths,
@@ -9,6 +10,10 @@ import {
 } from "./managed/paths.ts";
 
 describe("managed paths", () => {
+  it("does not expose the removed SQLite registry path", () => {
+    expect(managedPathsModule).not.toHaveProperty("managedRegistryPath");
+  });
+
   it.each([
     ["empty", ""],
     ["wrong-length", "018f8b4e-8e5c-7e32-a956-6f297fd05a2"],
@@ -146,7 +151,7 @@ describe("managed paths", () => {
     });
   });
 
-  it("rejects non-UUID IDs and registry paths that do not match the derived root", () => {
+  it("rejects non-UUID IDs and stack paths that do not match the derived root", () => {
     expect(() => managedStackPaths("/state", "../../tmp/escaped")).toThrow(
       InvalidManagedIdentityError,
     );

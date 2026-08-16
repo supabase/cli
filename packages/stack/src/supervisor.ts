@@ -82,7 +82,15 @@ interface SupervisorErrorMessage {
   readonly message: string;
 }
 
-type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
+interface SupervisorTestStageMessage {
+  readonly type: "test-stage";
+  readonly stage: "attached-before-ready";
+}
+
+type SupervisorMessage =
+  | SupervisorStartedMessage
+  | SupervisorErrorMessage
+  | SupervisorTestStageMessage;
 /** Compatibility input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
   readonly workspacePath: string;
@@ -486,6 +494,9 @@ const runManaged = (
     const stackId = input.stackId ?? deriveStackId(discovery.identity, input.stackName);
     const acquisition = yield* acquireControl({ stackId });
     if (acquisition._tag === "Attached") {
+      if (input.testMode === "hold-start") {
+        yield* sendMessage({ type: "test-stage", stage: "attached-before-ready" });
+      }
       yield* awaitOwnerReady(acquisition);
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
