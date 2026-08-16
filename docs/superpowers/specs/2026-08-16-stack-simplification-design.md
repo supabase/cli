@@ -156,14 +156,15 @@ and replans with a bounded Effect `Schedule`. Stopped automatic ownership remain
 
 ### Lifecycle ownership and reattachment
 
-Each managed stack has one deterministic loopback control address derived from its `stackId`. The
-address uses the `127/8` loopback range plus a high port, giving roughly 38 bits of address space
-without consuming a user-facing service port. Node, Bun, POSIX, and Windows use the same transport.
-An unrelated listener or deterministic-address collision fails as a typed control-address conflict;
-it is never unlinked or taken over.
+Each managed stack has one deterministic loopback control address derived from its `stackId`:
+`127.0.0.1` plus a port in `49152..65535` derived from two digest bytes. Node, Bun, POSIX, and
+Windows use the same transport. The listener binds before service-port planning, so automatic ports
+avoid it. An unrelated listener or the rare 14-bit deterministic-address collision fails as a typed
+control-address conflict; it is never unlinked or taken over.
 
-Binding the endpoint grants lifecycle ownership. The endpoint also serves the existing validated
-`Stack` management transport plus a versioned owner-status response.
+Binding the endpoint grants lifecycle ownership. The same bound server serves the existing validated
+`Stack` management transport plus a versioned owner-status response; `/owner` is not a sidecar
+listener or separate lifecycle API.
 
 Acquisition behaves as follows:
 

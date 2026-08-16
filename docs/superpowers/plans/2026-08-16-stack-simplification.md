@@ -275,16 +275,18 @@
 
 - [ ] **Step 3: Implement deterministic endpoint paths and scoped acquisition**
 
-  Bind before any managed mutation. On `EADDRINUSE`, connect and decode owner status. A listener that
+  Bind `127.0.0.1` before any managed mutation, using port
+  `49152 + (twoDigestBytes % 16384)`. On `EADDRINUSE`, connect and decode owner status. A listener that
   does not speak the expected protocol yields a typed address-conflict error; never unlink or kill
-  it. Normal close waits for Node/Bun server shutdown before rebinding. Derive the loopback host and
-  high port deterministically from the stack ID, identically on Node and Bun.
+  it. Normal close waits for Node/Bun server shutdown before rebinding. Node and Bun use the exact
+  same host, port derivation, and endpoint metadata.
 
 - [ ] **Step 4: Extend the management transport**
 
-  Add versioned owner/readiness status without duplicating `Stack` lifecycle routes. A protocol
-  mismatch returns a typed error with the expected and observed versions. `RemoteStack` continues to
-  map the validated transport to the existing `Stack` interface.
+  Add versioned owner/readiness status to the same bound `HttpServer` that serves the existing Stack
+  lifecycle routes; do not create a sidecar owner listener. A protocol mismatch returns a typed error
+  with the expected and observed versions. `RemoteStack` continues to map that one validated
+  transport to the existing `Stack` interface.
 
 - [ ] **Step 5: Run focused transport tests and checks**
 
