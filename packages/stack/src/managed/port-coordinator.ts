@@ -67,8 +67,6 @@ export interface ManagedPortCoordinatorOptions {
   readonly candidatePolicy?: ManagedPortCandidatePolicy;
   /** Internal retry seam. The production default is eight complete candidates. */
   readonly retryLimit?: number;
-  /** @internal Test-only seam; production callers should use the real socket binder. */
-  readonly binder?: ManagedPortBinder;
 }
 
 export interface ManagedPortCoordinatorShape {
@@ -283,10 +281,12 @@ const retryableClaimRace = (
   return conflicting.every((assignment) => newlyAutomatic.has(assignment.key));
 };
 
-const makeCoordinator = (options: ManagedPortCoordinatorOptions): ManagedPortCoordinatorShape => {
+const makeCoordinator = (
+  options: ManagedPortCoordinatorOptions,
+  binder: ManagedPortBinder = bindWithReservePortSet,
+): ManagedPortCoordinatorShape => {
   const candidatePolicy = options.candidatePolicy ?? defaultCandidatePolicy;
   const retryLimit = options.retryLimit ?? DEFAULT_RETRY_LIMIT;
-  const binder = options.binder ?? bindWithReservePortSet;
 
   const acquireStart: ManagedPortCoordinatorShape["acquireStart"] = (input) =>
     Effect.suspend(() => {
@@ -381,7 +381,16 @@ const makeCoordinator = (options: ManagedPortCoordinatorOptions): ManagedPortCoo
   return { acquireStart };
 };
 
-/** Scoped managed allocation facade. Constructor options are intentionally test-only seams. */
+interface ManagedPortCoordinatorTestingOptions extends ManagedPortCoordinatorOptions {
+  readonly binder: ManagedPortBinder;
+}
+
+/** @internal Source-test-only factory; not part of the managed package surface. */
+export const makeManagedPortCoordinatorForTesting = (
+  options: ManagedPortCoordinatorTestingOptions,
+): ManagedPortCoordinatorShape => makeCoordinator(options, options.binder);
+
+/** Scoped managed allocation facade. */
 export class ManagedPortCoordinator {
   static make(options: ManagedPortCoordinatorOptions): ManagedPortCoordinatorShape {
     return makeCoordinator(options);

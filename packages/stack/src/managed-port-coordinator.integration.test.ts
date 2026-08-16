@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import type { ManagedPortPlan } from "./managed/port-plan.ts";
 import {
   ManagedPortCoordinator,
+  makeManagedPortCoordinatorForTesting,
   type ManagedPortStartAllocation,
 } from "./managed/port-coordinator.ts";
 import type { ManagedStackRecord } from "./managed/model.ts";
@@ -631,7 +632,7 @@ describe("managed port coordinator", () => {
     const firstBound = Deferred.makeUnsafe<number>();
     const firstPort = await freePort();
     const secondPort = await freePort();
-    const coordinator = ManagedPortCoordinator.make({
+    const coordinator = makeManagedPortCoordinatorForTesting({
       repository: repositoryFor(),
       binder: (requests, options) =>
         reservePortSet(requests, {
