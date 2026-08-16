@@ -19,16 +19,10 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
-  legacyResolveDbSetupPrelude,
-  legacySetupDatabase,
-} from "../../../shared/db-bootstrap/db-setup.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
-import {
-  legacyBuildShadowSetupDatabaseInput,
-  legacyConnectShadowDatabase,
-  legacyCreateShadowDatabase,
-  legacyRemoveShadowDatabase,
+  legacyOpenShadowBaselineSession,
   legacyShadowRunInputFromLocalContainerInputs,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -85,14 +79,31 @@ type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
  * `squashMigrations`:
- * shadow create -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY
+ * shadow acquire -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY
  * (NOT `setupShadowConn`, so NO `CREATE DATABASE contrib_regression` template) -> dump the
- * auth/storage schema before migrating -> apply every migration -> dump auth/storage again ->
- * write the target file as the FULL (unrestricted) dump + the separator + the auth/storage
- * line diff. `acquire` is only shadow creation (brief, Docker-API-bound); the health-wait/
- * connect/setup/dump/apply sequence runs in the interruptible `use` phase, matching the CLI-1956
- * review ruling `shadow-database.ts`/`diff.handler.ts` already established (a SIGINT during the
- * health-wait must land immediately, from a single cancellable scope).
+ * auth/storage schema before migrating -> apply the migrations up to the target -> dump
+ * auth/storage again -> write the target file as the FULL (unrestricted) dump + the separator +
+ * the auth/storage line diff. `acquire` is only shadow acquisition (brief, Docker-API-bound); the
+ * health-wait/connect/setup/dump/apply sequence runs in the interruptible `use` phase, matching
+ * the CLI-1956 review ruling `shadow-database.ts`/`diff.handler.ts` already established (a SIGINT
+ * during the health-wait must land immediately, from a single cancellable scope).
+ *
+ * `legacyWithShadowDatabase` (`shadow-cache.ts`) rather than a bare `legacyCreateShadowDatabase`/
+ * `legacyRemoveShadowDatabase` pair — see its doc comment for both halves of the rationale: why
+ * the lifecycle is an `Effect.acquireUseRelease` (an interrupt must not be able to land between
+ * creation and the finalizer being attached) and why the cache seam sits here (with
+ * `SUPABASE_SHADOW_CACHE` unset it IS today's create/remove pair; otherwise a key-matching PGDATA
+ * snapshot is restored into the fresh container in a few seconds instead of cold-provisioning the
+ * baseline in ~15s). No `webhooks` override, unlike `db diff`/`db pull`'s forced-on
+ * `legacyMigrateShadowDatabase` baseline: squash's `SetupDatabase` call has always followed
+ * `config.toml`, so the cache key must hash the config-following policy or a squash run would
+ * warm-restore a `pg_net`-forced cluster.
+ *
+ * The baseline is the ONLY thing the cache covers, and
+ * {@link legacyOpenShadowBaselineSession} hands back the open session at exactly that seam — so
+ * squash's own `before` dump / apply-migrations / `after` dump sequence is unchanged, and a warm
+ * shadow merely reaches the `before` dump without having re-run `SetupDatabase` (and therefore
+ * without printing its `Initialising schema...`/`Seeding globals...` progress lines).
  */
 const squashMigrations = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -122,107 +133,104 @@ const squashMigrations = Effect.fnUntraced(function* (
   // `pg_dump` container below uses; `legacySquashDumpSchema` applies the registry mirror itself.
   const image = localInputs.bootstrapConfig.postgresImage;
 
-  yield* Effect.acquireUseRelease(
-    legacyCreateShadowDatabase(spawner, shadowInput),
-    (handle) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
-            timeoutSeconds: shadowInput.healthTimeoutSeconds,
-          });
-          const session = yield* legacyConnectShadowDatabase(connConfig);
-          const resolved = yield* legacyResolveDbSetupPrelude(shadowInput.setup);
-          yield* legacySetupDatabase(
-            spawner,
-            legacyBuildShadowSetupDatabaseInput(
-              {
-                fs: shadowInput.fs,
-                path: shadowInput.path,
-                workdir: shadowInput.workdir,
-                projectId: shadowInput.projectId,
-                container: handle.containerId,
-                networkId: shadowInput.networkId,
-                connConfig,
-                setup: shadowInput.setup,
-              },
-              session,
-              resolved,
-            ),
-          );
+  yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* legacyWaitForShadowReady(spawner, handle.containerId, connConfig, {
+          timeoutSeconds: shadowInput.healthTimeoutSeconds,
+          // The shadow container's OWN resolved image, not the (pin-resolved, unmapped) `image`
+          // the `pg_dump` containers below use — this one only names the shadow in the
+          // exec-format recovery hint.
+          image: shadowInput.image,
+        });
+        const session = yield* legacyOpenShadowBaselineSession(
+          spawner,
+          {
+            fs: shadowInput.fs,
+            path: shadowInput.path,
+            workdir: shadowInput.workdir,
+            projectId: shadowInput.projectId,
+            container: handle.containerId,
+            networkId: shadowInput.networkId,
+            connConfig,
+            setup: shadowInput.setup,
+          },
+          {},
+          handle,
+        );
 
-          const before = yield* legacySquashDumpSchemaToString({
-            image,
-            conn: connConfig,
-            schema: ["auth", "storage"],
-            projectEnvValues: localInputs.context.projectEnvValues,
-          });
-          yield* legacyApplyMigrations(
-            session,
-            fs,
-            path,
-            migrations,
-            (message) => new LegacyMigrationApplyError({ message }),
-          );
-          const after = yield* legacySquashDumpSchemaToString({
-            image,
-            conn: connConfig,
-            schema: ["auth", "storage"],
-            projectEnvValues: localInputs.context.projectEnvValues,
-          });
+        const before = yield* legacySquashDumpSchemaToString({
+          image,
+          conn: connConfig,
+          schema: ["auth", "storage"],
+          projectEnvValues: localInputs.context.projectEnvValues,
+        });
+        yield* legacyApplyMigrations(
+          session,
+          fs,
+          path,
+          migrations,
+          (message) => new LegacyMigrationApplyError({ message }),
+        );
+        const after = yield* legacySquashDumpSchemaToString({
+          image,
+          conn: connConfig,
+          schema: ["auth", "storage"],
+          projectEnvValues: localInputs.context.projectEnvValues,
+        });
 
-          const targetPath = migrations[migrations.length - 1]!;
-          const targetRel = path.relative(workdir, targetPath);
-          yield* Effect.scoped(
-            Effect.gen(function* () {
-              // One open call that both truncates (or creates) the target file AND opens it for the
-              // writes below, matching `new.handler.ts:87`'s identical `{ flag: "w" }` precedent.
-              // There is no separate truncate-then-reopen step.
-              const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyMigrationSquashWriteError({
-                      message: `failed to open migration file: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
-                    }),
-                ),
-              );
-              // The full dump — NO schema restriction — streamed straight into the
-              // already-truncated file at constant memory. The underlying failure here is
-              // the docker-log-stream write into the file handle,
-              // not the line-diff writer below, so it byte-matches "failed to copy
-              // docker logs:" rather than "failed to write line:".
-              yield* legacySquashDumpSchema({
-                image,
-                conn: connConfig,
-                schema: [],
-                projectEnvValues: localInputs.context.projectEnvValues,
-                onStdout: (chunk) =>
-                  file.writeAll(chunk).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new LegacyMigrationSquashWriteError({
-                          message: `failed to copy docker logs: ${legacyErrorMessage(cause)}`,
-                        }),
-                    ),
+        const targetPath = migrations[migrations.length - 1]!;
+        const targetRel = path.relative(workdir, targetPath);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            // One open call that both truncates (or creates) the target file AND opens it for the
+            // writes below, matching `new.handler.ts:87`'s identical `{ flag: "w" }` precedent.
+            // There is no separate truncate-then-reopen step.
+            const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new LegacyMigrationSquashWriteError({
+                    message: `failed to open migration file: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
+                  }),
+              ),
+            );
+            // The full dump — NO schema restriction — streamed straight into the
+            // already-truncated file at constant memory. The underlying failure here is
+            // the docker-log-stream write into the file handle,
+            // not the line-diff writer below, so it byte-matches "failed to copy
+            // docker logs:" rather than "failed to write line:".
+            yield* legacySquashDumpSchema({
+              image,
+              conn: connConfig,
+              schema: [],
+              projectEnvValues: localInputs.context.projectEnvValues,
+              onStdout: (chunk) =>
+                file.writeAll(chunk).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new LegacyMigrationSquashWriteError({
+                        message: `failed to copy docker logs: ${legacyErrorMessage(cause)}`,
+                      }),
                   ),
-              });
-              // The separator and the auth/storage line diff write sequentially to the
-              // SAME handle, with nothing observable
-              // between the two writes — combined into one `writeAll` here.
-              const tail =
-                LEGACY_SQUASH_SEPARATOR_COMMENT + legacySquashLineByLineDiff(before, after);
-              yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new LegacyMigrationSquashWriteError({
-                      message: `failed to write line: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
-                    }),
                 ),
-              );
-            }),
-          );
-        }),
-      ),
-    (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+            });
+            // The separator and the auth/storage line diff write sequentially to the
+            // SAME handle, with nothing observable
+            // between the two writes — combined into one `writeAll` here.
+            const tail =
+              LEGACY_SQUASH_SEPARATOR_COMMENT + legacySquashLineByLineDiff(before, after);
+            yield* file.writeAll(new TextEncoder().encode(tail)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new LegacyMigrationSquashWriteError({
+                    message: `failed to write line: ${legacyRelativizeErrorMessage(legacyErrorMessage(cause), targetPath, targetRel)}`,
+                  }),
+              ),
+            );
+          }),
+        );
+      }),
+    ),
   );
 });
 

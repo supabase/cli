@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option } from "effect";
+import { Effect, Exit, Fiber, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -18,6 +18,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
+  withLegacyShadowCacheEnabled,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
@@ -54,6 +55,7 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyShadowBaselineCacheDir } from "../../../shared/legacy-pgdelta.paths.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseDiffInput,
@@ -93,16 +95,11 @@ interface SetupOpts {
   // over `failWriteOnCall` when shadow setup writes extra SQL before the
   // command's `--file` migration.
   readonly failWriteMatching?: (path: string) => boolean;
-  // When set, the shadow container never reports healthy — for the interrupt-during-
-  // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
-  // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
-  // (not `Effect.never`) to observe a genuinely suspended retry loop. Only the
-  // `--use-pgadmin` branch still gates on the Docker healthcheck; the shadow-source
-  // branch gates on `neverConnectableShadow` below instead.
-  readonly neverHealthyShadow?: boolean;
   // When set, every connect to the shadow's own port is refused, so the readiness gate
-  // (`legacyWaitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
-  // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
+  // (`legacyWaitForShadowReady`) keeps polling — for the interrupt-during-readiness-wait
+  // regression coverage (review: PRRT_kwDOErm0O86XMrID). A refused connect, not an unhealthy
+  // container, is what keeps a provisioning fiber genuinely suspended: NO branch (pgAdmin
+  // included) gates on the Docker healthcheck any more.
   readonly neverConnectableShadow?: boolean;
   // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
@@ -195,7 +192,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // and a real (fake) Postgres session backs the shadow's own
   // platform-baseline/migration/declarative setup.
   const shadowSpawner = mockLegacyShadowContainerCliSpawner({
-    neverHealthy: opts.neverHealthyShadow ?? false,
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
@@ -1076,6 +1072,84 @@ describe("legacy db diff", () => {
         expect(err).not.toContain("Finished");
       }).pipe(Effect.provide(s.layer));
     },
+  );
+
+  // The shadow baseline cache (`shared/db-bootstrap/shadow-cache.ts`) is ON by default in
+  // production; the suite-wide `useLegacyShadowCacheDisabled` above turns it off everywhere else.
+  // `--use-pgadmin` used to be the one native branch that provisioned a bare, uncached shadow —
+  // this scenario turns the cache back on (under a per-test `SUPABASE_HOME`) and drives two
+  // pgAdmin diffs to prove it now shares the same seam as the migra/pg-delta branch. The cache's
+  // own mechanics are covered in `shared/db-bootstrap/shadow-cache.integration.test.ts`.
+  it.effect(
+    "--use-pgadmin reuses the cached platform baseline on a second run, without changing the diff it produces",
+    () =>
+      withLegacyShadowCacheEnabled(
+        join(tmp.current, "_supabase_home"),
+        Effect.gen(function* () {
+          const run = Effect.fnUntraced(function* () {
+            const s = setup(tmp.current, {
+              pgadminStdout: [JSON.stringify([pgadminEntry()])],
+            });
+            yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+              Effect.provide(s.layer),
+            );
+            return s;
+          });
+
+          const cold = yield* run();
+          expect(cold.shadowSetupJobCalls.length).toBeGreaterThan(0);
+          expect(cold.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(1);
+
+          const warm = yield* run();
+          // The restored cluster already carries the platform baseline, so
+          // `legacyMigrateShadowDatabase` skips `SetupDatabase` and its one-shot jobs — but
+          // still creates `contrib_regression` and replays every local migration, and the
+          // differ run and its output are byte-identical to the cold run's.
+          expect(warm.shadowSetupJobCalls).toHaveLength(0);
+          expect(warm.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(0);
+          expect(warm.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+          expect(warm.differCalls).toHaveLength(1);
+          expect(stdout(warm.out)).toBe(stdout(cold.out));
+        }),
+      ),
+  );
+
+  // The two native branches provision DIFFERENT clusters on a webhooks-disabled project:
+  // `--use-pgadmin` migrates through `legacyMigrateShadowDatabase`, whose baseline installs
+  // `pg_net` unconditionally, while pg-delta next migrates through
+  // `legacyMigrateNextShadowDatabase`, which follows `config.toml` (webhooks absent = off). If the
+  // cache key described the caller's literal `webhooks` opt rather than the baseline the run
+  // actually builds, one would warm-restore the other's snapshot and silently diff against a
+  // cluster with the wrong extension set.
+  it.effect(
+    "--use-pgadmin does not reuse the pg-delta next baseline when config leaves webhooks disabled",
+    () =>
+      withLegacyShadowCacheEnabled(
+        join(tmp.current, "_supabase_home"),
+        Effect.gen(function* () {
+          const next = setup(tmp.current, { pgDeltaImplementation: "next" });
+          yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) })).pipe(
+            Effect.provide(next.layer),
+          );
+          expect(next.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(1);
+
+          const pgadmin = setup(tmp.current, {
+            pgadminStdout: [JSON.stringify([pgadminEntry()])],
+          });
+          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+            Effect.provide(pgadmin.layer),
+          );
+          // Cold, not warm: it ran its own `SetupDatabase` one-shot jobs and published its own
+          // snapshot instead of restoring the config-following one next just wrote.
+          expect(pgadmin.shadowSetupJobCalls.length).toBeGreaterThan(0);
+          expect(pgadmin.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(1);
+
+          // Two keys, two tars — the poisoning scenario cannot arise.
+          const cacheDir = legacyShadowBaselineCacheDir(yield* Path.Path);
+          const tars = readdirSync(cacheDir).filter((name) => name.endsWith(".tar"));
+          expect(tars).toHaveLength(2);
+        }).pipe(Effect.provide(BunServices.layer)),
+      ),
   );
 
   it.effect("rejects --project-ref combined with --use-pg-schema before delegating", () => {
@@ -2527,23 +2601,18 @@ describe("legacy db diff", () => {
     it.live(
       "removes the shadow container on interruption during the health wait for --use-pgadmin too",
       () => {
-        const s = setup(tmp.current, { neverHealthyShadow: true });
+        const s = setup(tmp.current, { neverConnectableShadow: true });
         return Effect.gen(function* () {
           const fiber = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.provide(s.layer),
             Effect.forkChild({ startImmediately: true }),
           );
-          // Wait for the SHADOW's own health probe specifically (its 64-hex id) —
-          // the pgadmin path's separate `supabase_db_test` "is running" probe fires
-          // first and would otherwise satisfy a looser check immediately.
-          while (
-            !s.shadowSpawned.some(
-              (c) =>
-                c.args[0] === "container" &&
-                c.args[1] === "inspect" &&
-                c.args[2] === LEGACY_FAKE_SHADOW_CONTAINER_ID,
-            )
-          ) {
+          // Wait until the shadow's readiness gate has actually refused a connect at least
+          // once — proving the fiber is genuinely suspended inside `legacyWaitForShadowReady`'s
+          // retry loop, not merely past the `create` call. Same gate as the native branch's
+          // own interrupt test above: pgAdmin gates on the connect probe too now, not on the
+          // Docker healthcheck.
+          while (s.shadowConnectedDatabases.length === 0) {
             yield* Effect.sleep("5 millis");
           }
           yield* Fiber.interrupt(fiber);

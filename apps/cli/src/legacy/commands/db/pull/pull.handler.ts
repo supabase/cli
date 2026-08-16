@@ -795,8 +795,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // pooler-retry attempt still acquires and releases its own shadow — on the warm path
             // each attempt restores its own fresh container from the same cached snapshot,
             // sequentially.
-            // `webhooks: "enabled"` matches `legacyMigrateShadowDatabase`'s forced `pg_net`
-            // baseline — the cache key must not collide with next's config-following migrate.
+            // The `webhooks` policy MUST describe the baseline the `use` callback below actually
+            // provisions, because that is what the cache key hashes: `legacyPrepareShadowSource`
+            // dispatches on `migrationMode`, running `legacyMigrateShadowDatabase` (forced
+            // `pg_net`) for the legacy engine but `legacyMigrateNextShadowDatabase`
+            // (config-following) for pg-delta next. Hardcoding `"enabled"` for both would make a
+            // next-mode cold run on a webhooks-disabled project publish a `pg_net`-less cluster
+            // under the `webhooks_enabled=true` key, which `db diff --use-pgadmin` (whose baseline
+            // really is forced-on) could then warm-restore, and vice versa.
             return yield* legacyWithShadowDatabase(
               spawner,
               shadowInput,
@@ -849,7 +855,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   });
                   return { sql, files: undefined, debug: undefined };
                 }),
-              { webhooks: "enabled" },
+              migrationMode === "pgdelta-next" ? {} : { webhooks: "enabled" },
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

@@ -28,12 +28,10 @@ import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
 import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
-  legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
-  legacyRemoveShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -630,24 +628,39 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         password: shadowBase.password,
         database: "postgres",
       };
-      // Register cleanup atomically with shadow creation; preparation stays interruptible.
-      const sql = yield* Effect.acquireUseRelease(
-        legacyCreateShadowDatabase(spawner, shadowBase),
+      // Register cleanup atomically with shadow acquisition; preparation stays interruptible.
+      // Same cached provisioning seam as the native branch below (`legacyWithShadowDatabase`,
+      // `shadow-cache.ts`) — see that call site's comment for the full rationale. The migrate
+      // step is untouched: it still receives the whole local migration set through the SAME
+      // `legacyMigrateShadowDatabase`, only now told (via `handle`) whether the cluster already
+      // carries the platform baseline. `webhooks: "enabled"` matches that function's own forced
+      // `pg_net` baseline, so this shares the snapshots the native branch below keys for the SAME
+      // forced-on baseline (its legacy-engine runs) rather than a second, pgAdmin-only set. It
+      // deliberately does NOT share with next's config-following migrate — see that branch's own
+      // `migrationMode`-conditional `webhooks` opt.
+      const sql = yield* legacyWithShadowDatabase(
+        spawner,
+        shadowBase,
         (handle) =>
           Effect.gen(function* () {
-            yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
+            yield* legacyWaitForShadowReady(spawner, handle.containerId, shadowConnConfig, {
               timeoutSeconds: shadowBase.healthTimeoutSeconds,
+              image: shadowBase.image,
             });
-            yield* legacyMigrateShadowDatabase(spawner, {
-              fs,
-              path,
-              workdir: cliConfig.workdir,
-              projectId: shadowBase.projectId,
-              container: handle.containerId,
-              networkId: shadowBase.networkId,
-              connConfig: shadowConnConfig,
-              setup: shadowBase.setup,
-            });
+            yield* legacyMigrateShadowDatabase(
+              spawner,
+              {
+                fs,
+                path,
+                workdir: cliConfig.workdir,
+                projectId: shadowBase.projectId,
+                container: handle.containerId,
+                networkId: shadowBase.networkId,
+                connConfig: shadowConnConfig,
+                setup: shadowBase.setup,
+              },
+              handle,
+            );
             yield* emitStatus("Diffing local database with current migrations...");
             return yield* legacyDiffSchemaPgAdmin({
               // `source`/`target` are INVERTED relative to the migra/pg-delta path below:
@@ -663,7 +676,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               emitStatus,
             });
           }),
-        (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+        { webhooks: "enabled" },
       );
       diffResult = { sql, files: undefined };
     } else {
@@ -689,8 +702,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
       // create/remove pair; otherwise a key-matching PGDATA snapshot is restored into the fresh
       // container in a few seconds instead of cold-provisioning the baseline in ~15s).
-      // `webhooks: "enabled"` matches `legacyMigrateShadowDatabase`'s forced `pg_net`
-      // baseline — the cache key must not collide with next's config-following migrate.
+      // The `webhooks` policy MUST describe the baseline the `use` callback below actually
+      // provisions, because that is what the cache key hashes: `legacyPrepareShadowSource`
+      // dispatches on `migrationMode`, running `legacyMigrateShadowDatabase` (forced `pg_net`) for
+      // the legacy engine but `legacyMigrateNextShadowDatabase` (config-following) for pg-delta
+      // next. Hardcoding `"enabled"` for both would make a next-mode cold run on a
+      // webhooks-disabled project publish a `pg_net`-less cluster under the
+      // `webhooks_enabled=true` key that the pgAdmin branch above (whose baseline really is
+      // forced-on) could then warm-restore, and vice versa.
       diffResult = yield* legacyWithShadowDatabase(
         spawner,
         shadowInput,
@@ -741,7 +760,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             // single migration file.
             return { sql, files: undefined };
           }),
-        { webhooks: "enabled" },
+        migrationMode === "pgdelta-next" ? {} : { webhooks: "enabled" },
       );
     }
     const out = diffResult.sql;
