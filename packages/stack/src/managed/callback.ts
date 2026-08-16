@@ -22,7 +22,13 @@ export const fromCallback = <A>(
   Effect.flatMap(Effect.try({ try: run, catch: (error: unknown) => error }), (answer) =>
     isAnswer(answer)
       ? Effect.succeed(answer)
-      : Effect.tryPromise({ try: () => answer, catch: (error: unknown) => error }),
+      : Effect.flatMap(
+          Effect.tryPromise({ try: () => answer, catch: (error: unknown) => error }),
+          (resolved) =>
+            isAnswer(resolved)
+              ? Effect.succeed(resolved)
+              : Effect.fail(new Error("Callback resolved with an invalid answer")),
+        ),
   );
 
 /** A callback that answers by finishing, so anything else is still pending. */

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
@@ -14,6 +13,7 @@ import {
   ManagedRuntimeStartError,
 } from "./managed/model.ts";
 import { managedRegistryPath, managedStackPaths } from "./managed/paths.ts";
+import { reservePortSet } from "./PortAllocator.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
 import { ManagedStackService } from "./managed/service.ts";
@@ -113,20 +113,37 @@ const effectPortDocument = (fixtureId: string, apiPort: number) => {
 };
 
 const freeEffectPort = (): Effect.Effect<number, Error> =>
-  Effect.callback<number, Error>((resume) => {
-    const server = createServer();
-    server.once("error", (error) => resume(Effect.die(error)));
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        resume(Effect.die(new Error("Ephemeral port probe returned no numeric address")));
-        return;
-      }
-      const port = address.port;
-      server.close(() => resume(Effect.succeed(port)));
-    });
-  });
+  Effect.scoped(
+    Effect.acquireRelease(
+      reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]),
+      (lease) => lease.releaseAll,
+    ).pipe(
+      Effect.flatMap((lease) =>
+        lease.ports.apiPort === undefined
+          ? Effect.fail(new Error("Ephemeral port reservation returned no api port"))
+          : Effect.succeed(lease.ports.apiPort),
+      ),
+    ),
+  );
+
+const freeEffectPortPair = (): Effect.Effect<readonly [number, number], Error> =>
+  Effect.scoped(
+    Effect.acquireRelease(
+      reservePortSet([
+        { field: "apiPort", selection: { kind: "automatic" } },
+        { field: "dbPort", selection: { kind: "automatic" } },
+      ]),
+      (lease) => lease.releaseAll,
+    ).pipe(
+      Effect.flatMap((lease) => {
+        const api = lease.ports.apiPort;
+        const db = lease.ports.dbPort;
+        return api === undefined || db === undefined
+          ? Effect.fail(new Error("Ephemeral port reservation returned an incomplete pair"))
+          : Effect.succeed([api, db] as const);
+      }),
+    ),
+  );
 
 /**
  * Stages a pending stack whose publisher is alive but will never publish, so the
@@ -745,8 +762,7 @@ describe("managed stack Effect surface", () => {
         const workspace = setup.workspace;
         return Effect.gen(function* () {
           const managed = yield* ManagedStackService;
-          const apiPort = yield* freeEffectPort();
-          const remotePort = scenario === "env-remote" ? yield* freeEffectPort() : apiPort + 1;
+          const [apiPort, remotePort] = yield* freeEffectPortPair();
           const fixtureId =
             scenario === "env-remote"
               ? "ports.env-and-remote-values-remain-exact"

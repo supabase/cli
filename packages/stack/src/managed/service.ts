@@ -566,6 +566,50 @@ export class ManagedStackService extends Context.Service<
                 }),
               );
             }
+            if (resolveOptions.operation === "start") {
+              const stableIdentityCandidate = {
+                ...settledReport.identity,
+                ...(settledReport.registryContextId === undefined
+                  ? {}
+                  : { contextId: settledReport.registryContextId }),
+              };
+              if (
+                stableIdentityCandidate.projectId !== undefined &&
+                stableIdentityCandidate.checkoutId !== undefined &&
+                stableIdentityCandidate.contextId !== undefined
+              ) {
+                const stableIdentity: ManagedIdentityTriple = {
+                  projectId: stableIdentityCandidate.projectId,
+                  checkoutId: stableIdentityCandidate.checkoutId,
+                  contextId: stableIdentityCandidate.contextId,
+                };
+                const stablePlan: ResolvedWorkspacePlan = {
+                  workspace: settledReport.workspace,
+                  context: settledReport.context,
+                  contextDescriptor: settledReport.contextDescriptor,
+                  identity: stableIdentity,
+                  identityMarkerCreated: false,
+                };
+                const existingStableStack = (yield* contextStacks(stableIdentity)).find(
+                  (candidate) => candidate.name === stackName,
+                );
+                if (
+                  existingStableStack?.lifecycle === "running" &&
+                  !(
+                    settledReport.state === "duplicate" &&
+                    settledReport.workspace.checkoutKind === "ordinary"
+                  ) &&
+                  settledReport.state !== "ambiguous"
+                ) {
+                  return yield* startedResolution(
+                    stablePlan,
+                    "reuse",
+                    existingStableStack,
+                    portDocument,
+                  );
+                }
+              }
+            }
             let recoveryReportForStart = settledReport;
             let identityMarkerCreated = false;
             if (resolveOptions.operation === "start") {
@@ -706,6 +750,9 @@ export class ManagedStackService extends Context.Service<
               (candidate) => candidate.name === stackName,
             );
             if (existingStack?.lifecycle === "running") {
+              if (firstStartTransition !== undefined) {
+                yield* workspaceIdentity.finalizeFirstStart(firstStartTransition);
+              }
               return yield* startedResolution(settledPlan, "reuse", existingStack, portDocument);
             }
             const registrationInput: RegisterManagedStackInput = {

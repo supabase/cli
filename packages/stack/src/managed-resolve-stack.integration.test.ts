@@ -671,6 +671,134 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(recovered.context).toEqual({ kind: "branch", branch: "renamed" });
   });
 
+  it("reports drift for a moved running checkout before automatic rebind", async () => {
+    const root = makeRoot();
+    const original = makeRepository(root, "original-running");
+    const moved = join(root, "moved-running");
+    const service = await openService(root);
+    const first = await service.resolveStack({
+      workspacePath: original,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    renameSync(original, moved);
+
+    const snapshot = async () => ({
+      stacks: runRepo(service.repository.listStacks({ includeTombstoned: true })),
+      claims: runRepo(service.repository.listIdentityClaims()),
+      locations: runRepo(service.repository.listCheckoutLocations()),
+      operations: runRepo(service.repository.listActiveOperations()),
+      projectId: storedConfigValue(gitConfigPath(join(moved, ".git")), GIT_PROJECT_ID_KEY),
+      branchContext: storedConfigValue(
+        gitConfigPath(join(moved, ".git")),
+        gitBranchContextIdKey("main"),
+      ),
+    });
+    const before = await snapshot();
+    let initialized = 0;
+    const resolved = await service.resolveStack({
+      workspacePath: moved,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: async () => {
+        initialized += 1;
+        return defaultInitialize();
+      },
+    });
+
+    expect(resolved.outcome).toBe("reuse");
+    expect(resolved.stack.id).toBe(first.stack.id);
+    expect(initialized).toBe(0);
+    expect(await snapshot()).toEqual(before);
+    expect(existsSync(original)).toBe(false);
+    expect(existsSync(moved)).toBe(true);
+  });
+
+  it("reports a copied-branch running stack before branch repair", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "copied-running");
+    const service = await openService(root);
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    git(repository, "branch", "-c", "main", "copied-running");
+    git(repository, "checkout", "-q", "copied-running");
+    const snapshot = async () => ({
+      stacks: runRepo(service.repository.listStacks({ includeTombstoned: true })),
+      claims: runRepo(service.repository.listIdentityClaims()),
+      locations: runRepo(service.repository.listCheckoutLocations()),
+      operations: runRepo(service.repository.listActiveOperations()),
+      copiedContext: storedConfigValue(
+        gitConfigPath(join(repository, ".git")),
+        gitBranchContextIdKey("copied-running"),
+      ),
+    });
+    const before = await snapshot();
+    let initialized = 0;
+    const resolved = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: async () => {
+        initialized += 1;
+        return defaultInitialize();
+      },
+    });
+
+    expect(resolved.outcome).toBe("reuse");
+    expect(resolved.stack.id).toBe(owner.stack.id);
+    expect(initialized).toBe(0);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("reports an adoptable running context before branch adoption", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "adoptable-running");
+    const service = await openService(root);
+    git(repository, "checkout", "-q", "-b", "original-running");
+    const owner = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    git(repository, "checkout", "-q", "main");
+    git(repository, "branch", "-D", "original-running");
+    git(repository, "checkout", "-q", "-b", "renamed-running");
+    git(repository, "config", gitBranchContextIdKey("renamed-running"), owner.identity.contextId);
+    expect((await service.discoverWorkspace(repository)).state).toBe("adoptable");
+    const snapshot = async () => ({
+      stacks: runRepo(service.repository.listStacks({ includeTombstoned: true })),
+      claims: runRepo(service.repository.listIdentityClaims()),
+      locations: runRepo(service.repository.listCheckoutLocations()),
+      operations: runRepo(service.repository.listActiveOperations()),
+      renamedContext: storedConfigValue(
+        gitConfigPath(join(repository, ".git")),
+        gitBranchContextIdKey("renamed-running"),
+      ),
+    });
+    const before = await snapshot();
+    let initialized = 0;
+    const resolved = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: async () => {
+        initialized += 1;
+        return defaultInitialize();
+      },
+    });
+
+    expect(resolved.outcome).toBe("reuse");
+    expect(resolved.stack.id).toBe(owner.stack.id);
+    expect(initialized).toBe(0);
+    expect(await snapshot()).toEqual(before);
+  });
+
   it("repairs a copied branch on its first mutating start without changing the owner", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
