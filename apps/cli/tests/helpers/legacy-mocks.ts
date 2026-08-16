@@ -703,13 +703,19 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
  * had afterwards. Like {@link useLegacyTempWorkdir} it calls vitest's `beforeEach`/`afterEach`
  * internally, so it must be invoked at module scope (or inside the surrounding `describe`).
  *
- * The shadow baseline cache (`db-bootstrap/shadow-cache.ts`) is ON by default and reads
- * `process.env` directly, so ANY suite that provisions a shadow through
- * `legacyWithShadowDatabase` with a mocked spawner — `db diff`, `db pull`, declarative sync — now
- * exercises the cache path unless it opts out: the cold path adds a `docker stop`/`docker cp`/
- * `docker start` round trip and writes a ~90MB-shaped tar into the test's workdir. Suites whose
- * subject is anything OTHER than the cache should call this so they keep asserting the plain
- * container lifecycle; the cache's own suites deliberately do not.
+ * The baseline PGDATA cache (`db-bootstrap/shadow-cache.ts`) is ON by default and reads
+ * `process.env` directly, so ANY suite that provisions a cluster whose platform baseline it
+ * covers, with a mocked spawner, now exercises the cache path unless it opts out: the cold path
+ * adds a `docker stop`/`docker cp`/`docker start` round trip and publishes a tar. That is both
+ * shadow-provisioning suites (`db diff`, `db pull`, declarative sync, `migration squash`, via
+ * `legacyWithShadowDatabase`) and the long-running `db` container's own bring-up (`supabase
+ * start`, `db start`, `db reset`, via `main-db-baseline.ts`).
+ *
+ * Critically, the tar directory is rooted at `SUPABASE_HOME` — which these suites do NOT pin — so
+ * without this the cache reads from, and writes into, the DEVELOPER'S REAL `~/.supabase`. Suites
+ * whose subject is anything OTHER than the cache should call this so they keep asserting the plain
+ * container lifecycle; the cache's own scenarios opt back in per-test with
+ * {@link withLegacyShadowCacheEnabled}, which pins both variables together.
  */
 export function useLegacyShadowCacheDisabled(): void {
   const name = "SUPABASE_SHADOW_CACHE";

@@ -41,6 +41,7 @@ import {
   LEGACY_SHADOW_CACHE_ENV,
   legacyAcquireShadowDatabase,
   legacyPeekShadowBaseline,
+  type LegacyShadowAcquiredHandle,
   type LegacyShadowCacheOpts,
 } from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
@@ -398,6 +399,14 @@ const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path
   return entries.filter((entry) => entry.endsWith(".tar"));
 });
 
+/**
+ * The snapshot step of whichever handle this is — the export on a cache-enabled cold acquire, and
+ * nothing at all on a warm or uncached one, which is exactly what the real consumer
+ * (`legacyOpenBaselineSession`) does with the same three states.
+ */
+const snapshotOf = (handle: LegacyShadowAcquiredHandle) =>
+  handle._tag === "cold" ? handle.snapshotBaseline : Effect.void;
+
 /** A full cold run: acquire, export the baseline, release. */
 const coldRun = (
   docker: ReturnType<typeof fakeDockerDaemon>,
@@ -406,7 +415,7 @@ const coldRun = (
 ) =>
   Effect.gen(function* () {
     const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input, opts);
-    yield* handle.snapshotBaseline;
+    yield* snapshotOf(handle);
     yield* legacyRemoveShadowDatabase(docker.spawner, handle.containerId);
     return handle;
   });
@@ -423,12 +432,12 @@ describe("legacyAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(handle.baselinePresent).toBe(false);
+        expect(handle._tag).toBe("uncached");
 
         // `--rm` intact, no PGDATA copies either way, and the snapshot step is a no-op. The one
         // `cp-secret` is the pgsodium root key every shadow has always been given.
         expect(docker.calls("create")[0] ?? []).toContain("--rm");
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
         expect(docker.steps()).toEqual(["create", "cp-secret", "start"]);
         // Nothing is written to disk at all.
         expect(yield* soleTarName(fs, path)).toEqual([]);
@@ -456,12 +465,12 @@ describe("legacyAcquireShadowDatabase", () => {
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
           bypassCache: true,
         });
-        expect(handle.baselinePresent).toBe(false);
+        expect(handle._tag).toBe("uncached");
         // No restore in, no export out: the bypassed run neither reads nor rewrites the tar.
         const bypassSteps = docker.steps().slice(docker.steps().lastIndexOf("create"));
         expect(bypassSteps).toEqual(["create", "cp-secret", "start"]);
         expect(docker.calls("create").at(-1) ?? []).toContain("--rm");
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
         expect(docker.stepCalls("cp-out")).toHaveLength(1); // the initial cold run's only
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -486,10 +495,9 @@ describe("legacyAcquireShadowDatabase", () => {
           setup: { ...base.setup, majorVersion: 14 },
         };
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(handle.baselinePresent).toBe(false);
-        expect(handle.snapshotRequired).toBe(false);
+        expect(handle._tag).toBe("uncached");
         expect(docker.calls("create")[0] ?? []).toContain("--rm");
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -518,7 +526,7 @@ describe("legacyAcquireShadowDatabase", () => {
         yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
 
         const warm = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(warm.baselinePresent).toBe(true);
+        expect(warm._tag).toBe("warm");
         expect(yield* fs.exists(abandoned)).toBe(false);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -540,9 +548,9 @@ describe("legacyAcquireShadowDatabase", () => {
           experimental: { ...defaultConfig.experimental, orioledb_version: "15" },
         };
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(handle.baselinePresent).toBe(false);
+        expect(handle._tag).toBe("uncached");
         expect(docker.calls("create")[0] ?? []).toContain("--rm");
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
         expect(docker.calls("stop")).toEqual([]);
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
@@ -559,7 +567,7 @@ describe("legacyAcquireShadowDatabase", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -576,11 +584,11 @@ describe("legacyAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(handle.baselinePresent).toBe(false);
+        expect(handle._tag).toBe("cold");
         // The cold container must survive its own `docker stop`, so it carries no `--rm`.
         expect(docker.calls("create")[0] ?? []).not.toContain("--rm");
 
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
 
         // Ordering IS the contract here: stop before the copy (a live PGDATA is not coherent to
         // copy), start plus a readiness probe after it (the caller is about to reconnect).
@@ -633,7 +641,7 @@ describe("legacyAcquireShadowDatabase", () => {
         const warm = yield* legacyAcquireShadowDatabase(docker.spawner, input);
         // A brand new container every time — the cache keeps a file, never a container.
         expect(warm.containerId).not.toBe(cold.containerId);
-        expect(warm.baselinePresent).toBe(true);
+        expect(warm._tag).toBe("warm");
         // Throwaway again: the warm container never gets stopped, so `--rm` is back.
         expect(docker.calls("create").at(-1) ?? []).toContain("--rm");
 
@@ -650,7 +658,7 @@ describe("legacyAcquireShadowDatabase", () => {
         );
 
         // Nothing more is exported: the baseline is already on disk.
-        yield* warm.snapshotBaseline;
+        yield* snapshotOf(warm);
         expect(docker.calls("stop")).toHaveLength(1);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
       }),
@@ -743,10 +751,10 @@ describe("legacyAcquireShadowDatabase", () => {
           ],
           { concurrency: 2 },
         );
-        expect(first.baselinePresent).toBe(false);
-        expect(second.baselinePresent).toBe(false);
+        expect(first._tag).toBe("cold");
+        expect(second._tag).toBe("cold");
 
-        yield* Effect.all([first.snapshotBaseline, second.snapshotBaseline], { concurrency: 2 });
+        yield* Effect.all([snapshotOf(first), snapshotOf(second)], { concurrency: 2 });
 
         // One export, one tar with the exported bytes intact, no leftover partials.
         expect(docker.stepCalls("cp-out")).toHaveLength(1);
@@ -790,7 +798,7 @@ describe("legacyAcquireShadowDatabase", () => {
         const both = yield* soleTarName(fs, path);
         expect(both).toHaveLength(2);
         expect(both).toContain(first[0]);
-        expect(rekeyed.baselinePresent).toBe(false);
+        expect(rekeyed._tag).toBe("cold");
 
         // An unrelated file in the cache directory is untouched by retention.
         const stray = path.join(shadowCacheDir(path), "catalog-abc.json");
@@ -823,7 +831,7 @@ describe("legacyAcquireShadowDatabase", () => {
         yield* fs.makeDirectory(path.join(worktreeB, "supabase"), { recursive: true });
 
         const cold = yield* coldRun(docker, { ...shadowInput(fs, path), workdir: worktreeA });
-        expect(cold.baselinePresent).toBe(false);
+        expect(cold._tag).toBe("cold");
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
         // Same settings, different project path — the second worktree must restore, not re-export.
@@ -831,7 +839,7 @@ describe("legacyAcquireShadowDatabase", () => {
           ...shadowInput(fs, path),
           workdir: worktreeB,
         });
-        expect(warm.baselinePresent).toBe(true);
+        expect(warm._tag).toBe("warm");
         expect(warm.containerId).not.toBe(cold.containerId);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
@@ -849,7 +857,7 @@ describe("legacyAcquireShadowDatabase", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cold = yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54320 }));
-        expect(cold.baselinePresent).toBe(false);
+        expect(cold._tag).toBe("cold");
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
         // pg-delta next allocates an ephemeral host port per shadow; the published port is
@@ -858,7 +866,7 @@ describe("legacyAcquireShadowDatabase", () => {
           docker.spawner,
           shadowInput(fs, path, { shadowPort: 54399 }),
         );
-        expect(warm.baselinePresent).toBe(true);
+        expect(warm._tag).toBe("warm");
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
       }),
@@ -882,17 +890,17 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
         const forcedOn = yield* coldRun(docker, input, { webhooks: "enabled" });
-        expect(forcedOn.baselinePresent).toBe(false);
+        expect(forcedOn._tag).toBe("cold");
         expect(yield* soleTarName(fs, path)).toHaveLength(2);
 
         const warmConfig = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
           webhooks: "config",
         });
-        expect(warmConfig.baselinePresent).toBe(true);
+        expect(warmConfig._tag).toBe("warm");
         const warmDisabled = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
           webhooks: "disabled",
         });
-        expect(warmDisabled.baselinePresent).toBe(true);
+        expect(warmDisabled._tag).toBe("warm");
         expect(yield* soleTarName(fs, path)).toHaveLength(2);
         yield* legacyRemoveShadowDatabase(docker.spawner, warmConfig.containerId);
         yield* legacyRemoveShadowDatabase(docker.spawner, warmDisabled.containerId);
@@ -922,7 +930,7 @@ describe("legacyAcquireShadowDatabase", () => {
           "mirror.internal.example",
           coldRun(docker, input),
         );
-        expect(mirrored.baselinePresent).toBe(false);
+        expect(mirrored._tag).toBe("cold");
         const mirroredTar = yield* soleTarName(fs, path);
         // Distinct keys coexist in the global cache — the default-registry tar is not swept.
         expect(mirroredTar).toHaveLength(2);
@@ -948,7 +956,7 @@ describe("legacyAcquireShadowDatabase", () => {
           // Reporting success here would send the caller's next connect to a dead container's port
           // — possibly answered by a DIFFERENT Postgres by then — so this must be a failure, not a
           // "not cached" warning.
-          const exit = yield* handle.snapshotBaseline.pipe(Effect.exit);
+          const exit = yield* snapshotOf(handle).pipe(Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           expect(out.stderrText).not.toContain("Warning: shadow baseline not cached");
         }),
@@ -967,7 +975,7 @@ describe("legacyAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
         // The run itself must never fail for a cache problem.
-        yield* handle.snapshotBaseline;
+        yield* snapshotOf(handle);
 
         expect(out.stderrText).toContain("Warning: shadow baseline not cached");
         // The caller is about to reconnect, so the container is running again regardless.
@@ -1005,7 +1013,7 @@ describe("legacyAcquireShadowDatabase", () => {
           const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
           expect(out.stderrText).toContain("cached shadow baseline unusable");
           // Falls all the way back to a cold provision — a fresh container with no baseline.
-          expect(fallback.baselinePresent).toBe(false);
+          expect(fallback._tag).toBe("cold");
           expect(fallback.containerId).not.toBe(cold.containerId);
           // The container whose restore failed is removed, not orphaned: with the cold run's own
           // container already released by `coldRun`, only the fallback's remains.
@@ -1015,7 +1023,7 @@ describe("legacyAcquireShadowDatabase", () => {
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
           // ...and the cold fallback's own export atomically republishes over it, so a genuinely
           // corrupt tar still self-heals within this one run.
-          yield* fallback.snapshotBaseline;
+          yield* snapshotOf(fallback);
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
           expect(yield* fs.readFileString(tarPath)).toBe(FAKE_PGDATA_TAR);
         }),
@@ -1044,7 +1052,7 @@ describe("legacyAcquireShadowDatabase", () => {
           Effect.provide(broken.layer),
         );
 
-        expect(fallback.baselinePresent).toBe(false);
+        expect(fallback._tag).toBe("cold");
         expect(fallback.containerId).not.toBe(cold.containerId);
         // The suspect container is gone before the replacement is created — it holds the shadow's
         // published port.

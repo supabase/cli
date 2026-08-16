@@ -21,7 +21,7 @@ One piece of the old Go CLI's `start` remains explicitly **out of scope**:
    an "update available" hint. Omitted entirely — this port has zero Management API
    dependency for `start`, by design.
 
-### Fresh-volume DB setup (`legacyStartSetupLocalDatabase`)
+### Fresh-volume DB setup (`legacyRunFreshDbSetup`)
 
 Runs the initial schema/migrations/seed pipeline. Gated on
 `isFreshVolume` (`legacyVolumeExists` on the Postgres volume, checked BEFORE the
@@ -40,6 +40,32 @@ seed — UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experiment
 enabled` is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
 `migrations/*.sql`; seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
+
+On PG15+, this pipeline is fronted by the **baseline PGDATA cache**
+(`db-bootstrap/main-db-baseline.ts`), which shares its tar pool with the throwaway shadow
+database `db diff`/`db pull`/`migration squash` provision. Before Postgres's container is
+created, the run computes a settings key and looks for
+`$SUPABASE_HOME/cache/shadow-baseline/shadow-baseline-<key>.tar` (default
+`~/.supabase/cache/...`, shared across worktrees):
+
+- **Warm** — the tar is unpacked into the created-but-not-yet-started container via
+  `docker cp - <id>:/var/lib/postgresql`, so the entrypoint finds an initialized PGDATA and
+  skips `initdb`. `Restoring cached baseline...` prints to stderr INSTEAD of
+  `Initialising schema...`/`Seeding globals from roles.sql...`, and the three PG15+ one-shot
+  migrate jobs do NOT run. Migrations and seeding are unchanged. If the restored cluster does
+  not become healthy, `Warning: cached database baseline unusable (...); recreating.` prints,
+  the container and its volume are force-removed, and the whole bring-up re-runs cold.
+- **Cold** — everything runs exactly as before, and the baseline is then published: after the
+  schema/vault/`roles.sql` steps and BEFORE `MigrateAndSeed`, the `db` container is
+  `docker stop`ped, its `/var/lib/postgresql/data` exported with `docker cp` to the tar
+  (atomic temp-then-rename, mode `0600`), `docker start`ed again, and waited on with a direct
+  connect probe. Publication is best-effort: any failure prints
+  `Warning: database baseline not cached: <reason>` and the run continues uncached. A cluster
+  that does not come back up after the snapshot DOES fail the run.
+- **Skipped entirely** on PG<=14, on OrioleDB clusters, when `supabase/roles.sql` is
+  unreadable, and when `SUPABASE_SHADOW_CACHE` is `false`/`0`.
+
+Retention is LRU (newest 8) plus a 14-day mtime TTL, swept on every cold export and warm hit.
 
 `legacyStartInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
 absent) is NOT part of this fresh-volume-gated pipeline — it runs unconditionally on every
@@ -91,11 +117,12 @@ command.
 
 ## Files Written
 
-| Path                                                                                          | Format | When                                                                                                                                                                                                            |
-| --------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                 |
-| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start` |
+| Path                                                                                          | Format | When                                                                                                                                                                                                                                                            |
+| --------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                                                                |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                                                                 |
+| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start`                                                 |
+| `$SUPABASE_HOME/cache/shadow-baseline/shadow-baseline-<key>.tar` (default `~/.supabase/…`)    | tar    | best-effort, on a fresh PG15+ volume with the baseline cache on, between the platform baseline and `MigrateAndSeed` — mode `0600`, published by an atomic rename, shared with the shadow-database cache; a failure only warns on stderr and never fails `start` |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -152,6 +179,8 @@ not implemented.
 | `SUPABASE_*` (any dotted config field)                                                                               | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                                                                                                                        | no        |
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                          | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | Enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                                                  | no        |
+| `SUPABASE_SHADOW_CACHE`                                                                                              | `false`/`0` opts out of the fresh-volume baseline PGDATA cache (default ON) — see "Fresh-volume DB setup" above                                                                                                                                                   | no        |
+| `SUPABASE_HOME`                                                                                                      | Roots the baseline PGDATA cache directory (`$SUPABASE_HOME/cache/shadow-baseline`, default `~/.supabase`)                                                                                                                                                         | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                    | no        |
 | `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliConfig.workdir`                                                                                                                                                                                                                                | no        |

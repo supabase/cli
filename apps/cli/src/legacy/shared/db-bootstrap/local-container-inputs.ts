@@ -55,7 +55,7 @@ import {
   legacyResolveDbBootstrapConfig,
   type LegacyDbBootstrapConfig,
 } from "./bootstrap-config.ts";
-import type { LegacyFreshDbSetupInput } from "./db-setup.ts";
+import { legacyMemoizeSuccess, type LegacyFreshDbSetupInput } from "./db-setup.ts";
 import type { LegacyContainerOpts } from "./container-lifecycle.ts";
 import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
 import type { LegacyPostgresStartServiceInput } from "./postgres.service.ts";
@@ -280,17 +280,25 @@ export const legacyBuildLocalDbContainerInputs = (
       // Go's `initSchema15`'s realtime job resolves JWKS itself, LOCALLY, gated on
       // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — `legacyRunFreshDbSetup` only
       // evaluates this Effect when reached AND `realtimeEnabledForSetup`.
-      jwks: Effect.tryPromise({
-        try: () =>
-          legacyResolveLocalJwks(
-            config,
-            workdir,
-            values.jwtSecret,
-            projectEnvValues,
-            remoteOverrideKeys,
-          ),
-        catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-      }),
+      //
+      // Memoized for the same reason the shadow's own run input memoizes it
+      // (`legacyShadowRunInputFromLocalContainerInputs`): with the baseline cache enabled a cold
+      // run evaluates this TWICE — once for the cache key (`main-db-baseline.ts`'s peek, before
+      // the container is even created), once by `legacyResolveDbSetupPrelude` for the baseline
+      // itself — and third-party JWKS discovery can be a real network request.
+      jwks: legacyMemoizeSuccess(
+        Effect.tryPromise({
+          try: () =>
+            legacyResolveLocalJwks(
+              config,
+              workdir,
+              values.jwtSecret,
+              projectEnvValues,
+              remoteOverrideKeys,
+            ),
+          catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
+        }),
+      ),
       apiUrl: values.apiUrl,
       authExternalUrl: legacyResolveAuthExternalUrl(
         loaded?.document,

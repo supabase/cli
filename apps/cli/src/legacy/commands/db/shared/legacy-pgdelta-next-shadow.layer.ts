@@ -281,14 +281,14 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         // reaches that seam when its export publishes the tar; any other handle (warm because
         // another process published between peek and acquire, or uncached) never runs a
         // snapshot, so signal immediately — the waiter then just re-peeks current disk state.
-        const seamWillRun = handle.snapshotRequired && !handle.baselinePresent;
-        const seamHandle: LegacyShadowAcquiredHandle = seamWillRun
-          ? {
-              ...handle,
-              snapshotBaseline: handle.snapshotBaseline.pipe(Effect.ensuring(onBaselineSeam)),
-            }
-          : handle;
-        if (!seamWillRun) yield* onBaselineSeam;
+        const seamHandle: LegacyShadowAcquiredHandle =
+          handle._tag === "cold"
+            ? {
+                ...handle,
+                snapshotBaseline: handle.snapshotBaseline.pipe(Effect.ensuring(onBaselineSeam)),
+              }
+            : handle;
+        if (handle._tag !== "cold") yield* onBaselineSeam;
         yield* awaitShadowReady(input, seamHandle);
         const setup = setupRunInput(input, seamHandle);
         yield* legacyMigrateNextShadowDatabase(input.spawner, setup, seamHandle);
@@ -318,7 +318,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         );
         return {
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
-          restoredFromPgDataSnapshot: handle.baselinePresent,
+          restoredFromPgDataSnapshot: handle._tag === "warm",
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 

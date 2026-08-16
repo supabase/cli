@@ -122,13 +122,13 @@ describeLive("shadow baseline cache (live Docker)", () => {
         yield* Effect.addFinalizer(() =>
           legacyRemoveShadowDatabase(spawner, cold.containerId).pipe(Effect.ignore),
         );
-        expect(cold.baselinePresent).toBe(false);
+        expect(cold._tag).toBe("cold");
         yield* legacyWaitForShadowReady(spawner, cold.containerId, connConfig, {
           timeoutSeconds: input.healthTimeoutSeconds,
         });
         // The export stops and restarts the container, so nothing may be connected while it runs —
         // exactly the contract `legacyMigrateShadowDatabase` honours around this same step.
-        yield* cold.snapshotBaseline;
+        yield* cold._tag === "cold" ? cold.snapshotBaseline : Effect.void;
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* connection.connect(connConfig, {
@@ -151,7 +151,7 @@ describeLive("shadow baseline cache (live Docker)", () => {
         // The cache keeps a file, never a container: run 2 is a brand new container that skipped
         // the baseline because its PGDATA arrived pre-initialized.
         expect(warm.containerId).not.toBe(cold.containerId);
-        expect(warm.baselinePresent).toBe(true);
+        expect(warm._tag).toBe("warm");
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* connection.connect(connConfig, {

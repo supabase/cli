@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Path, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -17,7 +17,9 @@ import {
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
+  withLegacyShadowCacheEnabled,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
@@ -38,6 +40,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyShadowBaselineCacheDir } from "../../../shared/legacy-pgdelta.paths.ts";
 import { legacyDbStart } from "./start.handler.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
@@ -141,7 +144,7 @@ function bindsFromCreateArgs(args: ReadonlyArray<string>): ReadonlyArray<string>
   return binds;
 }
 
-/** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls). */
+/** The three PG15+ one-shot migrate jobs (`legacyRunFreshDbSetup`'s `LegacyDockerRun` calls). */
 function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
   return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
 }
@@ -256,6 +259,12 @@ function fakeDbSession() {
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-db-start-int-");
+
+// The baseline cache (`db-bootstrap/main-db-baseline.ts`) is ON by default and reads
+// `process.env` directly, so every fresh-volume bring-up below would otherwise restore or publish
+// a real tar under the developer's own `~/.supabase`. This suite's subject is the bring-up itself;
+// the cache-focused scenarios opt back in per-test with `withLegacyShadowCacheEnabled`.
+useLegacyShadowCacheDisabled();
 
 function writeConfig(workdir: string, contents: string) {
   mkdirSync(join(workdir, "supabase"), { recursive: true });
@@ -1800,5 +1809,112 @@ describe("legacy db start", () => {
       // PRRT_kwDOErm0O86VmHkn).
       expect(out.stderrText).toContain("Starting database from backup...\n");
     });
+  });
+
+  // The baseline cache (`shared/db-bootstrap/main-db-baseline.ts`) is ON in production; the
+  // suite-wide `useLegacyShadowCacheDisabled` above turns it off everywhere else so the other
+  // scenarios assert the plain bring-up. These turn it back on — under a per-test
+  // `SUPABASE_HOME`, so the ~90MB-in-production tar never lands in the developer's real
+  // `~/.supabase` — and drive `db start` for real against it. The cache's own mechanics (key
+  // derivation, atomic publish, retention, degradation) are covered at their own level in
+  // `shared/db-bootstrap/shadow-cache.integration.test.ts`.
+  describe("cached database baseline", () => {
+    const SHADOW_HOME_DIR = "_supabase_home";
+
+    /** Re-enables the cache the suite-wide gate turned off, rooted at this test's own home. */
+    const withCacheEnabled = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      withLegacyShadowCacheEnabled(join(tempRoot.current, SHADOW_HOME_DIR), body);
+
+    /**
+     * Every published `shadow-baseline-<key>.tar` under the per-test home, at the directory
+     * production itself derives — a relocated cache directory cannot pass unnoticed here.
+     */
+    const publishedBaselineTars = (): ReadonlyArray<string> => {
+      const dir = legacyShadowBaselineCacheDir(
+        Effect.runSync(Path.Path.pipe(Effect.provide(Path.layer))),
+        { SUPABASE_HOME: join(tempRoot.current, SHADOW_HOME_DIR) },
+      );
+      return existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".tar")) : [];
+    };
+
+    /**
+     * The baseline restore's own `docker cp - <id>:/var/lib/postgresql` (PGDATA's PARENT).
+     * Deliberately narrower than `cp -`: every container create also copies its secret files
+     * that way, targeting `<id>:/`.
+     */
+    const isBaselineRestoreCp = (args: ReadonlyArray<string>): boolean =>
+      args[0] === "cp" && args[1] === "-" && (args[2] ?? "").endsWith(":/var/lib/postgresql");
+
+    /** One full fresh-volume `db start`. */
+    const runFreshStart = Effect.fnUntraced(function* (fromBackup?: string) {
+      const s = setup({ route: freshVolumeRoute(defaultRoute()) });
+      yield* legacyDbStart(flags(fromBackup)).pipe(Effect.provide(s.layer));
+      return s;
+    });
+
+    it.live(
+      "reuses the published baseline on the next fresh-volume start instead of re-running it",
+      () =>
+        withCacheEnabled(
+          Effect.gen(function* () {
+            const cold = yield* runFreshStart();
+            // Cold: the platform baseline really ran, and the snapshot was taken at its seam.
+            expect(cold.out.stderrText).toContain("Initialising schema...");
+            expect(dbSetupJobCalls(cold.child.spawned)).toHaveLength(3);
+            expect(cold.child.spawned.filter((s) => s.args[0] === "stop")).toHaveLength(1);
+            expect(publishedBaselineTars()).toHaveLength(1);
+
+            const warm = yield* runFreshStart();
+            // Warm: the restored cluster already carries the baseline, so neither its progress
+            // text nor its one-shot migrate jobs happen — and nothing is re-snapshotted.
+            expect(warm.out.stderrText).toContain("Restoring cached baseline...\n");
+            expect(warm.out.stderrText).not.toContain("Initialising schema...");
+            expect(warm.out.stderrText).not.toContain("Seeding globals from roles.sql...");
+            expect(dbSetupJobCalls(warm.child.spawned)).toHaveLength(0);
+            expect(warm.child.spawned.filter((s) => s.args[0] === "stop")).toHaveLength(0);
+
+            // The tar is unpacked into the created-but-unstarted container: the entrypoint has
+            // to find an initialized PGDATA, so the copy MUST precede `docker start`.
+            const restoreCp = warm.child.spawned.findIndex((s) => isBaselineRestoreCp(s.args));
+            const start = warm.child.spawned.findIndex((s) => s.args[0] === "start");
+            expect(restoreCp).toBeGreaterThanOrEqual(0);
+            expect(start).toBeGreaterThan(restoreCp);
+
+            // `initCurrentBranch` is the last line of `StartDatabase` on every path.
+            expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+            expect(publishedBaselineTars()).toHaveLength(1);
+          }),
+        ),
+      20_000,
+    );
+
+    it.live(
+      "--from-backup never restores a cached baseline, even when one is published for this project",
+      () =>
+        withCacheEnabled(
+          Effect.gen(function* () {
+            // `--from-backup` and a plain fresh start hash to the SAME key (the restore
+            // entrypoint is not a key input), so this leaves a tar the backup run below would
+            // warm-hit if it consulted the cache at all.
+            yield* runFreshStart();
+            expect(publishedBaselineTars()).toHaveLength(1);
+
+            const backup = yield* runFreshStart("/abs/host/backup.sql");
+
+            expect(backup.out.stderrText).not.toContain("Restoring cached baseline...");
+            // The only archive this path delivers is its own backup bind.
+            expect(bindsFromCreateArgs(createArgs(backup.child.spawned) ?? [])).toContain(
+              "/abs/host/backup.sql:/etc/backup.sql:ro",
+            );
+            expect(backup.child.spawned.some((s) => isBaselineRestoreCp(s.args))).toBe(false);
+            // The whole `SetupLocalDatabase`-equivalent pipeline is skipped, so there is no
+            // platform baseline to publish either — the pool is left exactly as it was.
+            expect(dbSetupJobCalls(backup.child.spawned)).toHaveLength(0);
+            expect(backup.child.spawned.filter((s) => s.args[0] === "stop")).toHaveLength(0);
+            expect(publishedBaselineTars()).toHaveLength(1);
+          }),
+        ),
+      20_000,
+    );
   });
 });

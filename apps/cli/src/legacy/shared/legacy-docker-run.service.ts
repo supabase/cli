@@ -46,7 +46,7 @@ export interface LegacyDockerRunOpts {
    * Skips this layer's own image resolution (`legacyMakeDockerImageResolver`) when the
    * caller already resolved `image` itself through a `projectEnvValues`-aware path (e.g.
    * `start`'s one-shot fresh-DB setup jobs, resolved via `legacyEnsureImagesCached` before
-   * `legacyStartSetupLocalDatabase` ever calls this service). This layer's own resolver is
+   * `legacyRunFreshDbSetup` ever calls this service). This layer's own resolver is
    * built once, statically, with no `projectEnvValues` in scope (see
    * `legacy-docker-run.layer.ts`'s header) — re-resolving an ALREADY-resolved image (e.g.
    * `registry.example.com/supabase/gotrue:v2.192.0`) would treat it as a fresh, unresolved
