@@ -97,9 +97,23 @@ export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): 
 export const managedRegistryPath = (stateRoot: string): string =>
   join(stateRoot, "registry.sqlite3");
 
+export const managedRegistryLockPath = (stateRoot: string): string =>
+  join(stateRoot, "registry.lock");
+
+export const managedStacksRoot = (stateRoot: string): string => join(stateRoot, "stacks");
+
+const SHA256_STACK_ID_PATTERN = /^[0-9a-f]{64}$/i;
+
+const assertManagedStackId = (stackId: string): string => {
+  if (SHA256_STACK_ID_PATTERN.test(stackId)) {
+    return stackId;
+  }
+  return assertManagedUuid(stackId, "stackId");
+};
+
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
-  assertManagedUuid(stackId, "stackId");
-  const root = join(stateRoot, "stacks", stackId);
+  assertManagedStackId(stackId);
+  const root = join(managedStacksRoot(stateRoot), stackId);
   return {
     root,
     data: join(root, "data"),
@@ -107,6 +121,9 @@ export const managedStackPaths = (stateRoot: string, stackId: string): ManagedSt
     runtime: join(root, "runtime"),
   };
 };
+
+export const managedStackDocumentPath = (stateRoot: string, stackId: string): string =>
+  join(managedStackPaths(stateRoot, stackId).root, "stack.json");
 
 export const assertManagedStackRoot = (
   stateRoot: string,
