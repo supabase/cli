@@ -1,4 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Data, Effect, Fiber, Layer, ManagedRuntime } from "effect";
 import { ApiProxy } from "./ApiProxy.ts";
@@ -219,6 +220,10 @@ export async function runManagedDaemon(
           projectDir: message.config.projectDir ?? message.workspacePath,
         };
 
+        // Only a newly initialized child may remove a stale socket. A reuse
+        // path must leave the already-running daemon's live socket untouched.
+        await rm(message.socketPath, { force: true });
+
         if (dependencies.runtimeBootstrap !== undefined) {
           runtimes.portLease = allocation.lease;
           const metadata = await dependencies.runtimeBootstrap({
@@ -416,7 +421,6 @@ export const managedDaemonLayer = (
     yield* fs
       .makeDirectory(dirname(input.socketPath), { recursive: true })
       .pipe(Effect.catchTag("PlatformError", (error) => Effect.die(error)));
-    yield* fs.remove(input.socketPath).pipe(Effect.ignore);
     const child = yield* forkManagedDaemon(daemonEntryPoint);
     let registered = false;
     return yield* Effect.gen(function* () {

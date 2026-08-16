@@ -9,6 +9,7 @@ import { createManagedStackService, managedDaemonLayer } from "./managed-bun.ts"
 import { unixHttpClientLayer } from "./platform-bun.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
+import type { ManagedStackProjection } from "./managed/model.ts";
 import type { ManagedDaemonStartInput } from "./managed-daemon.ts";
 import { managedDaemonLayer as managedDaemonLayerWithEntryPoint } from "./managed-daemon.ts";
 import {
@@ -265,7 +266,7 @@ describe("managed daemon", () => {
     const workspacePath = join(root, "workspace");
     const config = makeMinimalConfig(workspacePath);
     const first = makeInput(root, config, "first.sock");
-    const second = makeInput(root, config, "second.sock");
+    const second = makeInput(root, config, "first.sock");
 
     const firstLayer = await Effect.runPromise(
       managedDaemonLayer(first).pipe(
@@ -274,12 +275,16 @@ describe("managed daemon", () => {
     );
     const firstRuntime = ManagedRuntime.make(firstLayer);
     let firstStack: Stack["Service"] | undefined;
+    let originalRecord: ManagedStackProjection | undefined;
     try {
       firstStack = Context.get(await firstRuntime.context(), Stack);
       const registry = await createManagedStackService({ stateRoot: first.stateRoot });
       try {
         const stacks = await registry.listStacks();
-        const pid = stacks[0]?.runtimeMetadata.pid;
+        const record = stacks[0];
+        if (record === undefined) throw new Error("missing first daemon record");
+        originalRecord = record;
+        const pid = record.runtimeMetadata.pid;
         if (pid === undefined) throw new Error("missing first daemon pid");
         childPids.add(pid);
         expect(isAlive(pid)).toBe(true);
@@ -297,6 +302,13 @@ describe("managed daemon", () => {
         const secondStack = Context.get(await secondRuntime.context(), Stack);
         const secondInfo = await secondRuntime.runPromise(secondStack.getInfo());
         expect(secondInfo.url).toBe(firstInfo.url);
+        const registry = await createManagedStackService({ stateRoot: first.stateRoot });
+        try {
+          const stacks = await registry.listStacks();
+          expect(stacks).toEqual([originalRecord]);
+        } finally {
+          await registry.close();
+        }
       } finally {
         await secondRuntime.dispose();
       }
