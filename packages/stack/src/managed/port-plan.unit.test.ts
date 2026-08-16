@@ -3,18 +3,15 @@ import { resolvePortIntents } from "./port-intent.ts";
 import { planManagedPorts, type ManagedDurablePortPlanEntry } from "./port-plan.ts";
 
 describe("planManagedPorts", () => {
-  it("pins persisted automatic and exact-to-omitted durable values", () => {
-    const activeFields = ["apiPort", "dbPort"] as const;
+  it("pins a persisted automatic durable value", () => {
+    const activeFields = ["apiPort"] as const;
     const intents = resolvePortIntents({ activeFields, document: {} });
 
     expect(
       planManagedPorts({
         activeFields,
         intents,
-        persisted: [
-          { key: "api.port", port: 55001, intent: "automatic" },
-          { key: "db.port", port: 55002, intent: "exact" },
-        ],
+        persisted: [{ key: "api.port", port: 55001, intent: "automatic" }],
       }),
     ).toEqual({
       durable: [
@@ -25,6 +22,24 @@ describe("planManagedPorts", () => {
           selection: { kind: "exact", port: 55001 },
           newlyAllocatedAutomatic: false,
         },
+      ],
+      runtimeOnly: [],
+      inactiveAssignments: [],
+    });
+  });
+
+  it("changes an exact assignment to automatic while retaining its number when omitted", () => {
+    const activeFields = ["dbPort"] as const;
+    const intents = resolvePortIntents({ activeFields, document: {} });
+
+    expect(
+      planManagedPorts({
+        activeFields,
+        intents,
+        persisted: [{ key: "db.port", port: 55002, intent: "exact" }],
+      }),
+    ).toEqual({
+      durable: [
         {
           field: "dbPort",
           key: "db.port",
