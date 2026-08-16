@@ -34,7 +34,7 @@ export interface ManagedDaemonStartInput {
   readonly config: ManagedDaemonConfig;
   /** Effective pre-default document used for managed intent resolution. */
   readonly effectiveConfig: Readonly<Record<string, unknown>>;
-  readonly valueOrigins: ManagedPortIntentDocument["valueOrigins"];
+  readonly valueOrigins?: ManagedPortIntentDocument["valueOrigins"];
   readonly socketPath: string;
 }
 

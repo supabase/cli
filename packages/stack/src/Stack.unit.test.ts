@@ -130,6 +130,8 @@ const noopPortLease = (ports: ResolvedPorts): PortLease => ({
   reserve: () => Effect.void,
   release: () => Effect.void,
   releaseAll: Effect.void,
+  handoff: Effect.void,
+  releaseAcquisition: Effect.void,
 });
 
 function setupLayer(
@@ -837,6 +839,8 @@ describe("Stack", () => {
               ? Deferred.succeed(mailpitReleaseStarted, undefined).pipe(Effect.asVoid)
               : Effect.void,
         releaseAll: Effect.void,
+        handoff: Effect.void,
+        releaseAcquisition: Effect.void,
       };
       const { layer } = setupLayer(config, lease);
 
@@ -1126,6 +1130,8 @@ describe("Stack", () => {
           for (const field of fields) released.add(field);
         }),
       releaseAll: Effect.void,
+      handoff: Effect.void,
+      releaseAcquisition: Effect.void,
     };
     const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, lease);
 

@@ -322,7 +322,7 @@ const makeCoordinator = (
                 mapAllocationError(requests, input.plan, input.stack.id, error),
               ),
             ),
-            (candidate) => candidate.releaseAll,
+            (candidate) => candidate.releaseAcquisition,
           );
           const activeAssignments = input.plan.durable.map((entry) =>
             assignmentFor(entry, lease.ports),

@@ -137,6 +137,10 @@ export interface PortLease {
   readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
+  /** Transfer cleanup ownership to the runtime that received this lease. */
+  readonly handoff: Effect.Effect<void>;
+  /** Internal coordinator finalizer; skips cleanup after a successful handoff. */
+  readonly releaseAcquisition: Effect.Effect<void>;
 }
 
 const uniqueFields = (
@@ -204,12 +208,21 @@ const reserveReservations = (
 
 const makePortLease = (ports: ResolvedPorts, reservations: Map<PortField, Server>): PortLease => {
   const lock = Semaphore.makeUnsafe(1);
+  let handedOff = false;
   return {
     ports,
     reserve: (fields) => lock.withPermit(reserveReservations(ports, reservations, fields)),
     release: (fields) => lock.withPermit(releaseReservations(reservations, fields)),
     releaseAll: lock.withPermit(
       Effect.suspend(() => releaseReservations(reservations, [...reservations.keys()])),
+    ),
+    handoff: Effect.sync(() => {
+      handedOff = true;
+    }),
+    releaseAcquisition: lock.withPermit(
+      Effect.suspend(() =>
+        handedOff ? Effect.void : releaseReservations(reservations, [...reservations.keys()]),
+      ),
     ),
   };
 };
