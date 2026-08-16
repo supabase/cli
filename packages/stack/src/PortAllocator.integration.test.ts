@@ -118,15 +118,16 @@ describe("selected-field port allocation", () => {
   });
 
   it("releases partial reservations when a selected set fails", async () => {
-    let port = 0;
+    const firstPort = await Effect.runPromise(
+      Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
+    );
     const failed = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const occupied = yield* occupyFreePort();
-          port = occupied.port;
           return yield* reservePortSet([
-            { field: "apiPort", selection: { kind: "automatic" } },
-            { field: "dbPort", selection: { kind: "exact", port } },
+            { field: "apiPort", selection: { kind: "exact", port: firstPort } },
+            { field: "dbPort", selection: { kind: "exact", port: occupied.port } },
           ]).pipe(Effect.exit);
         }),
       ),
@@ -134,8 +135,25 @@ describe("selected-field port allocation", () => {
     expect(failed._tag).toBe("Failure");
 
     const available = await Effect.runPromise(
+      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: firstPort } }]),
+    );
+    expect(available.apiPort).toBe(firstPort);
+  });
+
+  it("releases a bound port when interrupted during lease registration", async () => {
+    const port = await Effect.runPromise(
+      Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
+    );
+    const interrupted = await Effect.runPromise(
+      reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }], {
+        onBound: () => Effect.interrupt,
+      }).pipe(Effect.exit),
+    );
+    expect(interrupted._tag).toBe("Failure");
+
+    const rebound = await Effect.runPromise(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]),
     );
-    expect(available.apiPort).toBe(port);
+    expect(rebound.apiPort).toBe(port);
   });
 });

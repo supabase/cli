@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { ResolvedPortsSchema } from "./effect.ts";
 import { allocatePortSet, PortAllocationError } from "./PortAllocator.ts";
 import { DEFAULT_PORTS, type PortField } from "./PortCatalog.ts";
 
@@ -56,6 +57,12 @@ describe("allocatePortSet", () => {
     for (const port of values) {
       expect(port).toBeGreaterThan(0);
     }
+  });
+
+  it("exports the partial resolved ports schema", () => {
+    expect(Schema.decodeUnknownSync(ResolvedPortsSchema)({ apiPort: 54321 })).toEqual({
+      apiPort: 54321,
+    });
   });
 
   it("reserved ports are skipped by later allocations", async () => {

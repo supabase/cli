@@ -328,6 +328,21 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 });
 
+describe("resolveConfig explicit keyless ports", () => {
+  it("preserves an explicit pooler api port", async () => {
+    const config = await resolveConfig({
+      mode: "docker",
+      edgeRuntime: false,
+      postgrest: false,
+      auth: false,
+      pooler: { port: 42423, apiPort: 42424 },
+    });
+
+    expect(config.ports.poolerPort).toBe(42423);
+    expect(config.ports.poolerApiPort).toBe(42424);
+  });
+});
+
 describe("candidateCleanupTargets", () => {
   it("derives fallback Docker identities from enabled catalog services", async () => {
     const config = await resolveConfig({

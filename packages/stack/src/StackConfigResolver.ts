@@ -541,9 +541,10 @@ export async function resolveConfig(
         return analyticsInput?.port;
       case "poolerPort":
         return poolerInput?.port;
+      case "poolerApiPort":
+        return poolerInput?.apiPort;
       case "postgrestPort":
       case "postgrestAdminPort":
-      case "poolerApiPort":
         return undefined;
     }
   };

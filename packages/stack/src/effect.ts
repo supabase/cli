@@ -58,6 +58,7 @@ export {
   DEFAULT_PORTS,
   PORT_CATALOG,
   PORT_FIELDS,
+  ResolvedPortsSchema,
   runtimeOnlyPortFields,
   stickyPortFields,
 } from "./PortCatalog.ts";

@@ -22,6 +22,8 @@ export interface PortSelectionOptions {
 
 interface PortAllocationOptions extends PortSelectionOptions {
   readonly probe?: PortProbe;
+  /** @internal deterministic interruption hook used by allocator integration tests. */
+  readonly onBound?: (field: PortField, bound: BoundPort) => Effect.Effect<void>;
 }
 
 interface PortProbe {
@@ -256,7 +258,7 @@ export const allocatePortSet = (
 
 export const reservePortSet = (
   requests: ReadonlyArray<PortReservationRequest>,
-  options: PortSelectionOptions = {},
+  options: PortAllocationOptions = {},
 ): Effect.Effect<PortLease, PortAllocationError> =>
   Effect.suspend(() => {
     const reservations = new Map<PortField, Server>();
@@ -264,6 +266,19 @@ export const reservePortSet = (
       const reserved = options.reserved ?? new Set<number>();
       const allocated = new Set<number>();
       const partial: Partial<Record<PortField, number>> = {};
+
+      const bindAndRegister = (
+        field: PortField,
+        acquisition: Effect.Effect<BoundPort, PortAllocationError>,
+      ) =>
+        Effect.uninterruptibleMask(() =>
+          Effect.gen(function* () {
+            const result = yield* acquisition;
+            reservations.set(field, result.server);
+            yield* options.onBound?.(field, result) ?? Effect.void;
+            return result;
+          }),
+        );
 
       for (const request of uniqueFields(requests)) {
         const exclude = new Set([...reserved, ...allocated]);
@@ -276,17 +291,19 @@ export const reservePortSet = (
               detail: `Port ${selection.port} is not available`,
             });
           }
-          bound = yield* bindPort(selection.port);
+          bound = yield* bindAndRegister(request.field, bindPort(selection.port));
         } else if (selection.preferred !== undefined && !exclude.has(selection.preferred)) {
-          bound = yield* bindPort(selection.preferred).pipe(
-            Effect.catchTag("PortAllocationError", () => reserveRandomPort(exclude)),
+          bound = yield* bindAndRegister(
+            request.field,
+            bindPort(selection.preferred).pipe(
+              Effect.catchTag("PortAllocationError", () => reserveRandomPort(exclude)),
+            ),
           );
         } else {
-          bound = yield* reserveRandomPort(exclude);
+          bound = yield* bindAndRegister(request.field, reserveRandomPort(exclude));
         }
 
         allocated.add(bound.port);
-        reservations.set(request.field, bound.server);
         partial[request.field] = bound.port;
       }
 
