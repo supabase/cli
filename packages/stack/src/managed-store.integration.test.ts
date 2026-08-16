@@ -1,28 +1,12 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
-import {
-  Cause,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Layer,
-  PlatformError,
-  Schedule,
-} from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import {
-  managedRegistryLockPath,
-  managedStackDocumentPath,
-  managedStackPaths,
-} from "./managed/paths.ts";
+import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
 import { makeStackStore } from "./managed/store.ts";
-import { withRegistryLock } from "./managed/registry-lock.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 
 const STACK_ID = "11111111-1111-4111-8111-111111111111";
@@ -47,25 +31,6 @@ const failingWriteFileSystemLayer = Layer.effect(
           module: "test",
           method: "writeFileString",
           description: "injected write failure",
-        }),
-      ),
-  })),
-).pipe(Layer.provide(NodeFileSystem.layer));
-
-const failingMakeDirectoryFileSystemLayer = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.map(FileSystem.FileSystem, (fs) => ({
-    ...fs,
-    makeDirectory: (
-      _path: string,
-      _options?: Parameters<FileSystem.FileSystem["makeDirectory"]>[1],
-    ) =>
-      Effect.fail(
-        PlatformError.systemError({
-          _tag: "PermissionDenied",
-          module: "test",
-          method: "makeDirectory",
-          description: "injected directory failure",
         }),
       ),
   })),
@@ -113,21 +78,6 @@ const writeRawStackDocument = (stateRoot: string, stackId: string, content: stri
   writeFileSync(managedStackDocumentPath(stateRoot, stackId), content);
 };
 
-const seedRegistryLock = (
-  stateRoot: string,
-  options: { readonly pid: number; readonly ageMs: number },
-): void => {
-  mkdirSync(stateRoot, { recursive: true });
-  writeFileSync(
-    managedRegistryLockPath(stateRoot),
-    JSON.stringify({
-      token: "other-owner",
-      pid: options.pid,
-      acquiredAt: new Date(Date.now() - options.ageMs).toISOString(),
-    }),
-  );
-};
-
 describe("managed stack document store", () => {
   it.live("persists and replaces one complete stack document atomically", () =>
     Effect.gen(function* () {
@@ -150,67 +100,6 @@ describe("managed stack document store", () => {
     }).pipe(Effect.provide(filesystemLayer)),
   );
 
-  it.live("does not reclaim an old registry lock while its owner is alive", () => {
-    const stateRoot = makeRoot();
-    seedRegistryLock(stateRoot, { pid: process.pid, ageMs: 31_000 });
-    return Effect.gen(function* () {
-      const exit = yield* withRegistryLock(stateRoot, Effect.void, {
-        retrySchedule: Schedule.spaced(Duration.millis(1)).pipe(Schedule.upTo({ times: 1 })),
-      }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(filesystemLayer));
-  });
-
-  it.live("serializes stale-lock reclamation before deleting a lock observed as stale", () => {
-    const stateRoot = makeRoot();
-    seedRegistryLock(stateRoot, { pid: 99_999_999, ageMs: 31_000 });
-    return Effect.gen(function* () {
-      const firstProbeEntered = Deferred.makeUnsafe<void>();
-      const releaseFirstProbe = Deferred.makeUnsafe<void>();
-      const firstAcquired = Deferred.makeUnsafe<void>();
-      const secondAcquired = Deferred.makeUnsafe<void>();
-      let deadOwnerProbes = 0;
-      const isProcessAlive = (pid: number): Effect.Effect<boolean> =>
-        pid === process.pid
-          ? Effect.succeed(true)
-          : Effect.gen(function* () {
-              deadOwnerProbes += 1;
-              if (deadOwnerProbes === 1) {
-                yield* Deferred.succeed(firstProbeEntered, undefined);
-                yield* Deferred.await(releaseFirstProbe);
-              }
-              return false;
-            });
-      const options = {
-        isProcessAlive,
-        retrySchedule: Schedule.spaced(Duration.millis(1)).pipe(Schedule.upTo({ times: 2 })),
-      };
-      const first = yield* withRegistryLock(
-        stateRoot,
-        Deferred.succeed(firstAcquired, undefined).pipe(
-          Effect.andThen(Effect.sleep(Duration.millis(100))),
-        ),
-        options,
-      ).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(firstProbeEntered);
-      const second = yield* withRegistryLock(
-        stateRoot,
-        Deferred.succeed(secondAcquired, undefined).pipe(
-          Effect.andThen(Effect.sleep(Duration.millis(100))),
-        ),
-        options,
-      ).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Effect.sleep(Duration.millis(10));
-      yield* Deferred.succeed(releaseFirstProbe, undefined);
-      yield* Effect.sleep(Duration.millis(10));
-      expect(
-        (yield* Deferred.isDone(firstAcquired)) && (yield* Deferred.isDone(secondAcquired)),
-      ).toBe(false);
-      yield* Fiber.interrupt(first);
-      yield* Fiber.interrupt(second);
-    }).pipe(Effect.provide(filesystemLayer));
-  });
-
   it.live("keeps a store filesystem failure in the typed error channel", () =>
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();
@@ -222,16 +111,4 @@ describe("managed stack document store", () => {
       }
     }).pipe(Effect.provide(Layer.mergeAll(failingWriteFileSystemLayer, NodePath.layer))),
   );
-
-  it.live("keeps a registry filesystem failure in the typed error channel", () => {
-    const stateRoot = makeRoot();
-    return Effect.gen(function* () {
-      const exit = yield* withRegistryLock(stateRoot, Effect.void).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(Cause.hasDies(exit.cause)).toBe(false);
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(PlatformError.PlatformError);
-      }
-    }).pipe(Effect.provide(Layer.mergeAll(failingMakeDirectoryFileSystemLayer, NodePath.layer)));
-  });
 });
