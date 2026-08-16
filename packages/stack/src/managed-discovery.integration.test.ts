@@ -54,7 +54,10 @@ const adapters = [
 ] as const;
 
 const defaultPortDocument = { activeFields: [] } as const;
-const defaultInitialize = async (): Promise<void> => {};
+const defaultInitialize = async (): Promise<{
+  readonly processIds: Readonly<Record<string, number>>;
+  readonly containerIds: Readonly<Record<string, string>>;
+}> => ({ processIds: {}, containerIds: {} });
 
 const inspect = async (repository: ManagedStackRepositoryShape, workspacePath: string) => {
   const runtime = ManagedRuntime.make(

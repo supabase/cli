@@ -82,7 +82,7 @@ interface ResolveManagedStackStartRequest extends ResolveManagedStackRequestBase
   readonly initialize: (
     stack: ManagedStackRecord,
     allocation: ManagedRuntimePortAllocation,
-  ) => Promise<ManagedRuntimeMetadata | void>;
+  ) => Promise<ManagedRuntimeMetadata>;
   readonly validate?: (stack: ManagedStackRecord) => Promise<void>;
 }
 
@@ -220,16 +220,19 @@ const managedStackServiceHandle = async <ER>(
         operation: "start",
         initialize: (stack, allocation) =>
           fromCallback(
-            async () => {
-              const metadata = await initialize(stack, allocation);
-              return metadata ?? { processIds: {}, containerIds: {} };
-            },
+            () => initialize(stack, allocation),
             (value): value is ManagedRuntimeMetadata =>
               typeof value === "object" &&
               value !== null &&
               "processIds" in value &&
               "containerIds" in value,
-          ).pipe(Effect.mapError((error) => new ManagedRuntimeStartError({ cause: error }))),
+          ).pipe(
+            Effect.mapError((error) =>
+              error instanceof ManagedRuntimeStartError
+                ? error
+                : new ManagedRuntimeStartError({ cause: error }),
+            ),
+          ),
         validate:
           options.validate === undefined
             ? undefined

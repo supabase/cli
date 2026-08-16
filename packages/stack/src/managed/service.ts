@@ -134,7 +134,7 @@ export interface ResolveManagedStackStartOptions extends ResolveManagedStackBase
   readonly initialize: (
     stack: ManagedStackRecord,
     allocation: ManagedRuntimePortAllocation,
-  ) => Effect.Effect<ManagedRuntimeMetadata | void, ManagedRuntimeStartError>;
+  ) => Effect.Effect<ManagedRuntimeMetadata, ManagedRuntimeStartError>;
   readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
 }
 
@@ -701,9 +701,15 @@ export class ManagedStackService extends Context.Service<
                     );
             const settledPlan = firstStartResolution.plan;
             const firstStartTransition = firstStartResolution.transition;
-            const initialize = resolveOptions.initialize;
+            const settledIdentity = yield* requireResolvedIdentity(settledPlan);
+            const existingStack = (yield* contextStacks(settledIdentity)).find(
+              (candidate) => candidate.name === stackName,
+            );
+            if (existingStack?.lifecycle === "running") {
+              return yield* startedResolution(settledPlan, "reuse", existingStack, portDocument);
+            }
             const registrationInput: RegisterManagedStackInput = {
-              identity: yield* requireResolvedIdentity(settledPlan),
+              identity: settledIdentity,
               checkoutKind: settledPlan.workspace.checkoutKind,
               checkoutRootPath: settledPlan.workspace.workspaceRoot,
               context: settledPlan.contextDescriptor,
@@ -711,13 +717,7 @@ export class ManagedStackService extends Context.Service<
               configuration: resolveOptions.configuration,
               portDocument,
               legacyPortConflict: resolveOptions.legacyPortConflict,
-              initialize:
-                initialize === undefined
-                  ? undefined
-                  : (stack, allocation) =>
-                      initialize(stack, allocation).pipe(
-                        Effect.map((metadata) => metadata ?? { processIds: {}, containerIds: {} }),
-                      ),
+              initialize: resolveOptions.initialize,
               validate: resolveOptions.validate,
             };
             const registered: RegisterManagedStackResult =

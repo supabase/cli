@@ -91,7 +91,10 @@ const adapters = [
 ] as const;
 
 const defaultPortDocument = { activeFields: ["apiPort"] } as const;
-const defaultInitialize = async (): Promise<void> => {};
+const defaultInitialize = async (): Promise<{
+  readonly processIds: Readonly<Record<string, number>>;
+  readonly containerIds: Readonly<Record<string, string>>;
+}> => ({ processIds: {}, containerIds: {} });
 
 const runRepo = Effect.runSync;
 

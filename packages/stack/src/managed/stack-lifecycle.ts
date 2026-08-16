@@ -73,7 +73,7 @@ export interface RegisterManagedStackInput {
     readonly port: number;
     readonly ownerId?: string;
   };
-  readonly initialize?: (
+  readonly initialize: (
     stack: ManagedStackRecord,
     allocation: ManagedRuntimePortAllocation,
   ) => Effect.Effect<ManagedRuntimeMetadata, ManagedRuntimeStartError>;
@@ -550,7 +550,7 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       ): Effect.Effect<never, RegisterManagedStackFailure> =>
         Effect.uninterruptible(
           Effect.gen(function* () {
-            const error = String(Cause.squash(cause));
+            const error = Cause.squash(cause);
             let failureOperation = operation;
             if (pending) {
               yield* repository.publishPendingStack(stack.id, operation.token, now());
@@ -568,9 +568,13 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
               failureOperation.token,
               "failed",
               now(),
-              error,
+              String(error),
             );
-            return yield* Effect.fail(new ManagedRuntimeStartError({ cause: Cause.squash(cause) }));
+            return yield* Effect.fail(
+              error instanceof ManagedRuntimeStartError
+                ? error
+                : new ManagedRuntimeStartError({ cause: error }),
+            );
           }),
         );
 
@@ -599,21 +603,19 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
               plan,
               now: now(),
             });
-            const initialize = input.initialize;
             const runtimeResult: Effect.Effect<ManagedRuntimeMetadata, ManagedRuntimeStartError> =
-              initialize === undefined
-                ? Effect.succeed(emptyRuntimeMetadata)
-                : initialize(allocation.stack, {
-                    ports: allocation.ports,
-                    lease: allocation.lease,
-                  }).pipe(
-                    Effect.mapError((error) =>
-                      error instanceof ManagedRuntimeStartError
-                        ? error
-                        : new ManagedRuntimeStartError({ cause: error }),
-                    ),
-                    Effect.map((metadata) => metadata ?? emptyRuntimeMetadata),
-                  );
+              input
+                .initialize(allocation.stack, {
+                  ports: allocation.ports,
+                  lease: allocation.lease,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    error instanceof ManagedRuntimeStartError
+                      ? error
+                      : new ManagedRuntimeStartError({ cause: error }),
+                  ),
+                );
             const initialized = yield* runtimeResult.pipe(
               Effect.flatMap((runtimeMetadata) =>
                 input.validate === undefined

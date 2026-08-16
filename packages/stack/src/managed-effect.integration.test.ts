@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
@@ -7,6 +8,7 @@ import { Cause, Duration, Effect, Exit } from "effect";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
   InvalidManagedIdentityError,
+  ManagedLegacyPortConflictError,
   ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
   ManagedRuntimeStartError,
@@ -83,6 +85,48 @@ const setupSqlite = (overrides: ServiceOverrides = {}) => {
     openRegistry: () => managedLayer(stateRoot, overrides),
   };
 };
+
+const effectPortDocument = (fixtureId: string, apiPort: number) => {
+  if (fixtureId === "ports.env-and-remote-values-remain-exact") {
+    return {
+      activeFields: ["apiPort", "dbPort"] as const,
+      document: { api: { port: apiPort }, db: { port: apiPort + 1 } },
+      valueOrigins: [
+        { path: ["api", "port"], source: "environment" as const },
+        { path: ["db", "port"], source: "remote" as const },
+      ],
+    };
+  }
+  if (
+    fixtureId === "ports.new-target-allocates-and-persists-omitted-ports" ||
+    fixtureId === "ports.sibling-targets-allocate-independent-ports"
+  ) {
+    return { activeFields: ["apiPort", "dbPort"] as const, document: {} };
+  }
+  if (
+    fixtureId === "ports.sticky-ports-reuse-on-return" ||
+    fixtureId === "ports.later-sticky-port-collision-fails"
+  ) {
+    return { activeFields: ["apiPort"] as const, document: {} };
+  }
+  return { activeFields: ["apiPort"] as const, document: { api: { port: apiPort } } };
+};
+
+const freeEffectPort = (): Effect.Effect<number, Error> =>
+  Effect.callback<number, Error>((resume) => {
+    const server = createServer();
+    server.once("error", (error) => resume(Effect.die(error)));
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        resume(Effect.die(new Error("Ephemeral port probe returned no numeric address")));
+        return;
+      }
+      const port = address.port;
+      server.close(() => resume(Effect.succeed(port)));
+    });
+  });
 
 /**
  * Stages a pending stack whose publisher is alive but will never publish, so the
@@ -361,7 +405,8 @@ describe("managed stack Effect surface", () => {
           portDocument: { activeFields: [], document: {} },
           operation: "start",
           workspacePath: workspace,
-          initialize: () => Effect.sleep(Duration.seconds(5)),
+          initialize: () =>
+            Effect.sleep(Duration.seconds(5)).pipe(Effect.as({ processIds: {}, containerIds: {} })),
         })
         .pipe(Effect.timeout(Duration.millis(50)), Effect.exit);
 
@@ -669,5 +714,153 @@ describe("managed stack Effect surface", () => {
       expect(stack[0]?.lifecycle).toBe("failed");
       expect(stack[0]?.ports).toHaveLength(1);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("conforms representative ports.* lifecycle scenarios on both adapters", () => {
+    const cases = [
+      ["in-memory", "exact-default"] as const,
+      ["sqlite", "exact-default"] as const,
+      ["in-memory", "env-remote"] as const,
+      ["sqlite", "env-remote"] as const,
+      ["in-memory", "legacy"] as const,
+      ["sqlite", "legacy"] as const,
+      ["in-memory", "running-drift"] as const,
+      ["sqlite", "running-drift"] as const,
+      ["in-memory", "failure-retention"] as const,
+      ["sqlite", "failure-retention"] as const,
+    ];
+    return Effect.forEach(
+      cases,
+      ([adapter, scenario]) => {
+        const setup =
+          adapter === "in-memory"
+            ? (() => {
+                const value = setupInMemory();
+                return { workspace: value.workspace, layer: value.layer };
+              })()
+            : (() => {
+                const value = setupSqlite();
+                return { workspace: value.workspace, layer: value.openRegistry() };
+              })();
+        const workspace = setup.workspace;
+        return Effect.gen(function* () {
+          const managed = yield* ManagedStackService;
+          const apiPort = yield* freeEffectPort();
+          const remotePort = scenario === "env-remote" ? yield* freeEffectPort() : apiPort + 1;
+          const fixtureId =
+            scenario === "env-remote"
+              ? "ports.env-and-remote-values-remain-exact"
+              : scenario === "exact-default"
+                ? "ports.exact-default-value-differs-from-omitted-default"
+                : "ports.explicit-free-port-is-used";
+          const portDocument =
+            scenario === "env-remote"
+              ? {
+                  activeFields: ["apiPort", "dbPort"] as const,
+                  document: { api: { port: apiPort }, db: { port: remotePort } },
+                  valueOrigins: [
+                    { path: ["api", "port"], source: "environment" as const },
+                    { path: ["db", "port"], source: "remote" as const },
+                  ],
+                }
+              : scenario === "exact-default"
+                ? {
+                    activeFields: ["apiPort", "dbPort"] as const,
+                    document: { api: { port: apiPort } },
+                  }
+                : effectPortDocument(fixtureId, apiPort);
+          if (scenario === "legacy") {
+            const exit = yield* managed
+              .resolveStack({
+                workspacePath: workspace,
+                operation: "start",
+                portDocument,
+                initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+                legacyPortConflict: { key: "api.port", port: apiPort, ownerId: "legacy" },
+              })
+              .pipe(Effect.exit);
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(Cause.squash(exit.cause)).toBeInstanceOf(ManagedLegacyPortConflictError);
+            }
+            expect(yield* managed.listStacks()).toEqual([]);
+            return;
+          }
+          if (scenario === "running-drift") {
+            const started = yield* managed.resolveStack({
+              workspacePath: workspace,
+              operation: "start",
+              portDocument,
+              initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+            });
+            let initialized = 0;
+            const changedPort = yield* freeEffectPort();
+            const drifted = yield* managed.resolveStack({
+              workspacePath: workspace,
+              operation: "start",
+              portDocument: effectPortDocument(fixtureId, changedPort),
+              initialize: () =>
+                Effect.sync(() => {
+                  initialized += 1;
+                  return { processIds: {}, containerIds: {} };
+                }),
+            });
+            expect(drifted.outcome).toBe("reuse");
+            expect(drifted.portDrift).toEqual([
+              expect.objectContaining({
+                key: "api.port",
+                actualPort: apiPort,
+                configuredPort: changedPort,
+              }),
+            ]);
+            expect(initialized).toBe(0);
+            expect((yield* managed.inspectStack(started.stack.id))?.lifecycle).toBe("running");
+            return;
+          }
+          if (scenario === "failure-retention") {
+            const failed = yield* managed
+              .resolveStack({
+                workspacePath: workspace,
+                operation: "start",
+                portDocument,
+                initialize: () =>
+                  Effect.fail(new ManagedRuntimeStartError({ cause: "fixture failure" })),
+              })
+              .pipe(Effect.exit);
+            expect(Exit.isFailure(failed)).toBe(true);
+            const stacks = yield* managed.listStacks();
+            expect(stacks[0]?.lifecycle).toBe("failed");
+            expect(stacks[0]?.ports.length).toBeGreaterThan(0);
+            return;
+          }
+          const started = yield* managed.resolveStack({
+            workspacePath: workspace,
+            operation: "start",
+            portDocument,
+            initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          });
+          expect(started.state).toBe("running");
+          if (scenario === "exact-default") {
+            expect(started.stack.ports).toEqual([
+              { key: "api.port", port: apiPort, intent: "exact" },
+              expect.objectContaining({ key: "db.port", intent: "automatic" }),
+            ]);
+          }
+          if (scenario === "env-remote") {
+            expect(started.stack.ports).toEqual([
+              { key: "api.port", port: apiPort, intent: "exact" },
+              { key: "db.port", port: remotePort, intent: "exact" },
+            ]);
+          }
+          const status = yield* managed.resolveStack({
+            workspacePath: workspace,
+            operation: "status",
+            portDocument,
+          });
+          expect(status.state).toBe("running");
+        }).pipe(Effect.provide(setup.layer));
+      },
+      { discard: true },
+    );
   });
 });

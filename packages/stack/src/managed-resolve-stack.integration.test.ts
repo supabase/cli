@@ -69,7 +69,10 @@ const adapters = [
 ] as const;
 
 const defaultPortDocument = { activeFields: [] } as const;
-const defaultInitialize = async (): Promise<void> => {};
+const defaultInitialize = async (): Promise<{
+  readonly processIds: Readonly<Record<string, number>>;
+  readonly containerIds: Readonly<Record<string, string>>;
+}> => ({ processIds: {}, containerIds: {} });
 
 describe("resolveStack identity publication", () => {
   it("accepts a monotonic partial identity published between discovery passes", async () => {
