@@ -7,6 +7,7 @@ import { Cause, Duration, Effect, Exit } from "effect";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
   InvalidManagedIdentityError,
+  ManagedExactPortOccupiedError,
   ManagedLegacyPortConflictError,
   ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
@@ -144,6 +145,28 @@ const freeEffectPortPair = (): Effect.Effect<readonly [number, number], Error> =
       }),
     ),
   );
+
+/**
+ * The scoped allocator lease must be released before resolveStack claims an
+ * exact port at the public boundary. Retry only an unexpected exact handoff
+ * collision; intentional conflict cases do not use this helper.
+ */
+const withFreshEffectExactPortPair = <A, E>(
+  run: (apiPort: number, dbPort: number) => Effect.Effect<A, E>,
+): Effect.Effect<A, E | Error> => {
+  const loop = (attempt: number): Effect.Effect<A, E | Error> =>
+    Effect.gen(function* () {
+      const [apiPort, dbPort] = yield* freeEffectPortPair();
+      return yield* run(apiPort, dbPort);
+    }).pipe(
+      Effect.catchIf(
+        (error): error is ManagedExactPortOccupiedError =>
+          error instanceof ManagedExactPortOccupiedError,
+        (error) => (attempt < 2 ? loop(attempt + 1) : Effect.fail(error)),
+      ),
+    );
+  return loop(0);
+};
 
 /**
  * Stages a pending stack whose publisher is alive but will never publish, so the
@@ -849,29 +872,52 @@ describe("managed stack Effect surface", () => {
             expect(stacks[0]?.ports.length).toBeGreaterThan(0);
             return;
           }
-          const started = yield* managed.resolveStack({
-            workspacePath: workspace,
-            operation: "start",
-            portDocument,
-            initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+          let selectedApiPort = apiPort;
+          let selectedDbPort = remotePort;
+          let startedPortDocument = portDocument;
+          const started = yield* withFreshEffectExactPortPair((freshApiPort, freshDbPort) => {
+            selectedApiPort = freshApiPort;
+            selectedDbPort = freshDbPort;
+            startedPortDocument =
+              scenario === "env-remote"
+                ? {
+                    activeFields: ["apiPort", "dbPort"] as const,
+                    document: { api: { port: freshApiPort }, db: { port: freshDbPort } },
+                    valueOrigins: [
+                      { path: ["api", "port"], source: "environment" as const },
+                      { path: ["db", "port"], source: "remote" as const },
+                    ],
+                  }
+                : scenario === "exact-default"
+                  ? {
+                      activeFields: ["apiPort", "dbPort"] as const,
+                      document: { api: { port: freshApiPort } },
+                    }
+                  : effectPortDocument(fixtureId, freshApiPort);
+            return managed.resolveStack({
+              workspacePath: workspace,
+              operation: "start",
+              portDocument: startedPortDocument,
+              initialize: () => Effect.succeed({ processIds: {}, containerIds: {} }),
+            });
           });
           expect(started.state).toBe("running");
           if (scenario === "exact-default") {
             expect(started.stack.ports).toEqual([
-              { key: "api.port", port: apiPort, intent: "exact" },
+              { key: "api.port", port: selectedApiPort, intent: "exact" },
               expect.objectContaining({ key: "db.port", intent: "automatic" }),
             ]);
           }
           if (scenario === "env-remote") {
             expect(started.stack.ports).toEqual([
-              { key: "api.port", port: apiPort, intent: "exact" },
-              { key: "db.port", port: remotePort, intent: "exact" },
+              { key: "api.port", port: selectedApiPort, intent: "exact" },
+              { key: "db.port", port: selectedDbPort, intent: "exact" },
             ]);
           }
           const status = yield* managed.resolveStack({
             workspacePath: workspace,
             operation: "status",
-            portDocument,
+            portDocument: startedPortDocument,
           });
           expect(status.state).toBe("running");
         }).pipe(Effect.provide(setup.layer));
