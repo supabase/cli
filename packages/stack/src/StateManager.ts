@@ -41,7 +41,7 @@ export interface StackState {
   readonly services: PartialVersionManifest;
 }
 
-export const StackStateSchema = Schema.Struct({
+const StackStateSchema = Schema.Struct({
   pid: Schema.Number,
   name: Schema.String,
   projectDir: Schema.String,

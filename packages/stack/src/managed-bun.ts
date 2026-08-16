@@ -1,19 +1,5 @@
-import type { Layer } from "effect";
-import { Layer as EffectLayer } from "effect";
 import { BunServices } from "@effect/platform-bun";
-import { BunFileSystem } from "@effect/platform-bun";
-import {
-  createManagedStackServiceWith,
-  makeManagedStackServiceWith,
-  managedStackLayerWith,
-  type CreateManagedStackServiceOptions,
-  type MakeManagedStackServiceOptions,
-  type ManagedStackLayerFailure,
-  type ManagedStackServiceHandle,
-} from "./managed/create-service.ts";
-import type { ManagedStackRepository } from "./managed/repository.ts";
-import type { ManagedStackService } from "./managed/service.ts";
-import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
+import { Layer as EffectLayer } from "effect";
 import {
   managedDaemonLayer as managedDaemonLayerForPlatform,
   type ManagedDaemonStartInput,
@@ -28,7 +14,6 @@ import { gitConfigStoreLayer } from "./managed/git.ts";
 import { controlTransportLayer } from "./platform-bun.ts";
 
 export * from "./managed.ts";
-export { bunSqliteManagedStackRepositoryLayer };
 export { managedDaemonEntryPoint };
 export { ManagedDaemonStartError, type ManagedDaemonStartInput } from "./supervisor.ts";
 
@@ -43,21 +28,6 @@ export const createManagedStackManager = (options: {
   readonly stateRoot: string;
 }): Promise<ManagedStackManagerHandle> =>
   createManagedStackManagerCore(managedStackManagerLayer(options));
-
-/** The managed assembly an Effect consumer provides, bound to the Bun runtime. */
-export const managedStackLayer = (
-  options: CreateManagedStackServiceOptions = {},
-): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
-  managedStackLayerWith(BunFileSystem.layer, bunSqliteManagedStackRepositoryLayer, options);
-
-export const createManagedStackService = (
-  options: CreateManagedStackServiceOptions = {},
-): Promise<ManagedStackServiceHandle> =>
-  createManagedStackServiceWith(BunFileSystem.layer, bunSqliteManagedStackRepositoryLayer, options);
-
-export const makeManagedStackService = (
-  options: MakeManagedStackServiceOptions,
-): Promise<ManagedStackServiceHandle> => makeManagedStackServiceWith(BunFileSystem.layer, options);
 
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,

@@ -77,7 +77,7 @@ class ControlUnavailableError extends Data.TaggedError("ControlUnavailableError"
   readonly cause: unknown;
 }> {}
 
-export interface ControlListener {
+interface ControlListener {
   readonly server: HttpServer.HttpServer["Service"];
   readonly close: Effect.Effect<void>;
 }
@@ -116,7 +116,7 @@ export interface ControlOwnership {
   readonly acquiredAfterClose: boolean;
 }
 
-export type ControlOwned = ControlOwnership;
+type ControlOwned = ControlOwnership;
 
 export interface ControlAttached {
   readonly _tag: "Attached";
@@ -382,5 +382,3 @@ export const acquireControl = (
       transport,
     );
   });
-
-export const protocolVersion = CONTROL_PROTOCOL_VERSION;

@@ -1,5 +1,4 @@
 import { Schema } from "effect";
-import { StackStateSchema } from "./StateManager.ts";
 
 const DaemonErrorCodeSchema = Schema.Literals([
   "SERVICE_NOT_FOUND",
@@ -14,7 +13,7 @@ const StackBuildReasonSchema = Schema.Literals([
   "asset_preparation",
 ]);
 
-export const ControlOwnerStateSchema = Schema.Literals([
+const ControlOwnerStateSchema = Schema.Literals([
   "starting",
   "running",
   "stopping",
@@ -33,13 +32,6 @@ export const ControlOwnerStatusSchema = Schema.Struct({
 
 export type ControlOwnerStatus = typeof ControlOwnerStatusSchema.Type;
 
-// Daemon-prefixed aliases keep the protocol vocabulary discoverable alongside
-// the existing DaemonErrorResponse and DaemonMessage schemas.
-export const DaemonOwnerStateSchema = ControlOwnerStateSchema;
-export type DaemonOwnerState = ControlOwnerState;
-export const DaemonOwnerStatusSchema = ControlOwnerStatusSchema;
-export type DaemonOwnerStatus = ControlOwnerStatus;
-
 export const DaemonErrorResponseSchema = Schema.Struct({
   code: DaemonErrorCodeSchema,
   error: Schema.String,
@@ -50,8 +42,3 @@ export const DaemonErrorResponseSchema = Schema.Struct({
 });
 
 export type DaemonErrorResponse = typeof DaemonErrorResponseSchema.Type;
-
-export const DaemonMessageSchema = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("started"), state: StackStateSchema }),
-  Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
-]);

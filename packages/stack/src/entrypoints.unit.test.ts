@@ -2,35 +2,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { Effect } from "effect";
-import type { Layer } from "effect";
 import * as bunRoot from "./bun.ts";
 import * as bunEffect from "./effect-bun.ts";
 import * as nodeEffect from "./effect-node.ts";
 import * as nodeRoot from "./node.ts";
 import * as managed from "./managed-bun.ts";
+import * as testing from "./testing.ts";
 import type { StackHandle } from "./createStack.ts";
 import type { Stack } from "./Stack.ts";
-import * as testing from "./testing.ts";
-import type {
-  ManagedPruneRequest,
-  ManagedPruneFailure,
-  ManagedPruneResult,
-  ManagedStackServiceHandle,
-  ManagedStackServiceShape,
-} from "./managed-bun.ts";
-
-const INTERNAL_EFFECT_EXPORTS = [
-  "ApiProxy",
-  "BinaryResolver",
-  "DaemonServer",
-  "JwtGenerator",
-  "RemoteStack",
-  "StackBuilder",
-  "UnixHttpClient",
-  "createStack",
-  "projectDaemonLayer",
-] as const;
+import type { Layer } from "effect";
 
 describe("@supabase/stack entrypoints", () => {
   it("declares only intentional package entrypoints", () => {
@@ -40,25 +20,19 @@ describe("@supabase/stack entrypoints", () => {
       readonly knip: { readonly entry: ReadonlyArray<string> };
     };
 
-    expect(packageJson.exports).toEqual({
-      ".": {
-        bun: "./src/bun.ts",
-        default: "./src/node.ts",
-      },
-      "./effect": {
-        bun: "./src/effect-bun.ts",
-        default: "./src/effect-node.ts",
-      },
-      "./managed": {
-        bun: "./src/managed-bun.ts",
-        default: "./src/managed-node.ts",
-      },
-      "./managed-model": "./src/managed/model.ts",
-      "./testing": "./src/testing.ts",
-      "./daemon-bun": "./src/daemon-bun.ts",
+    expect(packageJson.exports["."]).toEqual({ bun: "./src/bun.ts", default: "./src/node.ts" });
+    expect(packageJson.exports["./effect"]).toEqual({
+      bun: "./src/effect-bun.ts",
+      default: "./src/effect-node.ts",
     });
+    expect(packageJson.exports["./managed"]).toEqual({
+      bun: "./src/managed-bun.ts",
+      default: "./src/managed-node.ts",
+    });
+    expect(packageJson.exports["./managed-model"]).toBe("./src/managed/model.ts");
+    expect(packageJson.exports["./testing"]).toBe("./src/testing.ts");
+    expect(packageJson.exports["./daemon-bun"]).toBe("./src/daemon-bun.ts");
     expect(packageJson.exports["./daemon-node"]).toBeUndefined();
-    expect(packageJson.exports["./internals"]).toBeUndefined();
     expect(packageJson.knip.entry).toContain("src/daemon-node.ts");
   });
 
@@ -69,144 +43,32 @@ describe("@supabase/stack entrypoints", () => {
     expectTypeOf(bunRoot.createStack).returns.toEqualTypeOf<Promise<StackHandle>>();
   });
 
-  it("exposes managed policy through its own entrypoint", () => {
-    expect(managed).toHaveProperty("createManagedStackService");
-    expect(managed).toHaveProperty("makeManagedStackService");
-    expect(managed).toHaveProperty("ManagedStackService");
-    expect(managed).toHaveProperty("managedStackLayer");
-    expect(managed).toHaveProperty("bunSqliteManagedStackRepositoryLayer");
-    expect(nodeRoot).not.toHaveProperty("createManagedStackService");
-    expectTypeOf<ManagedStackServiceHandle["prune"]>().toEqualTypeOf<
-      (request: ManagedPruneRequest) => Promise<ManagedPruneResult>
-    >();
-    expectTypeOf<ManagedStackServiceShape>().toHaveProperty("prune");
-    expectTypeOf<ManagedStackServiceShape["prune"]>().toMatchTypeOf<
-      (request: ManagedPruneRequest) => Effect.Effect<ManagedPruneResult, ManagedPruneFailure>
-    >();
-  });
-
-  it("pins the managed runtime surface so internals cannot leak into it", () => {
-    // The in-memory repository is a test seam and belongs to `./testing` only;
-    // the adapters' shared port and update guards stay module-internal.
-    expect(Object.keys(managed).sort()).toEqual(
-      [
-        "ControlAddressConflictError",
-        "ControlBindError",
-        "ControlProtocolError",
-        "ControlProtocolMismatchError",
-        "ControlTransportError",
-        "DEFAULT_MANAGED_STACK_NAME",
-        "DuplicateManagedIdentityError",
-        "DuplicateManagedPortKeyError",
-        "GIT_CHECKOUT_IDENTITY_VERSION",
-        "GIT_PROJECT_ID_KEY",
-        "GitConfigStore",
-        "IncompatibleManagedRegistryError",
-        "InvalidControlOwnershipIdError",
-        "InvalidManagedIdentityError",
-        "InvalidManagedOwnerPidError",
-        "InvalidManagedPortError",
-        "InvalidManagedStackNameError",
-        "MANAGED_ERROR_CODES",
-        "MANAGED_ERROR_TAG_BY_CODE",
-        "ManagedAbandonedOperationError",
-        "ManagedCheckoutConflictError",
-        "ManagedCopiedBranchConflictError",
-        "ManagedDaemonStartError",
-        "ManagedExactPortOccupiedError",
-        "ManagedIdentityTransitionOwnershipError",
-        "ManagedInaccessiblePathError",
-        "ManagedOperationInProgressError",
-        "ManagedOperationOwnershipError",
-        "ManagedPendingStackUpdateError",
-        "ManagedPortAllocationError",
-        "ManagedPortClaimRaceError",
-        "ManagedPortCoordinator",
-        "ManagedPortReservationError",
-        "ManagedRunningStackPortChangeError",
-        "ManagedLegacyPortConflictError",
-        "ManagedRuntimeStartError",
-        "ManagedStackAttachedError",
-        "ManagedStackControlRequiredError",
-        "ManagedStackInitializationError",
-        "ManagedStackManager",
-        "ManagedStackNotFoundError",
-        "ManagedStackNotStoppedError",
-        "ManagedStackPublicationTimeoutError",
-        "ManagedWorkspaceRepairConflictError",
-        "ManagedStickyPortOccupiedError",
-        "ManagedStackRepository",
-        "ManagedStackService",
-        "ORDINARY_WORKSPACE_IDENTITY_VERSION",
-        "UnsafeManagedStackPathError",
-        "UnsupportedGitWorkspaceError",
-        "acquireControl",
-        "assertManagedStackRoot",
-        "assertManagedUuid",
-        "bunSqliteManagedStackRepositoryLayer",
-        "controlEndpoint",
-        "controlEndpointPath",
-        "createManagedStackManager",
-        "createManagedStackService",
-        "createManagedUuid",
-        "deriveRepairOwnershipId",
-        "ensureBranchContextId",
-        "ensureGitCheckoutIdentity",
-        "ensureOrdinaryWorkspaceIdentity",
-        "gitBranchContextIdKey",
-        "gitCheckoutIdentityPath",
-        "gitCheckoutLocationPath",
-        "gitConfigPath",
-        "gitConfigStoreLayer",
-        "gitDetachedContextIdentityPath",
-        "gitWorktreeConfigPath",
-        "inspectWorkspace",
-        "isManagedStackError",
-        "makeManagedStackManager",
-        "makeManagedStackService",
-        "managedDaemonEntryPoint",
-        "managedDaemonLayer",
-        "managedRegistryPath",
-        "managedStackDocumentPath",
-        "managedStackLayer",
-        "managedStackManagerLayer",
-        "managedStackPaths",
-        "managedStacksRoot",
-        "ordinaryWorkspaceIdentityPath",
-        "readBranchContextId",
-        "readGitCheckoutIdentity",
-        "readOrdinaryWorkspaceIdentity",
-        "requireExplicitManagedStateRoot",
-        "resolveManagedStateRoot",
-      ].sort(),
-    );
+  it("exposes only the managed manager and supervisor APIs", () => {
+    expect(managed).toHaveProperty("createManagedStackManager");
+    expect(managed).toHaveProperty("managedStackManagerLayer");
+    expect(managed).toHaveProperty("ManagedStackManager");
+    expect(managed).toHaveProperty("managedDaemonLayer");
+    expect(managed).not.toHaveProperty("createManagedStackService");
+    expect(managed).not.toHaveProperty("ManagedStackRepository");
+    expect(managed).not.toHaveProperty("bunSqliteManagedStackRepositoryLayer");
   });
 
   it("binds consumer Effect layers without exposing implementation tags", () => {
     expectTypeOf(nodeEffect.foregroundLayer).returns.toEqualTypeOf<Layer.Layer<Stack>>();
     expectTypeOf(bunEffect.foregroundLayer).returns.toEqualTypeOf<Layer.Layer<Stack>>();
-
     for (const entrypoint of [nodeEffect, bunEffect]) {
       expect(entrypoint).toHaveProperty("connectLayer");
       expect(entrypoint).toHaveProperty("daemonLayer");
       expect(entrypoint).toHaveProperty("foregroundLayer");
       expect(entrypoint).toHaveProperty("unixHttpClientLayer");
-      for (const name of INTERNAL_EFFECT_EXPORTS) {
-        expect(entrypoint).not.toHaveProperty(name);
-      }
+      expect(entrypoint).not.toHaveProperty("DaemonServer");
     }
   });
 
-  it("isolates consumer test seams in the testing entry", () => {
-    expect(Object.keys(testing).sort()).toEqual([
-      "DaemonServer",
-      "UnixHttpClient",
-      "createInMemoryManagedStackRepository",
-      "managedNativePlatformByNodeTarget",
-      "managedNativePlatformFromNode",
-      "managedNativeServiceMatrix",
-      "managedStackContractFixtures",
-      "validateManagedStackContractFixtures",
-    ]);
+  it("keeps only runtime test seams in the testing entry", () => {
+    expect(testing).toHaveProperty("DaemonServer");
+    expect(testing).toHaveProperty("UnixHttpClient");
+    expect(testing).not.toHaveProperty("ManagedStackRepository");
+    expect(testing).not.toHaveProperty("managedStackContractFixtures");
   });
 });

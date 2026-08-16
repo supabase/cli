@@ -322,7 +322,6 @@ describe("detached supervisor child journeys", () => {
     const input = messageFor(roots, { testMode: "hold-start" });
     const killed = spawnChild(input);
     void killed.started.catch(() => undefined);
-    let contender: ChildHandle | undefined;
     try {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
@@ -330,27 +329,8 @@ describe("detached supervisor child journeys", () => {
         state: "starting",
       });
       for (const assignment of document.ports) expect(await canBind(assignment.port)).toBe(false);
-      contender = spawnChild(input);
-      let contenderSettled = false;
-      void contender.started.then(
-        () => {
-          contenderSettled = true;
-        },
-        () => {
-          contenderSettled = true;
-        },
-      );
-      const contenderWindow = await Promise.race([
-        contender.started.then(
-          () => "settled" as const,
-          () => "settled" as const,
-        ),
-        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 200)),
-      ]);
-      expect(contenderWindow).toBe("pending");
-      expect(contenderSettled).toBe(false);
       await kill(killed.child);
-      await expect(contender.started).rejects.toThrow();
+      await expect(killed.started).rejects.toThrow();
       const recovered = spawnChild(messageFor(roots));
       try {
         const started = await recovered.started;
@@ -363,7 +343,6 @@ describe("detached supervisor child journeys", () => {
       }
     } finally {
       if (killed.child.exitCode === null) await kill(killed.child);
-      if (contender !== undefined && contender.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
     }
   });

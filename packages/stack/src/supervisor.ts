@@ -70,8 +70,6 @@ export interface SupervisorStartMessage {
   readonly testMode?: SupervisorTestMode;
 }
 
-export type DaemonStartMessage = SupervisorStartMessage;
-
 export interface SupervisorStartedMessage {
   readonly type: "started";
   readonly endpoint: ControlEndpoint;
@@ -79,14 +77,12 @@ export interface SupervisorStartedMessage {
   readonly attached?: boolean;
 }
 
-export interface SupervisorErrorMessage {
+interface SupervisorErrorMessage {
   readonly type: "error";
   readonly message: string;
 }
 
-export type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
-export type DaemonMessage = SupervisorMessage;
-
+type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
 /** Compatibility input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
   readonly workspacePath: string;
@@ -137,8 +133,6 @@ const supervisorStartMessageSchema = Schema.Struct({
   ),
 });
 
-export const supervisorStartSchema = supervisorStartMessageSchema;
-
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null;
 
@@ -151,7 +145,7 @@ const isControlEndpoint = (value: unknown): value is ControlEndpoint =>
   typeof value.url === "string" &&
   typeof value.path === "string";
 
-export const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage => {
+const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage => {
   return Schema.decodeUnknownSync(supervisorStartMessageSchema)(value);
 };
 

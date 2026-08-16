@@ -90,7 +90,7 @@ const managedStackDocumentSchema = Schema.Struct({
   updatedAt: Schema.String,
 });
 
-export const ManagedStackDocumentSchema = Schema.fromJsonString(managedStackDocumentSchema);
+const ManagedStackDocumentSchema = Schema.fromJsonString(managedStackDocumentSchema);
 
 export class InvalidManagedStackDocumentError extends Data.TaggedError(
   "InvalidManagedStackDocumentError",

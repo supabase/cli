@@ -52,7 +52,6 @@
       "scripts/**/*.ts",
       "src/**/*.test.ts",
       "src/daemon-node.ts",
-      "src/daemon-bun.ts",
       "tests/**/*.ts"
     ],
     "ignoreDependencies": [

@@ -47,8 +47,11 @@ import {
   type ManagedPortDrift,
   type ManagedPortIntentDocument,
 } from "./model.ts";
-import { managedPortReservationsConflict } from "./repository.ts";
-import { planManagedPorts, type ManagedPortPlan } from "./port-plan.ts";
+import {
+  managedPortReservationsConflict,
+  planManagedPorts,
+  type ManagedPortPlan,
+} from "./port-plan.ts";
 import { resolvePortIntents } from "./port-intent.ts";
 import { makeStackStore, type ManagedStackListing } from "./store.ts";
 import type { ManagedStackDocument } from "./document.ts";

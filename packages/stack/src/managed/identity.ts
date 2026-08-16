@@ -205,65 +205,6 @@ export const ensureOrdinaryWorkspaceIdentity = (
     }),
   );
 
-/**
- * Publishes an exact ordinary-folder identity without adopting or replacing a
- * competing marker. Recovery transitions use this when their reserved target
- * was already chosen before publication began.
- */
-export const publishOrdinaryWorkspaceIdentity = (
-  workspacePath: string,
-  identity: Pick<OrdinaryWorkspaceIdentity, "projectId" | "checkoutId" | "contextId">,
-  temporaryId: string = randomUUID(),
-): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
-  failsWithIdentity(
-    Effect.uninterruptible(
-      Effect.tryPromise({
-        try: async () => {
-          const existing = await readIdentity(workspacePath);
-          const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
-          const target: OrdinaryWorkspaceIdentity = {
-            version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-            projectId: assertManagedUuid(identity.projectId, "projectId"),
-            checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
-            contextId: assertManagedUuid(identity.contextId, "contextId"),
-          };
-          if (existing !== undefined) {
-            if (
-              existing.projectId !== target.projectId ||
-              existing.checkoutId !== target.checkoutId ||
-              existing.contextId !== target.contextId
-            ) {
-              throw new InvalidManagedIdentityError({
-                message: "Ordinary workspace identity changed before recovery publication",
-              });
-            }
-            return { identity: existing, created: false, markerPath };
-          }
-          await mkdir(dirname(markerPath), { recursive: true });
-          const outcome = await claimFileAtomically(
-            markerPath,
-            `${JSON.stringify(target, null, 2)}\n`,
-            { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
-          );
-          if (outcome === "claimed") return { identity: target, created: true, markerPath };
-          const winner = await readIdentity(workspacePath);
-          if (
-            winner === undefined ||
-            winner.projectId !== target.projectId ||
-            winner.checkoutId !== target.checkoutId ||
-            winner.contextId !== target.contextId
-          ) {
-            throw new InvalidManagedIdentityError({
-              message: "Ordinary workspace identity publication raced without the requested winner",
-            });
-          }
-          return { identity: winner, created: false, markerPath };
-        },
-        catch: asRaised,
-      }),
-    ),
-  );
-
 const DETACHED_CONTEXT_VERSION = 1;
 
 const decodeDetachedContextId = (content: string): string => {

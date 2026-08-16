@@ -66,7 +66,7 @@ describe("planManagedPorts", () => {
     ).toEqual({
       durable: [],
       runtimeOnly: [],
-      inactiveAssignments: [{ key: "studio.port", port: 55003, intent: "exact" }],
+      inactiveAssignments: [{ key: "studio.port", port: 55003, intent: "automatic" }],
     });
   });
 

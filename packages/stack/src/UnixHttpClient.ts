@@ -1,6 +1,6 @@
 import { Data, Effect, Context } from "effect";
 
-export interface LoopbackHttpEndpoint {
+interface LoopbackHttpEndpoint {
   readonly _tag: "Loopback";
   readonly hostname: string;
   readonly port: number;

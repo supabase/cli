@@ -2,6 +2,33 @@ import { PORT_CATALOG } from "../PortCatalog.ts";
 import type { ConfigPortKey, PortField } from "../PortCatalog.ts";
 import type { PortReservationRequest, PortSelection } from "../PortAllocator.ts";
 import type { ManagedPortAssignment, ManagedPortRequest, ManagedPortIntent } from "./model.ts";
+import type { ManagedStackDocumentLifecycle } from "./document.ts";
+
+/** A persisted assignment used when applying the managed port conflict matrix. */
+export interface ManagedPortReservation {
+  readonly stackId: string;
+  readonly stackName?: string;
+  readonly lifecycle: ManagedStackDocumentLifecycle;
+  readonly assignment: ManagedPortAssignment;
+}
+
+/**
+ * Automatic assignments are exclusive for every persisted stack. Exact
+ * assignments may coexist while the owner is stopped or failed, but never
+ * while the owner occupies its ports.
+ */
+export const managedPortReservationsConflict = (
+  incomingStackId: string,
+  incoming: ManagedPortAssignment,
+  owner: ManagedPortReservation,
+): boolean =>
+  incomingStackId !== owner.stackId &&
+  incoming.port === owner.assignment.port &&
+  (incoming.intent === "automatic" ||
+    owner.assignment.intent === "automatic" ||
+    owner.lifecycle === "running" ||
+    owner.lifecycle === "starting" ||
+    owner.lifecycle === "deleting");
 
 export interface ManagedDurablePortPlanEntry {
   readonly field: PortField;

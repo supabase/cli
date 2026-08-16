@@ -62,7 +62,7 @@ const testRuntime = ({
   });
 
 /** Thin Bun child entrypoint shared by managed and ordinary detached starts. */
-export const runBunSupervisor = (): void => {
+export const runBunDaemon = (): void => {
   void Effect.runPromise(
     runSupervisor({ platformFactory, managerLayer, testRuntime }).pipe(
       Effect.provide(BunServices.layer),
@@ -73,6 +73,4 @@ export const runBunSupervisor = (): void => {
   );
 };
 
-export const runBunDaemon = runBunSupervisor;
-
-if (import.meta.main) runBunSupervisor();
+if (import.meta.main) runBunDaemon();

@@ -54,14 +54,6 @@ export const failsWith =
   };
 
 /**
- * The `catch` handler for a synchronous call that has no domain failure at all:
- * every throw is a defect.
- */
-export const neverFails = (error: unknown): never => {
-  throw error;
-};
-
-/**
  * Narrows an effect's error channel to the one failure class a protocol reports,
  * turning everything else into a defect.
  *
