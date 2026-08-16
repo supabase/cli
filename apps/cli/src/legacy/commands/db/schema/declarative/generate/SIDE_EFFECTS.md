@@ -84,8 +84,15 @@ always go to stderr, in every `--output-format`. On success:
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
 - `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
   smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
-- `--output <dir>` selects a destination for this invocation without changing
-  config or activating it for later syncs.
+- `--output-dir <dir>` selects a destination for this invocation without changing
+  config or activating it for later syncs (TS-only; deliberately not
+  `--output`/`-o`, which the legacy root reserves for the global machine-format
+  flag — see `docs/go-cli-divergences.md`).
+- When `declarative_schema_path` is unset, the new `supabase/schemas` default is
+  empty, and the former `supabase/database` default still contains `.sql` files
+  or an export manifest, a WARNING on stderr explains the default move and how
+  to keep the existing tree. Read-only probe; never changes behavior or exit
+  codes.
 - Under the legacy opt-out, remote Supabase targets get the embedded pg-delta CA
   bundle written under `supabase/.temp/pgdelta/` and the URL rewritten to
   `sslmode=verify-ca`; the bundled engine uses the shared connection/TLS behavior.

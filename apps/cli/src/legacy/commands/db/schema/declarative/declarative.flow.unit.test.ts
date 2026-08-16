@@ -101,20 +101,20 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
     );
     const { suggestion } = legacyFormatDeclarativeUpgradeGate({
       evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
-      context: { declarativeDir: "supabase/schemas", schema: [] },
+      context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
     expect(suggestion).toContain(
-      "generate --local --overwrite \\\n    --output supabase/schemas-next --experimental",
+      "generate --local --overwrite \\\n    --output-dir supabase/schemas-next --experimental",
     );
   });
 
   it("derives staged-export commands from a custom declarative path", () => {
     const { suggestion } = legacyFormatDeclarativeUpgradeGate({
       evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
-      context: { declarativeDir: "supabase/custom schema", schema: [] },
+      context: { declarativeDir: "supabase/custom schema", schema: [], platform: "posix" },
     });
 
-    expect(suggestion).toContain("--output 'supabase/custom schema-next'");
+    expect(suggestion).toContain("--output-dir 'supabase/custom schema-next'");
     expect(suggestion).toContain(
       "rm -rf 'supabase/custom schema' && mv 'supabase/custom schema-next' 'supabase/custom schema'",
     );
@@ -123,11 +123,15 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
   it("preserves schema filters in staged-export and follow-up sync commands", () => {
     const { suggestion } = legacyFormatDeclarativeUpgradeGate({
       evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
-      context: { declarativeDir: "supabase/schemas", schema: ["app", "tenant,one"] },
+      context: {
+        declarativeDir: "supabase/schemas",
+        schema: ["app", "tenant,one"],
+        platform: "posix",
+      },
     });
 
     expect(suggestion).toContain(
-      `--output supabase/schemas-next --schema app --schema '"tenant,one"' --experimental`,
+      `--output-dir supabase/schemas-next --schema app --schema '"tenant,one"' --experimental`,
     );
     expect(suggestion).toContain(
       `sync --no-apply --schema app --schema '"tenant,one"' --experimental`,
@@ -139,7 +143,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   it("renders one template with indented evidence and no --debug-style guidance", () => {
     const gate = legacyFormatDeclarativeUpgradeGate({
       evidence: legacyFormatDeclarativeGapEvidence(classifyGap()),
-      context: { declarativeDir: "supabase/schemas", schema: [] },
+      context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
 
     expect(gate.message).toBe(
@@ -159,7 +163,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
         "Upgrade without changing the active supabase/schemas tree:",
         "",
         "  supabase db schema declarative generate --local --overwrite \\",
-        "    --output supabase/schemas-next --experimental",
+        "    --output-dir supabase/schemas-next --experimental",
         "  # review supabase/schemas-next",
         "  rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
         "  supabase db schema declarative sync --no-apply --experimental",
@@ -172,7 +176,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
       evidence: [
         "members.sql:3 uses extensions.uuid_generate_v4(), but the tree does not declare uuid-ossp.",
       ],
-      context: { declarativeDir: "supabase/schemas", schema: [] },
+      context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
 
     expect(`${gate.message}\n${gate.suggestion}`).not.toContain("extension.sql");
@@ -192,10 +196,39 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
   it("omits the evidence block entirely when there is nothing to report", () => {
     const gate = legacyFormatDeclarativeUpgradeGate({
       evidence: [],
-      context: { declarativeDir: "supabase/schemas", schema: [] },
+      context: { declarativeDir: "supabase/schemas", schema: [], platform: "posix" },
     });
 
     expect(gate.message).not.toContain("\n\n\n");
+  });
+
+  it("renders single-line PowerShell recovery commands on windows", () => {
+    const gate = legacyFormatDeclarativeUpgradeGate({
+      evidence: [],
+      context: { declarativeDir: "supabase/custom schema", schema: [], platform: "windows" },
+    });
+
+    expect(gate.suggestion).toContain(
+      "  supabase db schema declarative generate --local --overwrite --output-dir 'supabase/custom schema-next' --experimental",
+    );
+    expect(gate.suggestion).toContain(
+      "  Remove-Item -Recurse -Force 'supabase/custom schema'; Move-Item 'supabase/custom schema-next' 'supabase/custom schema'",
+    );
+    // No POSIX-isms anywhere in the windows recipe: it must run as printed.
+    expect(gate.suggestion).not.toContain("rm -rf");
+    expect(gate.suggestion).not.toContain(" && ");
+    expect(gate.suggestion).not.toContain("\\\n");
+  });
+
+  it("escapes quotes PowerShell-style in windows adoption commands", () => {
+    const lines = legacyFormatStagedExportAdoption({
+      declarativeDir: "supabase/it's here",
+      schema: [],
+      platform: "windows",
+    });
+    expect(lines.join("\n")).toContain(
+      "Remove-Item -Recurse -Force 'supabase/it''s here'; Move-Item 'supabase/it''s here-next' 'supabase/it''s here'",
+    );
   });
 });
 
@@ -395,6 +428,7 @@ describe("legacyResolveStagedDeclarativeDir", () => {
     const lines = legacyFormatStagedExportAdoption({
       declarativeDir: "./schemas/",
       schema: [],
+      platform: "posix",
     });
     expect(lines.join("\n")).toContain("rm -rf ./schemas/ && mv ./schemas-next ./schemas/");
   });

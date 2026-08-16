@@ -63,6 +63,13 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `POST /v1/projects` accepts them (restored via `packages/api/scripts/openapi-overrides.json`,
   CLI-2180). Both flags are hidden and gated behind `--experimental` (or `SUPABASE_EXPERIMENTAL`)
   until PROD-548 exposes them officially; omitting them matches Go exactly.
+- `db schema declarative generate` has a TS-only `--output-dir <dir>` flag (no Go equivalent,
+  no short alias). It writes the generated declarative tree to the given directory for this
+  invocation only, without changing the configured `declarative_schema_path` — the staging step
+  of the legacy-tree upgrade recipe printed by the sync/generate compatibility gates. The name
+  deliberately avoids `--output`/`-o`, which the legacy root reserves for the global
+  machine-format flag; a leaf string flag would shadow it and turn `generate -o json` into a
+  write to a directory named `json`. Default behavior (omitted flag) matches Go.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
   `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
   project ref shape is always treated as a ref; any other non-empty value is resolved to its
@@ -79,6 +86,26 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
+- `db schema declarative generate`/`sync` default declarative directory is `supabase/schemas`;
+  the old Go CLI reference (pre-`7b469f5b3`) used `supabase/database`. The move aligns the
+  default with the product-wide declarative-schemas convention. To keep the upgrade visible,
+  both commands print a TS-only warning when `declarative_schema_path` is unset, the new
+  default directory is empty, and the former `supabase/database` default still contains `.sql`
+  files or an export manifest — telling the user to set
+  `declarative_schema_path = "./database"` or move the tree. The warning never changes
+  behavior or exit codes; a non-interactive sync still fails with Go's
+  "no declarative schema found" message.
+- Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
+  installed unconditionally: `db-webhook.sql` no longer creates the extension at container
+  init, `supabase start`/`db start` install it (with grants reapplied via the
+  `issue_pg_net_access` event trigger) only when webhooks are enabled or migration history
+  contains a `create extension … pg_net`, and an existing-volume `start` with webhooks
+  disabled drops a `pg_net` that migration history does not own. Known accepted edge: `pg_net`
+  installed OUTSIDE migrations (for example via local Studio's SQL editor or extension toggle)
+  is invisible to the migration-ownership heuristic and is dropped on the next `start`; a
+  tracked dependency on `net.*` (PG14+ `BEGIN ATOMIC` functions) makes that non-`CASCADE` drop
+  — and therefore `start` — fail. Workaround in both cases: enable `[experimental.webhooks]`
+  or declare the extension in a migration. Documented rather than special-cased.
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

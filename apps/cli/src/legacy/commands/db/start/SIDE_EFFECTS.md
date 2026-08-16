@@ -173,6 +173,12 @@ Same result object as the terminal `result` event; progress on stderr.
 
 ## Notes
 
+- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (shared
+  `legacyStartDatabase` behavior — see `supabase start`'s SIDE_EFFECTS.md note and
+  `docs/go-cli-divergences.md`): fresh volumes install it only when webhooks are enabled or
+  migration history owns it; existing volumes with webhooks disabled DROP a `pg_net` that
+  migration history does not own. `pg_net` installed outside migrations (Studio SQL editor)
+  is dropped on the next start — accepted, documented edge.
 - `--from-backup` restores the database from a logical backup file on start; the health
   check is skipped (not failed) for backups — a large restore can exceed
   `db.health_timeout`.

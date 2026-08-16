@@ -593,14 +593,35 @@ describe("legacy db schema declarative sync integration", () => {
   });
 
   it.effect("fails when there are no declarative files", () => {
-    const { layer } = setup(tmp.current, { experimental: true });
+    const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect((failError(exit) as { message: string }).message).toContain(
         "no declarative schema found",
       );
-    }).pipe(Effect.provide(layer));
+      // No tree under the former default either — nothing to point at.
+      expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("warns when the tree still lives under the former supabase/database default", () => {
+    // Upgrade path: the implicit default moved from supabase/database to
+    // supabase/schemas. A project that generated under the old default and never
+    // set declarative_schema_path must get an explanation, not a bare
+    // "no declarative schema found".
+    const formerDir = join(tmp.current, "supabase", "database");
+    mkdirSync(formerDir, { recursive: true });
+    writeFileSync(join(formerDir, "public.sql"), "create table a();");
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain('declarative_schema_path = "./database"');
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
@@ -1093,6 +1114,7 @@ describe("legacy db schema declarative sync integration", () => {
       stdinIsTty: true,
       planErrors: [legacyUuidLoadError()],
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
@@ -1143,6 +1165,7 @@ describe("legacy db schema declarative sync integration", () => {
       stdinIsTty: true,
       planErrors: [legacyUuidLoadError()],
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
 
     return Effect.gen(function* () {
@@ -1264,6 +1287,7 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
       removals: { extensions: ["pgcrypto"], extensionIntents: [] },
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
@@ -1275,6 +1299,35 @@ describe("legacy db schema declarative sync integration", () => {
       expect(stripAnsi(s.out.stderrText)).toContain(
         "rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("staged export names its live-database source and honors the reset offer", () => {
+    seedDeclarative(tmp.current);
+    // `legacyResetLocalDatabase`'s container-recreate resolves its own project id
+    // from `@supabase/config` — pin it so the recreated container name matches
+    // the spawner route's assumption (same as the apply-failure reset test).
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [true], // accept the staged export's reset offer
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      // The export source is stated before the snapshot, so stale local drift
+      // cannot silently become the staged declarative tree.
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "Exporting from the running local database (not the migrations state).",
+      );
+      // Accepting the offer really reset the local database before the export.
+      expect(legacyLocalResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
