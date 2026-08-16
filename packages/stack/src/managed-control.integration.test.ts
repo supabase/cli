@@ -47,15 +47,17 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
   logHistoryAll: () => Effect.succeed([]),
 });
 
-const listenRaw = (port: number): Promise<Server> =>
+const listenRawResponse = (port: number, body: string): Promise<Server> =>
   new Promise((resolve, reject) => {
     const server = createServer((_request, response) => {
       response.writeHead(200, { "content-type": "text/plain" });
-      response.end("not-supabase");
+      response.end(body);
     });
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => resolve(server));
   });
+
+const listenRaw = (port: number): Promise<Server> => listenRawResponse(port, "not-supabase");
 
 const closeRaw = (server: Server): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -198,7 +200,39 @@ describe("managed control endpoint", () => {
             }),
           );
           expect(result._tag).toBe("Left");
-          if (result._tag === "Left") expect(result.error._tag).toBe("ControlProtocolError");
+          if (result._tag === "Left") expect(result.error._tag).toBe("ControlAddressConflictError");
+          expect(unrelated.listening).toBe(true);
+        }),
+      ),
+    ),
+  );
+
+  it.live("preserves an explicit owner protocol mismatch", () =>
+    live(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const endpoint = yield* controlEndpoint(STACK_ID);
+          const unrelated = yield* Effect.acquireRelease(
+            Effect.promise(() =>
+              listenRawResponse(
+                endpoint.port,
+                JSON.stringify({ protocolVersion: 2, state: "running", ready: true }),
+              ),
+            ),
+            (server) => Effect.promise(() => closeRaw(server)),
+          );
+          const result = yield* acquireControl({
+            runtimeRoot: RUNTIME_ROOT,
+            stackId: STACK_ID,
+          }).pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: "Left" as const, error }),
+              onSuccess: (value) => ({ _tag: "Right" as const, value }),
+            }),
+          );
+          expect(result._tag).toBe("Left");
+          if (result._tag === "Left")
+            expect(result.error._tag).toBe("ControlProtocolMismatchError");
           expect(unrelated.listening).toBe(true);
         }),
       ),

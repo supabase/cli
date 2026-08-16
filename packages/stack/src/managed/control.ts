@@ -270,6 +270,7 @@ const acquireAtEndpoint = (
     | ControlTransportError
     | ControlProtocolError
     | ControlProtocolMismatchError
+    | ControlAddressConflictError
     | ControlUnavailableError,
     import("effect/Scope").Scope
   > = Effect.gen(function* () {
@@ -286,7 +287,9 @@ const acquireAtEndpoint = (
       Effect.mapError((cause) =>
         cause._tag === "ControlTransportError" && cause.reason === "unreachable"
           ? unavailable(endpoint, cause)
-          : cause,
+          : cause._tag === "ControlProtocolError"
+            ? new ControlAddressConflictError({ endpoint, cause })
+            : cause,
       ),
     );
   });

@@ -40,30 +40,36 @@ const errorCode = (cause: unknown): string | undefined => {
 
 const controlTransport: ControlTransport["Service"] = {
   bind: (endpoint: ControlEndpoint) =>
-    Effect.gen(function* () {
-      const parentScope = yield* Effect.scope;
-      const serverScope = yield* Scope.fork(parentScope);
-      const server = yield* BunHttpServer.make({
-        hostname: endpoint.hostname,
-        port: endpoint.port,
-        disablePreemptiveShutdown: true,
-      }).pipe(
-        Scope.provide(serverScope),
-        Effect.catchDefect((cause) =>
-          Effect.fail(
-            new ControlBindError({
-              endpoint,
-              reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
-              cause,
-            }),
+    // Bun.serve starts synchronously inside BunHttpServer.make, before that
+    // constructor yields to register its scope finalizer. Keep only this
+    // acquisition window uninterruptible; request handling and listener close
+    // remain governed by the normal scope and interruption semantics.
+    Effect.uninterruptibleMask(() =>
+      Effect.gen(function* () {
+        const parentScope = yield* Effect.scope;
+        const serverScope = yield* Scope.fork(parentScope);
+        const server = yield* BunHttpServer.make({
+          hostname: endpoint.hostname,
+          port: endpoint.port,
+          disablePreemptiveShutdown: true,
+        }).pipe(
+          Scope.provide(serverScope),
+          Effect.catchDefect((cause) =>
+            Effect.fail(
+              new ControlBindError({
+                endpoint,
+                reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+                cause,
+              }),
+            ),
           ),
-        ),
-      );
-      return {
-        server,
-        close: Scope.close(serverScope, Exit.void),
-      };
-    }),
+        );
+        return {
+          server,
+          close: Scope.close(serverScope, Exit.void),
+        };
+      }),
+    ),
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
       try: async () => {
