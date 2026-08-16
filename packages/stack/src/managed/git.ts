@@ -8,6 +8,7 @@ import { claimFileAtomically } from "./atomic-claim.ts";
 import { errorCode } from "./error-code.ts";
 import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { ensureGitCheckoutLocation, readGitCheckoutLocation } from "./identity.ts";
 import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import {
   GIT_CHECKOUT_IDENTITY_VERSION,
@@ -1037,6 +1038,8 @@ export interface EnsureGitCheckoutIdentityResult {
 export interface GitCheckoutIdentityState {
   readonly projectId: string | undefined;
   readonly checkoutId: string | undefined;
+  /** Last canonical workspace path recorded for explicit move detection. */
+  readonly workspacePath: string | undefined;
   readonly projectIdentityLocation: string;
   readonly checkoutIdentityLocation: string;
 }
@@ -1072,6 +1075,11 @@ export const ensureGitCheckoutIdentity = (
         try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
         catch: asRaised,
       });
+      yield* ensureGitCheckoutLocation(
+        inspection.gitDirectory,
+        inspection.workspaceRoot,
+        createManagedUuid(idFactory, "location temporary id"),
+      );
       return {
         projectId,
         checkoutId: checkoutClaim.checkoutId,
@@ -1104,6 +1112,7 @@ export const readGitCheckoutIdentity = (
       return {
         projectId,
         checkoutId: identity?.checkoutId,
+        workspacePath: undefined,
         projectIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
       };
@@ -1148,9 +1157,11 @@ export const readGitCheckoutIdentityWithFileSystem = (
               try: () => decodeGitCheckoutIdentity(content),
               catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
             });
+      const workspacePath = yield* readGitCheckoutLocation(inspection.gitDirectory);
       return {
         projectId,
         checkoutId: identity?.checkoutId,
+        workspacePath,
         projectIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
       };

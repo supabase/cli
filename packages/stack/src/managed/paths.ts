@@ -163,3 +163,11 @@ export const gitWorktreeConfigPath = (commonDirectory: string): string =>
  */
 export const gitCheckoutIdentityPath = (gitDirectory: string): string =>
   join(gitDirectory, "supabase-checkout.json");
+
+/** A checkout-scoped detached-context identity beside its checkout marker. */
+export const gitDetachedContextIdentityPath = (gitDirectory: string): string =>
+  join(gitDirectory, "supabase-detached-context.json");
+
+/** The last canonical workspace path observed for a checkout identity. */
+export const gitCheckoutLocationPath = (gitDirectory: string): string =>
+  join(gitDirectory, "supabase-checkout-location.json");
