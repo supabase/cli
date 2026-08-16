@@ -223,7 +223,10 @@ class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerU
 
 const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
 
-const awaitOwnerReady = (acquisition: ControlAttached) =>
+const awaitOwnerReady = (
+  acquisition: ControlAttached,
+  onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
+) =>
   acquisition.ownerStatus.pipe(
     Effect.flatMap((status) => {
       if (status.state === "running" && status.ready) return Effect.succeed(status);
@@ -236,6 +239,7 @@ const awaitOwnerReady = (acquisition: ControlAttached) =>
     }),
     Effect.retry({
       schedule: Schedule.spaced("25 millis").pipe(
+        Schedule.tap(({ attempt }) => (attempt === 1 ? onWaiting : Effect.void)),
         Schedule.upTo({ duration: SUPERVISOR_STARTUP_TIMEOUT }),
       ),
       while: (error) => error._tag === "SupervisorOwnerUnavailableError" && error.retry,
@@ -494,10 +498,12 @@ const runManaged = (
     const stackId = input.stackId ?? deriveStackId(discovery.identity, input.stackName);
     const acquisition = yield* acquireControl({ stackId });
     if (acquisition._tag === "Attached") {
-      if (input.testMode === "hold-start") {
-        yield* sendMessage({ type: "test-stage", stage: "attached-before-ready" });
-      }
-      yield* awaitOwnerReady(acquisition);
+      yield* awaitOwnerReady(
+        acquisition,
+        input.testMode === "hold-start"
+          ? sendMessage({ type: "test-stage", stage: "attached-before-ready" })
+          : Effect.void,
+      );
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;

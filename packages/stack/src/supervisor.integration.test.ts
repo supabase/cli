@@ -104,7 +104,7 @@ const spawnChild = (input: SupervisorStartMessage): ChildHandle => {
     child.once("error", onError);
     child.once("exit", onExit);
   });
-  const attachedBeforeReady = new Promise<void>((resolve) => {
+  const attachedBeforeReady = new Promise<void>((resolve, reject) => {
     const onMessage = (value: unknown) => {
       if (
         typeof value === "object" &&
@@ -120,11 +120,22 @@ const spawnChild = (input: SupervisorStartMessage): ChildHandle => {
     };
     const cleanup = () => {
       child.off("message", onMessage);
-      child.off("exit", cleanup);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onError = (cause: Error) => {
+      cleanup();
+      reject(cause);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      reject(new Error(`supervisor exited before attach wait stage (${String(code)})`));
     };
     child.on("message", onMessage);
-    child.once("exit", cleanup);
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
+  void attachedBeforeReady.catch(() => undefined);
   child.send(input);
   return { child, started, attachedBeforeReady };
 };
