@@ -41,6 +41,7 @@ import {
   type ManagedStackRecord,
   type ManagedStackStatus,
 } from "./model.ts";
+import type { ConfigPortKey } from "../PortCatalog.ts";
 import type {
   ClaimManagedOperationFailure,
   ClaimManagedOperationInput,
@@ -767,8 +768,25 @@ const readTransaction = <A>(
 ): Effect.Effect<A, never> =>
   Effect.try({ try: () => runTransaction(database, "BEGIN", run), catch: neverFails });
 
+const managedPortKey = (value: string): ConfigPortKey => {
+  switch (value) {
+    case "api.port":
+    case "db.port":
+    case "edge_runtime.inspector_port":
+    case "local_smtp.port":
+    case "local_smtp.smtp_port":
+    case "local_smtp.pop3_port":
+    case "studio.port":
+    case "analytics.port":
+    case "db.pooler.port":
+      return value;
+    default:
+      throw new Error(`Unknown managed port key ${value}`);
+  }
+};
+
 const decodePort = (row: unknown): ManagedPortAssignment => ({
-  key: getString(row, "key"),
+  key: managedPortKey(getString(row, "key")),
   port: getNumber(row, "port"),
   intent: managedPortIntent(getString(row, "intent")),
 });

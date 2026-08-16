@@ -41,10 +41,12 @@ import {
   ManagedStackPublicationTimeoutError,
   ManagedIdentityTransitionOwnershipError,
   UnsafeManagedStackPathError,
+  type ManagedPortAssignment,
   type ManagedStackConfiguration,
   type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./managed/model.ts";
+import type { ConfigPortKey } from "./PortCatalog.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import {
   decideManagedIdentityMetadataPrune,
@@ -222,15 +224,34 @@ const fixture = (id: string) => {
 const portFacts = (id: string) =>
   fixture(id).given.flatMap((fact) => (fact.kind === "config-port" ? [fact] : []));
 
+const managedPortKey = (value: string): ConfigPortKey => {
+  switch (value) {
+    case "api.port":
+    case "db.port":
+    case "edge_runtime.inspector_port":
+    case "local_smtp.port":
+    case "local_smtp.smtp_port":
+    case "local_smtp.pop3_port":
+    case "studio.port":
+    case "analytics.port":
+    case "db.pooler.port":
+      return value;
+    default:
+      throw new Error(`Unknown managed port key ${value}`);
+  }
+};
+
 const portAssignmentFacts = (id: string) =>
-  fixture(id).given.flatMap((fact) => (fact.kind === "port-assignment" ? [fact] : []));
+  fixture(id).given.flatMap((fact) =>
+    fact.kind === "port-assignment" ? [{ ...fact, key: managedPortKey(fact.key) }] : [],
+  );
 
 const requirePortFact = (id: string, key: string) => {
   const fact = portFacts(id).find((candidate) => candidate.key === key);
   if (fact === undefined || !("value" in fact) || typeof fact.value !== "number") {
     throw new Error(`Fixture ${id} does not define ${key}`);
   }
-  return { key: fact.key, port: fact.value, intent: fact.intent };
+  return { key: managedPortKey(fact.key), port: fact.value, intent: fact.intent };
 };
 
 const stackNames = (id: string): ReadonlyArray<string> =>
@@ -1123,7 +1144,7 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
       const workspace = makeWorkspace(root);
-      const duplicateKeyPorts = [
+      const duplicateKeyPorts: Array<ManagedPortAssignment> = [
         { key: "api.port", port: 54_401, intent: "automatic" as const },
         { key: "api.port", port: 54_402, intent: "automatic" as const },
       ];
@@ -1840,7 +1861,7 @@ describe("managed repository and lifecycle", () => {
       operation: "start",
       workspacePath: join(root, "workspace"),
       configuration: {
-        ports: [{ key: removed.key, port: 60_000, intent: removed.intent }],
+        ports: [{ key: managedPortKey(removed.key), port: 60_000, intent: removed.intent }],
       },
     });
     expect(sticky.outcome).toBe("reuse");

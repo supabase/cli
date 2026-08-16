@@ -1,4 +1,5 @@
 import { Data } from "effect";
+import type { ConfigPortKey, PortField } from "../PortCatalog.ts";
 
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
@@ -48,6 +49,7 @@ export type ManagedContextDescriptor =
 export type ManagedStackStatus = "active" | "pending" | "tombstoned";
 export type ManagedStackLifecycle = "failed" | "running" | "starting" | "stopped" | "stopping";
 export type ManagedPortIntent = "automatic" | "exact";
+export type ManagedPortSource = "environment" | "local" | "omitted" | "remote";
 export type ManagedOperationKind = "delete" | "start" | "stop" | "update";
 export type ManagedOperationStatus = "active" | "completed" | "failed";
 
@@ -81,9 +83,41 @@ export interface ManagedStackPaths {
 }
 
 export interface ManagedPortAssignment {
-  readonly key: string;
+  readonly key: ConfigPortKey;
   readonly port: number;
   readonly intent: ManagedPortIntent;
+}
+
+export interface ManagedPortIntentDocument {
+  readonly activeFields: ReadonlyArray<PortField>;
+  readonly document?: Readonly<Record<string, unknown>>;
+  readonly valueOrigins?: ReadonlyArray<{
+    readonly path: ReadonlyArray<string>;
+    readonly source: Exclude<ManagedPortSource, "omitted">;
+  }>;
+}
+
+export type ManagedPortRequest =
+  | {
+      readonly field: PortField;
+      readonly key: ConfigPortKey;
+      readonly intent: "exact";
+      readonly port: number;
+      readonly source: Exclude<ManagedPortSource, "omitted">;
+    }
+  | {
+      readonly field: PortField;
+      readonly key: ConfigPortKey;
+      readonly intent: "automatic";
+      readonly source: "omitted";
+    };
+
+export interface ManagedPortDrift {
+  readonly key: ConfigPortKey;
+  readonly actualIntent: ManagedPortIntent;
+  readonly actualPort: number;
+  readonly configuredIntent: ManagedPortIntent;
+  readonly configuredPort?: number;
 }
 
 export interface ManagedRuntimeMetadata {
