@@ -3,8 +3,8 @@ import { resolvePortIntents } from "./port-intent.ts";
 import { planManagedPorts, type ManagedDurablePortPlanEntry } from "./port-plan.ts";
 
 describe("planManagedPorts", () => {
-  it("pins persisted values, preserves inactive rows, and allocates keyless fields at runtime", () => {
-    const activeFields = ["apiPort", "dbPort", "authPort"] as const;
+  it("pins persisted automatic and exact-to-omitted durable values", () => {
+    const activeFields = ["apiPort", "dbPort"] as const;
     const intents = resolvePortIntents({ activeFields, document: {} });
 
     expect(
@@ -14,7 +14,6 @@ describe("planManagedPorts", () => {
         persisted: [
           { key: "api.port", port: 55001, intent: "automatic" },
           { key: "db.port", port: 55002, intent: "exact" },
-          { key: "studio.port", port: 55003, intent: "exact" },
         ],
       }),
     ).toEqual({
@@ -34,8 +33,36 @@ describe("planManagedPorts", () => {
           newlyAllocatedAutomatic: false,
         },
       ],
-      runtimeOnly: [{ field: "authPort", selection: { kind: "automatic" } }],
+      runtimeOnly: [],
+      inactiveAssignments: [],
+    });
+  });
+
+  it("preserves inactive durable assignments without requesting sockets", () => {
+    const activeFields = [] as const;
+    const intents = resolvePortIntents({ activeFields, document: {} });
+
+    expect(
+      planManagedPorts({
+        activeFields,
+        intents,
+        persisted: [{ key: "studio.port", port: 55003, intent: "exact" }],
+      }),
+    ).toEqual({
+      durable: [],
+      runtimeOnly: [],
       inactiveAssignments: [{ key: "studio.port", port: 55003, intent: "exact" }],
+    });
+  });
+
+  it("creates runtime-only automatic requests for active keyless fields", () => {
+    const activeFields = ["authPort"] as const;
+    const intents = resolvePortIntents({ activeFields, document: {} });
+
+    expect(planManagedPorts({ activeFields, intents, persisted: [] })).toEqual({
+      durable: [],
+      runtimeOnly: [{ field: "authPort", selection: { kind: "automatic" } }],
+      inactiveAssignments: [],
     });
   });
 
