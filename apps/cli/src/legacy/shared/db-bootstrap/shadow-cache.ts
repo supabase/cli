@@ -46,10 +46,7 @@ import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
-import {
-  LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
-  type LegacySetupDatabaseOptions,
-} from "./db-setup.ts";
+import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
@@ -70,6 +67,7 @@ import {
   type LegacyShadowBaselineState,
   LegacyShadowDbError,
   type LegacyShadowSetupInput,
+  type LegacyShadowWebhooksPolicy,
 } from "./shadow-database.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -180,10 +178,11 @@ export interface LegacyShadowCacheKeyInputs {
   readonly autoExposeNewTables: Option.Option<boolean>;
   /**
    * Effective Webhooks/`pg_net` policy baked into the cluster — the same boolean
-   * `legacySetupDatabase` applies (`options.webhooks` resolved against
-   * `setup.webhooksEnabled`). Distinct from the raw config flag: legacy migrate
-   * forces enabled, next declarative forces disabled, and next migrate follows
-   * config. Hashed so those callers cannot share a snapshot (review: Codex/
+   * `legacySetupDatabase` applies, resolved from the ONE field every baseline provisioner
+   * also reads (`setup.webhooks` resolved against `setup.webhooksEnabled` — see
+   * `LegacyShadowDbSetupInput.webhooks`, `shadow-database.ts`). Distinct from the raw config flag: the legacy
+   * migrate engine forces enabled, next's declarative shadow forces disabled, and next's
+   * migrate follows config. Hashed so those callers cannot share a snapshot (review: Codex/
    * depthfirst on #6184).
    */
   readonly webhooksEnabled: boolean;
@@ -334,22 +333,25 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
 
 /**
  * Same resolution `legacySetupDatabase` applies (`db-setup.ts`): `"enabled"` always
- * installs `pg_net`, `"disabled"` always removes it, `"config"` (the default) follows
- * `setup.webhooksEnabled`.
+ * installs `pg_net`, `"disabled"` always removes it, `"config"` follows
+ * `setup.webhooksEnabled`. `policy` is always an explicit `LegacyShadowDbSetupInput.webhooks`
+ * — no defaulting here, so the boolean this returns cannot describe a policy no provisioner ran.
  */
 export function legacyEffectiveShadowWebhooksEnabled(
-  policy: LegacySetupDatabaseOptions["webhooks"],
+  policy: LegacyShadowWebhooksPolicy,
   webhooksEnabled: boolean,
 ): boolean {
-  const webhooks = policy ?? "config";
-  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
+  return policy === "enabled" || (policy === "config" && webhooksEnabled);
 }
 
 /**
  * Resolves {@link LegacyShadowCacheKeyInputs} from the same run input the shadow container
  * itself is built from, plus `supabase/roles.sql` off disk. The service enabled flags come from
  * `setup.config` (NOT the `*EnabledForSetup` fields, which only gate JWKS resolution) because
- * `legacySetupDatabase`'s own one-shot job gates read exactly those config fields.
+ * `legacySetupDatabase`'s own one-shot job gates read exactly those config fields. The Webhooks/
+ * `pg_net` policy likewise comes from `input.setup.webhooks` — the SAME field every baseline
+ * provisioner passes to `legacySetupDatabase`, so the key cannot describe a policy the cluster
+ * was not provisioned under (see `LegacyShadowDbSetupInput.webhooks`, `shadow-database.ts`).
  *
  * Returns `Option.none` (never a failure) for the two conditions that make caching
  * unavailable — an OrioleDB cluster (whose state is partly external, see the body's own
@@ -366,7 +368,6 @@ export function legacyEffectiveShadowWebhooksEnabled(
 
 const legacyResolveShadowCacheKeyInputs = <E>(
   input: LegacyShadowSetupInput<E>,
-  opts: LegacyShadowCacheOpts = {},
 ): Effect.Effect<Option.Option<LegacyShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
     // OrioleDB (`experimental.orioledb_version`) makes the WHOLE cache ineligible, not just a
@@ -427,7 +428,7 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       storageTargetMigration: input.setup.storageTargetMigration,
       autoExposeNewTables: input.setup.apiAutoExposeNewTables,
       webhooksEnabled: legacyEffectiveShadowWebhooksEnabled(
-        opts.webhooks,
+        input.setup.webhooks,
         input.setup.webhooksEnabled,
       ),
       rolesSql,
@@ -823,21 +824,19 @@ const legacyExportShadowBaseline = <E>(
  * it must neither restore an existing snapshot nor publish a new one — exactly the uncached
  * lifecycle, regardless of the env gate (review: Codex on #6184).
  *
- * `webhooks` is the same policy the caller will pass to `legacySetupDatabase` /
- * `legacySetupShadowDatabase` / `legacyMigrate*ShadowDatabase`. Defaults to `"config"`
- * (follow `setup.webhooksEnabled`), matching {@link LegacySetupDatabaseOptions}. Hashed as
- * the effective boolean so a forced-on legacy migrate snapshot cannot warm-restore into a
- * next path that follows config, or a declarative shadow that forces webhooks off.
+ * Deliberately carries NO Webhooks policy: that is not a per-invocation cache control but a
+ * property of the baseline itself, stated once on `input.setup.webhooks` and read by BOTH the
+ * provisioners and the key resolution — see `LegacyShadowDbSetupInput.webhooks`
+ * (`shadow-database.ts`) for why the two must not be expressible separately.
  */
 export interface LegacyShadowCacheOpts {
   readonly bypassCache?: boolean;
-  readonly webhooks?: LegacySetupDatabaseOptions["webhooks"];
   /**
    * Key inputs a caller already resolved via {@link legacyPeekShadowBaseline}, so
    * {@link legacyAcquireShadowDatabase} does not resolve them a second time. Resolution is not
    * idempotent-cheap: it can include a live JWKS discovery request (realtime on PG15+), so a
    * peek-then-acquire caller passing this through halves that traffic. MUST have been computed
-   * from the same `input`/`opts` pair, or the acquire keys against the wrong snapshot.
+   * from the same `input`, or the acquire keys against the wrong snapshot.
    */
   readonly precomputedKeyInputs?: LegacyShadowCacheKeyInputs;
 }
@@ -878,7 +877,7 @@ export const legacyPeekShadowBaseline = <E>(
     ) {
       return { state: "uncachable" } as const;
     }
-    const keyInputs = yield* legacyResolveShadowCacheKeyInputs(input, opts);
+    const keyInputs = yield* legacyResolveShadowCacheKeyInputs(input);
     if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(
@@ -1061,7 +1060,7 @@ export const legacyAcquireShadowDatabase = <E>(
     const keyInputs =
       opts.precomputedKeyInputs !== undefined
         ? Option.some(opts.precomputedKeyInputs)
-        : yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
+        : yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(

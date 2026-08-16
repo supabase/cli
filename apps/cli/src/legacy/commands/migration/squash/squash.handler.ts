@@ -94,10 +94,10 @@ type Spawner = ChildProcessSpawnerType["Service"];
  * creation and the finalizer being attached) and why the cache seam sits here (with
  * `SUPABASE_SHADOW_CACHE` unset it IS today's create/remove pair; otherwise a key-matching PGDATA
  * snapshot is restored into the fresh container in a few seconds instead of cold-provisioning the
- * baseline in ~15s). No `webhooks` override, unlike `db diff`/`db pull`'s forced-on
- * `legacyMigrateShadowDatabase` baseline: squash's `SetupDatabase` call has always followed
- * `config.toml`, so the cache key must hash the config-following policy or a squash run would
- * warm-restore a `pg_net`-forced cluster.
+ * baseline in ~15s). The shadow input states `webhooks: "config"`, unlike `db diff`/`db pull`'s
+ * forced-on legacy-engine baseline: squash's `SetupDatabase` call has always followed
+ * `config.toml`. That one field is both what {@link legacyOpenShadowBaselineSession} applies and
+ * what the cache key hashes, so a squash run cannot warm-restore a `pg_net`-forced cluster.
  *
  * The baseline is the ONLY thing the cache covers, and
  * {@link legacyOpenShadowBaselineSession} hands back the open session at exactly that seam — so
@@ -119,6 +119,9 @@ const squashMigrations = Effect.fnUntraced(function* (
     localInputs,
     resolvedShadowImage,
     toml,
+    // Squash's `SetupDatabase` has always followed `config.toml` — see this function's own doc
+    // comment.
+    "config",
     fs,
     path,
   );
@@ -155,7 +158,6 @@ const squashMigrations = Effect.fnUntraced(function* (
             connConfig,
             setup: shadowInput.setup,
           },
-          {},
           handle,
         );
 

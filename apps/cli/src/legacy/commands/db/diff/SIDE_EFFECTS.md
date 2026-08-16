@@ -248,8 +248,8 @@ on release). A cache anomaly never fails the command — a warm-path anomaly col
 a cold export failure only warns and leaves the run uncached (one exception: a shadow that
 fails to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
 shadow-cache.ts`'s doc comment for the mechanics. `--use-pgadmin` shares this cache and these
-snapshots: its shadow runs the same forced-on Webhooks/`pg_net` baseline
-(`legacyMigrateShadowDatabase`), so it keys to the same tars as the native branch.
+snapshots: its shadow input states the same forced-on Webhooks/`pg_net` policy
+(`webhooks: "enabled"`) the native branch's legacy-engine runs do, so it keys to the same tars.
 
 ### `--use-pgadmin` parity quirks and deliberate divergence (CLI-1968)
 

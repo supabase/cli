@@ -26,12 +26,12 @@ import { legacyWaitForShadowReady } from "./db-bootstrap/health-check.ts";
 import {
   legacyWithShadowDatabase,
   type LegacyShadowAcquiredHandle,
-  type LegacyShadowCacheOpts,
 } from "./db-bootstrap/shadow-cache.ts";
 import {
   legacySetupShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
   type LegacyShadowSetupInput,
+  type LegacyShadowWebhooksPolicy,
 } from "./db-bootstrap/shadow-database.ts";
 import { legacyPgDeltaTempPath } from "./legacy-pgdelta.paths.ts";
 import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
@@ -770,7 +770,17 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
-  shadowCacheOpts: LegacyShadowCacheOpts = {},
+  opts: {
+    /**
+     * The baseline policy this caller's own `provision` really runs under — no default, so a
+     * new caller cannot inherit a policy it never applies. Lands on `setup.webhooks`, which is
+     * what the provisioner applies AND what the shadow baseline cache keys on (see
+     * `LegacyShadowDbSetupInput.webhooks`, `db-bootstrap/shadow-database.ts`).
+     */
+    readonly webhooks: LegacyShadowWebhooksPolicy;
+    /** `db schema declarative sync --no-cache`'s bypass — see `LegacyShadowCacheOpts`. */
+    readonly bypassCache?: boolean;
+  },
 ) =>
   Effect.gen(function* () {
     const { spawner, localInputs } = built;
@@ -779,6 +789,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
       localInputs,
       resolvedImage,
       toml,
+      opts.webhooks,
       fs,
       path,
     );
@@ -787,8 +798,9 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
     // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
     // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
-    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass and the
-    // caller's effective Webhooks policy — see `LegacyShadowCacheOpts`.
+    // call sites make. The only per-invocation cache control left here is `sync --no-cache`'s
+    // bypass; the Webhooks policy rides on `shadowInput.setup` above — see
+    // `LegacyShadowCacheOpts`.
     const written = yield* legacyWithShadowDatabase(
       spawner,
       shadowInput,
@@ -801,7 +813,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
           });
           return yield* persist(snapshot);
         }),
-      shadowCacheOpts,
+      opts.bypassCache === true ? { bypassCache: true } : {},
     );
     return path.relative(ctx.cwd, written);
   });
@@ -888,12 +900,9 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
-    // Same forced-on policy {@link legacyGetMigrationsCatalogRef} passes below, for the same
-    // reason: `legacyProvisionMigrationsShadow` migrates through `legacyMigrateShadowDatabase`,
-    // whose baseline installs `pg_net` regardless of `config.toml`. Leaving this at the
-    // config-following default would key the published tar as `webhooks_enabled=false` on a
-    // webhooks-disabled project even though the snapshotted cluster HAS `pg_net` — poisoning
-    // every other config-following consumer of that key.
+    // Forced-on, same as {@link legacyGetMigrationsCatalogRef} below:
+    // `legacyProvisionMigrationsShadow` goes through `legacyPrepareShadowSource`'s legacy
+    // engine, whose baseline installs `pg_net` regardless of `config.toml`.
     { webhooks: "enabled" },
   );
 });
@@ -1002,10 +1011,12 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
-    // `--no-cache` promises "force fresh shadow database setup" (`declarative.shared.ts`), so it
-    // must ALSO bypass the shadow baseline snapshot, not just the catalog cache — otherwise a
-    // warm tar would skip the very setup the flag exists to force (review: Codex on #6184).
-    { bypassCache: params.noCache, webhooks: "enabled" },
+    // Forced-on for the same reason as {@link legacyResolveMigrationsCatalogRef} above (the
+    // legacy engine's `pg_net` baseline). `--no-cache` promises "force fresh shadow database
+    // setup" (`declarative.shared.ts`), so it must ALSO bypass the shadow baseline snapshot, not
+    // just the catalog cache — otherwise a warm tar would skip the very setup the flag exists to
+    // force (review: Codex on #6184).
+    { webhooks: "enabled", bypassCache: params.noCache },
   );
 });
 
@@ -1095,7 +1106,6 @@ const legacyProvisionBaselineShadow = (
         connConfig,
         setup: shadowInput.setup,
       },
-      {},
       handle,
     );
     return { sourceUrl: legacyToPostgresURL(connConfig) } satisfies LegacyProvisionedShadow;
@@ -1143,7 +1153,6 @@ const legacyProvisionDeclarativeShadow = (
         connConfig,
         setup: shadowInput.setup,
       },
-      {},
       handle,
     );
     const targetUrl = legacyToPostgresURL(connConfig);
@@ -1232,7 +1241,12 @@ export const legacyExportBaselineCatalogRef = (
               snapshot,
             )
           : legacyWriteCatalogFile(fs, tempDir, cachePath, snapshot),
-      { bypassCache: params.noCache, webhooks: "config" },
+      {
+        // Config-following: these two provisions run the bare platform baseline through
+        // `legacySetupShadowDatabase`, which has no `pg_net` override of its own.
+        webhooks: "config",
+        bypassCache: params.noCache,
+      },
     );
   });
 
@@ -1323,6 +1337,11 @@ export const legacyExportDeclarativeCatalogRef = (
                 timestamp,
               );
             }),
-      { bypassCache: params.noCache, webhooks: "config" },
+      {
+        // Config-following: these two provisions run the bare platform baseline through
+        // `legacySetupShadowDatabase`, which has no `pg_net` override of its own.
+        webhooks: "config",
+        bypassCache: params.noCache,
+      },
     );
   });

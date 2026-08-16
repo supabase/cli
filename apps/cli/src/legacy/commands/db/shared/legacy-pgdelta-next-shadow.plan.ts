@@ -12,7 +12,8 @@
  *   provision skips the platform baseline entirely (`legacySetupShadowDatabase`'s
  *   `baselinePresent` branch), so the declarative fiber prints nothing and the migrations fiber's
  *   `Applying migration ...` lines stream live and in order.
- * - `baseline-handoff` — both are cold with the SAME cache key (webhooks agree): the baseline is
+ * - `baseline-handoff` — both are cold with the SAME cache key (their `setup.webhooks` policies
+ *   resolve to the same effective boolean): the baseline is
  *   paid exactly once. The migrations shadow cold-provisions; its snapshot export runs at the
  *   baseline seam (after platform setup, before migration replay) and signals the declarative
  *   fiber, which then warm-restores from the just-published tar CONCURRENTLY with the migration

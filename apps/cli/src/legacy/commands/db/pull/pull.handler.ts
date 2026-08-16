@@ -89,7 +89,10 @@ import {
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
-import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
+import {
+  legacyPrepareShadowSource,
+  legacyShadowSourceWebhooksPolicy,
+} from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
   LegacyDbPullDumpError,
@@ -533,6 +536,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                     declLocalInputs,
                     resolvedDeclShadowImage,
                     toml,
+                    // `legacyPrepareRawShadow` runs no platform baseline at all (and no cache),
+                    // so this policy is never applied; `"config"` states the inert default.
+                    "config",
                     fs,
                     path,
                   );
@@ -773,6 +779,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 pullLocalInputs,
                 resolvedPullShadowImage,
                 toml,
+                legacyShadowSourceWebhooksPolicy(migrationMode),
                 fs,
                 path,
               ),
@@ -795,67 +802,58 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // pooler-retry attempt still acquires and releases its own shadow — on the warm path
             // each attempt restores its own fresh container from the same cached snapshot,
             // sequentially.
-            // The `webhooks` policy MUST describe the baseline the `use` callback below actually
-            // provisions, because that is what the cache key hashes: `legacyPrepareShadowSource`
-            // dispatches on `migrationMode`, running `legacyMigrateShadowDatabase` (forced
-            // `pg_net`) for the legacy engine but `legacyMigrateNextShadowDatabase`
-            // (config-following) for pg-delta next. Hardcoding `"enabled"` for both would make a
-            // next-mode cold run on a webhooks-disabled project publish a `pg_net`-less cluster
-            // under the `webhooks_enabled=true` key, which `db diff --use-pgadmin` (whose baseline
-            // really is forced-on) could then warm-restore, and vice versa.
-            return yield* legacyWithShadowDatabase(
-              spawner,
-              shadowInput,
-              (handle) =>
-                Effect.gen(function* () {
-                  const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-                  const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
-                  yield* output.raw(
-                    diffSchema.length > 0
-                      ? `Diffing schemas: ${diffSchema.join(",")}\n`
-                      : "Diffing schemas...\n",
-                    "stderr",
-                  );
-                  if (usePgDeltaDiff) {
-                    return yield* pgDeltaEngine.diffDatabase({
-                      context: ctx,
-                      source: {
-                        kind: "database",
-                        ref: shadow.sourceUrl,
-                        connectOptions: { isLocal: true, dnsResolver: "native" },
-                      },
-                      target: {
-                        kind: "database",
-                        ref: target,
-                        ...(shadow.targetUrlOverride === undefined
-                          ? {
-                              ...(targetEndpoint.connection !== undefined
-                                ? { connection: targetEndpoint.connection }
-                                : {}),
-                              connectOptions: targetEndpoint.connectOptions,
-                            }
-                          : {
-                              connectOptions: { isLocal: true, dnsResolver },
-                            }),
-                      },
-                      schema: diffSchema,
-                      formatOptions,
-                      debug: legacyIsPgDeltaDebugEnabled(),
-                      strictCoverage: flags.strictCoverage,
-                    });
-                  }
-                  const sql = yield* legacyDiffMigra(ctx, {
-                    source: shadow.sourceUrl,
-                    target,
+            // The engine's Webhooks policy rides on `shadowInput.setup.webhooks` above, which is
+            // both what `legacyPrepareShadowSource`'s baseline applies and what the cache key
+            // hashes — the two cannot describe different clusters.
+            return yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+              Effect.gen(function* () {
+                const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+                const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
+                yield* output.raw(
+                  diffSchema.length > 0
+                    ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                    : "Diffing schemas...\n",
+                  "stderr",
+                );
+                if (usePgDeltaDiff) {
+                  return yield* pgDeltaEngine.diffDatabase({
+                    context: ctx,
+                    source: {
+                      kind: "database",
+                      ref: shadow.sourceUrl,
+                      connectOptions: { isLocal: true, dnsResolver: "native" },
+                    },
+                    target: {
+                      kind: "database",
+                      ref: target,
+                      ...(shadow.targetUrlOverride === undefined
+                        ? {
+                            ...(targetEndpoint.connection !== undefined
+                              ? { connection: targetEndpoint.connection }
+                              : {}),
+                            connectOptions: targetEndpoint.connectOptions,
+                          }
+                        : {
+                            connectOptions: { isLocal: true, dnsResolver },
+                          }),
+                    },
                     schema: diffSchema,
-                    connectOptions:
-                      shadow.targetUrlOverride === undefined
-                        ? targetEndpoint.connectOptions
-                        : { isLocal: true, dnsResolver },
+                    formatOptions,
+                    debug: legacyIsPgDeltaDebugEnabled(),
+                    strictCoverage: flags.strictCoverage,
                   });
-                  return { sql, files: undefined, debug: undefined };
-                }),
-              migrationMode === "pgdelta-next" ? {} : { webhooks: "enabled" },
+                }
+                const sql = yield* legacyDiffMigra(ctx, {
+                  source: shadow.sourceUrl,
+                  target,
+                  schema: diffSchema,
+                  connectOptions:
+                    shadow.targetUrlOverride === undefined
+                      ? targetEndpoint.connectOptions
+                      : { isLocal: true, dnsResolver },
+                });
+                return { sql, files: undefined, debug: undefined };
+              }),
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

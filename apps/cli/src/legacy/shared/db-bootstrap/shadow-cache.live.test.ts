@@ -82,6 +82,7 @@ describeLive("shadow baseline cache (live Docker)", () => {
           projectEnvValues: undefined,
           debug: false,
           webhooksEnabled: false,
+          webhooks: "config",
           apiAutoExposeNewTables: Option.some(true),
           vault: [],
         };

@@ -206,6 +206,9 @@ export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
     localInputs,
     resolvedImage,
     toml,
+    // `legacyPrepareRawShadow` runs no platform baseline at all (and no cache), so this policy
+    // is never applied; `"config"` states the inert default.
+    "config",
     fs,
     path,
   );

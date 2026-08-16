@@ -49,10 +49,10 @@ import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import type { LegacyShadowAcquiredHandle } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyMigrateShadowDatabase,
-  legacyMigrateNextShadowDatabase,
   LegacyShadowDbError,
   type LegacyShadowSetupInput,
   type LegacyShadowSourceResult,
+  type LegacyShadowWebhooksPolicy,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import type { LegacyStartSetupLocalDatabaseError } from "../../../shared/db-bootstrap/db-setup.ts";
 import {
@@ -83,6 +83,22 @@ export interface LegacyPrepareShadowSourceInput<E> extends LegacyShadowSetupInpu
   /** Ambient pg-delta edge-runtime context, only read on the pg-delta declarative-apply sub-branch. */
   readonly ctx: LegacyPgDeltaContext;
 }
+
+/**
+ * The Webhooks/`pg_net` policy each engine's shadow baseline has always applied: the legacy
+ * migra/pg-delta engines include `pg_net` in the platform baseline regardless of project config
+ * (Go parity — those Go-backed workflows always ran `SetupDatabase` with webhooks forced on),
+ * while pg-delta next follows `config.toml` through `legacySetupDatabase`'s own default.
+ *
+ * Callers building a {@link legacyPrepareShadowSource} input pass this into
+ * `legacyShadowRunInputFromLocalContainerInputs` so `setup.webhooks` states the engine's real
+ * policy exactly once — the shadow baseline cache then hashes the very field the provisioner
+ * applies, instead of a separately-supplied opt that could describe a different baseline (see
+ * `LegacyShadowDbSetupInput.webhooks`, `shadow-database.ts`).
+ */
+export const legacyShadowSourceWebhooksPolicy = (
+  migrationMode: LegacyPrepareShadowSourceInput<never>["migrationMode"],
+): LegacyShadowWebhooksPolicy => (migrationMode === "pgdelta-next" ? "config" : "enabled");
 
 /** Every failure {@link legacyPrepareShadowSource} can produce, beyond its own `E` (JWKS resolution). */
 export type LegacyPrepareShadowSourceError =
@@ -165,12 +181,10 @@ export const legacyPrepareShadowSource = <E>(
     // already holds the platform baseline (so only the template database + user migrations run),
     // and on a cache-enabled cold provision it carries the snapshot step that runs between the
     // two — see `shadow-cache.ts`/`LegacyShadowBaselineState`. An uncached acquire hands over the
-    // always-cold state, which reproduces today's sequence exactly.
-    const migrateShadow =
-      input.migrationMode === "pgdelta-next"
-        ? legacyMigrateNextShadowDatabase
-        : legacyMigrateShadowDatabase;
-    yield* migrateShadow(
+    // always-cold state, which reproduces today's sequence exactly. The per-engine Webhooks
+    // difference rides on `input.setup.webhooks` (built via
+    // {@link legacyShadowSourceWebhooksPolicy}), so there is one migrate function, not two.
+    yield* legacyMigrateShadowDatabase(
       spawner,
       {
         fs: input.fs,

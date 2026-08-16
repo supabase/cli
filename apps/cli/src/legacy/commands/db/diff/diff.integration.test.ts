@@ -1115,12 +1115,11 @@ describe("legacy db diff", () => {
   );
 
   // The two native branches provision DIFFERENT clusters on a webhooks-disabled project:
-  // `--use-pgadmin` migrates through `legacyMigrateShadowDatabase`, whose baseline installs
-  // `pg_net` unconditionally, while pg-delta next migrates through
-  // `legacyMigrateNextShadowDatabase`, which follows `config.toml` (webhooks absent = off). If the
-  // cache key described the caller's literal `webhooks` opt rather than the baseline the run
-  // actually builds, one would warm-restore the other's snapshot and silently diff against a
-  // cluster with the wrong extension set.
+  // `--use-pgadmin` states `webhooks: "enabled"` on its shadow input, so its baseline installs
+  // `pg_net` unconditionally, while pg-delta next states `"config"` and follows `config.toml`
+  // (webhooks absent = off). That one field is what the cache key hashes, so neither can
+  // warm-restore the other's snapshot and silently diff against a cluster with the wrong
+  // extension set.
   it.effect(
     "--use-pgadmin does not reuse the pg-delta next baseline when config leaves webhooks disabled",
     () =>
