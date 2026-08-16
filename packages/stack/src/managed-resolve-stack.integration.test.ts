@@ -16,8 +16,8 @@ import {
   gitBranchContextIdKey,
   gitCheckoutIdentityPath,
   gitConfigPath,
+  ManagedExactPortOccupiedError,
   InvalidManagedStackNameError,
-  ManagedPortReservationError,
   ManagedIdentityTransitionOwnershipError,
   type ManagedStackRepositoryShape,
   type ManagedStackServiceHandle,
@@ -382,20 +382,28 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
   });
 
   it("scopes named stacks inside one context without letting them share anything", async () => {
+    const fixture = managedStackContractFixtures.find(
+      ({ id }) => id === "ports.explicit-port-conflict-with-sibling-fails",
+    );
+    if (fixture === undefined) throw new Error("Missing exact sibling port fixture");
+    expect("error" in fixture.expected ? fixture.expected.error?.code : undefined).toBe(
+      "EXACT_PORT_OCCUPIED",
+    );
     const root = makeRoot();
     const repository = makeRepository(root);
     const service = await openService(root);
     const names = ["default", "review", "review-42"];
+    const automaticPortDocument = { activeFields: ["apiPort"] as const, document: {} };
 
     const resolved = [];
-    for (const [index, stackName] of names.entries()) {
+    for (const stackName of names) {
       resolved.push(
         await service.resolveStack({
           workspacePath: repository,
           operation: "start",
           stackName,
           configuration: running(),
-          portDocument: portDocumentFor(54_400 + index),
+          portDocument: automaticPortDocument,
           initialize: defaultInitialize,
         }),
       );
@@ -409,9 +417,9 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     }
     expect(new Set(resolved.map(({ stack }) => stack.id)).size).toBe(names.length);
     expect(new Set(resolved.map(({ stack }) => stack.paths.root)).size).toBe(names.length);
-    expect(resolved.flatMap(({ stack }) => stack.ports.map((port) => port.port))).toEqual([
-      54_400, 54_401, 54_402,
-    ]);
+    expect(
+      new Set(resolved.flatMap(({ stack }) => stack.ports.map((port) => port.port))),
+    ).toHaveLength(names.length);
 
     const listed = await service.listStacks();
     expect(listed.map((stack) => stack.name).sort()).toEqual([...names].sort());
@@ -419,16 +427,24 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
 
     // The ports the siblings occupy are reserved registry-wide, so a fourth
     // named stack cannot quietly take one of them.
-    await expect(
-      service.resolveStack({
+    const conflictPort = resolved[1]?.stack.ports[0]?.port;
+    if (conflictPort === undefined) throw new Error("Named stack did not persist its exact port");
+    const conflict = await service
+      .resolveStack({
         workspacePath: repository,
         operation: "start",
         stackName: "conflicting",
         configuration: running(),
-        portDocument: portDocumentFor(54_401),
+        portDocument: portDocumentFor(conflictPort),
         initialize: defaultInitialize,
-      }),
-    ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      })
+      .catch((error: unknown) => error);
+    expect(conflict).toBeInstanceOf(ManagedExactPortOccupiedError);
+    if (!(conflict instanceof ManagedExactPortOccupiedError)) {
+      throw new Error("Expected an exact sibling port conflict");
+    }
+    expect(conflict.ownerStackId).toBe(resolved[1]?.stack.id);
+    expect(conflict.ownerStackName).toBe("review");
   });
 
   it("refuses an invalid stack name before claiming or registering anything", async () => {
@@ -584,35 +600,54 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
   });
 
   it("reuses a branch's stack when the branch comes back, renamed or not", async () => {
+    const stickyFixture = managedStackContractFixtures.find(
+      ({ id }) => id === "ports.sticky-ports-reuse-on-return",
+    );
+    if (stickyFixture === undefined) throw new Error("Missing sticky port fixture");
+    expect(stickyFixture.expected.outcome).toBe("reuse");
     const root = makeRoot();
     const repository = makeRepository(root);
     const service = await openService(root);
+    const automaticPortDocument = {
+      activeFields: ["apiPort", "dbPort"] as const,
+      document: {},
+    };
 
     git(repository, "checkout", "-q", "-b", "feat/x");
     const feature = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
-      portDocument: defaultPortDocument,
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
+    expect(feature.stack.ports).toHaveLength(2);
+    expect(feature.stack.ports.every((assignment) => assignment.intent === "automatic")).toBe(true);
+    const featurePorts = feature.stack.ports;
+    await service.updateStack(feature.stack.id, { lifecycle: "stopped" });
     git(repository, "checkout", "-q", "main");
     const main = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
-      portDocument: defaultPortDocument,
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     expect(main.stack.id).not.toBe(feature.stack.id);
+    expect(
+      main.stack.ports.every((assignment) =>
+        featurePorts.every((featureAssignment) => featureAssignment.port !== assignment.port),
+      ),
+    ).toBe(true);
 
     git(repository, "checkout", "-q", "feat/x");
     const returned = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
-      portDocument: defaultPortDocument,
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     expect(returned.outcome).toBe("reuse");
     expect(returned.stack.id).toBe(feature.stack.id);
+    expect(returned.stack.ports).toEqual(featurePorts);
 
     // A rename is git's own operation on the context it owns, so the stack
     // survives it and only the name it is displayed under is refreshed.
@@ -620,14 +655,17 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const renamed = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
-      portDocument: defaultPortDocument,
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     expect(renamed.outcome).toBe("reuse");
     expect(renamed.stack.id).toBe(feature.stack.id);
     expect(renamed.identity.contextId).toBe(feature.identity.contextId);
     expect(renamed.context).toEqual({ kind: "branch", branch: "feat/renamed" });
-    expect(renamed.stack.contextLocator).toBe("feat/renamed");
+    // Running reuse is intentionally read-only: the discovery projection sees
+    // the renamed branch, while the durable stack locator is unchanged until a
+    // mutating lifecycle operation.
+    expect(renamed.stack.contextLocator).toBe("feat/x");
 
     // The repository query itself must retain the branch context predicate: the
     // main branch shares this project and checkout, but its stack is not part of
@@ -713,6 +751,48 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(await snapshot()).toEqual(before);
     expect(existsSync(original)).toBe(false);
     expect(existsSync(moved)).toBe(true);
+  });
+
+  it("settles an active recovery transition before reusing a running stack", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root, "transition-owner");
+    const moved = join(root, "transition-moved");
+    const service = await openService(root);
+    const owner = await service.resolveStack({
+      workspacePath: previous,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: defaultInitialize,
+    });
+    renameSync(previous, moved);
+    const transition = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: crypto.randomUUID(),
+        kind: "rebind-checkout",
+        checkoutId: owner.identity.checkoutId,
+        projectId: owner.identity.projectId,
+        path: moved,
+        now: new Date().toISOString(),
+      }),
+    );
+    expect(transition.phase).toBe("reserved");
+    expect((await service.discoverWorkspace(moved)).state).toBe("transitioning");
+
+    let initialized = 0;
+    const resolved = await service.resolveStack({
+      workspacePath: moved,
+      operation: "start",
+      portDocument: defaultPortDocument,
+      initialize: async () => {
+        initialized += 1;
+        return defaultInitialize();
+      },
+    });
+
+    expect(resolved.outcome).toBe("reuse");
+    expect(resolved.stack.id).toBe(owner.stack.id);
+    expect(initialized).toBe(0);
+    expect((await service.discoverWorkspace(moved)).activeTransition).toBeUndefined();
   });
 
   it("reports a copied-branch running stack before branch repair", async () => {
@@ -1324,11 +1404,12 @@ describe.each(adapters)("managed stack isolation with the %s adapter", (_name, m
   const startSiblings = async (root: string, service: ManagedStackServiceHandle) => {
     const repository = makeRepository(root);
     git(repository, "worktree", "add", "-q", join(root, "wt-b"), "-b", "feat/b");
+    const automaticPortDocument = { activeFields: ["apiPort"] as const, document: {} };
     const primary = await service.resolveStack({
       workspacePath: repository,
       operation: "start",
       configuration: running(),
-      portDocument: portDocumentFor(54_410),
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     const named = await service.resolveStack({
@@ -1336,14 +1417,14 @@ describe.each(adapters)("managed stack isolation with the %s adapter", (_name, m
       operation: "start",
       stackName: "review",
       configuration: running(),
-      portDocument: portDocumentFor(54_411),
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     const worktree = await service.resolveStack({
       workspacePath: join(root, "wt-b"),
       operation: "start",
       configuration: running(),
-      portDocument: portDocumentFor(54_412),
+      portDocument: automaticPortDocument,
       initialize: defaultInitialize,
     });
     return { repository, primary, named, worktree };

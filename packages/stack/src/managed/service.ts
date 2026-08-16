@@ -595,10 +595,9 @@ export class ManagedStackService extends Context.Service<
                 );
                 if (
                   existingStableStack?.lifecycle === "running" &&
-                  !(
-                    settledReport.state === "duplicate" &&
-                    settledReport.workspace.checkoutKind === "ordinary"
-                  ) &&
+                  settledReport.state !== "transitioning" &&
+                  (settledReport.state !== "duplicate" ||
+                    workspaceIdentity.branchCopyIsUnambiguous(settledReport)) &&
                   settledReport.state !== "ambiguous"
                 ) {
                   return yield* startedResolution(
@@ -628,7 +627,13 @@ export class ManagedStackService extends Context.Service<
                 ) {
                   return "folder-to-git";
                 }
-                if (candidate.state === "moved") return "rebind-checkout";
+                if (
+                  candidate.state === "moved" ||
+                  (candidate.state === "transitioning" &&
+                    candidate.activeTransition?.kind === "rebind-checkout")
+                ) {
+                  return "rebind-checkout";
+                }
                 if (
                   ((candidate.state === "adoptable" || candidate.state === "orphaned") &&
                     candidate.recoveryOperations.some(
