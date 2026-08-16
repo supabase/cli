@@ -994,6 +994,13 @@ describe("legacyAcquireShadowDatabase", () => {
           const cold = yield* coldRun(docker, input);
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
+          // Corrupt the published tar's bytes so REPLACEMENT (not just survival) is observable
+          // below — the same-process export dedupe must never mistake this retained-but-unusable
+          // tar for a sibling's fresh publish and skip over it (review: Codex on #6215).
+          const [tarName = ""] = yield* soleTarName(fs, path);
+          const tarPath = path.join(shadowCacheDir(path), tarName);
+          yield* fs.writeFileString(tarPath, "corrupt-bytes");
+
           const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
           expect(out.stderrText).toContain("cached shadow baseline unusable");
           // Falls all the way back to a cold provision — a fresh container with no baseline.
@@ -1009,6 +1016,7 @@ describe("legacyAcquireShadowDatabase", () => {
           // corrupt tar still self-heals within this one run.
           yield* fallback.snapshotBaseline;
           expect(yield* soleTarName(fs, path)).toHaveLength(1);
+          expect(yield* fs.readFileString(tarPath)).toBe(FAKE_PGDATA_TAR);
         }),
       ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
     },

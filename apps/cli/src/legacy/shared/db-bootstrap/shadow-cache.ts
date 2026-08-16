@@ -700,20 +700,30 @@ const legacyShadowExportMutex = Semaphore.makeUnsafe(1);
  * Ensures the tar's global cache directory exists, delegates the actual export to
  * {@link legacyExportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
  * the atomic-publish mechanics), then applies the LRU + TTL retention rule. Runs under
- * {@link legacyShadowExportMutex}, and skips the export entirely when the tar was published
- * while this fiber waited on the permit — a same-key sibling's snapshot is this same baseline,
- * so re-exporting would only re-move ~90MB to replace equivalent bytes.
+ * {@link legacyShadowExportMutex}.
+ *
+ * `skipIfPublished` dedupes same-key sibling exports: when the tar was ABSENT at acquire time
+ * (the `!cached` cold path), one published while this fiber waited on the permit is a sibling's
+ * snapshot of this same baseline, so re-exporting would only re-move ~90MB to replace equivalent
+ * bytes. It must be `false` on the warm-fallback cold path, where a tar deliberately RETAINED
+ * despite an unusable restore (see `LegacyShadowCacheUnavailable.tarSuspect`) is sitting at this
+ * exact path waiting to be atomically replaced — skipping there would leave a genuinely corrupt
+ * tar in place forever, failing every later warm restore into another cold provision (review:
+ * Codex on #6215).
  */
 const legacyWriteShadowBaselineTar = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
   tarPath: string,
   containerId: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<void, LegacyShadowCacheUnavailable> =>
   legacyShadowExportMutex.withPermit(
     Effect.gen(function* () {
-      const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
-      if (published) return;
+      if (skipIfPublished) {
+        const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+        if (published) return;
+      }
       const cacheDir = legacyShadowBaselineCacheDir(input.path);
       yield* input.fs
         .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
@@ -758,6 +768,7 @@ const legacyExportShadowBaseline = <E>(
   key: string,
   tarPath: string,
   containerId: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection> =>
   legacyTimeShadowPhase(
     "baseline-export",
@@ -767,7 +778,13 @@ const legacyExportShadowBaseline = <E>(
       const exported = yield* Effect.result(
         Effect.gen(function* () {
           yield* legacyShadowContainerVerb(spawner, "stop", containerId);
-          yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
+          yield* legacyWriteShadowBaselineTar(
+            spawner,
+            input,
+            tarPath,
+            containerId,
+            skipIfPublished,
+          );
         }),
       );
       // Run-critical phase: the shadow must be back up and answering before this step reports
@@ -849,19 +866,31 @@ const legacyUncachedShadow = <E>(
  * destroys an `--rm` container the moment it exits. Release still removes it with `docker rm -f
  * -v`, so the container's lifetime is unchanged — see
  * {@link LegacyCreateShadowDatabaseInput.autoRemove}.
+ *
+ * `skipIfPublished` MUST reflect whether the tar was absent when this cold acquisition began —
+ * see {@link legacyWriteShadowBaselineTar} for what each value means and why the warm-fallback
+ * caller must pass `false`.
  */
 const legacyColdCachedShadow = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
   key: string,
   tarPath: string,
+  skipIfPublished: boolean,
 ): Effect.Effect<LegacyShadowAcquiredHandle, LegacyShadowDbError> =>
   legacyCreateShadowDatabase(spawner, { ...input, autoRemove: false }).pipe(
     Effect.map(({ containerId }) => ({
       containerId,
       baselinePresent: false,
       snapshotRequired: true,
-      snapshotBaseline: legacyExportShadowBaseline(spawner, input, key, tarPath, containerId),
+      snapshotBaseline: legacyExportShadowBaseline(
+        spawner,
+        input,
+        key,
+        tarPath,
+        containerId,
+        skipIfPublished,
+      ),
     })),
   );
 
@@ -977,7 +1006,9 @@ export const legacyAcquireShadowDatabase = <E>(
     );
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
-    if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
+    // The tar is absent at acquire time, so a tar found at export time can only be a
+    // same-key sibling's fresh publish — dedupe against it.
+    if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath, true);
 
     // Warm hits refresh mtime (so frequently used keys survive LRU/TTL) and sweep abandoned
     // partials — a killed concurrent writer's leftover would otherwise persist indefinitely once
@@ -1002,7 +1033,11 @@ export const legacyAcquireShadowDatabase = <E>(
           if (cause.tarSuspect === true) {
             yield* legacyForgetShadowBaselineTar(input.fs, tarPath);
           }
-          return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
+          // No dedupe on this path: unless it was suspect (deleted above), the unusable tar is
+          // still sitting at this exact path, deliberately retained so this fallback's own
+          // export atomically REPLACES it — skipping because "a tar exists" would leave a
+          // genuinely corrupt one in place forever (review: Codex on #6215).
+          return yield* legacyColdCachedShadow(spawner, input, key, tarPath, false);
         }),
       ),
     );
