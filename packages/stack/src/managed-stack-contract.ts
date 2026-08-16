@@ -2431,7 +2431,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       },
     },
     expected: {
-      outcome: "update",
+      outcome: "reuse",
       selection: {
         projectId: "project-a",
         checkoutId: "checkout-main",
@@ -2446,15 +2446,12 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: {
         stopped_siblings_coexist: true,
-        occupied_start_conflict: "EXACT_PORT_OCCUPIED",
+        occupied_start_conflict: "MANAGED_EXACT_PORT_OCCUPIED",
         assignments_unchanged_after_return: true,
       },
       output: {
         api: {
-          outcome: "update",
-          stackId: "stack-main-default",
-          ports: { api: 55321, db: 55322 },
-          siblingConflictStackId: "stack-main-default",
+          outcome: "reuse",
         },
       },
     },

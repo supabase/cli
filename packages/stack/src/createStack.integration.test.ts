@@ -8,6 +8,7 @@ const handles: StackHandle[] = [];
 
 const isAddressInUse = (error: unknown, depth = 0): boolean => {
   if (depth > 4 || !(error instanceof Error)) return false;
+  if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
   const cause: unknown = error.cause;
   if (typeof cause === "object" && cause !== null && "code" in cause) {
     if (Reflect.get(cause, "code") === "EADDRINUSE") return true;

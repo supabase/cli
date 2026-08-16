@@ -39,3 +39,15 @@ the identity-fix workstream. Per orchestration, the two required full integratio
 restarted while that workstream was active. No fixed ports, probe-close helpers, file-parallelism
 limits, or worker caps were introduced.
 
+## Follow-up review fixes
+
+- Moved the shared-exact sibling scenario into a three-attempt fresh-pair handoff. Each attempt
+  creates and closes its service and Git worktrees and removes its isolated root; only typed exact
+  occupancy or nested/top-level `EADDRINUSE` retries.
+- Made the fixture's public projection executable: the API output contains only the observed
+  outcome, the conflict detail uses `MANAGED_EXACT_PORT_OCCUPIED`, and the unchanged assignment
+  detail is compared with a computed lifecycle result.
+- Direct handoff classifiers now recognize a top-level `error.code` as well as bounded causes.
+- Follow-up focused fixture/concurrency group: pass (1 file, 6 tests, 33.62s).
+- Follow-up mixed direct/daemon/coordinator group: pass (5 files, 13 tests, 46.32s).
+- Follow-up `pnpm --filter @supabase/stack check:all`: pass.

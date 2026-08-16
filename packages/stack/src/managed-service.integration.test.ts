@@ -16,7 +16,10 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { Cause, Context, Deferred, Effect, Exit, ManagedRuntime } from "effect";
 import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
-import { managedStackContractFixtures } from "./managed-stack-contract.ts";
+import {
+  managedStackContractFixtures,
+  type ManagedStackContractScenario,
+} from "./managed-stack-contract.ts";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
   managedRegistryPath,
@@ -527,6 +530,16 @@ const freeTcpPortPair = async (): Promise<readonly [number, number]> =>
       ),
     ),
   );
+
+const isAddressInUse = (error: unknown, depth = 0): boolean => {
+  if (depth > 4 || !(error instanceof Error)) return false;
+  if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
+  const cause: unknown = error.cause;
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    if (Reflect.get(cause, "code") === "EADDRINUSE") return true;
+  }
+  return isAddressInUse(cause, depth + 1);
+};
 
 const withHeldTcpPort = async <A>(port: number, action: () => Promise<A>): Promise<A> =>
   Effect.runPromise(
@@ -2705,10 +2718,159 @@ describe("managed repository and lifecycle", () => {
     await service.close();
   });
 
+  const runStoppedSiblingExactFixture = async (
+    adapter: "in-memory" | "bun-sqlite",
+  ): Promise<void> => {
+    const contract: ManagedStackContractScenario = fixture(
+      "ports.stopped-siblings-with-shared-exact-config-coexist",
+    );
+    const expectedApi = contract.expected.output.api;
+    const expectedDetails = contract.expected.details;
+    if (expectedApi === undefined || expectedDetails === undefined) {
+      throw new Error("Stopped sibling fixture requires API output and details");
+    }
+    const literal = resolvePortIntents(literalPortFixtureDocument(contract));
+    expect(literal).toEqual([
+      { field: "apiPort", key: "api.port", intent: "exact", port: 55321, source: "local" },
+      { field: "dbPort", key: "db.port", intent: "exact", port: 55322, source: "local" },
+    ]);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const root = makeRoot();
+      let service: ManagedStackServiceHandle | undefined;
+      try {
+        service =
+          adapter === "in-memory"
+            ? await makeInMemoryService(root)
+            : await makePersistentService(root);
+        const [apiPort, dbPort] = await freeTcpPortPair();
+        const document = portFixtureDocument(
+          "ports.stopped-siblings-with-shared-exact-config-coexist",
+          apiPort,
+          dbPort,
+        );
+        const initialize = async () => ({ processIds: {}, containerIds: {} });
+        const repositoryRoot = makeRepository(root, "ports-repo");
+        git(
+          repositoryRoot,
+          "worktree",
+          "add",
+          "-q",
+          join(root, "checkout-feature"),
+          "-b",
+          "feat/feature",
+        );
+        const mainWorkspace = repositoryRoot;
+        const featureWorkspace = join(root, "checkout-feature");
+        const main = await service.resolveStack({
+          workspacePath: mainWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
+        const feature = await service.resolveStack({
+          workspacePath: featureWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        await service.updateStack(feature.stack.id, { lifecycle: "stopped" });
+
+        const allStopped = (await service.listStacks()).every(
+          (stack) => stack.lifecycle === "stopped",
+        );
+        expect(allStopped).toBe(expectedDetails.stopped_siblings_coexist);
+        expect(main.identity.projectId).toBe(feature.identity.projectId);
+        expect(main.identity.checkoutId).not.toBe(feature.identity.checkoutId);
+        expect(main.identity.contextId).not.toBe(feature.identity.contextId);
+        expect(feature.stack.ports).toEqual(main.stack.ports);
+        expect(main.stack.ports).toEqual([
+          { key: "api.port", port: apiPort, intent: "exact" },
+          { key: "db.port", port: dbPort, intent: "exact" },
+        ]);
+
+        const startedMain = await service.resolveStack({
+          workspacePath: mainWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        expect(startedMain.outcome).toBe(contract.expected.outcome);
+        expect(expectedApi.outcome).toBe(startedMain.outcome);
+        expect(startedMain.stack.ports).toEqual(main.stack.ports);
+        expect(startedMain.selection.stackName).toBe(contract.expected.selection?.stackName);
+        expect(startedMain.selection.projectId).toBe(main.identity.projectId);
+        expect(startedMain.selection.checkoutId).toBe(main.identity.checkoutId);
+        expect(startedMain.selection.contextId).toBe(main.identity.contextId);
+
+        const conflict = await service
+          .resolveStack({
+            workspacePath: featureWorkspace,
+            operation: "start",
+            portDocument: document,
+            initialize,
+          })
+          .catch((error: unknown) => {
+            if (isAddressInUse(error)) throw error;
+            return error;
+          });
+        expect(conflict).toBeInstanceOf(ManagedExactPortOccupiedError);
+        if (conflict instanceof ManagedExactPortOccupiedError) {
+          expect(conflict.code).toBe(expectedDetails.occupied_start_conflict);
+          expect(conflict.ownerStackId).toBe(main.stack.id);
+          expect(conflict.port).toBe(apiPort);
+        }
+
+        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
+        const returnedFeature = await service.resolveStack({
+          workspacePath: featureWorkspace,
+          operation: "start",
+          portDocument: document,
+          initialize,
+        });
+        const assignmentsUnchanged =
+          returnedFeature.stack.ports.length === feature.stack.ports.length &&
+          returnedFeature.stack.ports.every((assignment, index) => {
+            const previous = feature.stack.ports[index];
+            return (
+              previous !== undefined &&
+              assignment.key === previous.key &&
+              assignment.port === previous.port &&
+              assignment.intent === previous.intent
+            );
+          });
+        expect(assignmentsUnchanged).toBe(expectedDetails.assignments_unchanged_after_return);
+        expect(returnedFeature.stack.ports).toEqual([
+          { key: "api.port", port: apiPort, intent: "exact" },
+          { key: "db.port", port: dbPort, intent: "exact" },
+        ]);
+        await service.updateStack(returnedFeature.stack.id, { lifecycle: "stopped" });
+        return;
+      } catch (error) {
+        if (
+          (!(error instanceof ManagedExactPortOccupiedError) && !isAddressInUse(error)) ||
+          attempt === 2
+        ) {
+          throw error;
+        }
+      } finally {
+        await service?.close();
+        const index = temporaryRoots.indexOf(root);
+        if (index >= 0) temporaryRoots.splice(index, 1);
+        rmSync(root, { force: true, recursive: true });
+      }
+    }
+    throw new Error("Stopped sibling exact-port handoff exhausted retries");
+  };
+
   const runManagedPortFixture = async (
     adapter: "in-memory" | "bun-sqlite",
     fixtureId: (typeof managedPortFixtureIds)[number],
   ): Promise<void> => {
+    if (fixtureId === "ports.stopped-siblings-with-shared-exact-config-coexist") {
+      return runStoppedSiblingExactFixture(adapter);
+    }
     const root = makeRoot();
     const service =
       adapter === "in-memory" ? await makeInMemoryService(root) : await makePersistentService(root);
@@ -2793,71 +2955,6 @@ describe("managed repository and lifecycle", () => {
       );
     }
     try {
-      if (fixtureId === "ports.stopped-siblings-with-shared-exact-config-coexist") {
-        const repositoryRoot = makeRepository(root, "ports-repo");
-        git(
-          repositoryRoot,
-          "worktree",
-          "add",
-          "-q",
-          join(root, "checkout-feature"),
-          "-b",
-          "feat/feature",
-        );
-        const mainWorkspace = repositoryRoot;
-        const featureWorkspace = join(root, "checkout-feature");
-        const main = await service.resolveStack({
-          workspacePath: mainWorkspace,
-          operation: "start",
-          portDocument: document,
-          initialize,
-        });
-        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
-        const feature = await service.resolveStack({
-          workspacePath: featureWorkspace,
-          operation: "start",
-          portDocument: document,
-          initialize,
-        });
-        await service.updateStack(feature.stack.id, { lifecycle: "stopped" });
-        expect((await service.listStacks()).every((stack) => stack.lifecycle === "stopped")).toBe(
-          true,
-        );
-        expect(main.identity.projectId).toBe(feature.identity.projectId);
-        expect(main.identity.checkoutId).not.toBe(feature.identity.checkoutId);
-        expect(main.identity.contextId).not.toBe(feature.identity.contextId);
-        expect(feature.stack.ports).toEqual(main.stack.ports);
-
-        const startedMain = await service.resolveStack({
-          workspacePath: mainWorkspace,
-          operation: "start",
-          portDocument: document,
-          initialize,
-        });
-        expect(startedMain.stack.ports).toEqual(main.stack.ports);
-        const conflict = await service
-          .resolveStack({
-            workspacePath: featureWorkspace,
-            operation: "start",
-            portDocument: document,
-            initialize,
-          })
-          .catch((error: unknown) => error);
-        expect(conflict).toBeInstanceOf(ManagedExactPortOccupiedError);
-        if (conflict instanceof ManagedExactPortOccupiedError) {
-          expect(conflict.ownerStackId).toBe(main.stack.id);
-        }
-        await service.updateStack(main.stack.id, { lifecycle: "stopped" });
-        const returnedFeature = await service.resolveStack({
-          workspacePath: featureWorkspace,
-          operation: "start",
-          portDocument: document,
-          initialize,
-        });
-        expect(returnedFeature.stack.ports).toEqual(feature.stack.ports);
-        return;
-      }
-
       if (fixtureId === "ports.explicit-free-port-is-used") {
         const exactFact = configPortFacts(literalScenario).find((fact) => fact.key === "api.port");
         if (exactFact === undefined) throw new Error("Explicit-free fixture lacks api.port fact");
