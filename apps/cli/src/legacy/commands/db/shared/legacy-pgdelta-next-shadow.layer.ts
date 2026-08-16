@@ -369,12 +369,17 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           // migrations acquire always does, the declarative one only under `parallel`. In the
           // handoff (waits for the seam) and sequential (waits for the whole migrations
           // provision) strategies the declarative acquire is DELAYED, and the key hashes
-          // mid-run-mutable inputs (`supabase/roles.sql`, remote JWKS) that the cold setup
-          // re-reads at its own time — reusing a stale peek there could publish a baseline
-          // under a key that no longer describes it (review: Codex on #6215). Re-resolving at
-          // acquire time also self-corrects a handoff whose key genuinely changed mid-run: the
-          // recomputed key misses the just-exported tar and the declarative side correctly
-          // cold-provisions with the current inputs.
+          // `supabase/roles.sql` while the cold setup re-reads that file at its own time —
+          // reusing a stale peek there could publish a baseline under a key that no longer
+          // describes it (review: Codex on #6215). Re-resolving at acquire time also
+          // self-corrects a handoff whose key genuinely changed mid-run: the recomputed key
+          // misses the just-exported tar and the declarative side correctly cold-provisions
+          // with the current inputs. The key's OTHER live input, the JWKS resolver, is
+          // deliberately exempt from this refresh: it is memoized per shadow input
+          // (`legacyShadowRunInputFromLocalContainerInputs`), so the key and the baked baseline
+          // always carry the SAME value and cannot diverge; a delayed acquire keeps the
+          // command-start JWKS, well inside the staleness the snapshot cache accepts by design
+          // (a warm hit serves a tar up to 14 days old under its matching key).
           const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
           const declarativeOpts =
             strategy === "parallel"
