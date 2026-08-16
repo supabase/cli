@@ -627,6 +627,88 @@ describe("managed port coordinator", () => {
     await Effect.runPromise(rebound.releaseAll);
   });
 
+  it("releases a listener acquired before interruption between candidate binds", async () => {
+    const firstBound = Deferred.makeUnsafe<number>();
+    const firstPort = await freePort();
+    const secondPort = await freePort();
+    const coordinator = ManagedPortCoordinator.make({
+      repository: repositoryFor(),
+      binder: (requests, options) =>
+        reservePortSet(requests, {
+          ...options,
+          onBound: (field, bound) =>
+            field === "apiPort"
+              ? Deferred.succeed(firstBound, bound.port).pipe(
+                  Effect.andThen(Effect.interruptible(Effect.never)),
+                )
+              : Effect.void,
+        }),
+    });
+    const fiber = Effect.runFork(
+      Effect.scoped(
+        coordinator.acquireStart({
+          stack: stack(),
+          operationToken: "operation-a",
+          plan: multiAutomaticPlan([firstPort, secondPort]),
+          now: "2026-01-01T00:00:00.000Z",
+        }),
+      ),
+    );
+    const bound = await Effect.runPromise(Deferred.await(firstBound));
+    expect(bound).toBe(firstPort);
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    const rebound = await Effect.runPromise(
+      reservePortSet([{ field: "apiPort", selection: { kind: "exact", port: bound } }]),
+    );
+    await Effect.runPromise(rebound.releaseAll);
+  });
+
+  it("releases a partial multi-listener candidate when a later fixed bind fails", async () => {
+    const firstPort = await freePort();
+    const occupied = await occupiedPort();
+    try {
+      const plan: ManagedPortPlan = {
+        durable: [
+          {
+            field: "apiPort",
+            key: "api.port",
+            intent: "exact",
+            selection: { kind: "exact", port: firstPort },
+            newlyAllocatedAutomatic: false,
+          },
+          {
+            field: "dbPort",
+            key: "db.port",
+            intent: "exact",
+            selection: { kind: "exact", port: occupied.port },
+            newlyAllocatedAutomatic: false,
+          },
+        ],
+        runtimeOnly: [],
+        inactiveAssignments: [],
+      };
+      const coordinator = ManagedPortCoordinator.make({ repository: repositoryFor() });
+      await expect(
+        Effect.runPromise(
+          Effect.scoped(
+            coordinator.acquireStart({
+              stack: stack(),
+              operationToken: "operation-a",
+              plan,
+              now: "2026-01-01T00:00:00.000Z",
+            }),
+          ),
+        ),
+      ).rejects.toMatchObject({ _tag: "ManagedExactPortOccupiedError", port: occupied.port });
+      const rebound = await Effect.runPromise(
+        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port: firstPort } }]),
+      );
+      await Effect.runPromise(rebound.releaseAll);
+    } finally {
+      await occupied.close();
+    }
+  });
+
   it("uses the real in-memory repository for preferred allocation and sticky reuse", async () => {
     const root = mkdtempSync(join(tmpdir(), "managed-port-coordinator-memory-"));
     const repository = createInMemoryManagedStackRepository();

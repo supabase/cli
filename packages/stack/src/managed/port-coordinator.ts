@@ -50,12 +50,25 @@ export type ManagedPortCandidatePolicy = (
   input: ManagedPortCandidateInput,
 ) => ReadonlyArray<PortReservationRequest>;
 
+interface ManagedPortBinderOptions {
+  readonly reserved?: ReadonlySet<number>;
+  readonly onBound?: (field: PortField, bound: { readonly port: number }) => Effect.Effect<void>;
+}
+
+/** @internal Test-only seam for deterministic bind interruption coverage. */
+type ManagedPortBinder = (
+  requests: ReadonlyArray<PortReservationRequest>,
+  options: ManagedPortBinderOptions,
+) => Effect.Effect<PortLease, PortAllocationError>;
+
 export interface ManagedPortCoordinatorOptions {
   readonly repository: ManagedStackRepositoryShape;
   /** Internal deterministic candidate seam; callers should use the default policy. */
   readonly candidatePolicy?: ManagedPortCandidatePolicy;
   /** Internal retry seam. The production default is eight complete candidates. */
   readonly retryLimit?: number;
+  /** @internal Test-only seam; production callers should use the real socket binder. */
+  readonly binder?: ManagedPortBinder;
 }
 
 export interface ManagedPortCoordinatorShape {
@@ -68,6 +81,9 @@ export interface ManagedPortCoordinatorShape {
 }
 
 const DEFAULT_RETRY_LIMIT = 8;
+
+const bindWithReservePortSet: ManagedPortBinder = (requests, options) =>
+  reservePortSet(requests, options);
 
 const defaultCandidatePolicy = ({
   plan,
@@ -270,6 +286,7 @@ const retryableClaimRace = (
 const makeCoordinator = (options: ManagedPortCoordinatorOptions): ManagedPortCoordinatorShape => {
   const candidatePolicy = options.candidatePolicy ?? defaultCandidatePolicy;
   const retryLimit = options.retryLimit ?? DEFAULT_RETRY_LIMIT;
+  const binder = options.binder ?? bindWithReservePortSet;
 
   const acquireStart: ManagedPortCoordinatorShape["acquireStart"] = (input) =>
     Effect.suspend(() => {
@@ -300,7 +317,7 @@ const makeCoordinator = (options: ManagedPortCoordinatorOptions): ManagedPortCoo
             attempt: attemptNumber,
           });
           const lease = yield* Effect.acquireRelease(
-            reservePortSet(requests, { reserved }).pipe(
+            binder(requests, { reserved }).pipe(
               Effect.mapError((error) =>
                 mapAllocationError(requests, input.plan, input.stack.id, error),
               ),
