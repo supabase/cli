@@ -106,9 +106,12 @@ const makeInput = (
   };
 };
 
-const startLoopback = async (input: ManagedDaemonStartInput) =>
+const startLoopback = async (
+  input: ManagedDaemonStartInput,
+  testMode: "bind-all" | "fail-after-bind" | "hold-reservations" = "bind-all",
+) =>
   Effect.runPromise(
-    managedDaemonLayerWithEntryPoint(input, managedDaemonTestEntryPoint).pipe(
+    managedDaemonLayerWithEntryPoint(input, managedDaemonTestEntryPoint, { testMode }).pipe(
       Effect.provide(Layer.mergeAll(BunServices.layer, unixHttpClientLayer)),
     ),
   );
@@ -269,7 +272,7 @@ describe("managed daemon", () => {
     roots.push(root);
     const config = makeAllServicesConfig(join(root, "workspace"));
     const input = makeInput(root, config, "reservation.sock");
-    await startLoopback(input);
+    await startLoopback(input, "hold-reservations");
     const stacks = await listStacksAndRegisterChildren(input.stateRoot);
     const stack = stacks[0];
     if (stack === undefined || stack.runtimeMetadata.pid === undefined) {
@@ -346,7 +349,9 @@ describe("managed daemon", () => {
     roots.push(root);
     const config = makeAllServicesConfig(join(root, "workspace"));
     const input = makeInput(root, config, "failure.sock");
-    await expect(startLoopback(input)).rejects.toThrow("loopback bootstrap failure");
+    await expect(startLoopback(input, "fail-after-bind")).rejects.toThrow(
+      "loopback bootstrap failure",
+    );
     const registry = await createManagedStackService({ stateRoot: input.stateRoot });
     try {
       const stacks = await registry.listStacks();

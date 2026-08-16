@@ -24,8 +24,8 @@ function formatServiceStateLine(service: {
     : `${service.name}: ${service.status} (${service.error})`;
 }
 
-function formatPortsLine(ports: { readonly apiPort?: number; readonly dbPort?: number }) {
-  return `Ports: API ${ports.apiPort ?? "unavailable"}, DB ${ports.dbPort ?? "unavailable"}`;
+function formatPortsLine(ports: { readonly apiPort: number; readonly dbPort: number }) {
+  return `Ports: API ${ports.apiPort}, DB ${ports.dbPort}`;
 }
 
 const renderUpdateStatus = Effect.fnUntraced(function* (

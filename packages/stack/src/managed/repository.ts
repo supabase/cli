@@ -1100,6 +1100,9 @@ export interface ManagedStackRepositoryShape {
   readonly claimStartPorts: (
     input: ClaimManagedStartPortsInput,
   ) => Effect.Effect<ManagedStackRecord, ClaimManagedStartPortsFailure>;
+  readonly getActiveOperation: (
+    stackId: string,
+  ) => Effect.Effect<ManagedOperationRecord | undefined>;
   readonly listActiveOperations: (
     startedBefore?: string,
   ) => Effect.Effect<ReadonlyArray<ManagedOperationRecord>>;

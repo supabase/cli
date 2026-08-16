@@ -25,6 +25,7 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { FileSystem, Path } from "effect";
 import { terminateChildProcess } from "./terminateChild.ts";
+import { causeMessage } from "./managed/failure.ts";
 
 type ManagedDaemonConfig = Omit<StackConfig, "functions">;
 
@@ -39,7 +40,12 @@ export interface ManagedDaemonStartInput {
   readonly socketPath: string;
 }
 
-type ManagedDaemonStartMessage = ManagedDaemonStartInput & { readonly type: "start" };
+type ManagedDaemonTestMode = "bind-all" | "fail-after-bind" | "hold-reservations";
+
+type ManagedDaemonStartMessage = ManagedDaemonStartInput & {
+  readonly type: "start";
+  readonly testMode?: ManagedDaemonTestMode;
+};
 
 export class ManagedDaemonStartError extends Data.TaggedError("ManagedDaemonStartError")<{
   readonly message: string;
@@ -50,6 +56,7 @@ interface ManagedDaemonRuntimeBootstrapInput {
   readonly config: ResolvedDaemonConfig;
   readonly allocation: ManagedRuntimePortAllocation;
   readonly socketPath: string;
+  readonly testMode?: ManagedDaemonTestMode;
 }
 
 /** Test-only runtime seam; the production entrypoints use the normal stack runtime. */
@@ -89,6 +96,10 @@ const isManagedDaemonStartMessage = (value: unknown): value is ManagedDaemonStar
     isRecord(value.config) &&
     isRecord(value.effectiveConfig) &&
     (value.valueOrigins === undefined || Array.isArray(value.valueOrigins)) &&
+    (value.testMode === undefined ||
+      value.testMode === "bind-all" ||
+      value.testMode === "fail-after-bind" ||
+      value.testMode === "hold-reservations") &&
     typeof value.socketPath === "string"
   );
 };
@@ -231,6 +242,7 @@ export async function runManagedDaemon(
             config,
             allocation,
             socketPath: message.socketPath,
+            testMode: message.testMode,
           });
           await Effect.runPromise(allocation.lease.handoff);
           return metadata;
@@ -294,17 +306,7 @@ export async function runManagedDaemon(
     await service.close();
     process.exit(0);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error && error.message.length > 0
-        ? error.message
-        : (() => {
-            try {
-              const serialized = JSON.stringify(error);
-              return serialized === undefined ? String(error) : serialized;
-            } catch {
-              return String(error);
-            }
-          })();
+    const errorMessage = causeMessage(error);
     if (!startupAcknowledged && process.connected) {
       process.send?.({ type: "error", message: errorMessage });
     }
@@ -326,7 +328,7 @@ const forkManagedDaemon = (
       }),
     catch: (cause) =>
       new ManagedDaemonStartError({
-        message: `Failed to fork managed daemon: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `Failed to fork managed daemon: ${causeMessage(cause)}`,
       }),
   });
 
@@ -345,7 +347,7 @@ const sendManagedDaemonStart = (
       resume(
         Effect.fail(
           new ManagedDaemonStartError({
-            message: cause instanceof Error ? cause.message : String(cause),
+            message: causeMessage(cause),
           }),
         ),
       );
@@ -411,6 +413,7 @@ const waitForManagedDaemonResponse = (
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
   daemonEntryPoint: string,
+  options: { readonly testMode?: ManagedDaemonTestMode } = {},
 ): Effect.Effect<
   Layer.Layer<Stack>,
   ManagedDaemonStartError,
@@ -435,7 +438,7 @@ export const managedDaemonLayer = (
         ),
         Effect.forkChild({ startImmediately: true }),
       );
-      yield* sendManagedDaemonStart(child, { ...input, type: "start" });
+      yield* sendManagedDaemonStart(child, { ...input, ...options, type: "start" });
       const response = yield* Fiber.join(responseFiber);
       if (response.type === "error") {
         return yield* new ManagedDaemonStartError({ message: response.message });

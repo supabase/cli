@@ -9,7 +9,7 @@ import { runManagedDaemon, type ManagedDaemonDependencies } from "./managed-daem
 import { createManagedStackServiceWith } from "./managed/create-service.ts";
 import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
 import { platformFactory } from "./platform-bun.ts";
-import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
+import { portFieldsForConfigInput } from "./ServicePorts.ts";
 
 /** Marker written by the loopback bootstrap before the stack is published. */
 export const MANAGED_DAEMON_TEST_PORT_MARKER = "managed-daemon-test-ports.json";
@@ -56,15 +56,15 @@ const noRuntimeDaemonServer: ManagedDaemonDependencies = {
       ownerPid,
       publicationPollMs: 1,
     }),
-  runtimeBootstrap: async ({ stack, config, allocation, socketPath }) => {
-    const fields = allocatedPortFieldsForConfig(config);
+  runtimeBootstrap: async ({ stack, config, allocation, socketPath, testMode }) => {
+    const fields = portFieldsForConfigInput(config);
     const fieldPorts = fields.flatMap((field): ReadonlyArray<readonly [typeof field, number]> => {
       const port = allocation.ports[field];
       return port === undefined ? [] : [[field, port]];
     });
     const servers: Array<Server> = [];
     try {
-      if (!socketPath.includes("reservation")) {
+      if (testMode !== "hold-reservations") {
         for (const [field, port] of fieldPorts) {
           await Effect.runPromise(allocation.lease.release([field]));
           servers.push(await bindLoopbackPort(port));
@@ -95,7 +95,7 @@ const noRuntimeDaemonServer: ManagedDaemonDependencies = {
       JSON.stringify(ports),
       "utf8",
     );
-    if (socketPath.includes("failure")) {
+    if (testMode === "fail-after-bind") {
       await closeLoopbackServers();
       throw new Error("loopback bootstrap failure");
     }

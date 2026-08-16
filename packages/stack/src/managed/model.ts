@@ -1,5 +1,6 @@
 import { Data } from "effect";
 import type { ConfigPortKey, PortField } from "../PortCatalog.ts";
+import { causeMessage } from "./failure.ts";
 
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
@@ -504,11 +505,27 @@ export class ManagedPortReservationError extends Data.TaggedError("ManagedPortRe
   }
 }
 
+const managedPortOwnerPhrase = (owner: {
+  readonly stackId: string;
+  readonly ownerStackId?: string;
+  readonly ownerStackName?: string;
+  readonly ownerKey?: ConfigPortKey;
+}): string => {
+  const stack =
+    owner.ownerStackId === undefined
+      ? "another process"
+      : owner.ownerStackId === owner.stackId
+        ? "this managed stack"
+        : `managed stack ${owner.ownerStackName === undefined ? owner.ownerStackId : `${owner.ownerStackName} (${owner.ownerStackId})`}`;
+  return owner.ownerKey === undefined ? stack : `${stack} through ${owner.ownerKey}`;
+};
+
 export class ManagedExactPortOccupiedError extends Data.TaggedError(
   "ManagedExactPortOccupiedError",
 )<{
   readonly key: ConfigPortKey;
   readonly port: number;
+  readonly stackId: string;
   readonly ownerStackId?: string;
   readonly ownerStackName?: string;
   readonly ownerKey?: ConfigPortKey;
@@ -516,12 +533,7 @@ export class ManagedExactPortOccupiedError extends Data.TaggedError(
   readonly code = "MANAGED_EXACT_PORT_OCCUPIED" as const;
 
   override get message(): string {
-    const owner =
-      this.ownerStackId === undefined
-        ? "another process"
-        : `managed stack ${this.ownerStackName === undefined ? this.ownerStackId : `${this.ownerStackName} (${this.ownerStackId})`}`;
-    const ownerKey = this.ownerKey === undefined ? "" : ` through ${this.ownerKey}`;
-    return `Port ${this.port} configured by ${this.key} is occupied by ${owner}${ownerKey}`;
+    return `Port ${this.port} configured by ${this.key} is occupied by ${managedPortOwnerPhrase(this)}`;
   }
 }
 
@@ -538,12 +550,7 @@ export class ManagedStickyPortOccupiedError extends Data.TaggedError(
   readonly code = "MANAGED_STICKY_PORT_OCCUPIED" as const;
 
   override get message(): string {
-    const owner =
-      this.ownerStackId === undefined
-        ? "another process"
-        : `managed stack ${this.ownerStackName === undefined ? this.ownerStackId : `${this.ownerStackName} (${this.ownerStackId})`}`;
-    const ownerKey = this.ownerKey === undefined ? "" : ` through ${this.ownerKey}`;
-    return `Sticky port ${this.port} for ${this.key} on managed stack ${this.stackId} is occupied by ${owner}${ownerKey}`;
+    return `Sticky port ${this.port} for ${this.key} on managed stack ${this.stackId} is occupied by ${managedPortOwnerPhrase(this)}`;
   }
 }
 
@@ -566,11 +573,7 @@ export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAll
   readonly code = "MANAGED_PORT_ALLOCATION_FAILED" as const;
 
   override get message(): string {
-    const detail =
-      this.cause instanceof Error && this.cause.message.length > 0
-        ? this.cause.message
-        : String(this.cause);
-    return `Failed to allocate managed ports ${this.fields.join(", ")}: ${detail}`;
+    return `Failed to allocate managed ports ${this.fields.join(", ")}: ${causeMessage(this.cause)}`;
   }
 }
 
@@ -580,11 +583,7 @@ export class ManagedRuntimeStartError extends Data.TaggedError("ManagedRuntimeSt
   readonly code = "MANAGED_RUNTIME_START_FAILED" as const;
 
   override get message(): string {
-    const detail =
-      this.cause instanceof Error && this.cause.message.length > 0
-        ? this.cause.message
-        : String(this.cause);
-    return `Managed runtime failed to start: ${detail}`;
+    return `Managed runtime failed to start: ${causeMessage(this.cause)}`;
   }
 }
 
@@ -646,7 +645,6 @@ export class ManagedStackInitializationError extends Data.TaggedError(
 )<{
   readonly stackId: string;
   readonly cause: unknown;
-  readonly cleanupErrors: ReadonlyArray<unknown>;
 }> {
   readonly code = "MANAGED_STACK_INITIALIZATION_FAILED" as const;
 

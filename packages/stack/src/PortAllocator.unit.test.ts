@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Cause, Effect, Exit, Schema } from "effect";
-import { ResolvedPortsSchema } from "./effect.ts";
+import { PortSetSchema } from "./effect.ts";
 import { allocatePortSet, PortAllocationError } from "./PortAllocator.ts";
 import { DEFAULT_PORTS, type PortField } from "./PortCatalog.ts";
 
@@ -18,7 +18,7 @@ const fakePortProbe = (
   return {
     exact: (port: number) =>
       unavailable.has(port)
-        ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))
+        ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port }))
         : Effect.succeed(port),
     random: (exclude: ReadonlySet<number>) =>
       Effect.gen(function* () {
@@ -59,8 +59,8 @@ describe("allocatePortSet", () => {
     }
   });
 
-  it("exports the partial resolved ports schema", () => {
-    expect(Schema.decodeUnknownSync(ResolvedPortsSchema)({ apiPort: 54321 })).toEqual({
+  it("exports the partial allocated port-set schema", () => {
+    expect(Schema.decodeUnknownSync(PortSetSchema)({ apiPort: 54321 })).toEqual({
       apiPort: 54321,
     });
   });

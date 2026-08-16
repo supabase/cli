@@ -1,6 +1,6 @@
 import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
-import type { ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
+import type { StackConfig } from "./StackConfig.ts";
 
 export const serviceEnabledForConfig = (
   config: StackConfig,
@@ -24,17 +24,6 @@ export const serviceEnabledForConfig = (
 
 /** Classifies active services before any ports are resolved. */
 export const portFieldsForConfigInput = (config: StackConfig = {}): ReadonlyArray<PortField> =>
-  PORT_FIELDS.filter(
-    (field) =>
-      field === "apiPort" ||
-      field === "dbPort" ||
-      (PORT_CATALOG[field].service !== undefined &&
-        serviceEnabledForConfig(config, PORT_CATALOG[field].service)),
-  );
-
-export const allocatedPortFieldsForConfig = (
-  config: ResolvedStackConfig,
-): ReadonlyArray<PortField> =>
   PORT_FIELDS.filter(
     (field) =>
       field === "apiPort" ||

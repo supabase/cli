@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -342,17 +343,34 @@ describe("resolveConfig explicit keyless ports", () => {
     expect(config.ports.poolerApiPort).toBe(42424);
   });
 
-  it("reserves explicit ports before omitted fields claim their preferred defaults", async () => {
-    const config = await resolveConfig({
-      mode: "native",
-      edgeRuntime: false,
-      postgrest: false,
-      auth: false,
-      analytics: { port: 54_322 },
-    });
+  it("orders explicit ports before omitted fields claim their preferred values", async () => {
+    const sharedCandidate = 61_234;
+    const config = await resolveConfig(
+      {
+        mode: "native",
+        edgeRuntime: false,
+        postgrest: false,
+        auth: false,
+        analytics: { port: sharedCandidate },
+      },
+      {
+        preferredPorts: { dbPort: sharedCandidate },
+        portAllocator: (requests) => {
+          expect(requests[0]).toEqual({
+            field: "analyticsPort",
+            selection: { kind: "exact", port: sharedCandidate },
+          });
+          return Effect.succeed({
+            apiPort: 61_233,
+            dbPort: 61_235,
+            analyticsPort: sharedCandidate,
+          });
+        },
+      },
+    );
 
-    expect(config.ports.analyticsPort).toBe(54_322);
-    expect(config.ports.dbPort).not.toBe(54_322);
+    expect(config.ports.analyticsPort).toBe(sharedCandidate);
+    expect(config.ports.dbPort).not.toBe(sharedCandidate);
   });
 });
 

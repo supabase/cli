@@ -1,6 +1,6 @@
 import { Cause, Duration, Effect, Exit, FileSystem, Option, Schedule } from "effect";
 import type { PortLease } from "../PortAllocator.ts";
-import type { ResolvedPorts } from "../PortCatalog.ts";
+import type { PortSet } from "../PortCatalog.ts";
 import {
   InvalidManagedIdentityError,
   InvalidManagedPortError,
@@ -35,6 +35,7 @@ import {
   type UpdateManagedStackFailure,
   type ManagedIdentityRecoveryError,
   type PruneManagedIdentityMetadataResult,
+  type ReconcileManagedOperationFailure,
 } from "./repository.ts";
 import { assertManagedUuid } from "./ids.ts";
 import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
@@ -56,7 +57,7 @@ export interface StackLifecycleDependencies {
 }
 
 export interface ManagedRuntimePortAllocation {
-  readonly ports: ResolvedPorts;
+  readonly ports: PortSet;
   readonly lease: PortLease;
 }
 
@@ -190,6 +191,11 @@ type RegisterManagedStackFailure =
   | PrepareStackFailure
   | UpdateManagedStackConfigurationFailure;
 
+type SettleDeleteForStartFailure =
+  | ManagedAbandonedOperationError
+  | ManagedOperationInProgressError
+  | ReconcileManagedOperationFailure;
+
 const dataRemoved: DeleteManagedStackResult["dataReclamation"] = { outcome: "removed" };
 
 const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation"] => ({
@@ -231,6 +237,11 @@ export interface StackLifecycle {
   readonly registerStack: (
     input: RegisterManagedStackInput,
   ) => Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure>;
+  /** Clears a dead delete claim when the persisted runtime can be classified safely. */
+  readonly settleDeleteForStart: (
+    stack: ManagedStackRecord,
+    operation?: ManagedOperationRecord,
+  ) => Effect.Effect<ManagedStackRecord, SettleDeleteForStartFailure>;
   /**
    * The `stop` callback's failure reaches the caller unchanged — a stack that
    * refused to stop was not deleted — so its error type flows through.
@@ -448,6 +459,46 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
         );
     });
 
+  const settleDeleteForStart: StackLifecycle["settleDeleteForStart"] = (stack, knownOperation) =>
+    Effect.gen(function* () {
+      const operation = knownOperation ?? (yield* repository.getActiveOperation(stack.id));
+      if (operation === undefined || operation.kind !== "delete") return stack;
+
+      if (isUsableManagedOwnerPid(operation.ownerPid)) {
+        const ownerAlive = yield* Effect.exit(probeProcessAlive(operation.ownerPid));
+        if (Exit.isFailure(ownerAlive)) {
+          return yield* Effect.fail(new ManagedAbandonedOperationError({ stackId: stack.id }));
+        }
+        if (ownerAlive.value) {
+          return yield* Effect.fail(
+            new ManagedOperationInProgressError({ stackId: stack.id, operation }),
+          );
+        }
+      }
+
+      const lifecycle = yield* Effect.gen(function* () {
+        if (stack.lifecycle === "stopped" || stack.lifecycle === "failed") return "stopped";
+        const runtimePid = stack.runtimeMetadata.pid;
+        if (!isUsableManagedOwnerPid(runtimePid)) return undefined;
+        const runtimeAlive = yield* Effect.exit(probeProcessAlive(runtimePid));
+        if (Exit.isFailure(runtimeAlive)) return undefined;
+        return runtimeAlive.value ? "running" : "stopped";
+      });
+      if (lifecycle === undefined) {
+        return yield* Effect.fail(new ManagedAbandonedOperationError({ stackId: stack.id }));
+      }
+
+      const reconciled = yield* repository.reconcileOperation(
+        stack.id,
+        operation.token,
+        lifecycle,
+        now(),
+      );
+      return reconciled.outcome === "recovered"
+        ? reconciled.stack
+        : yield* Effect.fail(new ManagedStackNotFoundError({ stackId: stack.id }));
+    });
+
   const registerStack = (
     input: RegisterManagedStackInput,
   ): Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure> =>
@@ -502,7 +553,7 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
           ? Effect.succeed(stack)
           : updateStackRecord(stack.id, configurationWithoutPorts);
 
-      const isPortFailure = (error: unknown): error is ManagedPortStartFailure => {
+      const isExpectedStartFailure = (error: unknown): error is ManagedPortStartFailure => {
         if (!(error instanceof Error) || !("_tag" in error)) return false;
         const tag = error._tag;
         return (
@@ -691,11 +742,13 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
                   );
                 }
                 if (prepared.operation.kind === "delete") {
-                  return yield* Effect.fail(
-                    new ManagedOperationInProgressError({
-                      stackId: prepared.stack.id,
-                      operation: prepared.operation,
-                    }),
+                  const settled = yield* settleDeleteForStart(prepared.stack, prepared.operation);
+                  if (settled.lifecycle === "running") {
+                    return { outcome: "reuse" as const, stack: settled };
+                  }
+                  const operation = yield* claimStartOperation(settled);
+                  return yield* runStart(settled, operation, false).pipe(
+                    releasingClaimOnFailure(settled.id, operation.token),
                   );
                 }
                 if (
@@ -730,31 +783,24 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
           ).pipe(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
-                const cleanupErrors: Array<unknown> = [];
                 const current = yield* repository.getStack(pending.id);
                 if (current?.status === "pending") {
                   const aborted = yield* Effect.exit(
                     repository.abortPendingStack(pending.id, operation.token),
                   );
-                  if (Exit.isFailure(aborted)) {
-                    cleanupErrors.push(Cause.squash(aborted.cause));
-                  } else {
-                    const reclaimed = yield* Effect.exit(removeStackState(pending));
-                    if (Exit.isFailure(reclaimed)) {
-                      cleanupErrors.push(Cause.squash(reclaimed.cause));
-                    }
+                  if (Exit.isSuccess(aborted)) {
+                    yield* Effect.exit(removeStackState(pending));
                   }
                 }
                 if (Cause.hasInterruptsOnly(cause)) return yield* Effect.interrupt;
                 const error = Cause.squash(cause);
-                if (error instanceof ManagedRuntimeStartError || isPortFailure(error)) {
+                if (error instanceof ManagedRuntimeStartError || isExpectedStartFailure(error)) {
                   return yield* Effect.fail(error);
                 }
                 return yield* Effect.fail(
                   new ManagedStackInitializationError({
                     stackId: pending.id,
                     cause: error,
-                    cleanupErrors,
                   }),
                 );
               }),
@@ -982,6 +1028,7 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
     listStacks: repository.listStackProjections,
     updateStack: updateStackRecord,
     registerStack,
+    settleDeleteForStart,
     deleteStack,
     reconcileAbandonedOperations,
     prune,

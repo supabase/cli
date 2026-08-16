@@ -22,7 +22,11 @@ export interface AllocatedPorts {
   readonly poolerApiPort: number;
 }
 
-export type ResolvedPorts = Readonly<Partial<AllocatedPorts>>;
+/** A selected allocation may contain any subset of the catalog fields. */
+export type PortSet = Readonly<Partial<AllocatedPorts>>;
+
+/** Every runnable or persisted stack has the two core listeners. */
+export type ResolvedPorts = Readonly<PortSet & Pick<AllocatedPorts, "apiPort" | "dbPort">>;
 
 export type PortField = keyof AllocatedPorts;
 
@@ -154,7 +158,7 @@ const preferredPort = (field: PortField): number => {
 
 export const DEFAULT_API_PORT = preferredPort("apiPort");
 export const DEFAULT_DB_PORT = preferredPort("dbPort");
-export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
+export const DEFAULT_PORTS: PortSet = {
   apiPort: preferredPort("apiPort"),
   dbPort: preferredPort("dbPort"),
   edgeRuntimePort: preferredPort("edgeRuntimePort"),
@@ -188,7 +192,7 @@ export const AllocatedPortsSchema = Schema.Struct({
   poolerApiPort: Schema.Number,
 });
 
-export const ResolvedPortsSchema = Schema.Struct({
+export const PortSetSchema = Schema.Struct({
   apiPort: Schema.optionalKey(Schema.Number),
   dbPort: Schema.optionalKey(Schema.Number),
   authPort: Schema.optionalKey(Schema.Number),
@@ -207,4 +211,10 @@ export const ResolvedPortsSchema = Schema.Struct({
   analyticsPort: Schema.optionalKey(Schema.Number),
   poolerPort: Schema.optionalKey(Schema.Number),
   poolerApiPort: Schema.optionalKey(Schema.Number),
+});
+
+export const ResolvedPortsSchema = Schema.Struct({
+  ...PortSetSchema.fields,
+  apiPort: Schema.Number,
+  dbPort: Schema.Number,
 });

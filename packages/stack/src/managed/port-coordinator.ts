@@ -5,7 +5,7 @@ import {
   type PortLease,
   type PortReservationRequest,
 } from "../PortAllocator.ts";
-import type { PortField, ResolvedPorts } from "../PortCatalog.ts";
+import type { PortField, PortSet } from "../PortCatalog.ts";
 import {
   ManagedExactPortOccupiedError,
   ManagedPortAllocationError,
@@ -26,7 +26,7 @@ import {
 export interface ManagedPortStartAllocation {
   readonly stack: ManagedStackRecord;
   readonly durableAssignments: ReadonlyArray<ManagedPortAssignment>;
-  readonly ports: ResolvedPorts;
+  readonly ports: PortSet;
   readonly lease: PortLease;
 }
 
@@ -36,19 +36,6 @@ export type ManagedPortStartFailure =
   | ManagedStickyPortOccupiedError
   | ManagedPortClaimRaceError
   | ManagedPortAllocationError;
-
-export interface ManagedPortCandidateInput {
-  readonly stack: ManagedStackRecord;
-  readonly plan: ManagedPortPlan;
-  readonly reservations: ReadonlyArray<ManagedPortReservation>;
-  readonly requests: ReadonlyArray<PortReservationRequest>;
-  readonly reserved: ReadonlySet<number>;
-  readonly attempt: number;
-}
-
-export type ManagedPortCandidatePolicy = (
-  input: ManagedPortCandidateInput,
-) => ReadonlyArray<PortReservationRequest>;
 
 interface ManagedPortBinderOptions {
   readonly reserved?: ReadonlySet<number>;
@@ -63,8 +50,6 @@ type ManagedPortBinder = (
 
 export interface ManagedPortCoordinatorOptions {
   readonly repository: ManagedStackRepositoryShape;
-  /** Internal deterministic candidate seam; callers should use the default policy. */
-  readonly candidatePolicy?: ManagedPortCandidatePolicy;
   /** Internal retry seam. The production default is eight complete candidates. */
   readonly retryLimit?: number;
 }
@@ -83,9 +68,7 @@ const DEFAULT_RETRY_LIMIT = 8;
 const bindWithReservePortSet: ManagedPortBinder = (requests, options) =>
   reservePortSet(requests, options);
 
-const defaultCandidatePolicy = ({
-  plan,
-}: ManagedPortCandidateInput): ReadonlyArray<PortReservationRequest> => {
+const requestsForPlan = (plan: ManagedPortPlan): ReadonlyArray<PortReservationRequest> => {
   const durable = plan.durable.map(({ field, selection }) => ({ field, selection }));
   return [
     ...durable.filter((request) => request.selection.kind === "exact"),
@@ -107,7 +90,7 @@ const ownerFor = (
 
 const assignmentFor = (
   entry: ManagedDurablePortPlanEntry,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ManagedPortAssignment | undefined => {
   const port = ports[entry.field];
   return port === undefined ? undefined : { key: entry.key, port, intent: entry.intent };
@@ -123,11 +106,13 @@ const reservationPorts = (
 const exactError = (
   entry: ManagedDurablePortPlanEntry,
   port: number,
+  stackId: string,
   owner: ManagedPortReservation | undefined,
 ): ManagedExactPortOccupiedError =>
   new ManagedExactPortOccupiedError({
     key: entry.key,
     port,
+    stackId,
     ...(owner === undefined
       ? {}
       : {
@@ -193,7 +178,7 @@ const preflight = (
         _tag: "Failure",
         error:
           entry.intent === "exact"
-            ? exactError(entry, entry.selection.port, owner)
+            ? exactError(entry, entry.selection.port, stack.id, owner)
             : stickyError(entry, candidatePort, stack.id, owner),
       };
     }
@@ -207,7 +192,7 @@ const preflight = (
     if (entry.intent === "exact") {
       return {
         _tag: "Failure",
-        error: exactError(entry, entry.selection.port, owner),
+        error: exactError(entry, entry.selection.port, stack.id, owner),
       };
     }
     return {
@@ -238,7 +223,11 @@ const mapAllocationError = (
         : plan.durable.find((candidate) => candidate.field === request.field);
     if (entry !== undefined) {
       return entry.intent === "exact"
-        ? new ManagedExactPortOccupiedError({ key: entry.key, port: error.port })
+        ? new ManagedExactPortOccupiedError({
+            key: entry.key,
+            port: error.port,
+            stackId,
+          })
         : new ManagedStickyPortOccupiedError({ key: entry.key, port: error.port, stackId });
     }
   }
@@ -275,7 +264,6 @@ const makeCoordinator = (
   options: ManagedPortCoordinatorOptions,
   binder: ManagedPortBinder = bindWithReservePortSet,
 ): ManagedPortCoordinatorShape => {
-  const candidatePolicy = options.candidatePolicy ?? defaultCandidatePolicy;
   const retryLimit = options.retryLimit ?? DEFAULT_RETRY_LIMIT;
 
   const acquireStart: ManagedPortCoordinatorShape["acquireStart"] = (input) =>
@@ -290,22 +278,7 @@ const makeCoordinator = (
             return yield* Effect.fail(preflightResult.error);
           }
           const reserved = preflightResult.reserved;
-          const baseRequests = defaultCandidatePolicy({
-            stack: input.stack,
-            plan: input.plan,
-            reservations,
-            requests: [],
-            reserved,
-            attempt: attemptNumber,
-          });
-          const requests = candidatePolicy({
-            stack: input.stack,
-            plan: input.plan,
-            reservations,
-            requests: baseRequests,
-            reserved,
-            attempt: attemptNumber,
-          });
+          const requests = requestsForPlan(input.plan);
           const lease = yield* Effect.acquireRelease(
             binder(requests, { reserved }).pipe(
               Effect.mapError((error) =>

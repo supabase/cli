@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:net";
 import { Data, Effect, Schema, Semaphore } from "effect";
-import { ResolvedPortsSchema, type PortField, type ResolvedPorts } from "./PortCatalog.ts";
+import { PortSetSchema, type PortField, type PortSet } from "./PortCatalog.ts";
 
 export class PortAllocationError extends Data.TaggedError("PortAllocationError")<{
   readonly detail: string;
@@ -142,7 +142,7 @@ const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =
   });
 
 export interface PortLease {
-  readonly ports: ResolvedPorts;
+  readonly ports: PortSet;
   readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
@@ -188,7 +188,7 @@ const releaseReservations = (
   );
 
 const reserveReservations = (
-  ports: ResolvedPorts,
+  ports: PortSet,
   reservations: Map<PortField, Server>,
   fields: ReadonlyArray<PortField>,
 ): Effect.Effect<void, PortAllocationError> =>
@@ -207,18 +207,21 @@ const reserveReservations = (
             }),
           );
         }
-        return Effect.tap(bindPort(port), ({ server }) =>
-          Effect.sync(() => {
-            reservations.set(field, server);
-            acquired.push(field);
-          }),
+        return bindPort(port).pipe(
+          Effect.mapError((error) => withPortField(field, error)),
+          Effect.tap(({ server }) =>
+            Effect.sync(() => {
+              reservations.set(field, server);
+              acquired.push(field);
+            }),
+          ),
         );
       },
       { discard: true },
     ).pipe(Effect.onError(() => releaseReservations(reservations, acquired)));
   });
 
-const makePortLease = (ports: ResolvedPorts, reservations: Map<PortField, Server>): PortLease => {
+const makePortLease = (ports: PortSet, reservations: Map<PortField, Server>): PortLease => {
   const lock = Semaphore.makeUnsafe(1);
   let handedOff = false;
   return {
@@ -261,25 +264,18 @@ const resolveSelection = (
     : choosePreferredPort(selection.preferred, exclude, probe);
 };
 
-const identifyAllocationRequest = (
-  request: PortReservationRequest,
-  error: PortAllocationError,
-): PortAllocationError =>
+const withPortField = (field: PortField, error: PortAllocationError): PortAllocationError =>
   new PortAllocationError({
     detail: error.detail,
     cause: error.cause,
-    field: request.field,
-    ...(error.port === undefined
-      ? request.selection.kind === "exact"
-        ? { port: request.selection.port }
-        : {}
-      : { port: error.port }),
+    field,
+    ...(error.port === undefined ? {} : { port: error.port }),
   });
 
 export const allocatePortSet = (
   requests: ReadonlyArray<PortReservationRequest>,
   options: PortAllocationOptions = {},
-): Effect.Effect<ResolvedPorts, PortAllocationError> =>
+): Effect.Effect<PortSet, PortAllocationError> =>
   Effect.gen(function* () {
     const reserved = options.reserved ?? new Set<number>();
     const probe = options.probe ?? defaultPortProbe;
@@ -289,13 +285,13 @@ export const allocatePortSet = (
     for (const request of uniqueFields(requests)) {
       const exclude = new Set([...reserved, ...allocated]);
       const port = yield* resolveSelection(request.selection, exclude, probe).pipe(
-        Effect.mapError((error) => identifyAllocationRequest(request, error)),
+        Effect.mapError((error) => withPortField(request.field, error)),
       );
       allocated.add(port);
       partial[request.field] = port;
     }
 
-    return Schema.decodeUnknownSync(ResolvedPortsSchema)(partial);
+    return Schema.decodeUnknownSync(PortSetSchema)(partial);
   });
 
 export const reservePortSet = (
@@ -316,9 +312,7 @@ export const reservePortSet = (
         Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             const result = yield* acquisition.pipe(
-              Effect.mapError((error) =>
-                identifyAllocationRequest({ field, selection: { kind: "automatic" } }, error),
-              ),
+              Effect.mapError((error) => withPortField(field, error)),
             );
             reservations.set(field, result.server);
             yield* options.onBound?.(field, result) ?? Effect.void;
@@ -355,7 +349,7 @@ export const reservePortSet = (
         partial[request.field] = bound.port;
       }
 
-      return makePortLease(Schema.decodeUnknownSync(ResolvedPortsSchema)(partial), reservations);
+      return makePortLease(Schema.decodeUnknownSync(PortSetSchema)(partial), reservations);
     });
 
     return reserve.pipe(

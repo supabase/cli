@@ -1,5 +1,16 @@
 import { Effect } from "effect";
 
+/** A stable human-readable rendering for failures crossing process boundaries. */
+export const causeMessage = (cause: unknown): string => {
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
+  try {
+    const serialized = JSON.stringify(cause);
+    return serialized === undefined ? String(cause) : serialized;
+  } catch {
+    return String(cause);
+  }
+};
+
 /**
  * The managed guards in `ids.ts`, `paths.ts`, and `repository.ts` are pure
  * synchronous functions that throw their own tagged failures, and both registry

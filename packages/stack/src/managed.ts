@@ -29,8 +29,6 @@ export * from "./managed/model.ts";
 export * from "./managed/paths.ts";
 export {
   ManagedPortCoordinator,
-  type ManagedPortCandidateInput,
-  type ManagedPortCandidatePolicy,
   type ManagedPortCoordinatorOptions,
   type ManagedPortCoordinatorShape,
   type ManagedPortStartAllocation,

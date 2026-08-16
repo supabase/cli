@@ -4540,6 +4540,162 @@ describe("managed repository and lifecycle", () => {
     });
   }
 
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`settles an abandoned delete before reusing its running stack with ${adapter}`, async () => {
+      const root = makeRoot();
+      const runtimePid = 987_710;
+      const abandonedOwnerPid = 987_711;
+      const overrides = {
+        isProcessAlive: (pid: number) => pid === runtimePid,
+      };
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root, overrides)
+          : await makePersistentService(root, overrides);
+      const workspacePath = makeWorkspace(root);
+      let initializationCount = 0;
+      try {
+        const created = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => {
+            initializationCount += 1;
+            return { pid: runtimePid, processIds: {}, containerIds: {} };
+          },
+          operation: "start",
+          workspacePath,
+        });
+        const deletion = runRepo(
+          service.repository.claimOperation({
+            token: crypto.randomUUID(),
+            stackId: created.stack.id,
+            kind: "delete",
+            ownerPid: abandonedOwnerPid,
+            now: "2026-08-16T00:00:00.000Z",
+          }),
+        );
+        if (!deletion.acquired) throw new Error("Expected the delete operation to be claimed");
+
+        const restarted = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => {
+            initializationCount += 1;
+            return { pid: runtimePid, processIds: {}, containerIds: {} };
+          },
+          operation: "start",
+          workspacePath,
+        });
+
+        expect(restarted).toMatchObject({
+          outcome: "reuse",
+          stack: { id: created.stack.id, lifecycle: "running" },
+        });
+        expect(initializationCount).toBe(1);
+        expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
+      } finally {
+        await service.close();
+      }
+    });
+
+    it(`settles an abandoned delete before restarting its stopped stack with ${adapter}`, async () => {
+      const root = makeRoot();
+      const abandonedOwnerPid = 987_712;
+      const overrides = { isProcessAlive: () => false };
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root, overrides)
+          : await makePersistentService(root, overrides);
+      const workspacePath = makeWorkspace(root);
+      let initializationCount = 0;
+      try {
+        const created = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => {
+            initializationCount += 1;
+            return { processIds: {}, containerIds: {} };
+          },
+          operation: "start",
+          workspacePath,
+        });
+        await service.updateStack(created.stack.id, { lifecycle: "stopped" });
+        const deletion = runRepo(
+          service.repository.claimOperation({
+            token: crypto.randomUUID(),
+            stackId: created.stack.id,
+            kind: "delete",
+            ownerPid: abandonedOwnerPid,
+            now: "2026-08-16T00:00:00.000Z",
+          }),
+        );
+        if (!deletion.acquired) throw new Error("Expected the delete operation to be claimed");
+
+        const restarted = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => {
+            initializationCount += 1;
+            return { processIds: {}, containerIds: {} };
+          },
+          operation: "start",
+          workspacePath,
+        });
+
+        expect(restarted).toMatchObject({
+          outcome: "reuse",
+          stack: { id: created.stack.id, lifecycle: "running" },
+        });
+        expect(initializationCount).toBe(2);
+        expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
+      } finally {
+        await service.close();
+      }
+    });
+
+    it(`keeps a live delete exclusive while starting with ${adapter}`, async () => {
+      const root = makeRoot();
+      const liveOwnerPid = 987_713;
+      const overrides = { isProcessAlive: (pid: number) => pid === liveOwnerPid };
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root, overrides)
+          : await makePersistentService(root, overrides);
+      const workspacePath = makeWorkspace(root);
+      try {
+        const created = await service.resolveStack({
+          portDocument: { activeFields: [], document: {} },
+          initialize: async () => ({ processIds: {}, containerIds: {} }),
+          operation: "start",
+          workspacePath,
+        });
+        const deletion = runRepo(
+          service.repository.claimOperation({
+            token: crypto.randomUUID(),
+            stackId: created.stack.id,
+            kind: "delete",
+            ownerPid: liveOwnerPid,
+            now: "2026-08-16T00:00:00.000Z",
+          }),
+        );
+        if (!deletion.acquired) throw new Error("Expected the delete operation to be claimed");
+
+        await expect(
+          service.resolveStack({
+            portDocument: { activeFields: [], document: {} },
+            initialize: async () => ({ processIds: {}, containerIds: {} }),
+            operation: "start",
+            workspacePath,
+          }),
+        ).rejects.toMatchObject({
+          _tag: "ManagedOperationInProgressError",
+          operation: { token: deletion.operation.token, kind: "delete" },
+        });
+        expect(runRepo(service.repository.getActiveOperation(created.stack.id))).toEqual(
+          deletion.operation,
+        );
+      } finally {
+        await service.close();
+      }
+    });
+  }
+
   it("re-reads lifecycle after claiming delete before deciding whether to stop", async () => {
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();

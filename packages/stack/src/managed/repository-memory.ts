@@ -219,17 +219,12 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           })),
       );
 
-  const transitionPortOwnership = (
-    current: ManagedStackRecord | undefined,
-    next: ManagedStackRecord,
-  ): void => {
+  const persistPorts = (stack: ManagedStackRecord): void => {
+    validateManagedPortAssignments(stack.id, stack.ports);
+  };
+
+  const claimPorts = (next: ManagedStackRecord): void => {
     validateManagedPortAssignments(next.id, next.ports);
-    if (
-      current !== undefined &&
-      !requiresManagedPortOwnershipValidation(current, next.ports, next.lifecycle)
-    ) {
-      return;
-    }
     const owners = listPortReservations().filter((owner) => owner.stackId !== next.id);
     for (const assignment of next.ports) {
       const owner = owners.find((candidate) =>
@@ -241,6 +236,20 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           ownerStackId: owner.stackId,
         });
       }
+    }
+  };
+
+  const transitionPortOwnership = (
+    current: ManagedStackRecord | undefined,
+    next: ManagedStackRecord,
+  ): void => {
+    if (
+      current === undefined ||
+      requiresManagedPortOwnershipValidation(current, next.ports, next.lifecycle)
+    ) {
+      claimPorts(next);
+    } else {
+      persistPorts(next);
     }
   };
 
@@ -959,6 +968,12 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           ManagedRunningStackPortChangeError,
           ManagedStackNotFoundError,
         ),
+      }),
+    getActiveOperation: (stackId) =>
+      Effect.sync(() => {
+        const token = activeOperationByStack.get(stackId);
+        const operation = token === undefined ? undefined : operations.get(token);
+        return operation === undefined ? undefined : copy(operation);
       }),
     listActiveOperations: (startedBefore) =>
       Effect.sync(() =>

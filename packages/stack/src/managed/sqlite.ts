@@ -1078,26 +1078,11 @@ const selectPortReservationsForPort = (
       assignment: decodePort(row),
     }));
 
-const replacePorts = (
+const writePorts = (
   database: ManagedSqliteDatabase,
   stackId: string,
   ports: ReadonlyArray<ManagedPortAssignment>,
-  validateConflicts = true,
 ): void => {
-  validateManagedPortAssignments(stackId, ports);
-  if (validateConflicts) {
-    for (const assignment of ports) {
-      const owner = selectPortReservationsForPort(database, stackId, assignment.port).find(
-        (candidate) => managedPortReservationsConflict(stackId, assignment, candidate),
-      );
-      if (owner !== undefined) {
-        throw new ManagedPortReservationError({
-          port: assignment.port,
-          ownerStackId: owner.stackId,
-        });
-      }
-    }
-  }
   database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
   const insert = database.prepare(
     "INSERT INTO ports (stack_id, key, port, intent) VALUES (?, ?, ?, ?)",
@@ -1105,6 +1090,35 @@ const replacePorts = (
   for (const assignment of ports) {
     insert.run([stackId, assignment.key, assignment.port, assignment.intent]);
   }
+};
+
+const persistPorts = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+): void => {
+  validateManagedPortAssignments(stackId, ports);
+  writePorts(database, stackId, ports);
+};
+
+const claimPorts = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+): void => {
+  validateManagedPortAssignments(stackId, ports);
+  for (const assignment of ports) {
+    const owner = selectPortReservationsForPort(database, stackId, assignment.port).find(
+      (candidate) => managedPortReservationsConflict(stackId, assignment, candidate),
+    );
+    if (owner !== undefined) {
+      throw new ManagedPortReservationError({
+        port: assignment.port,
+        ownerStackId: owner.stackId,
+      });
+    }
+  }
+  writePorts(database, stackId, ports);
 };
 
 const claimOperation = (
@@ -1168,7 +1182,7 @@ const insertConfiguration = (
       input.now,
       input.now,
     ]);
-  replacePorts(database, input.stackId, input.configuration.ports ?? []);
+  claimPorts(database, input.stackId, input.configuration.ports ?? []);
 };
 
 /**
@@ -1538,12 +1552,11 @@ const updateStack = (
       input.now,
       input.stackId,
     ]);
-  replacePorts(
-    database,
-    input.stackId,
-    ports,
-    requiresManagedPortOwnershipValidation(current, ports, lifecycle),
-  );
+  if (requiresManagedPortOwnershipValidation(current, ports, lifecycle)) {
+    claimPorts(database, input.stackId, ports);
+  } else {
+    persistPorts(database, input.stackId, ports);
+  }
   return requireStack(database, input.stackId);
 };
 
@@ -1563,8 +1576,7 @@ const claimStartPorts = (
   ) {
     throw new ManagedRunningStackPortChangeError({ stackId: input.stackId });
   }
-  validateManagedPortAssignments(input.stackId, input.ports);
-  replacePorts(database, input.stackId, input.ports);
+  claimPorts(database, input.stackId, input.ports);
   database
     .prepare("UPDATE stacks SET lifecycle = 'starting', updated_at = ? WHERE id = ?")
     .run([input.now, input.stackId]);
@@ -1618,12 +1630,11 @@ const reconcileOperation = (
     database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
     return { outcome: "discarded" };
   }
-  replacePorts(
-    database,
-    stackId,
-    current.ports,
-    requiresManagedPortOwnershipValidation(current, current.ports, lifecycle),
-  );
+  if (requiresManagedPortOwnershipValidation(current, current.ports, lifecycle)) {
+    claimPorts(database, stackId, current.ports);
+  } else {
+    persistPorts(database, stackId, current.ports);
+  }
   database
     .prepare(
       `UPDATE stacks SET
@@ -2167,6 +2178,8 @@ const createSqliteManagedStackRepository = (
             ManagedStackNotFoundError,
           ),
         ),
+      getActiveOperation: (stackId) =>
+        readTransaction(database, () => getActiveOperation(database, stackId)),
       listActiveOperations: (startedBefore) =>
         readTransaction(database, () => selectActiveOperations(database, startedBefore)),
       reconcileOperation: (stackId, operationToken, lifecycle, now) =>

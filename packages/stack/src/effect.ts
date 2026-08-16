@@ -42,6 +42,7 @@ export type {
   ConfigPortKey,
   PortCatalogEntry,
   PortField,
+  PortSet,
   ResolvedPorts,
 } from "./PortCatalog.ts";
 export type {
@@ -58,15 +59,12 @@ export {
   DEFAULT_PORTS,
   PORT_CATALOG,
   PORT_FIELDS,
+  PortSetSchema,
   ResolvedPortsSchema,
   runtimeOnlyPortFields,
   stickyPortFields,
 } from "./PortCatalog.ts";
-export {
-  allocatedPortFieldsForConfig,
-  portFieldsForConfigInput,
-  portFieldsForService,
-} from "./ServicePorts.ts";
+export { portFieldsForConfigInput, portFieldsForService } from "./ServicePorts.ts";
 
 export type {
   AnalyticsConfig,

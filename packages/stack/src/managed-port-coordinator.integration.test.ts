@@ -469,6 +469,7 @@ describe("managed port coordinator", () => {
       port,
       ownerStackId: "stack-a",
       ownerKey: "db.port",
+      message: `Port ${port} configured by api.port is occupied by this managed stack through db.port`,
     });
     expect(claims).toBe(0);
   });

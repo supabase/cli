@@ -29,6 +29,7 @@ import {
   PORT_CATALOG,
   PORT_FIELDS,
   type PortField,
+  type PortSet,
   type ResolvedPorts,
 } from "./PortCatalog.ts";
 import { portFieldsForConfigInput, serviceEnabledForConfig } from "./ServicePorts.ts";
@@ -75,12 +76,12 @@ export function defaultManagedStackName(_cwd: string): string {
 export interface ResolveConfigOptions {
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
-  readonly preferredPorts?: ResolvedPorts;
+  readonly preferredPorts?: PortSet;
   readonly reservedPorts?: ReadonlySet<number>;
   readonly portAllocator?: (
     requests: ReadonlyArray<PortReservationRequest>,
     options: PortSelectionOptions,
-  ) => Effect.Effect<ResolvedPorts, PortAllocationError>;
+  ) => Effect.Effect<PortSet, PortAllocationError>;
 }
 
 interface ResolvedRoots {
@@ -128,7 +129,7 @@ const resolveDataDir = (
   suffix: string,
 ): string => explicitDir ?? join(stackRoot, "data", suffix);
 
-const requiredPort = (ports: ResolvedPorts, field: PortField): number => {
+const requiredPort = (ports: PortSet, field: PortField): number => {
   const port = ports[field];
   if (port === undefined) {
     throw new StackBuildError({
@@ -250,7 +251,7 @@ async function readReservedPortsInStacksRoot(
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
   raw: PostgrestConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedPostgrestConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -267,7 +268,7 @@ function resolvePostgrestConfig(
 function resolveAuthConfig(
   input: AuthConfig | undefined,
   raw: AuthConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
   apiPort: number,
 ): ResolvedAuthConfig | false {
   if (raw === false) return false;
@@ -284,7 +285,7 @@ function resolveAuthConfig(
 function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
   raw: RealtimeConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedRealtimeConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -302,7 +303,7 @@ function resolveRealtimeConfig(
 function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
   raw: EdgeRuntimeConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedEdgeRuntimeConfig | false {
   if (raw === false || raw?.enabled === false) return false;
   const cfg = input ?? {};
@@ -351,7 +352,7 @@ function resolveInstanceId(instanceId: string | undefined): string | undefined {
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
   opts: ResolveConfigOptions,
 ): ResolvedStorageConfig | false {
   if (raw === false) return false;
@@ -368,7 +369,7 @@ function resolveStorageConfig(
 function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
   raw: ImgproxyConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedImgproxyConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -381,7 +382,7 @@ function resolveImgproxyConfig(
 function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedMailpitConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -398,7 +399,7 @@ function resolveMailpitConfig(
 function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
   raw: PgmetaConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedPgmetaConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -411,7 +412,7 @@ function resolvePgmetaConfig(
 function resolveStudioConfig(
   input: StudioConfig | undefined,
   raw: StudioConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
   apiPort: number,
 ): ResolvedStudioConfig | false {
   if (raw === false) return false;
@@ -426,7 +427,7 @@ function resolveStudioConfig(
 function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
   raw: AnalyticsConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedAnalyticsConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -452,7 +453,7 @@ function resolveVectorConfig(
 function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
-  ports: ResolvedPorts,
+  ports: PortSet,
 ): ResolvedPoolerConfig | false {
   if (raw === false) return false;
   const cfg = input ?? {};
@@ -579,6 +580,7 @@ export async function resolveConfig(
   const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
   const apiPort = requiredPort(ports, "apiPort");
   const dbPort = requiredPort(ports, "dbPort");
+  const resolvedPorts: ResolvedPorts = { ...ports, apiPort, dbPort };
 
   return {
     instanceId,
@@ -591,7 +593,7 @@ export async function resolveConfig(
     readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
     readinessSource: config.readiness === undefined ? "default" : "configured",
     jwtSecret,
-    ports,
+    ports: resolvedPorts,
     apiPort,
     dbPort,
     publishableKey: config.publishableKey ?? defaultPublishableKey,
