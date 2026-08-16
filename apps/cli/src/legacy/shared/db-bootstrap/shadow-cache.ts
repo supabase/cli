@@ -832,7 +832,66 @@ const legacyExportShadowBaseline = <E>(
 export interface LegacyShadowCacheOpts {
   readonly bypassCache?: boolean;
   readonly webhooks?: LegacySetupDatabaseOptions["webhooks"];
+  /**
+   * Key inputs a caller already resolved via {@link legacyPeekShadowBaseline}, so
+   * {@link legacyAcquireShadowDatabase} does not resolve them a second time. Resolution is not
+   * idempotent-cheap: it can include a live JWKS discovery request (realtime on PG15+), so a
+   * peek-then-acquire caller passing this through halves that traffic. MUST have been computed
+   * from the same `input`/`opts` pair, or the acquire keys against the wrong snapshot.
+   */
+  readonly precomputedKeyInputs?: LegacyShadowCacheKeyInputs;
 }
+
+/** What {@link legacyPeekShadowBaseline} learned about a would-be acquire, without provisioning anything. */
+export type LegacyShadowBaselinePeek =
+  /** The cache cannot apply: bypassed, env-disabled, or key-ineligible (PG<=14, OrioleDB, unreadable roles.sql). */
+  | { readonly state: "uncachable" }
+  | {
+      readonly state: "cold" | "warm";
+      readonly key: string;
+      /** Pass back via {@link LegacyShadowCacheOpts.precomputedKeyInputs} to skip re-resolution. */
+      readonly keyInputs: LegacyShadowCacheKeyInputs;
+    };
+
+/**
+ * Answers "what would {@link legacyAcquireShadowDatabase} do for this input right now?" without
+ * creating a container: `warm` (a snapshot for this key is published), `cold` (cache-enabled but
+ * no snapshot yet), or `uncachable`. Callers use it to CHOOSE an orchestration (pg-delta next's
+ * plan provisioning picks parallel / baseline-handoff / sequential — see
+ * `legacy-pgdelta-next-shadow.plan.ts`), never to skip the acquire's own re-checks: the answer
+ * can go stale between peek and acquire (another process publishes or evicts the tar), and the
+ * acquire re-deciding on current state is what keeps that race merely suboptimal rather than
+ * incorrect.
+ *
+ * The error channel is the key resolution's own `E` (a JWKS resolution failure) — same rationale
+ * as {@link legacyAcquireShadowDatabase}: a real cold provision at this input would have failed
+ * the same way, so it must not be folded into `uncachable`.
+ */
+export const legacyPeekShadowBaseline = <E>(
+  input: LegacyShadowSetupInput<E>,
+  opts: LegacyShadowCacheOpts = {},
+): Effect.Effect<LegacyShadowBaselinePeek, E> =>
+  Effect.gen(function* () {
+    if (
+      opts.bypassCache === true ||
+      !legacyShadowCacheEnabled(process.env, input.setup.projectEnvValues)
+    ) {
+      return { state: "uncachable" } as const;
+    }
+    const keyInputs = yield* legacyResolveShadowCacheKeyInputs(input, opts);
+    if (Option.isNone(keyInputs)) return { state: "uncachable" } as const;
+    const key = legacyShadowCacheKey(keyInputs.value);
+    const tarPath = input.path.join(
+      legacyShadowBaselineCacheDir(input.path),
+      legacyShadowBaselineTarFileName(key),
+    );
+    const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+    return {
+      state: cached ? ("warm" as const) : ("cold" as const),
+      key,
+      keyInputs: keyInputs.value,
+    };
+  });
 
 /**
  * What `Effect.acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its
@@ -996,8 +1055,13 @@ export const legacyAcquireShadowDatabase = <E>(
     // nothing has been acquired yet — and the JWKS effect inside can be a real third-party
     // discovery request, which must not pin a Ctrl-C for its whole duration (review: Codex on
     // #6184). Interruption here simply means no container was ever created, so there is nothing
-    // for a finalizer to release.
-    const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
+    // for a finalizer to release. A caller that already peeked passes its resolved inputs
+    // through ({@link LegacyShadowCacheOpts.precomputedKeyInputs}) so the JWKS request is not
+    // repeated; the tar-existence check below always re-runs on current state.
+    const keyInputs =
+      opts.precomputedKeyInputs !== undefined
+        ? Option.some(opts.precomputedKeyInputs)
+        : yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(

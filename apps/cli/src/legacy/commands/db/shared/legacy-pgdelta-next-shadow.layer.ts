@@ -22,9 +22,16 @@ import {
 import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
 import {
   legacyAcquireShadowDatabase,
-  type LegacyShadowAcquiredHandle,
+  legacyPeekShadowBaseline,
+  type LegacyShadowBaselinePeek,
   type LegacyShadowCacheOpts,
+  type LegacyShadowAcquiredHandle,
 } from "../../../shared/db-bootstrap/shadow-cache.ts";
+import {
+  legacyBufferedShadowOutput,
+  legacyResolvePlanShadowStrategy,
+  legacyRunPlanShadowProvisions,
+} from "./legacy-pgdelta-next-shadow.plan.ts";
 import {
   legacyConnectShadowDatabase,
   legacyMigrateNextShadowDatabase,
@@ -155,19 +162,23 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
     const dbConnection = yield* LegacyDbConnection;
     const httpClient = yield* HttpClient.HttpClient;
 
-    const runtime = Layer.mergeAll(
-      Layer.succeed(FileSystem.FileSystem, fs),
-      Layer.succeed(Path.Path, path),
-      Layer.succeed(LegacyDebugFlag, debugFlag),
-      Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
-      Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
-      Layer.succeed(CliArgs, cliArgs),
-      Layer.succeed(Output, output),
-      Layer.succeed(RuntimeInfo, runtimeInfo),
-      Layer.succeed(LegacyDockerRun, docker),
-      Layer.succeed(LegacyDbConnection, dbConnection),
-      Layer.succeed(HttpClient.HttpClient, httpClient),
-    );
+    // Parameterized on the Output service so `provisionPlan` can hand a concurrently running
+    // provision a buffering decorator (`legacyBufferedShadowOutput`) instead of the live one.
+    const runtimeWith = (outputService: typeof Output.Service) =>
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, fs),
+        Layer.succeed(Path.Path, path),
+        Layer.succeed(LegacyDebugFlag, debugFlag),
+        Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
+        Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
+        Layer.succeed(CliArgs, cliArgs),
+        Layer.succeed(Output, outputService),
+        Layer.succeed(RuntimeInfo, runtimeInfo),
+        Layer.succeed(LegacyDockerRun, docker),
+        Layer.succeed(LegacyDbConnection, dbConnection),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+      );
+    const runtime = runtimeWith(output);
 
     const nextPort = (excluded?: number) =>
       Effect.gen(function* () {
@@ -248,19 +259,40 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         },
       );
 
-    const provisionMigrations = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+    const provisionMigrations = (
+      input: NativeShadowInput,
+      opts: LegacyShadowCacheOpts,
+      onBaselineSeam: Effect.Effect<void> = Effect.void,
+    ) =>
       Effect.gen(function* () {
         const handle = yield* acquireShadow(input, opts);
-        yield* awaitShadowReady(input, handle);
-        const setup = setupRunInput(input, handle);
-        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
+        // The baseline-handoff strategy (`legacy-pgdelta-next-shadow.plan.ts`) waits on
+        // `onBaselineSeam` before warm-restoring the declarative shadow. A snapshot-cold handle
+        // reaches that seam when its export publishes the tar; any other handle (warm because
+        // another process published between peek and acquire, or uncached) never runs a
+        // snapshot, so signal immediately — the waiter then just re-peeks current disk state.
+        const seamWillRun = handle.snapshotRequired && !handle.baselinePresent;
+        const seamHandle: LegacyShadowAcquiredHandle = seamWillRun
+          ? {
+              ...handle,
+              snapshotBaseline: handle.snapshotBaseline.pipe(Effect.ensuring(onBaselineSeam)),
+            }
+          : handle;
+        if (!seamWillRun) yield* onBaselineSeam;
+        yield* awaitShadowReady(input, seamHandle);
+        const setup = setupRunInput(input, seamHandle);
+        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, seamHandle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
-          restoredFromPgDataSnapshot: handle.baselinePresent,
+          restoredFromPgDataSnapshot: seamHandle.baselinePresent,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+    const provisionDeclarative = (
+      input: NativeShadowInput,
+      opts: LegacyShadowCacheOpts,
+      outputService: typeof Output.Service = output,
+    ) =>
       Effect.gen(function* () {
         const handle = yield* acquireShadow(input, opts);
         yield* awaitShadowReady(input, handle);
@@ -279,7 +311,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle.baselinePresent,
         } satisfies ProvisionedDeclarativeShadow;
-      }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+      }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const cacheOpts = (
       opts: LegacyPgDeltaNextShadowInput,
@@ -304,20 +336,49 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          // The two shadows are fully independent — anonymous containers on the distinct host
-          // ports allocated above, per-invocation scoped temp dirs, a race-tolerant network
-          // ensure, and cold snapshot exports serialized by `legacyShadowExportMutex`
-          // (`shadow-cache.ts`) — so they provision concurrently: the declarative shadow's whole
-          // create/ready/baseline cost hides behind the slower migrations shadow instead of
-          // adding to it. A failure on either side interrupts the other, and the scope
-          // finalizers registered by each acquire still remove whatever was created.
-          const [migrations, declarative] = yield* Effect.all(
-            [
-              provisionMigrations(migrationsInput, cacheOpts(opts, "config")),
-              provisionDeclarative(declarativeInput, cacheOpts(opts, "disabled")),
-            ],
-            { concurrency: 2 },
-          );
+          // The two shadows are independent — anonymous containers on the distinct host ports
+          // allocated above, per-invocation scoped temp dirs, and a race-tolerant network
+          // ensure — so warm provisions run fully concurrently. How much can safely overlap
+          // when a baseline still has to be BUILT is the strategy question: peek both cache
+          // states up front and dispatch (see `legacy-pgdelta-next-shadow.plan.ts` for the
+          // three strategies and their transcript guarantees). The peeks also resolve the
+          // cache-key inputs once; passing them back through `precomputedKeyInputs` keeps the
+          // acquire from repeating a live JWKS discovery request.
+          const [migrationsPeek, declarativePeek] = yield* Effect.all([
+            legacyPeekShadowBaseline(migrationsInput.base, cacheOpts(opts, "config")),
+            legacyPeekShadowBaseline(declarativeInput.base, cacheOpts(opts, "disabled")),
+          ]);
+          const withPeek = (
+            cache: LegacyShadowCacheOpts,
+            peek: LegacyShadowBaselinePeek,
+          ): LegacyShadowCacheOpts =>
+            peek.state === "uncachable"
+              ? cache
+              : { ...cache, precomputedKeyInputs: peek.keyInputs };
+          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
+          const declarativeOpts = withPeek(cacheOpts(opts, "disabled"), declarativePeek);
+          const strategy = legacyResolvePlanShadowStrategy(migrationsPeek, declarativePeek);
+
+          // In the concurrent strategies the declarative fiber's writes are buffered and
+          // flushed after the join, so nothing can land between two of the migrations fiber's
+          // live lines; sequential needs no buffer (one fiber at a time). `Effect.ensuring` on
+          // the JOIN (not the declarative fiber, which can finish first) so anomaly warnings
+          // survive failures without ever interleaving.
+          const buffered =
+            strategy === "sequential" ? undefined : legacyBufferedShadowOutput(output);
+          const provisions = legacyRunPlanShadowProvisions({
+            strategy,
+            provisionMigrations: (onBaselineSeam) =>
+              provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
+            provisionDeclarative: provisionDeclarative(
+              declarativeInput,
+              declarativeOpts,
+              buffered === undefined ? output : buffered.output,
+            ),
+          });
+          const [migrations, declarative] = yield* buffered === undefined
+            ? provisions
+            : provisions.pipe(Effect.ensuring(buffered.flush));
           return {
             migrationsUrl: migrations.migrationsUrl,
             declarativeUrl: declarative.declarativeUrl,

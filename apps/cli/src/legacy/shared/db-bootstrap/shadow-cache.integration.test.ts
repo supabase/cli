@@ -40,6 +40,7 @@ import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_CACHE_ENV,
   legacyAcquireShadowDatabase,
+  legacyPeekShadowBaseline,
   type LegacyShadowCacheOpts,
 } from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
@@ -1105,6 +1106,111 @@ describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
           expect(writes.some((chunk) => chunk.includes("shadow-debug:"))).toBe(false);
         }),
       ),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+});
+
+describe("legacyPeekShadowBaseline", () => {
+  it.live("reports cold before a snapshot exists, warm after, and uncachable on bypass", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+
+        const before = yield* legacyPeekShadowBaseline(input);
+        expect(before.state).toBe("cold");
+
+        yield* coldRun(docker, input);
+        const after = yield* legacyPeekShadowBaseline(input);
+        expect(after.state).toBe("warm");
+        // Same input, same key — the tar the cold run published is the one the peek found.
+        expect(after.state === "uncachable" || before.state === "uncachable").toBe(false);
+        if (after.state !== "uncachable" && before.state !== "uncachable") {
+          expect(after.key).toBe(before.key);
+        }
+
+        // The handoff precondition: with config webhooks OFF, the migrations ("config") and
+        // declarative ("disabled") opts hash to the SAME key; forcing webhooks on re-keys.
+        const viaConfig = yield* legacyPeekShadowBaseline(input, { webhooks: "config" });
+        const viaDisabled = yield* legacyPeekShadowBaseline(input, { webhooks: "disabled" });
+        const viaEnabled = yield* legacyPeekShadowBaseline(input, { webhooks: "enabled" });
+        if (
+          viaConfig.state !== "uncachable" &&
+          viaDisabled.state !== "uncachable" &&
+          viaEnabled.state !== "uncachable"
+        ) {
+          expect(viaConfig.key).toBe(viaDisabled.key);
+          expect(viaEnabled.key).not.toBe(viaConfig.key);
+        } else {
+          expect.unreachable("cache-eligible input peeked as uncachable");
+        }
+
+        expect((yield* legacyPeekShadowBaseline(input, { bypassCache: true })).state).toBe(
+          "uncachable",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("reports uncachable when the cache env gate is off", () => {
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "0",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        expect((yield* legacyPeekShadowBaseline(shadowInput(fs, path))).state).toBe("uncachable");
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("acquire reuses peeked key inputs instead of re-resolving JWKS", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Realtime enabled on PG17 is the one gate that makes the cache key consume the JWKS
+        // effect — a live third-party discovery request in production, so resolving it once
+        // per run (peek) rather than once per peek AND once per acquire is the contract.
+        let jwksResolutions = 0;
+        const base = shadowInput(fs, path);
+        const input: typeof base = {
+          ...base,
+          setup: {
+            ...base.setup,
+            config: {
+              ...defaultConfig,
+              realtime: { ...defaultConfig.realtime, enabled: true },
+            },
+            jwks: Effect.sync(() => {
+              jwksResolutions += 1;
+              return '{"keys":[]}';
+            }),
+          },
+        };
+
+        const peek = yield* legacyPeekShadowBaseline(input);
+        expect(peek.state).toBe("cold");
+        expect(jwksResolutions).toBe(1);
+
+        const handle = yield* legacyAcquireShadowDatabase(
+          docker.spawner,
+          input,
+          peek.state === "uncachable" ? {} : { precomputedKeyInputs: peek.keyInputs },
+        );
+        expect(jwksResolutions).toBe(1);
+        yield* legacyRemoveShadowDatabase(docker.spawner, handle.containerId);
+      }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 });
