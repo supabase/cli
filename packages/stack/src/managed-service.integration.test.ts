@@ -2000,6 +2000,214 @@ describe("managed repository and lifecycle", () => {
   }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claimStartPorts accepts stopped stacks with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const stopped = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "stopped"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_509, intent: "exact" }],
+        },
+      });
+      const operation = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: stopped.stack.id,
+          kind: "start",
+          ownerPid: process.pid,
+          now: "2026-08-16T00:01:00.000Z",
+        }),
+      );
+      if (!operation.acquired) throw new Error("Expected a start operation claim");
+
+      const claimed = await Effect.runPromise(
+        service.repository.claimStartPorts({
+          stackId: stopped.stack.id,
+          operationToken: operation.operation.token,
+          ports: [{ key: "api.port", port: 55_510, intent: "exact" }],
+          now: "2026-08-16T00:01:01.000Z",
+        }),
+      );
+      expect(claimed.lifecycle).toBe("starting");
+      expect(claimed.ports).toEqual([{ key: "api.port", port: 55_510, intent: "exact" }]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claimStartPorts accepts failed stacks with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const failed = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "failed"),
+        configuration: {
+          lifecycle: "failed",
+          ports: [{ key: "api.port", port: 55_511, intent: "exact" }],
+        },
+      });
+      const operation = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: failed.stack.id,
+          kind: "start",
+          ownerPid: process.pid,
+          now: "2026-08-16T00:02:00.000Z",
+        }),
+      );
+      if (!operation.acquired) throw new Error("Expected a start operation claim");
+
+      const claimed = await Effect.runPromise(
+        service.repository.claimStartPorts({
+          stackId: failed.stack.id,
+          operationToken: operation.operation.token,
+          ports: [{ key: "api.port", port: 55_512, intent: "exact" }],
+          now: "2026-08-16T00:02:01.000Z",
+        }),
+      );
+      expect(claimed.lifecycle).toBe("starting");
+      expect(claimed.ports).toEqual([{ key: "api.port", port: 55_512, intent: "exact" }]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claimStartPorts rejects a missing active operation without mutation with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const stopped = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "missing-operation"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_513, intent: "exact" }],
+        },
+      });
+
+      await expect(
+        Effect.runPromise(
+          service.repository.claimStartPorts({
+            stackId: stopped.stack.id,
+            operationToken: crypto.randomUUID(),
+            ports: [{ key: "api.port", port: 55_514, intent: "exact" }],
+            now: "2026-08-16T00:03:00.000Z",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ManagedOperationOwnershipError);
+      expect((await service.inspectStack(stopped.stack.id))?.lifecycle).toBe("stopped");
+      expect((await service.inspectStack(stopped.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_513, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claimStartPorts rejects a wrong active operation without mutation with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const stopped = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "wrong-operation"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_515, intent: "exact" }],
+        },
+      });
+      const operation = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: stopped.stack.id,
+          kind: "start",
+          ownerPid: process.pid,
+          now: "2026-08-16T00:04:00.000Z",
+        }),
+      );
+      if (!operation.acquired) throw new Error("Expected a start operation claim");
+
+      await expect(
+        Effect.runPromise(
+          service.repository.claimStartPorts({
+            stackId: stopped.stack.id,
+            operationToken: crypto.randomUUID(),
+            ports: [{ key: "api.port", port: 55_516, intent: "exact" }],
+            now: "2026-08-16T00:04:01.000Z",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ManagedOperationOwnershipError);
+      expect((await service.inspectStack(stopped.stack.id))?.lifecycle).toBe("stopped");
+      expect((await service.inspectStack(stopped.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_515, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claimStartPorts blocks a direct automatic claim against a stopped automatic reservation with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const owner = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "automatic-owner"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_517, intent: "automatic" }],
+        },
+      });
+      const target = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "automatic-target"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_518, intent: "exact" }],
+        },
+      });
+      const operation = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: target.stack.id,
+          kind: "start",
+          ownerPid: process.pid,
+          now: "2026-08-16T00:05:00.000Z",
+        }),
+      );
+      if (!operation.acquired) throw new Error("Expected a start operation claim");
+
+      await expect(
+        Effect.runPromise(
+          service.repository.claimStartPorts({
+            stackId: target.stack.id,
+            operationToken: operation.operation.token,
+            ports: [{ key: "api.port", port: 55_517, intent: "automatic" }],
+            now: "2026-08-16T00:05:01.000Z",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(owner.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_517, intent: "automatic" },
+      ]);
+      expect((await service.inspectStack(target.stack.id))?.lifecycle).toBe("stopped");
+      expect((await service.inspectStack(target.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_518, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
     it(`blocks stopped automatic and preserves rejected writes with ${adapter}`, async () => {
       const root = makeRoot();
       const service =
