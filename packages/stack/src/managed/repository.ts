@@ -920,6 +920,20 @@ export interface UpdateManagedStackInput extends ManagedStackConfiguration {
   readonly now: string;
 }
 
+export interface ManagedPortReservation {
+  readonly stackId: string;
+  readonly stackName: string;
+  readonly lifecycle: ManagedStackLifecycle;
+  readonly assignment: ManagedPortAssignment;
+}
+
+export interface ClaimManagedStartPortsInput {
+  readonly stackId: string;
+  readonly operationToken: string;
+  readonly ports: ReadonlyArray<ManagedPortAssignment>;
+  readonly now: string;
+}
+
 /**
  * How an abandoned operation was settled against observed runtime state.
  *
@@ -956,6 +970,15 @@ export type UpdateManagedStackFailure =
   | InvalidManagedPortError
   | ManagedOperationOwnershipError
   | ManagedPendingStackUpdateError
+  | ManagedPortReservationError
+  | ManagedRunningStackPortChangeError
+  | ManagedStackNotFoundError;
+
+/** Failures both adapters raise while atomically claiming a start's ports. */
+export type ClaimManagedStartPortsFailure =
+  | DuplicateManagedPortKeyError
+  | InvalidManagedPortError
+  | ManagedOperationOwnershipError
   | ManagedPortReservationError
   | ManagedRunningStackPortChangeError
   | ManagedStackNotFoundError;
@@ -1073,6 +1096,10 @@ export interface ManagedStackRepositoryShape {
   readonly updateStack: (
     input: UpdateManagedStackInput,
   ) => Effect.Effect<ManagedStackRecord, UpdateManagedStackFailure>;
+  readonly listPortReservations: () => Effect.Effect<ReadonlyArray<ManagedPortReservation>>;
+  readonly claimStartPorts: (
+    input: ClaimManagedStartPortsInput,
+  ) => Effect.Effect<ManagedStackRecord, ClaimManagedStartPortsFailure>;
   readonly listActiveOperations: (
     startedBefore?: string,
   ) => Effect.Effect<ReadonlyArray<ManagedOperationRecord>>;
@@ -1102,8 +1129,27 @@ export class ManagedStackRepository extends Context.Service<
   ManagedStackRepositoryShape
 >()("stack/managed/ManagedStackRepository") {}
 
-export const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
+const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
   lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
+
+/**
+ * The durable ownership matrix shared by every repository adapter.
+ *
+ * Automatic assignments are exclusive for the whole lifetime of a
+ * non-tombstoned stack. Exact assignments may be duplicated while their owner
+ * is stopped or failed, but an exact assignment cannot overlap an owner that
+ * currently occupies its ports.
+ */
+export const managedPortReservationsConflict = (
+  incomingStackId: string,
+  incoming: ManagedPortAssignment,
+  owner: ManagedPortReservation,
+): boolean =>
+  incomingStackId !== owner.stackId &&
+  incoming.port === owner.assignment.port &&
+  (incoming.intent === "automatic" ||
+    owner.assignment.intent === "automatic" ||
+    managedStackOccupiesPorts(owner.lifecycle));
 
 /**
  * An operation's owner pid is only useful because recovery asks the operating

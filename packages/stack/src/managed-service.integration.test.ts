@@ -1726,45 +1726,14 @@ describe("managed repository and lifecycle", () => {
           ports: [{ key: "api.port", port: 55_409, intent: "exact" }],
         },
       });
-      const pending = await prepareAbandonedStack(
-        service,
-        makeWorkspace(root, "pending"),
-        987_673,
-        { ports: [{ key: "api.port", port: 55_409, intent: "exact" }] },
-      );
-
-      const blocked = await service.reconcileAbandonedOperations({
-        inspectRuntime: async () => "running",
-      });
-
-      expect(blocked.failures).toEqual([
-        {
-          operation: pending.operation,
-          phase: "reconciliation",
-          operationReleased: false,
-          error: expect.any(ManagedPortReservationError),
-        },
-      ]);
-      expect(await service.inspectStack(pending.stack.id)).toMatchObject({
-        status: "pending",
-        lifecycle: "stopped",
-      });
-      expect(runRepo(service.repository.listActiveOperations())).toEqual([pending.operation]);
-
-      await service.updateStack(owner.stack.id, { lifecycle: "stopped" });
-      const retried = await service.reconcileAbandonedOperations({
-        inspectRuntime: async () => "running",
-      });
-
-      expect(retried.recovered).toEqual([
-        expect.objectContaining({
-          id: pending.stack.id,
-          status: "active",
-          lifecycle: "running",
+      await expect(
+        prepareAbandonedStack(service, makeWorkspace(root, "pending"), 987_673, {
+          ports: [{ key: "api.port", port: 55_409, intent: "exact" }],
         }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(owner.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_409, intent: "exact" },
       ]);
-      expect(retried.failures).toEqual([]);
-      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
       await service.close();
     });
   }
@@ -1785,44 +1754,16 @@ describe("managed repository and lifecycle", () => {
           ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
         },
       });
-      const blocked = await service.resolveStack({
-        operation: "start",
-        workspacePath: makeWorkspace(root, "blocked"),
-        configuration: {
-          ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
-        },
-      });
-      const operation = runRepo(
-        service.repository.claimOperation({
-          token: crypto.randomUUID(),
-          stackId: blocked.stack.id,
-          kind: "start",
-          ownerPid: 987_654,
-          now: "2026-08-11T00:00:00.000Z",
-        }),
-      );
-      if (!operation.acquired) {
-        throw new Error("Expected the abandoned start operation to be claimed");
-      }
-
-      const reconciled = await service.reconcileAbandonedOperations({
-        inspectRuntime: async () => "running",
-      });
-
-      expect(reconciled.failures).toHaveLength(1);
-      expect(reconciled.failures[0]).toMatchObject({
-        operation: operation.operation,
-        phase: "reconciliation",
-        operationReleased: true,
-        error: expect.any(ManagedPortReservationError),
-      });
-      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
-      expect((await service.inspectStack(blocked.stack.id))?.lifecycle).toBe("failed");
       await expect(
-        service.deleteStack(blocked.stack.id, { stop: async () => {} }),
-      ).resolves.toMatchObject({
-        outcome: "delete",
-      });
+        service.resolveStack({
+          operation: "start",
+          workspacePath: makeWorkspace(root, "blocked"),
+          configuration: {
+            ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
+          },
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect(await service.listStacks()).toHaveLength(1);
       await service.close();
     });
   }
@@ -1946,45 +1887,244 @@ describe("managed repository and lifecycle", () => {
     });
   }
 
-  it("keeps stopped sticky assignments soft and claims them only while starting", async () => {
-    const stickyContract = fixture("ports.sticky-ports-reuse-on-return");
-    const collisionContract = fixture("ports.later-sticky-port-collision-fails");
-    const stickyAssignment = portAssignmentFacts(stickyContract.id)[0];
-    const collisionAssignment = portAssignmentFacts(collisionContract.id)[0];
-    if (stickyAssignment === undefined || collisionAssignment === undefined) {
-      throw new Error("Sticky-port fixtures must provide persisted assignments");
-    }
-    expect(stickyAssignment.port).toBe(collisionAssignment.port);
-    const root = makeRoot();
-    const service = await makePersistentService(root);
-    const assignment = {
-      key: stickyAssignment.key,
-      port: stickyAssignment.port,
-      intent: stickyAssignment.intent,
-    };
-    const first = await service.resolveStack({
-      operation: "start",
-      workspacePath: makeWorkspace(root, "first"),
-      configuration: { ports: [assignment] },
-    });
-    const second = await service.resolveStack({
-      operation: "start",
-      workspacePath: makeWorkspace(root, "second"),
-      configuration: { ports: [assignment] },
-    });
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`applies the intent-sensitive managed reservation matrix with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const first = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "first"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_501, intent: "exact" }],
+        },
+      });
+      const second = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "second"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_501, intent: "exact" }],
+        },
+      });
 
-    await service.updateStack(first.stack.id, { lifecycle: "starting" });
-    await expect(
-      service.updateStack(second.stack.id, { lifecycle: "starting" }),
-    ).rejects.toBeInstanceOf(ManagedPortReservationError);
-    expect(collisionContract.expected.outcome).toBe("error");
+      expect(
+        runRepo(service.repository.listPortReservations()).filter(
+          (reservation) => reservation.assignment.port === 55_501,
+        ),
+      ).toHaveLength(2);
 
-    await service.updateStack(first.stack.id, { lifecycle: "stopped" });
-    const startedSecond = await service.updateStack(second.stack.id, { lifecycle: "starting" });
-    expect(startedSecond.ports).toEqual([assignment]);
-    expect(stickyContract.expected.outcome).toBe("reuse");
-    await service.close();
-  });
+      await service.updateStack(first.stack.id, {
+        lifecycle: "running",
+      });
+      await expect(
+        service.updateStack(second.stack.id, {
+          lifecycle: "starting",
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(first.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_501, intent: "exact" },
+      ]);
+      expect((await service.inspectStack(second.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_501, intent: "exact" },
+      ]);
+      await service.updateStack(first.stack.id, { lifecycle: "stopped" });
+      await expect(
+        service.updateStack(second.stack.id, {
+          ports: [{ key: "api.port", port: 55_501, intent: "automatic" }],
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(first.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_501, intent: "exact" },
+      ]);
+      expect((await service.inspectStack(second.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_501, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`claims a complete starting assignment atomically with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const owner = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "owner"),
+        configuration: {
+          lifecycle: "running",
+          ports: [{ key: "api.port", port: 55_507, intent: "exact" }],
+        },
+      });
+      const pending = await prepareAbandonedStack(
+        service,
+        makeWorkspace(root, "pending"),
+        process.pid,
+        { ports: [{ key: "api.port", port: 55_508, intent: "exact" }] },
+      );
+
+      await expect(
+        Effect.runPromise(
+          service.repository.claimStartPorts({
+            stackId: pending.stack.id,
+            operationToken: pending.operation.token,
+            ports: [{ key: "api.port", port: 55_507, intent: "exact" }],
+            now: "2026-08-16T00:00:01.000Z",
+          }),
+        ),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(owner.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_507, intent: "exact" },
+      ]);
+      expect((await service.inspectStack(pending.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_508, intent: "exact" },
+      ]);
+      expect((await service.inspectStack(pending.stack.id))?.lifecycle).toBe("stopped");
+
+      const claimed = await Effect.runPromise(
+        service.repository.claimStartPorts({
+          stackId: pending.stack.id,
+          operationToken: pending.operation.token,
+          ports: [{ key: "api.port", port: 55_508, intent: "exact" }],
+          now: "2026-08-16T00:00:02.000Z",
+        }),
+      );
+      expect(claimed.lifecycle).toBe("starting");
+      expect(claimed.ports).toEqual([{ key: "api.port", port: 55_508, intent: "exact" }]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`blocks stopped automatic and preserves rejected writes with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const automatic = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "automatic"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_502, intent: "automatic" }],
+        },
+      });
+      const exact = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "exact"),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_503, intent: "exact" }],
+        },
+      });
+
+      await expect(
+        service.resolveStack({
+          operation: "start",
+          workspacePath: makeWorkspace(root, "automatic-again"),
+          configuration: {
+            ports: [{ key: "api.port", port: 55_502, intent: "automatic" }],
+          },
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+
+      await expect(
+        service.updateStack(exact.stack.id, {
+          ports: [{ key: "api.port", port: 55_502, intent: "exact" }],
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(automatic.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_502, intent: "automatic" },
+      ]);
+      expect((await service.inspectStack(exact.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_503, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`keeps failed automatic rows exclusive while failed exact rows coexist with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const failedAutomatic = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "failed-automatic"),
+        configuration: {
+          lifecycle: "failed",
+          ports: [{ key: "api.port", port: 55_504, intent: "automatic" }],
+        },
+      });
+      const failedExact = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "failed-exact"),
+        configuration: {
+          lifecycle: "failed",
+          ports: [{ key: "api.port", port: 55_505, intent: "exact" }],
+        },
+      });
+      const failedExactSibling = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "failed-exact-sibling"),
+        configuration: {
+          lifecycle: "failed",
+          ports: [{ key: "api.port", port: 55_505, intent: "exact" }],
+        },
+      });
+
+      await expect(
+        service.updateStack(failedExact.stack.id, {
+          ports: [{ key: "api.port", port: 55_504, intent: "exact" }],
+        }),
+      ).rejects.toBeInstanceOf(ManagedPortReservationError);
+      expect((await service.inspectStack(failedAutomatic.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_504, intent: "automatic" },
+      ]);
+      expect((await service.inspectStack(failedExact.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_505, intent: "exact" },
+      ]);
+      expect((await service.inspectStack(failedExactSibling.stack.id))?.ports).toEqual([
+        { key: "api.port", port: 55_505, intent: "exact" },
+      ]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`removes tombstoned rows from managed reservations with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const created = await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root),
+        configuration: {
+          ports: [{ key: "api.port", port: 55_506, intent: "exact" }],
+        },
+      });
+      expect(
+        runRepo(service.repository.listPortReservations()).map(
+          (reservation) => reservation.stackId,
+        ),
+      ).toContain(created.stack.id);
+
+      await service.deleteStack(created.stack.id);
+      expect(
+        runRepo(service.repository.listPortReservations()).map(
+          (reservation) => reservation.stackId,
+        ),
+      ).not.toContain(created.stack.id);
+      await service.close();
+    });
+  }
 
   it("reports duplicate ports inside one stack as a managed reservation error", async () => {
     const root = makeRoot();

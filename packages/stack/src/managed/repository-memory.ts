@@ -42,12 +42,15 @@ import {
   transitionResourceKeys,
   decideManagedContextRegistration,
   decideManagedCheckoutIdentity,
-  managedStackOccupiesPorts,
+  managedPortReservationsConflict,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
   type ClaimManagedOperationFailure,
   type ClaimManagedOperationInput,
   type ClaimManagedOperationResult,
+  type ClaimManagedStartPortsFailure,
+  type ClaimManagedStartPortsInput,
+  type ManagedPortReservation,
   type ManagedStackRepositoryShape,
   type OwnedManagedStackFailure,
   type PrepareStackFailure,
@@ -131,8 +134,6 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
   const stackIdentities = new Map<string, string>();
   const operations = new Map<string, ManagedOperationRecord>();
   const activeOperationByStack = new Map<string, string>();
-  const portOwners = new Map<number, string>();
-
   const atomic = <A>(run: () => A): A => {
     const snapshot = {
       projects: structuredClone([...projects]),
@@ -144,7 +145,6 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       stackIdentities: structuredClone([...stackIdentities]),
       operations: structuredClone([...operations]),
       activeOperationByStack: structuredClone([...activeOperationByStack]),
-      portOwners: structuredClone([...portOwners]),
     };
     try {
       return run();
@@ -169,8 +169,6 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       for (const [key, value] of snapshot.activeOperationByStack) {
         activeOperationByStack.set(key, value);
       }
-      portOwners.clear();
-      for (const [key, value] of snapshot.portOwners) portOwners.set(key, value);
       throw error;
     }
   };
@@ -200,33 +198,38 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     return operation;
   };
 
-  const transitionPortOwnership = (
-    current: ManagedStackRecord | undefined,
-    next: ManagedStackRecord,
-  ): void => {
+  const listPortReservations = (): ReadonlyArray<ManagedPortReservation> =>
+    [...stacks.values()]
+      .filter((stack) => stack.status !== "tombstoned")
+      .sort(
+        (left, right) =>
+          compareManagedText(left.createdAt, right.createdAt) ||
+          compareManagedText(left.id, right.id),
+      )
+      .flatMap((stack) =>
+        stack.ports
+          .slice()
+          .sort((left, right) => compareManagedText(left.key, right.key))
+          .map((assignment) => ({
+            stackId: stack.id,
+            stackName: stack.name,
+            lifecycle: stack.lifecycle,
+            assignment,
+          })),
+      );
+
+  const transitionPortOwnership = (next: ManagedStackRecord): void => {
     validateManagedPortAssignments(next.id, next.ports);
-    if (managedStackOccupiesPorts(next.lifecycle)) {
-      for (const assignment of next.ports) {
-        const owner = portOwners.get(assignment.port);
-        if (owner !== undefined && owner !== next.id) {
-          throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: owner });
-        }
-      }
-    }
-    if (current !== undefined && managedStackOccupiesPorts(current.lifecycle)) {
-      for (const assignment of current.ports) {
-        if (portOwners.get(assignment.port) === current.id) {
-          portOwners.delete(assignment.port);
-        }
-      }
-    }
-    if (managedStackOccupiesPorts(next.lifecycle)) {
-      for (const assignment of next.ports) {
-        const owner = portOwners.get(assignment.port);
-        if (owner !== undefined && owner !== next.id) {
-          throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: owner });
-        }
-        portOwners.set(assignment.port, next.id);
+    const owners = listPortReservations().filter((owner) => owner.stackId !== next.id);
+    for (const assignment of next.ports) {
+      const owner = owners.find((candidate) =>
+        managedPortReservationsConflict(next.id, assignment, candidate),
+      );
+      if (owner !== undefined) {
+        throw new ManagedPortReservationError({
+          port: assignment.port,
+          ownerStackId: owner.stackId,
+        });
       }
     }
   };
@@ -237,7 +240,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
    * the explicit abort path and by recovery's pending branch.
    */
   const discardPendingStack = (stack: ManagedStackRecord, operationToken: string): void => {
-    transitionPortOwnership(stack, { ...stack, lifecycle: "stopped", ports: [] });
+    transitionPortOwnership({ ...stack, lifecycle: "stopped", ports: [] });
     stacks.delete(stack.id);
     stackIdentities.delete(stackIdentityKey(stack.checkoutId, stack.contextId, stack.name));
     operations.delete(operationToken);
@@ -404,7 +407,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         updatedAt: input.now,
       };
       const stack = applyConfiguration(baseStack, input.configuration, input.now);
-      transitionPortOwnership(undefined, stack);
+      transitionPortOwnership(stack);
       stacks.set(stack.id, stack);
       stackIdentities.set(identityKey, stack.id);
       const claimed = claimOperation({
@@ -472,59 +475,87 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     activeOperationByStack.delete(stackId);
   };
 
-  const updateStack = (input: UpdateManagedStackInput): ManagedStackRecord => {
-    requireOwnedOperation(input.stackId, input.operationToken);
-    const current = requireStack(input.stackId);
-    assertManagedStackUpdatable(current);
-    const next = applyConfiguration(current, input, input.now);
-    transitionPortOwnership(current, next);
-    stacks.set(current.id, next);
-    return copy(next);
-  };
+  const updateStack = (input: UpdateManagedStackInput): ManagedStackRecord =>
+    atomic(() => {
+      requireOwnedOperation(input.stackId, input.operationToken);
+      const current = requireStack(input.stackId);
+      assertManagedStackUpdatable(current);
+      const next = applyConfiguration(current, input, input.now);
+      transitionPortOwnership(next);
+      stacks.set(current.id, next);
+      return copy(next);
+    });
+
+  const claimStartPorts = (input: ClaimManagedStartPortsInput): ManagedStackRecord =>
+    atomic(() => {
+      requireOwnedOperation(input.stackId, input.operationToken);
+      const current = requireStack(input.stackId);
+      if (current.status === "tombstoned") {
+        throw new ManagedStackNotFoundError({ stackId: input.stackId });
+      }
+      if (
+        current.status !== "pending" &&
+        current.lifecycle !== "stopped" &&
+        current.lifecycle !== "failed"
+      ) {
+        throw new ManagedRunningStackPortChangeError({ stackId: input.stackId });
+      }
+      validateManagedPortAssignments(input.stackId, input.ports);
+      const next: ManagedStackRecord = {
+        ...current,
+        lifecycle: "starting",
+        ports: input.ports.slice().sort((left, right) => compareManagedText(left.key, right.key)),
+        updatedAt: input.now,
+      };
+      transitionPortOwnership(next);
+      stacks.set(input.stackId, next);
+      return copy(next);
+    });
 
   const reconcileOperation = (
     stackId: string,
     operationToken: string,
     lifecycle: ManagedStackRecord["lifecycle"],
     now: string,
-  ): ReconcileManagedOperationResult => {
-    const operation = requireOwnedOperation(stackId, operationToken);
-    const current = requireStack(stackId);
-    if (current.status === "tombstoned") {
-      // A tombstoned row under a live claim is a deletion that died before
-      // releasing it. Registry state is already final, so recovery only
-      // releases the claim; reviving a lifecycle here would resurrect a
-      // deleted stack, and dropping the row would break idempotent deletion.
+  ): ReconcileManagedOperationResult =>
+    atomic(() => {
+      const operation = requireOwnedOperation(stackId, operationToken);
+      const current = requireStack(stackId);
+      if (current.status === "tombstoned") {
+        // A tombstoned row under a live claim is a deletion that died before
+        // releasing it. Registry state is already final, so recovery only
+        // releases the claim; reviving a lifecycle here would resurrect a
+        // deleted stack, and dropping the row would break idempotent deletion.
+        operations.set(operationToken, {
+          ...operation,
+          status: "failed",
+          finishedAt: now,
+          error: "Recovered after an abandoned deletion",
+        });
+        activeOperationByStack.delete(stackId);
+        return { outcome: "tombstoned", stack: copy(current) };
+      }
+      if (current.status === "pending" && lifecycle === "stopped") {
+        discardPendingStack(current, operationToken);
+        return { outcome: "discarded" };
+      }
+      const next: ManagedStackRecord = {
+        ...current,
+        status: current.status === "pending" ? "active" : current.status,
+        lifecycle,
+        updatedAt: now,
+      };
+      transitionPortOwnership(next);
+      stacks.set(stackId, next);
       operations.set(operationToken, {
         ...operation,
         status: "failed",
         finishedAt: now,
-        error: "Recovered after an abandoned deletion",
+        error: `Recovered after runtime reconciliation (${lifecycle})`,
       });
       activeOperationByStack.delete(stackId);
-      return { outcome: "tombstoned", stack: copy(current) };
-    }
-    if (current.status === "pending" && lifecycle === "stopped") {
-      discardPendingStack(current, operationToken);
-      return { outcome: "discarded" };
-    }
-    const next: ManagedStackRecord = {
-      ...current,
-      status: current.status === "pending" ? "active" : current.status,
-      lifecycle,
-      updatedAt: now,
-    };
-    transitionPortOwnership(current, next);
-    stacks.set(stackId, next);
-    operations.set(operationToken, {
-      ...operation,
-      status: "failed",
-      finishedAt: now,
-      error: `Recovered after runtime reconciliation (${lifecycle})`,
+      return { outcome: "recovered", stack: copy(next) };
     });
-    activeOperationByStack.delete(stackId);
-    return { outcome: "recovered", stack: copy(next) };
-  };
 
   const tombstoneStack = (
     stackId: string,
@@ -542,7 +573,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       updatedAt: now,
       tombstonedAt: now,
     };
-    transitionPortOwnership(current, next);
+    transitionPortOwnership(next);
     stacks.set(stackId, next);
     stackIdentities.delete(stackIdentityKey(current.checkoutId, current.contextId, current.name));
     return copy(next);
@@ -901,6 +932,19 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           InvalidManagedPortError,
           ManagedOperationOwnershipError,
           ManagedPendingStackUpdateError,
+          ManagedPortReservationError,
+          ManagedRunningStackPortChangeError,
+          ManagedStackNotFoundError,
+        ),
+      }),
+    listPortReservations: () => Effect.sync(() => listPortReservations().map(copy)),
+    claimStartPorts: (input) =>
+      Effect.try({
+        try: () => claimStartPorts(input),
+        catch: failsWith<ClaimManagedStartPortsFailure>(
+          DuplicateManagedPortKeyError,
+          InvalidManagedPortError,
+          ManagedOperationOwnershipError,
           ManagedPortReservationError,
           ManagedRunningStackPortChangeError,
           ManagedStackNotFoundError,

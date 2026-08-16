@@ -46,7 +46,10 @@ import type {
   ClaimManagedOperationFailure,
   ClaimManagedOperationInput,
   ClaimManagedOperationResult,
+  ClaimManagedStartPortsFailure,
+  ClaimManagedStartPortsInput,
   ManagedStackRepositoryShape,
+  ManagedPortReservation,
   OwnedManagedStackFailure,
   PrepareStackFailure,
   PrepareStackInput,
@@ -77,7 +80,7 @@ import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
   decideManagedContextRegistration,
-  managedStackOccupiesPorts,
+  managedPortReservationsConflict,
   ManagedStackRepository,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
@@ -516,7 +519,7 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
         intent TEXT NOT NULL CHECK (intent IN ('automatic', 'exact')),
         PRIMARY KEY (stack_id, key)
       );
-      CREATE INDEX port_assignments_by_port ON ports(port);
+      CREATE INDEX port_assignments_by_port ON ports(port, intent);
 
       CREATE TABLE operations (
         token TEXT PRIMARY KEY,
@@ -632,7 +635,7 @@ const managedSqliteIndexShapes: Readonly<Record<string, ManagedSqliteIndexShape>
   },
   port_assignments_by_port: {
     table: "ports",
-    columns: ["port"],
+    columns: ["port", "intent"],
     unique: false,
   },
   one_active_operation_per_stack: {
@@ -1044,31 +1047,42 @@ const requireOwnedOperation = (
   return operation;
 };
 
+const selectPortReservations = (
+  database: ManagedSqliteDatabase,
+): ReadonlyArray<ManagedPortReservation> =>
+  database
+    .prepare(
+      `SELECT stacks.id AS stack_id, stacks.name AS stack_name, stacks.lifecycle,
+              ports.key, ports.port, ports.intent
+       FROM stacks
+       JOIN ports ON ports.stack_id = stacks.id
+       WHERE stacks.status != 'tombstoned'
+       ORDER BY stacks.created_at, stacks.id, ports.key`,
+    )
+    .all()
+    .map((row) => ({
+      stackId: getString(row, "stack_id"),
+      stackName: getString(row, "stack_name"),
+      lifecycle: managedStackLifecycle(getString(row, "lifecycle")),
+      assignment: decodePort(row),
+    }));
+
 const replacePorts = (
   database: ManagedSqliteDatabase,
   stackId: string,
   ports: ReadonlyArray<ManagedPortAssignment>,
-  lifecycle: ManagedStackLifecycle,
 ): void => {
   validateManagedPortAssignments(stackId, ports);
-  if (managedStackOccupiesPorts(lifecycle)) {
-    for (const assignment of ports) {
-      const owner = database
-        .prepare(
-          `SELECT ports.stack_id
-           FROM ports
-           JOIN stacks ON stacks.id = ports.stack_id
-           WHERE ports.port = ? AND ports.stack_id != ?
-             AND stacks.status != 'tombstoned'
-             AND stacks.lifecycle IN ('starting', 'running', 'stopping')`,
-        )
-        .get([assignment.port, stackId]);
-      if (owner !== undefined) {
-        throw new ManagedPortReservationError({
-          port: assignment.port,
-          ownerStackId: getString(owner, "stack_id"),
-        });
-      }
+  const owners = selectPortReservations(database).filter((owner) => owner.stackId !== stackId);
+  for (const assignment of ports) {
+    const owner = owners.find((candidate) =>
+      managedPortReservationsConflict(stackId, assignment, candidate),
+    );
+    if (owner !== undefined) {
+      throw new ManagedPortReservationError({
+        port: assignment.port,
+        ownerStackId: owner.stackId,
+      });
     }
   }
   database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
@@ -1141,12 +1155,7 @@ const insertConfiguration = (
       input.now,
       input.now,
     ]);
-  replacePorts(
-    database,
-    input.stackId,
-    input.configuration.ports ?? [],
-    input.configuration.lifecycle ?? "stopped",
-  );
+  replacePorts(database, input.stackId, input.configuration.ports ?? []);
 };
 
 /**
@@ -1516,7 +1525,31 @@ const updateStack = (
       input.now,
       input.stackId,
     ]);
-  replacePorts(database, input.stackId, ports, lifecycle);
+  replacePorts(database, input.stackId, ports);
+  return requireStack(database, input.stackId);
+};
+
+const claimStartPorts = (
+  database: ManagedSqliteDatabase,
+  input: ClaimManagedStartPortsInput,
+): ManagedStackRecord => {
+  requireOwnedOperation(database, input.stackId, input.operationToken);
+  const current = requireStack(database, input.stackId);
+  if (current.status === "tombstoned") {
+    throw new ManagedStackNotFoundError({ stackId: input.stackId });
+  }
+  if (
+    current.status !== "pending" &&
+    current.lifecycle !== "stopped" &&
+    current.lifecycle !== "failed"
+  ) {
+    throw new ManagedRunningStackPortChangeError({ stackId: input.stackId });
+  }
+  validateManagedPortAssignments(input.stackId, input.ports);
+  replacePorts(database, input.stackId, input.ports);
+  database
+    .prepare("UPDATE stacks SET lifecycle = 'starting', updated_at = ? WHERE id = ?")
+    .run([input.now, input.stackId]);
   return requireStack(database, input.stackId);
 };
 
@@ -1567,7 +1600,7 @@ const reconcileOperation = (
     database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
     return { outcome: "discarded" };
   }
-  replacePorts(database, stackId, current.ports, lifecycle);
+  replacePorts(database, stackId, current.ports);
   database
     .prepare(
       `UPDATE stacks SET
@@ -2092,6 +2125,20 @@ const createSqliteManagedStackRepository = (
             InvalidManagedPortError,
             ManagedOperationOwnershipError,
             ManagedPendingStackUpdateError,
+            ManagedPortReservationError,
+            ManagedRunningStackPortChangeError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      listPortReservations: () => readTransaction(database, () => selectPortReservations(database)),
+      claimStartPorts: (input) =>
+        transaction(
+          database,
+          () => claimStartPorts(database, input),
+          failsWith<ClaimManagedStartPortsFailure>(
+            DuplicateManagedPortKeyError,
+            InvalidManagedPortError,
+            ManagedOperationOwnershipError,
             ManagedPortReservationError,
             ManagedRunningStackPortChangeError,
             ManagedStackNotFoundError,
