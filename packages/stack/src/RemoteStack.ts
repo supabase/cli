@@ -307,9 +307,10 @@ function toServiceState(
 // ---------------------------------------------------------------------------
 
 /**
- * RemoteStack implements the Stack interface over HTTP to a daemon
- * running on a Unix socket. This allows the CLI to transparently switch
- * between foreground (in-process) and detached (daemon) modes.
+ * RemoteStack implements the Stack interface over HTTP to a daemon running
+ * on either a Unix socket or a deterministic loopback control endpoint.
+ * This allows the CLI to transparently switch between foreground
+ * (in-process) and detached (daemon) modes.
  */
 export const RemoteStack = {
   layer: (socketPath: HttpTransportTarget): Layer.Layer<Stack, never, UnixHttpClient> =>

@@ -1,4 +1,5 @@
 import { Data, Effect, Context, Ref, Result, Schedule, Schema } from "effect";
+import { HttpServer } from "effect/unstable/http";
 import {
   ControlOwnerStatusSchema,
   type ControlOwnerStatus,
@@ -7,7 +8,7 @@ import {
 
 export type { ControlOwnerState, ControlOwnerStatus } from "../DaemonProtocol.ts";
 
-/** The one path served by a control listener before the full daemon routes are installed. */
+/** The owner status path exposed once the daemon routes are installed. */
 export const CONTROL_STATUS_PATH = "/owner";
 
 const CONTROL_PROTOCOL_VERSION = 1 as const;
@@ -22,6 +23,8 @@ export interface ControlEndpoint {
   /** The persisted transport spelling used by stack documents and clients. */
   readonly path: string;
 }
+
+const controlOwnershipBrand: unique symbol = Symbol("stack/ControlOwnership");
 
 export class InvalidControlOwnershipIdError extends Data.TaggedError(
   "InvalidControlOwnershipIdError",
@@ -75,14 +78,14 @@ class ControlUnavailableError extends Data.TaggedError("ControlUnavailableError"
 }> {}
 
 export interface ControlListener {
+  readonly server: HttpServer.HttpServer["Service"];
   readonly close: Effect.Effect<void>;
 }
 
 export interface ControlTransportShape {
   readonly bind: (
     endpoint: ControlEndpoint,
-    status: () => ControlOwnerStatus,
-  ) => Effect.Effect<ControlListener, ControlBindError>;
+  ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
   readonly read: (
     endpoint: ControlEndpoint,
   ) => Effect.Effect<unknown, ControlTransportError | ControlProtocolError>;
@@ -97,18 +100,21 @@ export interface ControlOwnershipInput {
   readonly stackId: string;
   readonly runtimeRoot?: string;
   readonly initialStatus?: ControlOwnerStatus;
-  readonly transport?: ControlTransportShape;
 }
 
-export interface ControlOwned {
+export interface ControlOwnership {
   readonly _tag: "Owned";
+  readonly [controlOwnershipBrand]: true;
   readonly endpoint: ControlEndpoint;
+  readonly server: HttpServer.HttpServer["Service"];
   readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
   readonly setOwnerStatus: (status: ControlOwnerStatus) => Effect.Effect<void>;
   readonly setState: (state: ControlOwnerState, ready?: boolean) => Effect.Effect<void>;
   readonly close: Effect.Effect<void>;
   readonly acquiredAfterClose: boolean;
 }
+
+export type ControlOwned = ControlOwnership;
 
 export interface ControlAttached {
   readonly _tag: "Attached";
@@ -132,15 +138,15 @@ const ownershipBytes = (ownershipId: string): ReadonlyArray<number> => {
   return bytes;
 };
 
-/** Derives a deterministic 127/8 address and high port from a stack id. */
+/** Derives a deterministic loopback address and high port from a stack id. */
 export const controlEndpoint = (
   ownershipId: string,
 ): Effect.Effect<ControlEndpoint, InvalidControlOwnershipIdError> => {
   if (!CONTROL_ID_PATTERN.test(ownershipId)) return invalidId(ownershipId);
   const bytes = ownershipBytes(ownershipId);
-  const host = `127.${1 + (bytes[0]! % 254)}.${1 + (bytes[1]! % 254)}.${1 + (bytes[2]! % 254)}`;
   const value = (bytes[3]! << 8) | bytes[4]!;
   const port = 49152 + (value % 16384);
+  const host = "127.0.0.1";
   const url = `http://${host}:${port}`;
   return Effect.succeed({
     _tag: "Loopback",
@@ -163,9 +169,8 @@ export const controlEndpointPath = (runtimeRoot: string, stackId: string): strin
   if (!CONTROL_ID_PATTERN.test(stackId) || bytes.length < 5) {
     throw new InvalidControlOwnershipIdError({ ownershipId: stackId });
   }
-  const host = `127.${1 + (bytes[0]! % 254)}.${1 + (bytes[1]! % 254)}.${1 + (bytes[2]! % 254)}`;
   const value = (bytes[3]! << 8) | bytes[4]!;
-  return `http://${host}:${49152 + (value % 16384)}`;
+  return `http://127.0.0.1:${49152 + (value % 16384)}`;
 };
 
 const decodeOwnerStatus = (
@@ -195,11 +200,6 @@ const decodeOwnerStatus = (
 const defaultStatus = (status: ControlOwnerStatus | undefined): ControlOwnerStatus =>
   status ?? { protocolVersion: CONTROL_PROTOCOL_VERSION, state: "starting", ready: false };
 
-const transportFor = (
-  input: ControlOwnershipInput,
-): Effect.Effect<ControlTransportShape, never, ControlTransport> =>
-  input.transport === undefined ? ControlTransport : Effect.succeed(input.transport);
-
 const unavailable = (endpoint: ControlEndpoint, cause: unknown): ControlUnavailableError =>
   new ControlUnavailableError({ endpoint, cause });
 
@@ -214,10 +214,12 @@ const attach = (
     .read(endpoint)
     .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)))
     .pipe(
-      Effect.map((status) => ({
+      Effect.map(() => ({
         _tag: "Attached" as const,
         endpoint,
-        ownerStatus: Effect.succeed(status),
+        ownerStatus: transport
+          .read(endpoint)
+          .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value))),
       })),
     );
 
@@ -235,7 +237,9 @@ const makeOwned = (
   });
   return Effect.succeed({
     _tag: "Owned",
+    [controlOwnershipBrand]: true,
     endpoint,
+    server: listener.server,
     ownerStatus: Ref.get(statusRef),
     setOwnerStatus: (status) => Ref.set(statusRef, status),
     setState: (state, ready = state === "running") =>
@@ -269,9 +273,7 @@ const acquireAtEndpoint = (
     | ControlUnavailableError,
     import("effect/Scope").Scope
   > = Effect.gen(function* () {
-    const bound = yield* transport
-      .bind(endpoint, () => Ref.getUnsafe(statusRef))
-      .pipe(Effect.result);
+    const bound = yield* transport.bind(endpoint).pipe(Effect.result);
     if (Result.isSuccess(bound)) {
       const owned = yield* makeOwned(endpoint, bound.success, statusRef, hadConflict);
       yield* Effect.addFinalizer(() => owned.close);
@@ -315,7 +317,7 @@ export const acquireControl = (
 > =>
   Effect.gen(function* () {
     const endpoint = yield* controlEndpoint(input.stackId);
-    const transport = yield* transportFor(input);
+    const transport = yield* ControlTransport;
     return yield* acquireAtEndpoint(endpoint, defaultStatus(input.initialStatus), transport);
   });
 

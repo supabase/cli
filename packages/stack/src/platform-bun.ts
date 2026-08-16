@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer, Scope } from "effect";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
@@ -10,8 +10,6 @@ import {
   ControlTransport,
   ControlTransportError,
   type ControlEndpoint,
-  type ControlListener,
-  type ControlOwnerStatus,
 } from "./managed/control.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -33,53 +31,38 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
     }),
 });
 
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  if ("code" in cause && typeof cause.code === "string") return cause.code;
+  if ("cause" in cause) return errorCode(cause.cause);
+  return undefined;
+};
+
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, status: () => ControlOwnerStatus) =>
-    Effect.try({
-      try: () => {
-        const serve = (hostname: string) =>
-          Bun.serve({
-            hostname,
-            port: endpoint.port,
-            fetch: (request) => {
-              if (
-                request.method !== "GET" ||
-                new URL(request.url).pathname !== CONTROL_STATUS_PATH
-              ) {
-                return new Response(JSON.stringify({ error: "not found" }), {
-                  status: 404,
-                  headers: { "content-type": "application/json" },
-                });
-              }
-              return Response.json(status());
-            },
-          });
-        const server = (() => {
-          try {
-            return serve(endpoint.hostname);
-          } catch (cause) {
-            const code =
-              typeof cause === "object" && cause !== null && "code" in cause
-                ? cause.code
-                : undefined;
-            if (code !== "EADDRNOTAVAIL") throw cause;
-            return serve("127.0.0.1");
-          }
-        })();
-        const listener: ControlListener = {
-          close: Effect.promise(() => server.stop()),
-        };
-        return listener;
-      },
-      catch: (cause) => {
-        const code =
-          typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
-        return new ControlBindError({
-          endpoint,
-          reason: code === "EADDRINUSE" ? "in-use" : "failed",
-          cause,
-        });
-      },
+  bind: (endpoint: ControlEndpoint) =>
+    Effect.gen(function* () {
+      const parentScope = yield* Effect.scope;
+      const serverScope = yield* Scope.fork(parentScope);
+      const server = yield* BunHttpServer.make({
+        hostname: endpoint.hostname,
+        port: endpoint.port,
+        disablePreemptiveShutdown: true,
+      }).pipe(
+        Scope.provide(serverScope),
+        Effect.catchDefect((cause) =>
+          Effect.fail(
+            new ControlBindError({
+              endpoint,
+              reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+              cause,
+            }),
+          ),
+        ),
+      );
+      return {
+        server,
+        close: Scope.close(serverScope, Exit.void),
+      };
     }),
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
@@ -89,8 +72,16 @@ const controlTransport: ControlTransport["Service"] = {
         return await response.json();
       },
       catch: (cause) => {
-        if (cause instanceof Error && cause.message.startsWith("Control status request returned")) {
+        if (
+          cause instanceof SyntaxError ||
+          (cause instanceof Error &&
+            cause.message.startsWith("Control status request returned") &&
+            !cause.message.endsWith(" 404"))
+        ) {
           return new ControlProtocolError({ endpoint, cause });
+        }
+        if (cause instanceof Error && cause.message.endsWith(" 404")) {
+          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
         }
         return new ControlTransportError({ endpoint, reason: "unreachable", cause });
       },

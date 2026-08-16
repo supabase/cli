@@ -13,8 +13,6 @@ import {
   ControlTransport,
   ControlTransportError,
   type ControlEndpoint,
-  type ControlListener,
-  type ControlOwnerStatus,
 } from "./managed/control.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -108,9 +106,10 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
 });
 
 const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
-  const code = cause.code;
-  return typeof code === "string" ? code : undefined;
+  if (typeof cause !== "object" || cause === null) return undefined;
+  if ("code" in cause && typeof cause.code === "string") return cause.code;
+  if ("cause" in cause) return errorCode(cause.cause);
+  return undefined;
 };
 
 const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
@@ -124,48 +123,24 @@ const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
   });
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, status: () => ControlOwnerStatus) =>
-    Effect.callback<ControlListener, ControlBindError>((resume) => {
-      const server = createServer((request, response) => {
-        if (request.method !== "GET" || request.url !== CONTROL_STATUS_PATH) {
-          response.writeHead(404, { "content-type": "application/json" });
-          response.end(JSON.stringify({ error: "not found" }));
-          return;
-        }
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(status()));
-      });
-      let fallbackBind = false;
-      const onError = (cause: unknown) => {
-        if (errorCode(cause) === "EADDRNOTAVAIL" && !fallbackBind) {
-          fallbackBind = true;
-          server.listen({ host: "127.0.0.1", port: endpoint.port }, () => {
-            server.off("error", onError);
-            resume(Effect.succeed({ close: closeControlServer(server) }));
-          });
-          return;
-        }
-        server.off("error", onError);
-        resume(
-          Effect.fail(
-            new ControlBindError({
-              endpoint,
-              reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
-              cause,
-            }),
-          ),
-        );
-      };
-      server.on("error", onError);
-      server.listen({ host: endpoint.hostname, port: endpoint.port }, () => {
-        server.off("error", onError);
-        resume(Effect.succeed({ close: closeControlServer(server) }));
-      });
-      return Effect.sync(() => {
-        server.off("error", onError);
-        if (server.listening) server.close();
-      });
-    }),
+  bind: (endpoint: ControlEndpoint) => {
+    const rawServer = createServer();
+    return NodeHttpServer.make(() => rawServer, {
+      host: endpoint.hostname,
+      port: endpoint.port,
+      disablePreemptiveShutdown: true,
+    }).pipe(
+      Effect.map((server) => ({ server, close: closeControlServer(rawServer) })),
+      Effect.mapError(
+        (cause) =>
+          new ControlBindError({
+            endpoint,
+            reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+            cause,
+          }),
+      ),
+    );
+  },
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
       try: async () => {
@@ -205,8 +180,6 @@ const controlTransport: ControlTransport["Service"] = {
             request.once("error", reject);
             request.end();
           });
-        // macOS does not route every 127/8 alias unless explicitly configured;
-        // the bind operation applies the same fallback, so connect through it.
         return await requestStatus("127.0.0.1");
       },
       catch: (cause) => {
@@ -219,8 +192,16 @@ const controlTransport: ControlTransport["Service"] = {
         ) {
           return new ControlTransportError({ endpoint, reason: "unreachable", cause });
         }
-        if (cause instanceof Error && cause.message.startsWith("Control status request returned")) {
+        if (
+          cause instanceof SyntaxError ||
+          (cause instanceof Error &&
+            cause.message.startsWith("Control status request returned") &&
+            !cause.message.endsWith(" 404"))
+        ) {
           return new ControlProtocolError({ endpoint, cause });
+        }
+        if (cause instanceof Error && cause.message.endsWith(" 404")) {
+          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
         }
         return new ControlTransportError({ endpoint, reason: "transport", cause });
       },
