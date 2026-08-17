@@ -42,7 +42,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/stripe/pg-schema-diff v1.0.8
+	github.com/stripe/pg-schema-diff v1.0.9
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/otel v1.45.0
