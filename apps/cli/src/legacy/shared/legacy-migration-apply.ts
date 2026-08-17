@@ -14,6 +14,7 @@ import {
   INSERT_MIGRATION_VERSION,
   MIGRATE_FILE_PATTERN,
   legacyCreateMigrationTable,
+  legacySortMigrationPathsByVersion,
 } from "./legacy-migration-history.ts";
 import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
@@ -772,7 +773,12 @@ export const legacyApplyMigrations = <E>(
     yield* legacyCreateMigrationTable(session).pipe(
       Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
-    for (const migrationPath of pending) {
+    // Sorted by version, not by file name: `db push` has applied in version
+    // order since supabase/cli#6038, so callers that hand over a name-ordered
+    // listing (`db reset`, the shadow-database replay) would otherwise apply the
+    // same files in the opposite order (#6036). Idempotent for callers that
+    // already sorted.
+    for (const migrationPath of legacySortMigrationPathsByVersion(pending)) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
       // Reset connection state per migration before running the batch.
       yield* resetConnectionState(session, mapError);
