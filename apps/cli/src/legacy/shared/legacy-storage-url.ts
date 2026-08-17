@@ -145,7 +145,7 @@ function unescapePath(s: string): string {
       pending = [];
     }
   };
-  for (let i = 0; i < s.length; ) {
+  for (let i = 0; i < s.length;) {
     if (s.charCodeAt(i) === 0x25 /* % */) {
       const h1 = i + 1 < s.length ? s.charCodeAt(i + 1) : -1;
       const h2 = i + 2 < s.length ? s.charCodeAt(i + 2) : -1;

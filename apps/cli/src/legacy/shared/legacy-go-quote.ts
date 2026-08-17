@@ -79,7 +79,7 @@ const GO_ESCAPES: Readonly<Record<number, string>> = {
  */
 export function legacyGoQuote(bytes: Uint8Array): string {
   let out = '"';
-  for (let i = 0; i < bytes.length; ) {
+  for (let i = 0; i < bytes.length;) {
     const { cp, size } = decodeUtf8Rune(bytes, i);
     if (cp === -1) {
       out += `\\x${(bytes[i] ?? 0).toString(16).padStart(2, "0")}`;
