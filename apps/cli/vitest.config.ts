@@ -6,7 +6,7 @@ function dockerfileTextPlugin() {
     name: "dockerfile-text-loader",
     load(id: string) {
       const [filePath] = id.split("?", 2);
-      if (filePath?.endsWith("/Dockerfile") !== true) {
+      if (filePath === undefined || !/[/\\]Dockerfile$/.test(filePath)) {
         return undefined;
       }
 

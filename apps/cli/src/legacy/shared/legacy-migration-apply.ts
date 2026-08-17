@@ -594,6 +594,13 @@ const execMigrationBatch = <E>(
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
 
+      // Role modification statements within migrations (SET ROLE / RESET ROLE) drop
+      // CURRENT_USER to the temporary login role on passwordless connections. Re-assert
+      // postgres before the ledger insert when detected so history recording cannot fail with 42501.
+      const ROLE_STATEMENT_PATTERN = /\b(?:SET|RESET)\s+ROLE\b/i;
+
+      const hasRoleStatement = statements.some((s) => ROLE_STATEMENT_PATTERN.test(s));
+
       const executeSequentially = (cleanup: string) =>
         Effect.gen(function* () {
           for (const [index, statement] of statements.entries()) {
@@ -604,6 +611,9 @@ const execMigrationBatch = <E>(
               );
           }
           if (version.length > 0) {
+            if (hasRoleStatement) {
+              yield* session.exec("SET ROLE postgres").pipe(Effect.ignore);
+            }
             yield* session
               .query(INSERT_MIGRATION_VERSION, [version, name, statements])
               .pipe(
@@ -642,6 +652,9 @@ const execMigrationBatch = <E>(
           const batchStatements = pending;
           const operations: Array<LegacyDbBatchStatement> = batchStatements.map((sql) => ({ sql }));
           if (recordVersion) {
+            if (hasRoleStatement) {
+              operations.push({ sql: "SET ROLE postgres" });
+            }
             operations.push({
               sql: INSERT_MIGRATION_VERSION,
               params: [version, name, statements],
@@ -672,7 +685,9 @@ const execMigrationBatch = <E>(
 
           yield* execute.pipe(
             Effect.mapError((cause) => {
-              const globalIndex = base + (cause.statementIndex ?? completed);
+              const rawIndex = base + (cause.statementIndex ?? completed);
+              const globalIndex =
+                hasRoleStatement && rawIndex > statements.length ? rawIndex - 1 : rawIndex;
               return legacyFormatExecBatchError(
                 cause,
                 globalIndex,

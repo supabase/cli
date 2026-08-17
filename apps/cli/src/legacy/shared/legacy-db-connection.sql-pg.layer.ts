@@ -503,12 +503,29 @@ export function legacyBuildRawPgConfig(
   port: number,
   sslOption: boolean | ConnectionOptions | undefined,
   connectTimeoutSeconds: number,
+  stepDownRequired: boolean = false,
 ): Pg.ClientConfig {
-  const hasOptions = legacyMergedConnectionOptions(cfg) !== undefined;
+  const effectiveCfg =
+    stepDownRequired && cfg.runtimeParams?.["role"] === undefined
+      ? {
+          ...cfg,
+          runtimeParams: {
+            ...cfg.runtimeParams,
+            role: "postgres",
+          },
+        }
+      : cfg;
+  const hasOptions = legacyMergedConnectionOptions(effectiveCfg) !== undefined;
   return {
     ...(hasOptions
-      ? { connectionString: legacyBuildConnectionUrl(cfg, host, port) }
-      : { host, port, user: cfg.user, password: cfg.password, database: cfg.database }),
+      ? { connectionString: legacyBuildConnectionUrl(effectiveCfg, host, port) }
+      : {
+          host,
+          port,
+          user: effectiveCfg.user,
+          password: effectiveCfg.password,
+          database: effectiveCfg.database,
+        }),
     ...(sslOption === undefined ? {} : { ssl: sslOption }),
     connectionTimeoutMillis: connectTimeoutSeconds * 1000,
   };
@@ -545,7 +562,7 @@ export function legacyBuildPoolConfig(
   stepDownRequired: boolean,
 ): Pg.PoolConfig {
   return {
-    ...legacyBuildRawPgConfig(cfg, host, port, sslOption, connectTimeoutSeconds),
+    ...legacyBuildRawPgConfig(cfg, host, port, sslOption, connectTimeoutSeconds, stepDownRequired),
     idleTimeoutMillis: 0,
     max: 1,
     application_name: "@effect/sql-pg",

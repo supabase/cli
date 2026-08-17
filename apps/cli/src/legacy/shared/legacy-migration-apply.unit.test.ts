@@ -230,6 +230,30 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("re-asserts postgres role before recording migration history after RESET ROLE", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_role_reset.sql");
+    writeFileSync(
+      file,
+      "CREATE ROLE repro_writer NOLOGIN;\nGRANT repro_writer TO postgres;\nSET ROLE repro_writer;\nSELECT 1;\nRESET ROLE;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          const stmts = batches[0]?.statements?.map((s) => s.sql) ?? [];
+          expect(stmts[stmts.length - 2]).toBe("SET ROLE postgres");
+          expect(stmts[stmts.length - 1]).toContain(
+            "INSERT INTO supabase_migrations.schema_migrations",
+          );
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("keeps the global error index after an incompatible-statement flush", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_fail_after_vacuum.sql");
@@ -786,6 +810,7 @@ describe("legacyApplySchemaFiles", () => {
       // `stat` only needs directory execute permission, not read permission on the
       // file itself, so this still resolves as a `"File"` match, unlike a directory
       // (which the glob would instead expand via `legacyWalkSqlFiles`).
+      if (process.platform === "win32") return Effect.void;
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-read-fail-"));
       const file = join(dir, "supabase", "unreadable.sql");
       mkdirSync(join(dir, "supabase"), { recursive: true });

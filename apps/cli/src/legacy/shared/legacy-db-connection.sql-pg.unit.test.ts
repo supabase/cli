@@ -336,7 +336,7 @@ describe("legacyBuildPoolConfig", () => {
       5432,
       { rejectUnauthorized: false },
       10,
-      true,
+      false,
     );
     expect(c.idleTimeoutMillis).toBe(0);
     expect(c.max).toBe(1);
@@ -352,12 +352,13 @@ describe("legacyBuildPoolConfig", () => {
     expect(c.ssl).toBe(false);
   });
 
-  it("installs the step-down verify hook only when required", () => {
+  it("installs the step-down verify hook and sets startup role option when required", () => {
     // Every NEW physical connection (initial + silent redials) runs the step-down
     // before pg-pool hands it to a checkout, mirroring Go's per-connection
-    // AfterConnect.
+    // AfterConnect, and includes -c role=postgres in startup options.
     const remote = legacyBuildPoolConfig({ ...base }, "db.example.com", 5432, false, 10, true);
     expect(remote.verify).toBe(legacyPoolStepDownVerify);
+    expect(remote.connectionString).toContain("options=-c+role%3Dpostgres");
     const local = legacyBuildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
     expect("verify" in local).toBe(false);
   });
