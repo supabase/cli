@@ -1001,8 +1001,62 @@ export function mockLegacyShadowContainerCliSpawner(
 // `mockLegacyShadowContainerCliSpawner` above deliberately does not model.
 // ---------------------------------------------------------------------------
 
-/** The bytes the fake `docker cp <id>:PGDATA -` emits — stands in for a real ~90MB PGDATA tar. */
-export const LEGACY_FAKE_PGDATA_TAR = "data/PG_VERSION\n17\n";
+/**
+ * A real (if tiny) POSIX tar, byte for byte — `legacyPgDataArchiveHasCluster`
+ * (`db-bootstrap/pgdata-snapshot.ts`) walks the header stream and checksum-validates every block
+ * before a warm restore, so the fake export has to be a genuine archive rather than a stand-in
+ * string. Every byte stays ASCII (padding is NUL), which is why the spawner's `TextEncoder` and
+ * the tests' `readFileString` round-trip it unchanged.
+ */
+const legacyFakeTarBlock = (fields: ReadonlyArray<readonly [number, string]>): string => {
+  const block = Array.from({ length: 512 }, () => "\0");
+  for (const [offset, text] of fields) {
+    for (let index = 0; index < text.length; index += 1) {
+      block[offset + index] = text[index] ?? "\0";
+    }
+  }
+  return block.join("");
+};
+
+const legacyFakeTarOctal = (value: number, width: number) =>
+  `${value.toString(8).padStart(width, "0")}\0`;
+
+/** One ustar member: a checksummed 512-byte header plus its NUL-padded content blocks. */
+const legacyFakeTarEntry = (name: string, content: string, typeFlag: "0" | "5"): string => {
+  const header = legacyFakeTarBlock([
+    [0, name],
+    [100, legacyFakeTarOctal(typeFlag === "5" ? 0o755 : 0o600, 7)],
+    [108, legacyFakeTarOctal(0, 7)],
+    [116, legacyFakeTarOctal(0, 7)],
+    [124, legacyFakeTarOctal(content.length, 11)],
+    [136, legacyFakeTarOctal(0, 11)],
+    // The checksum is computed over the header with this field read as 8 spaces.
+    [148, "        "],
+    [156, typeFlag],
+    [257, "ustar\0"],
+    [263, "00"],
+  ]);
+  let checksum = 0;
+  for (let index = 0; index < header.length; index += 1) checksum += header.charCodeAt(index);
+  const padding = "\0".repeat((512 - (content.length % 512)) % 512);
+  return `${header.slice(0, 148)}${legacyFakeTarOctal(checksum, 6)} ${header.slice(156)}${content}${padding}`;
+};
+
+/** Tar's end-of-archive marker: two all-zero blocks. */
+const LEGACY_FAKE_TAR_END = "\0".repeat(1024);
+
+/**
+ * The bytes the fake `docker cp <id>:PGDATA -` emits — stands in for a real ~90MB PGDATA tar,
+ * with the same top-level `data/` member and `data/PG_VERSION` marker a real export carries.
+ */
+export const LEGACY_FAKE_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${LEGACY_FAKE_TAR_END}`;
+
+/**
+ * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
+ * artifact looks like to `docker cp -`, which extracts it happily and lets the entrypoint `initdb`
+ * a fresh cluster over the top. The pre-restore marker check is what catches it.
+ */
+export const LEGACY_FAKE_EMPTY_TAR = LEGACY_FAKE_TAR_END;
 
 interface LegacyFakeContainer {
   readonly labels: Readonly<Record<string, string>>;

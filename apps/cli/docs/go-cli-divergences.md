@@ -86,7 +86,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
-- `db diff`/`db pull`/`db schema declarative sync` shadow baseline cache (#6184): the shadow
+- `db diff`/`db pull`/`db schema declarative sync`/`db schema declarative generate` shadow
+  baseline cache (#6184): the shadow
   database's platform baseline is cached as a PGDATA snapshot under
   `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
   the root; LRU keep-8 + 14-day mtime TTL, shared across worktrees with the same settings) and
@@ -94,8 +95,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. The key
   includes the effective Webhooks/`pg_net` policy (legacy migrate forces enabled; next migrate
   follows config; next declarative forces disabled). Covers
-  migra/`db pull` via `legacyWithShadowDatabase`, and the bundled pg-delta next sync/diff
-  shadows via `legacyAcquireShadowDatabase` (ephemeral host ports are not part of the cache
+  migra/`db pull` via `legacyWithShadowDatabase`, the bundled pg-delta next sync/diff
+  shadows via `legacyAcquireShadowDatabase`, and `generate`/`sync`/`diff`'s legacy pg-delta
+  opt-out (`SUPABASE_USE_PG_DELTA_NEXT=false`), whose catalog exports provision a shadow through
+  the same acquire on a catalog cache miss (ephemeral host ports are not part of the cache
   key — they are not baked into PGDATA). TS-only,
   default ON; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (ambient env or project dotenv), `sync
 --no-cache` bypasses it per-invocation, and `SUPABASE_SHADOW_DEBUG=1` prints stderr-only phase

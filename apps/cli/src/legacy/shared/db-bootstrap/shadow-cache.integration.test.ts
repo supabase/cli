@@ -19,6 +19,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import {
+  LEGACY_FAKE_EMPTY_TAR,
   LEGACY_FAKE_PGDATA_TAR,
   legacyWithEnv,
   mockLegacyDockerDaemonCliSpawner,
@@ -748,6 +749,45 @@ describe("legacyAcquireShadowDatabase", () => {
       ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
     },
   );
+
+  it.live("a published tar carrying no cluster is discarded instead of restored", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        yield* coldRun(docker, input);
+        const [tarName = ""] = yield* soleTarName(fs, path);
+        const tarPath = path.join(shadowCacheDir(path), tarName);
+
+        // The published artifact is replaced by a tar that is perfectly well-formed but carries no
+        // PGDATA: `docker cp -` would extract nothing, the entrypoint would `initdb` a fresh
+        // cluster, readiness would pass, and the caller would diff against a BARE database while
+        // being told the platform baseline was present.
+        yield* fs.writeFileString(tarPath, LEGACY_FAKE_EMPTY_TAR);
+        const stepsBefore = docker.steps().length;
+
+        const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+
+        expect(out.stderrText).toContain("cached shadow baseline unusable");
+        expect(out.stderrText).toContain("data/PG_VERSION");
+        expect(fallback.baselinePresent).toBe(false);
+        // Caught before any container was created, so nothing was ever restored.
+        expect(docker.steps().slice(stepsBefore)).not.toContain("cp-in");
+        // The contents ARE the problem, so the tar goes — and the cold fallback republishes a
+        // good one within the same run, which is what keeps this fail-open.
+        expect(yield* soleTarName(fs, path)).toEqual([]);
+        yield* fallback.snapshotBaseline;
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+        expect(yield* fs.readFileString(tarPath)).toBe(LEGACY_FAKE_PGDATA_TAR);
+        yield* legacyRemoveShadowDatabase(docker.spawner, fallback.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
 
   it.live("a restored shadow that never becomes ready is removed before the cold retry", () => {
     const docker = mockLegacyDockerDaemonCliSpawner();

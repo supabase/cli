@@ -28,7 +28,7 @@
  * well — nothing about the format is container-specific.
  */
 
-import { Effect, Stream, type FileSystem } from "effect";
+import { Effect, Option, Stream, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -149,6 +149,227 @@ export const legacyExportPgDataTar = (
       );
   }).pipe(Effect.onError(() => fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined))));
 };
+
+// ---------------------------------------------------------------------------
+// Archive validation
+// ---------------------------------------------------------------------------
+
+/**
+ * PGDATA's own directory name — `docker cp <id>:<dir> -` names its members after the source
+ * BASENAME, so `data/` is the export tar's top-level entry (see {@link LEGACY_PGDATA_PARENT_PATH}).
+ */
+const LEGACY_PGDATA_DIR_NAME = LEGACY_PGDATA_PATH.slice(LEGACY_PGDATA_PARENT_PATH.length + 1);
+
+/**
+ * The one entry whose presence proves an archive really carries an exported cluster: every
+ * Postgres data directory has a `PG_VERSION` file at its root, and `initdb` writes it first. An
+ * archive that unpacks cleanly but lacks it is the corruption a restore cannot otherwise notice —
+ * see {@link legacyPgDataArchiveHasCluster}.
+ */
+export const LEGACY_PGDATA_MARKER_ENTRY = `${LEGACY_PGDATA_DIR_NAME}/PG_VERSION`;
+
+/** POSIX tar's fixed block size: headers, file content, and the end marker are all multiples of it. */
+const LEGACY_TAR_BLOCK_SIZE = 512;
+
+const LEGACY_TAR_NO_BYTES = new Uint8Array(0);
+
+const legacyTarDecoder = new TextDecoder();
+
+/**
+ * {@link legacyScanTarChunkForEntry}'s carry-over state — everything needed to resume a header
+ * walk at an arbitrary chunk boundary, and nothing else. `carry` holds the bytes of a header block
+ * a chunk ended in the middle of (always `< 512`); `skip` counts the file-content bytes still to be
+ * STEPPED OVER without buffering, which is what keeps a ~90MB archive off the heap.
+ */
+export interface LegacyTarScanState {
+  readonly carry: Uint8Array;
+  readonly skip: number;
+  /** Consecutive all-zero blocks seen; two in a row is tar's end-of-archive marker. */
+  readonly zeroBlocks: number;
+  readonly found: boolean;
+  readonly ended: boolean;
+  /** A block that is neither zero nor a checksum-valid header: not a tar (or a truncated one). */
+  readonly malformed: boolean;
+}
+
+export const legacyInitialTarScanState: LegacyTarScanState = {
+  carry: LEGACY_TAR_NO_BYTES,
+  skip: 0,
+  zeroBlocks: 0,
+  found: false,
+  ended: false,
+  malformed: false,
+};
+
+/** Whether the scan has reached a verdict — nothing later in the archive can change it. */
+export const legacyTarScanSettled = (state: LegacyTarScanState): boolean =>
+  state.found || state.ended || state.malformed;
+
+/** A NUL-terminated text field of a tar header block. */
+const legacyTarTextField = (block: Uint8Array, offset: number, length: number): string => {
+  const raw = block.subarray(offset, offset + length);
+  const end = raw.indexOf(0);
+  return legacyTarDecoder.decode(end === -1 ? raw : raw.subarray(0, end));
+};
+
+/**
+ * A numeric header field: NUL/space-padded octal, or GNU's base-256 form (high bit of the first
+ * byte) for sizes past what 11 octal digits can hold. `undefined` when neither parses.
+ */
+const legacyTarNumericField = (
+  block: Uint8Array,
+  offset: number,
+  length: number,
+): number | undefined => {
+  const first = block[offset] ?? 0;
+  if ((first & 0x80) !== 0) {
+    let value = first & 0x7f;
+    for (let index = offset + 1; index < offset + length; index += 1) {
+      value = value * 256 + (block[index] ?? 0);
+    }
+    return value;
+  }
+  const text = legacyTarTextField(block, offset, length).trim();
+  if (text.length === 0) return 0;
+  if (!/^[0-7]+$/u.test(text)) return undefined;
+  return Number.parseInt(text, 8);
+};
+
+/**
+ * Tar's own integrity check on a header block: the stored checksum is the sum of all 512 bytes
+ * with the checksum field itself read as spaces. Both the unsigned and the (historical) signed
+ * summation are accepted, as every tar reader does. This is what tells a genuine header apart from
+ * arbitrary bytes, so a non-tar file cannot be walked as if it were one.
+ */
+const legacyTarChecksumValid = (block: Uint8Array): boolean => {
+  const stored = legacyTarNumericField(block, 148, 8);
+  if (stored === undefined) return false;
+  let unsigned = 0;
+  let signed = 0;
+  for (let index = 0; index < LEGACY_TAR_BLOCK_SIZE; index += 1) {
+    const byte = index >= 148 && index < 156 ? 0x20 : (block[index] ?? 0);
+    unsigned += byte;
+    signed += byte > 127 ? byte - 256 : byte;
+  }
+  return stored === unsigned || stored === signed;
+};
+
+/** The header's full member path: ustar's `prefix` field rejoined, with a leading `./` dropped. */
+const legacyTarEntryName = (block: Uint8Array): string => {
+  const name = legacyTarTextField(block, 0, 100);
+  const prefix = legacyTarTextField(block, 345, 155);
+  const joined = prefix.length > 0 ? `${prefix}/${name}` : name;
+  return joined.startsWith("./") ? joined.slice(2) : joined;
+};
+
+const legacyTarBlockIsZero = (block: Uint8Array): boolean => block.every((byte) => byte === 0);
+
+/**
+ * Folds one stream chunk into a tar HEADER walk looking for `entryName`. Pure and
+ * chunk-boundary-agnostic: file content is stepped over by byte count rather than buffered, so the
+ * whole scan costs one partial header block of memory no matter how large the archive is. Stops
+ * (and stays stopped) at the first of: the entry found, the end-of-archive marker, or a block that
+ * is not a valid header.
+ */
+export const legacyScanTarChunkForEntry = (
+  state: LegacyTarScanState,
+  chunk: Uint8Array,
+  entryName: string,
+): LegacyTarScanState => {
+  if (legacyTarScanSettled(state)) return state;
+  const settle = (
+    verdict: Pick<LegacyTarScanState, "found" | "ended" | "malformed">,
+  ): LegacyTarScanState => ({
+    ...legacyInitialTarScanState,
+    ...verdict,
+  });
+  let carry = state.carry;
+  let skip = state.skip;
+  let zeroBlocks = state.zeroBlocks;
+  // Content bytes carried over from the previous chunk come first — they are not headers.
+  let offset = Math.min(skip, chunk.length);
+  skip -= offset;
+  while (offset < chunk.length) {
+    const available = chunk.length - offset;
+    let block: Uint8Array;
+    if (carry.length > 0) {
+      const take = Math.min(LEGACY_TAR_BLOCK_SIZE - carry.length, available);
+      const merged = new Uint8Array(carry.length + take);
+      merged.set(carry);
+      merged.set(chunk.subarray(offset, offset + take), carry.length);
+      offset += take;
+      if (merged.length < LEGACY_TAR_BLOCK_SIZE) {
+        carry = merged;
+        break;
+      }
+      carry = LEGACY_TAR_NO_BYTES;
+      block = merged;
+    } else if (available < LEGACY_TAR_BLOCK_SIZE) {
+      carry = chunk.slice(offset);
+      break;
+    } else {
+      block = chunk.subarray(offset, offset + LEGACY_TAR_BLOCK_SIZE);
+      offset += LEGACY_TAR_BLOCK_SIZE;
+    }
+
+    if (legacyTarBlockIsZero(block)) {
+      zeroBlocks += 1;
+      if (zeroBlocks >= 2) return settle({ found: false, ended: true, malformed: false });
+      continue;
+    }
+    zeroBlocks = 0;
+    if (!legacyTarChecksumValid(block)) {
+      return settle({ found: false, ended: false, malformed: true });
+    }
+    if (legacyTarEntryName(block) === entryName) {
+      return settle({ found: true, ended: false, malformed: false });
+    }
+    const size = legacyTarNumericField(block, 124, 12);
+    if (size === undefined || size < 0) {
+      return settle({ found: false, ended: false, malformed: true });
+    }
+    // Content is padded up to the next block boundary; directories and links carry size 0.
+    const content = Math.ceil(size / LEGACY_TAR_BLOCK_SIZE) * LEGACY_TAR_BLOCK_SIZE;
+    const stepped = Math.min(content, chunk.length - offset);
+    offset += stepped;
+    skip = content - stepped;
+  }
+  return { carry, skip, zeroBlocks, found: false, ended: false, malformed: false };
+};
+
+/**
+ * Whether `tarPath` really is a {@link legacyExportPgDataTar} archive — i.e. whether its member
+ * list contains {@link LEGACY_PGDATA_MARKER_ENTRY}.
+ *
+ * This exists because an archive that is syntactically fine but carries no cluster (an EMPTY tar
+ * qualifies) restores SILENTLY: `docker cp -` extracts nothing, the Postgres entrypoint finds an
+ * empty PGDATA and runs a fresh `initdb`, readiness passes, and the caller is handed a bare
+ * cluster it believes carries the platform baseline. Validating the header stream up front is the
+ * only place that difference is observable, so callers must check BEFORE restoring.
+ *
+ * Reads the file locally — no Docker, no extraction — and stops at the marker, so a warm hit
+ * normally touches only the archive's first blocks. Only a genuine read failure fails; a valid tar
+ * without the marker simply resolves `false`.
+ */
+export const legacyPgDataArchiveHasCluster = (
+  fs: FileSystem.FileSystem,
+  tarPath: string,
+): Effect.Effect<boolean, LegacyPgDataSnapshotUnavailable> =>
+  fs.stream(tarPath).pipe(
+    Stream.mapAccum(
+      () => legacyInitialTarScanState,
+      (state: LegacyTarScanState, chunk: Uint8Array) => {
+        const next = legacyScanTarChunkForEntry(state, chunk, LEGACY_PGDATA_MARKER_ENTRY);
+        return [next, [next]] as const;
+      },
+    ),
+    Stream.takeUntil(legacyTarScanSettled),
+    Stream.runLast,
+    Effect.map((last) => Option.isSome(last) && last.value.found),
+    Effect.mapError((cause) =>
+      legacyPgDataSnapshotUnavailable(`failed to read ${tarPath}: ${cause.message}`),
+    ),
+  );
 
 /**
  * Builds the {@link LegacyStartContainerSpec.preStartArchives} entry that restores a
