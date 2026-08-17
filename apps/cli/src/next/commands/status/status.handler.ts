@@ -15,6 +15,7 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { StatusFlags } from "./status.command.ts";
 import { managedPortIntents } from "../../config/managed-port-intents.ts";
 import { isExcludedStackService, toStartStackConfig } from "../../config/stack-config.ts";
+import { formatPortDriftWarning } from "../../stack/port-drift.ts";
 
 function formatServiceStateLine(service: {
   readonly name: string;
@@ -49,15 +50,10 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
 });
 
 const renderPortDrift = Effect.fnUntraced(function* (drift: NonNullable<StackSummary["drift"]>) {
-  if (drift.length === 0) return;
+  const message = formatPortDriftWarning(drift);
+  if (message === undefined) return;
   const output = yield* Output;
-  const changes = drift.map(
-    (entry) =>
-      `${entry.key} changed from ${entry.actualPort} to ${entry.configuredPort ?? "automatic"}`,
-  );
-  yield* output.warn(
-    `Port configuration changed while the stack is running: ${changes.join(", ")}. Restart to apply.`,
-  );
+  yield* output.warn(message);
 });
 
 const renderUpdateStatus = Effect.fnUntraced(function* (

@@ -47,6 +47,18 @@ describe("status handler", () => {
               );
               expect(out.messages).toContainEqual(
                 expect.objectContaining({
+                  type: "warn",
+                  message: expect.stringContaining("changed from not yet allocated"),
+                }),
+              );
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: expect.stringContaining("undefined"),
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
                   type: "info",
                   message: `API URL: ${fixture.stackInfo.url}`,
                 }),

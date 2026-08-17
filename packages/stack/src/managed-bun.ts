@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Layer as EffectLayer } from "effect";
+import { Effect, Layer as EffectLayer } from "effect";
 import {
   managedDaemonLayer as managedDaemonLayerForPlatform,
   type ManagedDaemonStartInput,
@@ -23,4 +23,6 @@ export const managedStackManagerLayer = (options: { readonly stateRoot: string }
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
 ): ReturnType<typeof managedDaemonLayerForPlatform> =>
-  managedDaemonLayerForPlatform(input, managedDaemonEntryPoint);
+  managedDaemonLayerForPlatform(input, managedDaemonEntryPoint).pipe(
+    Effect.provide(BunServices.layer),
+  );

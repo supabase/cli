@@ -2,6 +2,7 @@ import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
 import { Effect, Exit, Layer, Scope } from "effect";
+import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
@@ -42,15 +43,6 @@ const controlTransport: ControlTransport["Service"] = {
                   headers: { "content-type": "application/json" },
                 }),
             },
-            [CONTROL_STOP_PATH]: {
-              POST: () => {
-                onStop();
-                return new Response(JSON.stringify({ ok: true }), {
-                  status: 202,
-                  headers: { "content-type": "application/json" },
-                });
-              },
-            },
           },
         }).pipe(
           Scope.provide(serverScope),
@@ -64,6 +56,21 @@ const controlTransport: ControlTransport["Service"] = {
             ),
           ),
         );
+        yield* server
+          .serve(
+            Effect.gen(function* () {
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
+                onStop();
+                return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 202 });
+              }
+              return HttpServerResponse.jsonUnsafe(
+                { error: "Stack supervisor is starting" },
+                { status: 503 },
+              );
+            }),
+          )
+          .pipe(Scope.provide(serverScope));
         return {
           server,
           close: Scope.close(serverScope, Exit.void),

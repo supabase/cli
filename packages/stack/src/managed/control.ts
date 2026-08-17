@@ -356,7 +356,9 @@ const acquireAtEndpoint = (
 
   return attempt.pipe(
     Effect.retry({
-      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 60 })),
+      // Leave explicit margin inside the parent's 35-second startup handshake,
+      // even when every owner probe consumes its 500 ms transport timeout.
+      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 30 })),
       while: (error) => error._tag === "ControlUnavailableError",
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>

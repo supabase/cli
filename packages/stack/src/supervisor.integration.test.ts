@@ -1,11 +1,21 @@
 import { Cause, Context, Effect, Layer } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
@@ -14,6 +24,7 @@ import { managedDaemonLayer } from "./supervisor.ts";
 import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
+import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
 
 const childEntryPoint = fileURLToPath(
@@ -29,18 +40,42 @@ interface ChildHandle {
   readonly attachedBeforeReady: Promise<void>;
 }
 
-const workspace = (): { readonly root: string; readonly stateRoot: string } => {
+const workspace = (): {
+  readonly root: string;
+  readonly stateRoot: string;
+  readonly stackId: string;
+} => {
   const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
   const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
   mkdirSync(join(root, ".supabase"), { recursive: true });
-  return { root, stateRoot };
+  const identity: EnvironmentIdentity = {
+    workspaceId: randomUUID(),
+    checkoutId: randomUUID(),
+    contextId: randomUUID(),
+    localProjectKey: ".",
+  };
+  writeFileSync(
+    join(root, ".supabase", "identity.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        workspaceId: identity.workspaceId,
+        checkoutId: identity.checkoutId,
+        contextId: identity.contextId,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return { root, stateRoot, stackId: deriveStackId(identity, "default") };
 };
 
 const messageFor = (
-  roots: { readonly root: string; readonly stateRoot: string },
+  roots: { readonly root: string; readonly stateRoot: string; readonly stackId: string },
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
   type: "start",
+  stackId: roots.stackId,
   workspacePath: roots.root,
   stackName: "default",
   stateRoot: roots.stateRoot,
@@ -68,6 +103,7 @@ const spawnChild = (
   input: SupervisorStartMessage,
   options: {
     readonly testMode?: TestMode;
+    readonly platform?: "node" | "bun";
     readonly environment?: Readonly<Record<string, string>>;
   } = {},
 ): ChildHandle => {
@@ -82,6 +118,7 @@ const spawnChild = (
       ...(options.testMode === undefined
         ? {}
         : { SUPABASE_STACK_TEST_RUNTIME_MODE: options.testMode }),
+      ...(options.platform === undefined ? {} : { SUPABASE_STACK_TEST_PLATFORM: options.platform }),
       ...options.environment,
     },
   });
@@ -338,6 +375,7 @@ describe("detached supervisor child journeys", () => {
       const exit = await Effect.runPromiseExit(
         managedDaemonLayer(messageFor(roots, { stackName: "bad\nname" }), childEntryPoint).pipe(
           Effect.provide(httpTransportClientLayer),
+          Effect.provide(NodeFileSystem.layer),
         ),
       );
       expect(exit._tag).toBe("Failure");
@@ -430,6 +468,104 @@ describe("detached supervisor child journeys", () => {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(stopping).toBe(true);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("Bun routes a ready-owner stop through the daemon shutdown transaction", async () => {
+    const roots = workspace();
+    const child = spawnChild(messageFor(roots), { testMode: "hold-stop", platform: "bun" });
+    try {
+      const started = await child.started;
+      let responseSettled = false;
+      const stopResult = fetch(`${started.endpoint.url}/stop`, { method: "POST" })
+        .then((response) => {
+          responseSettled = true;
+          return response.status;
+        })
+        .catch(() => {
+          responseSettled = true;
+          return undefined;
+        });
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
+      expect(responseSettled).toBe(false);
+      await kill(child.child);
+      await stopResult;
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("starts after an owner finishes stopping", async () => {
+    const roots = workspace();
+    const releaseFile = join(roots.root, "release-stop");
+    const input = messageFor(roots);
+    const owner = spawnChild(input, {
+      testMode: "hold-stop",
+      environment: { SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile },
+    });
+    let contender: ChildHandle | undefined;
+    try {
+      const started = await owner.started;
+      const stop = fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
+
+      contender = spawnChild(input);
+      await contender.attachedBeforeReady;
+      writeFileSync(releaseFile, "release");
+      const restarted = await contender.started;
+      expect(restarted.attached).not.toBe(true);
+      expect(await fetchOwner(restarted.endpoint)).toMatchObject({ state: "running", ready: true });
+      await stop;
+      await remoteStop(restarted.endpoint);
+      await waitForExit(contender.child);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("accepts stop while workspace discovery is still blocked", async () => {
+    const roots = workspace();
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const child = spawnChild(messageFor(roots), {
+      environment: {
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    void child.started.catch(() => undefined);
+    try {
+      const deadline = Date.now() + 2_000;
+      while (!existsSync(ensureReady) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(existsSync(ensureReady)).toBe(true);
+      const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
+      const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      expect(response.status).toBe(202);
+      writeFileSync(ensureRelease, "release");
+      await waitForExit(child.child);
+      expect(readStackDocument(roots)).toBeUndefined();
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);

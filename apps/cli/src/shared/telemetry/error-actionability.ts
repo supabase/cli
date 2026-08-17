@@ -842,6 +842,10 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_identity",
   }),
+  INVALID_MANAGED_STACK_NAME: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_stack_name",
+  }),
   MANAGED_STACK_NOT_FOUND: () => ({
     ...actionability.invalidInput,
     fingerprint_suffix: "not_found",

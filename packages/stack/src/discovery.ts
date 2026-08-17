@@ -86,7 +86,11 @@ export const listStacks = (opts: {
     const projectPath =
       opts.projectDir === undefined
         ? undefined
-        : (yield* manager.discoverWorkspace(opts.projectDir)).path;
+        : yield* manager.discoverWorkspace(opts.projectDir).pipe(
+            Effect.map((workspace) => workspace.path),
+            Effect.catchTag("UnsupportedGitWorkspaceError", () => Effect.succeed(null)),
+          );
+    if (projectPath === null) return [];
     const summaries = yield* Effect.forEach(listings, (listing) =>
       Effect.gen(function* () {
         if (

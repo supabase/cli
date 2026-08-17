@@ -17,6 +17,8 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { DEFAULT_MANAGED_STACK_NAME, defaultCacheRoot } from "./paths.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
+import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
+import { gitConfigStoreLayer } from "./managed/git.ts";
 
 /**
  * Inputs owned by the process that will boot the runtime. The lease is passed
@@ -141,8 +143,13 @@ export const daemonLayer = (
       name,
     };
     const httpTransportClient = yield* HttpTransportClient;
+    const discovery = yield* ensureEnvironment(projectDir).pipe(
+      Effect.provide(gitConfigStoreLayer),
+      Effect.mapError((error) => new DaemonStartError({ message: error.message })),
+    );
     const startMsg: SupervisorStartMessage = {
       type: "start",
+      stackId: deriveStackId(discovery.identity, name),
       workspacePath: projectDir,
       stackName: name,
       stateRoot,

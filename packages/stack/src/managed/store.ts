@@ -24,6 +24,7 @@ export type ManagedStackListing =
       readonly id: string;
       readonly status: "corrupt";
       readonly path: string;
+      readonly cause: InvalidManagedStackDocumentError | PlatformError.PlatformError;
     };
 
 export interface StackStore {
@@ -92,11 +93,23 @@ const makeListEntry = (
   const documentPath = managedStackDocumentPath(stateRoot, stackId);
   return decodeAtPath(fs, documentPath, stackId).pipe(
     Effect.map((document): ManagedStackListing => ({ id: stackId, status: "healthy", document })),
-    Effect.catchTag("InvalidManagedStackDocumentError", () =>
-      Effect.succeed<ManagedStackListing>({ id: stackId, status: "corrupt", path: documentPath }),
+    Effect.catchTag("InvalidManagedStackDocumentError", (cause) =>
+      Effect.succeed<ManagedStackListing>({
+        id: stackId,
+        status: "corrupt",
+        path: documentPath,
+        cause,
+      }),
     ),
     Effect.catchTag("PlatformError", (error) =>
-      isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+      isNotFound(error)
+        ? Effect.succeed(undefined)
+        : Effect.succeed<ManagedStackListing>({
+            id: stackId,
+            status: "corrupt",
+            path: documentPath,
+            cause: error,
+          }),
     ),
   );
 };

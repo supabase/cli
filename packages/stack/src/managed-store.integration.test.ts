@@ -166,6 +166,24 @@ describe("managed stack document store", () => {
     }).pipe(Effect.provide(filesystemLayer)),
   );
 
+  it.live("lists an unreadable stack as corrupt without hiding healthy stacks", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      yield* store.write(document({ id: HEALTHY_ID }));
+      mkdirSync(managedStackDocumentPath(store.stateRoot, CORRUPT_ID), { recursive: true });
+
+      const listings = yield* store.list();
+      expect(listings).toEqual([
+        expect.objectContaining({
+          id: CORRUPT_ID,
+          status: "corrupt",
+          cause: expect.any(PlatformError.PlatformError),
+        }),
+        expect.objectContaining({ id: HEALTHY_ID, status: "healthy" }),
+      ]);
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
   it.live("keeps a store filesystem failure in the typed error channel", () =>
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();

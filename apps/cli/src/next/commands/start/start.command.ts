@@ -5,6 +5,7 @@ import {
   daemonLayer,
   fillServiceVersionManifest,
   resolveStackSummary,
+  type StackSummary,
 } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -90,6 +91,7 @@ interface StartVersionStateShape {
     readonly excludedServices: ReadonlyArray<ExcludedStackService>;
   };
   readonly previousUpdateFingerprint?: string;
+  readonly drift?: NonNullable<StackSummary["drift"]>;
   readonly serviceVersionContext: ResolvedServiceVersionContext;
   readonly lifecycleInput: {
     readonly cacheRoot: string;
@@ -206,6 +208,16 @@ export const startCommand = Command.make("start", flags).pipe(
       yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
       const portIntents = managedPortIntents(stackConfig, loadedProjectConfig ?? undefined);
+      const configuredSummary =
+        existingSummary === undefined
+          ? undefined
+          : yield* resolveStackSummary({
+              cacheRoot: cliConfig.supabaseHome,
+              projectDir: projectHome.projectRoot,
+              cwd: runtimeInfo.cwd,
+              name: flags.stack,
+              portDocument: portIntents,
+            });
       const launch = {
         mode: flags.mode,
         versions: serviceVersionContext.pinnedBaseline,
@@ -242,6 +254,9 @@ export const startCommand = Command.make("start", flags).pipe(
           ...(summary.lastNotifiedUpdateFingerprint === undefined
             ? {}
             : { previousUpdateFingerprint: summary.lastNotifiedUpdateFingerprint }),
+          ...(configuredSummary?.running !== true || configuredSummary.drift === undefined
+            ? {}
+            : { drift: configuredSummary.drift }),
           serviceVersionContext,
           lifecycleInput: {
             cacheRoot: cliConfig.supabaseHome,

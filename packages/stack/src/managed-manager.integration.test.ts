@@ -1309,4 +1309,17 @@ describe("managed stack journeys", () => {
       Effect.provide(controlTransportLayer),
     );
   });
+
+  it.live("treats unsupported Git metadata as no managed stacks on read-only listing", () => {
+    const { layer, stateRoot, workspace } = setup();
+    mkdirSync(join(workspace, ".git"));
+    return listStackSummaries({ cacheRoot: stateRoot, projectDir: workspace }).pipe(
+      Effect.tap((summaries) => Effect.sync(() => expect(summaries).toEqual([]))),
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
 });

@@ -50,6 +50,15 @@ describe("start handler", () => {
                   stackName: fixture.stackName,
                   cwd: fixture.projectRoot,
                 },
+                drift: [
+                  {
+                    key: "api.port",
+                    actualIntent: "automatic",
+                    actualPort: 54321,
+                    configuredPort: 54322,
+                    configuredIntent: "exact",
+                  },
+                ],
               });
               const analytics = Layer.succeed(Analytics, {
                 capture: () => Effect.void,
@@ -90,6 +99,12 @@ describe("start handler", () => {
                       expect.objectContaining({
                         type: "info",
                         message: `API URL: ${fixture.stackInfo.url}`,
+                      }),
+                    );
+                    expect(out.messages).toContainEqual(
+                      expect.objectContaining({
+                        type: "warn",
+                        message: expect.stringContaining("api.port changed from 54321 to 54322"),
                       }),
                     );
                   }),

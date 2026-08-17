@@ -7,6 +7,7 @@ import { StartVersionState } from "./start.command.ts";
 import { startBackground } from "./flows/background.flow.ts";
 import { startForeground } from "./flows/foreground.flow.ts";
 import { startNonInteractive } from "./flows/non-interactive.flow.ts";
+import { formatPortDriftWarning } from "../../stack/port-drift.ts";
 
 export const start = Effect.fnUntraced(function* (flags: StartFlags) {
   return yield* Effect.scoped(
@@ -14,8 +15,11 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
       const output = yield* Output;
       const analytics = yield* Analytics;
       const startVersionState = yield* StartVersionState;
-      const { launch, previousUpdateFingerprint, serviceVersionContext, lifecycleInput } =
+      const { launch, previousUpdateFingerprint, serviceVersionContext, lifecycleInput, drift } =
         startVersionState;
+
+      const driftWarning = drift === undefined ? undefined : formatPortDriftWarning(drift);
+      if (driftWarning !== undefined) yield* output.warn(driftWarning);
 
       if (serviceVersionContext.activeOverrides.length > 0) {
         yield* output.warn(

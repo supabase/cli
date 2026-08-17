@@ -5,7 +5,13 @@ import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { describe, expect } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { acquireControl, controlEndpoint } from "./managed/control.ts";
+import {
+  acquireControl,
+  controlEndpoint,
+  ControlBindError,
+  ControlTransport,
+  ControlTransportError,
+} from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
@@ -316,6 +322,39 @@ describe("managed control endpoint", () => {
           expect(unrelated.listening).toBe(true);
         }),
       ),
+    ),
+  );
+
+  it.live("reports an unavailable control endpoint before the parent handshake expires", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const unavailable = Layer.succeed(ControlTransport, {
+          bind: (endpoint) =>
+            Effect.fail(
+              new ControlBindError({ endpoint, reason: "in-use" as const, cause: "occupied" }),
+            ),
+          read: (endpoint) =>
+            Effect.fail(
+              new ControlTransportError({
+                endpoint,
+                reason: "unreachable" as const,
+                cause: "unavailable",
+              }),
+            ),
+          requestStop: () => Effect.void,
+        });
+        const exit = yield* acquireControl({ stackId: STACK_ID }).pipe(
+          Effect.timeout("2 seconds"),
+          Effect.exit,
+          Effect.provide(unavailable),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toMatchObject({
+            _tag: "ControlAddressConflictError",
+          });
+        }
+      }),
     ),
   );
 

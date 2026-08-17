@@ -27,7 +27,8 @@ import {
 } from "./managed/control.ts";
 import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
 import { managedStackLaunchSchema } from "./managed/document.ts";
-import { deriveStackId } from "./managed/environment.ts";
+import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
+import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPaths } from "./managed/paths.ts";
 import { PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
@@ -44,6 +45,7 @@ import { dockerForceRemove } from "./cleanup.ts";
 /** The only message sent across the detached child IPC boundary. */
 export interface SupervisorStartMessage {
   readonly type: "start";
+  readonly stackId: string;
   readonly workspacePath: string;
   readonly stackName: string;
   readonly stateRoot: string;
@@ -82,6 +84,7 @@ const supervisorPortIntentSchema = Schema.Struct({
 
 const supervisorStartMessageSchema = Schema.Struct({
   type: Schema.Literal("start"),
+  stackId: Schema.String,
   workspacePath: Schema.String,
   stackName: Schema.String,
   stateRoot: Schema.String,
@@ -144,7 +147,7 @@ const awaitOwnerReady = (
       if (status.state === "running" && status.ready) return Effect.succeed(status);
       return Effect.fail(
         new SupervisorOwnerUnavailableError({
-          retry: status.state === "starting",
+          retry: status.state === "starting" || status.state === "stopping",
           detail: `Attached supervisor owner is ${status.state} before becoming ready`,
         }),
       );
@@ -312,19 +315,35 @@ const runManaged = (
   let managerService: ManagedStackManager["Service"] | undefined;
   return Effect.gen(function* () {
     yield* validateManagedStackName(input.stackName);
-    const manager = yield* ManagedStackManager.pipe(
-      Effect.provide(platform.managerLayer(input.stateRoot)),
-    );
-    managerService = manager;
     const configInput = toDaemonConfig(input.config);
     if (configInput === undefined) {
       return yield* Effect.fail(
         new SupervisorStartError({ message: "Supervisor config is missing cwd" }),
       );
     }
-    const discovery = yield* manager.ensureWorkspace(input.workspacePath);
-    const stackId = deriveStackId(discovery.identity, input.stackName);
-    const initialAcquisition = yield* acquireControl({ stackId });
+    const initialAcquisition = yield* acquireControl({ stackId: input.stackId });
+    if (initialAcquisition._tag === "Owned") owner = initialAcquisition;
+    const manager = yield* ManagedStackManager.pipe(
+      Effect.provide(platform.managerLayer(input.stateRoot)),
+    );
+    managerService = manager;
+    const discovered = manager
+      .ensureWorkspace(input.workspacePath)
+      .pipe(Effect.map((discovery) => ({ _tag: "discovered" as const, discovery })));
+    const discoveryResult = yield* initialAcquisition._tag === "Owned"
+      ? Effect.raceFirst(
+          discovered,
+          initialAcquisition.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
+        )
+      : discovered;
+    if (discoveryResult._tag === "stopped") return;
+    const stackId = deriveStackId(discoveryResult.discovery.identity, input.stackName);
+    if (stackId !== input.stackId) {
+      return yield* Effect.fail(
+        new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
+      );
+    }
+    let attachedOwnerWasStopping = false;
     const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
       manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
@@ -354,10 +373,20 @@ const runManaged = (
       );
     const attachedResolution =
       initialAcquisition._tag === "Attached"
-        ? awaitOwnerReady(
-            initialAcquisition,
-            platform.onAttachedBeforeReady?.() ?? Effect.void,
-          ).pipe(
+        ? initialAcquisition.ownerStatus.pipe(
+            Effect.tap((status) =>
+              Effect.sync(() => {
+                attachedOwnerWasStopping = status.state === "stopping";
+              }),
+            ),
+            Effect.flatMap((status) =>
+              status.state === "running" && status.ready
+                ? Effect.succeed(status)
+                : awaitOwnerReady(
+                    initialAcquisition,
+                    platform.onAttachedBeforeReady?.() ?? Effect.void,
+                  ),
+            ),
             Effect.as(initialAcquisition),
             Effect.catch((error) =>
               error instanceof ControlTransportError && error.reason === "unreachable"
@@ -388,7 +417,7 @@ const runManaged = (
     }
     const ownership = acquisition;
     owner = ownership;
-    if (initialAcquisition._tag === "Attached") {
+    if (initialAcquisition._tag === "Attached" && !attachedOwnerWasStopping) {
       const existing = yield* manager.inspectStack(stackId);
       if (existing?.lifecycle === "stopped") {
         yield* ownership.close;
@@ -652,20 +681,28 @@ export const managedDaemonLayer = (
 ): Effect.Effect<
   Layer.Layer<Stack>,
   SupervisorStartError | import("./managed/model.ts").InvalidManagedStackNameError,
-  HttpTransportClient
+  HttpTransportClient | import("effect").FileSystem.FileSystem
 > =>
-  supervisorLayer(
-    {
-      type: "start",
-      workspacePath: input.workspacePath,
-      stackName: input.stackName,
-      stateRoot: input.stateRoot,
-      config: {
-        ...input.config,
-        cwd: typeof input.config.cwd === "string" ? input.config.cwd : input.workspacePath,
+  Effect.gen(function* () {
+    yield* validateManagedStackName(input.stackName);
+    const discovery = yield* ensureEnvironment(input.workspacePath).pipe(
+      Effect.provide(gitConfigStoreLayer),
+      Effect.mapError((error) => new SupervisorStartError({ message: error.message })),
+    );
+    return yield* supervisorLayer(
+      {
+        type: "start",
+        stackId: deriveStackId(discovery.identity, input.stackName),
+        workspacePath: input.workspacePath,
+        stackName: input.stackName,
+        stateRoot: input.stateRoot,
+        config: {
+          ...input.config,
+          cwd: typeof input.config.cwd === "string" ? input.config.cwd : input.workspacePath,
+        },
+        portIntents: input.portIntents,
+        ...(input.launch === undefined ? {} : { launch: input.launch }),
       },
-      portIntents: input.portIntents,
-      ...(input.launch === undefined ? {} : { launch: input.launch }),
-    },
-    entryPoint,
-  );
+      entryPoint,
+    );
+  });

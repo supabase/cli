@@ -1,5 +1,5 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import {
   managedDaemonLayer as managedDaemonLayerForPlatform,
   type ManagedDaemonStartInput,
@@ -28,4 +28,7 @@ export const managedStackManagerLayer = (options: { readonly stateRoot: string }
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
 ): ReturnType<typeof managedDaemonLayerForPlatform> =>
-  managedDaemonLayerForPlatform(input, managedDaemonEntryPoint);
+  managedDaemonLayerForPlatform(input, managedDaemonEntryPoint).pipe(
+    Effect.provide(NodeFileSystem.layer),
+    Effect.provide(NodePath.layer),
+  );

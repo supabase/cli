@@ -82,6 +82,11 @@ ownership:
 Control ownership is the liveness authority. PID files, process scans, and a
 second metadata file are not part of managed lifecycle decisions.
 
+Read-only project-scoped discovery treats unsupported or unreadable Git metadata
+as no managed stacks for that project. Mutating operations such as start still
+fail loudly so they cannot create identity or runtime state against ambiguous
+repository metadata.
+
 ## Detached transport
 
 The supervisor child hosts `DaemonServer` on a deterministic local loopback TCP
@@ -97,13 +102,20 @@ range, while explicit service ports remain available unless they match the
 incoming stack's endpoint or a known persisted stack's endpoint. A rare hash
 collision or unrelated listener therefore makes a mutation fail with a typed
 conflict. Read-only liveness treats it as non-live and never claims the address.
+An exact port can still match the future endpoint of an identity that has never
+started and therefore has no document. That low-probability collision fails at
+control acquisition; it is accepted instead of forbidding 22,768 otherwise
+valid explicit ports or adding a global registry.
 This intentionally favors a small single-user localhost mechanism; the control
 protocol has no token authentication.
 
-The parent sends one managed start message containing the resolved daemon
-configuration, the raw project document for port intent, and launch
-metadata. Managed-only fields are split from the generic daemon config before
-serialization so they cannot leak into runtime service configuration.
+The parent resolves the workspace identity and stack id before forking, then
+sends that id with the resolved daemon configuration, raw project document for
+port intent, and launch metadata. The child binds the deterministic control
+endpoint first, performs workspace discovery, and verifies the identity still
+derives the same id before publishing stack state. Managed-only fields are split
+from the generic daemon config before serialization so they cannot leak into
+runtime service configuration.
 
 ## Ports and launch metadata
 
