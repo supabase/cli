@@ -12,7 +12,9 @@ import {
   LEGACY_VALID_REF,
   legacyFailWriteStringMatchingFsLayer,
   legacyFailWriteStringOnNthCallFsLayer,
+  legacyWithEnv,
   mockLegacyCliConfig,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
@@ -139,6 +141,10 @@ interface SetupOpts {
   // host-gateway` (Linux-only). Defaults to `"linux"` (every other test's implicit
   // baseline); pass `"darwin"`/`"win32"` to exercise the no-add-host branch.
   readonly platform?: NodeJS.Platform;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -199,6 +205,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
   const shadowDbConnection = fakeShadowDbConnection({
     neverConnectableShadow: opts.neverConnectableShadow ?? false,
   });
@@ -434,7 +445,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     shadowDbConnection.layer,
-    shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
@@ -480,6 +491,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
+    dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
   };
@@ -2579,5 +2591,63 @@ describe("legacy db diff", () => {
         });
       },
     );
+  });
+
+  describe("shadow baseline cache", () => {
+    /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
+    const publishedTars = () => {
+      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
+    };
+
+    /**
+     * Runs `db diff` with the shadow baseline cache ENABLED (this file pins it off for every
+     * other test) and its artifacts isolated under the workdir, against the stateful Docker
+     * model the export/restore round trip needs.
+     */
+    const runCached = (implementation: "legacy" | "next") => {
+      const s = setup(tmp.current, {
+        statefulDocker: true,
+        pgDeltaImplementation: implementation,
+        diffSql: "create table t ();\n",
+      });
+      return legacyWithEnv(
+        "SUPABASE_HOME",
+        join(tmp.current, "_supabase_home"),
+        legacyWithEnv(
+          "SUPABASE_SHADOW_CACHE",
+          "1",
+          legacyDbDiff(flags({ usePgDelta: Option.some(true) })).pipe(Effect.provide(s.layer)),
+        ),
+      ).pipe(Effect.as(s));
+    };
+
+    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
+    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // to the SAME tar and silently restored each other's cluster. The handler now forks the
+    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
+    // the contract, this covers `db diff`'s call site.
+    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = true\n",
+      );
+      return Effect.gen(function* () {
+        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
+        const legacyRun = yield* runCached("legacy");
+        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const legacyTars = publishedTars();
+        expect(legacyTars).toHaveLength(1);
+
+        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // and publish its OWN baseline rather than restore the forced-on one above.
+        const nextRun = yield* runCached("next");
+        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        expect(publishedTars()).toHaveLength(2);
+        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+      });
+    });
   });
 });

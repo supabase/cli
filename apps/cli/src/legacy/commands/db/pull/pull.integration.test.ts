@@ -9,7 +9,9 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
+  legacyWithEnv,
   mockLegacyCliConfig,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
@@ -129,6 +131,10 @@ interface SetupOpts {
   // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
   // instead of silently falling back to `opts.resolvedRef ?? LEGACY_VALID_REF`.
   readonly linkedFails?: boolean;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -141,6 +147,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // A real docker-spawner fake backs container create/start/health-inspect/cleanup.
   const shadowSpawner = mockLegacyShadowContainerCliSpawner();
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
 
   const engineCalls: Array<{
     operation: "diff" | "export";
@@ -440,7 +451,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     dbConnection,
-    shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
@@ -477,6 +488,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dumpCalls,
     engineCalls,
     shadowSpawned: shadowSpawner.spawned,
+    dockerDaemon,
     get edgeRunCount() {
       return edgeRunCount;
     },
@@ -2266,5 +2278,70 @@ describe("legacy db pull", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  describe("shadow baseline cache", () => {
+    /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
+    const publishedTars = () => {
+      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
+    };
+
+    /**
+     * Runs `db pull` with the shadow baseline cache ENABLED (this file pins it off for every
+     * other test) and its artifacts isolated under the temp root, against the stateful Docker
+     * model the export/restore round trip needs.
+     *
+     * Each run gets its OWN workdir so the migration file the previous pull wrote cannot shift
+     * the second run's behaviour — the cache key is global and deliberately workdir-independent,
+     * so two worktrees with identical settings still collide on the same tar.
+     */
+    const runCached = (implementation: "legacy" | "next") => {
+      const workdir = join(tmp.current, `${implementation}-worktree`);
+      seedMigration(workdir, "20240101000000");
+      writeFileSync(
+        join(workdir, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = true\n",
+      );
+      const s = setup(workdir, {
+        statefulDocker: true,
+        engineImplementation: implementation,
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }]),
+        yes: true,
+      });
+      return legacyWithEnv(
+        "SUPABASE_HOME",
+        join(tmp.current, "_supabase_home"),
+        legacyWithEnv(
+          "SUPABASE_SHADOW_CACHE",
+          "1",
+          legacyDbPull(flags()).pipe(Effect.provide(s.layer)),
+        ),
+      ).pipe(Effect.as(s));
+    };
+
+    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
+    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // to the SAME tar and silently restored each other's cluster. The handler now forks the
+    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
+    // the contract, this covers `db pull`'s call site.
+    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+      return Effect.gen(function* () {
+        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
+        const legacyRun = yield* runCached("legacy");
+        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const legacyTars = publishedTars();
+        expect(legacyTars).toHaveLength(1);
+
+        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // and publish its OWN baseline rather than restore the forced-on one above.
+        const nextRun = yield* runCached("next");
+        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        expect(publishedTars()).toHaveLength(2);
+        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+      });
+    });
   });
 });

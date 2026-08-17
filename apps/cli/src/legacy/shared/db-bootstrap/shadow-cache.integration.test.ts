@@ -16,21 +16,14 @@ import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Predicate,
-  Schema,
-  Sink,
-  Stream,
-} from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_FAKE_PGDATA_TAR,
+  legacyWithEnv,
+  mockLegacyDockerDaemonCliSpawner,
+  useLegacyTempWorkdir,
+} from "../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
@@ -51,29 +44,8 @@ const defaultConfig: ProjectConfig = decodeConfig({});
 
 const tempRoot = useLegacyTempWorkdir("legacy-shadow-cache-");
 
-/** Sets an env var for the duration of `body`, restoring whatever the host had. */
-const withEnv = <A, E, R>(
-  name: string,
-  value: string | undefined,
-  body: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = process.env[name];
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-      return previous;
-    }),
-    () => body,
-    (previous) =>
-      Effect.sync(() => {
-        if (previous === undefined) delete process.env[name];
-        else process.env[name] = previous;
-      }),
-  );
-
 const withShadowCacheEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-  withEnv(LEGACY_SHADOW_CACHE_ENV, value, body);
+  legacyWithEnv(LEGACY_SHADOW_CACHE_ENV, value, body);
 
 /**
  * Isolates the global shadow-baseline cache under a per-test `SUPABASE_HOME` so tests never
@@ -83,14 +55,14 @@ const withShadowCacheHome = <A, E, R>(
   value: string | undefined,
   body: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  withEnv(
+  legacyWithEnv(
     "SUPABASE_HOME",
     join(tempRoot.current, "_supabase_home"),
     withShadowCacheEnv(value, body),
   );
 
 const withShadowDebugEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-  withEnv(LEGACY_SHADOW_DEBUG_ENV, value, body);
+  legacyWithEnv(LEGACY_SHADOW_DEBUG_ENV, value, body);
 
 /**
  * Captures every write `body` makes directly to the real `process.stderr` — the channel
@@ -117,199 +89,6 @@ const captureStderr = <A, E, R>(
     );
     return { result, writes };
   });
-
-// ---------------------------------------------------------------------------
-// A minimal, stateful Docker model
-// ---------------------------------------------------------------------------
-
-/** The bytes the fake `docker cp <id>:PGDATA -` emits — stands in for a real ~90MB PGDATA tar. */
-const FAKE_PGDATA_TAR = "data/PG_VERSION\n17\n";
-
-interface FakeContainer {
-  readonly labels: Readonly<Record<string, string>>;
-  readonly autoRemove: boolean;
-  running: boolean;
-  /** Whether this container has ever been `docker start`ed — distinguishes a RE-start for `failRestart`. */
-  everStarted?: boolean;
-  /** What a previous `docker cp - <id>:<path>` unpacked into this container, if anything. */
-  restored: string | undefined;
-}
-
-function fakeDockerDaemon(
-  opts: {
-    readonly failStart?: boolean;
-    /** Fails only RE-starts (a `docker start` after the container has already run once) — the cold export's revive step. */
-    readonly failRestart?: boolean;
-    readonly failCopyOut?: boolean;
-    readonly failCopyIn?: boolean;
-  } = {},
-) {
-  const containers = new Map<string, FakeContainer>();
-  const spawned: Array<ReadonlyArray<string>> = [];
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  let nextId = 0;
-
-  /**
-   * Drains a `Stream` passed as a command's `stdin` into a string, the way the real
-   * `NodeChildProcessSpawner` runs a user-supplied stdin stream into the child's stdin sink — a
-   * fake that ignored it would never notice the restore tar was not actually delivered.
-   */
-  const readStdin = Effect.fnUntraced(function* (command: ChildProcess.Command) {
-    const configured = command._tag === "StandardCommand" ? command.options.stdin : undefined;
-    // A caller may pass either a bare `CommandInput` or a `StdinConfig` wrapping one.
-    const input = Stream.isStream(configured)
-      ? configured
-      : Predicate.hasProperty(configured, "stream")
-        ? configured.stream
-        : undefined;
-    if (!Stream.isStream(input)) return "";
-    return yield* Stream.runFold(
-      input,
-      () => "",
-      (text: string, chunk) => text + decoder.decode(chunk as Uint8Array, { stream: true }),
-    ).pipe(Effect.orElseSucceed(() => ""));
-  });
-
-  const spawner = ChildProcessSpawner.make((command) =>
-    Effect.gen(function* () {
-      const args = command._tag === "StandardCommand" ? command.args : [];
-      spawned.push(args);
-
-      let exitCode = 0;
-      let stdout = "";
-      let stderr = "";
-
-      if (args[0] === "network" && args[1] === "inspect") {
-        exitCode = 1;
-      } else if (args[0] === "create") {
-        nextId += 1;
-        const id = `shadowcontainer${String(nextId).padStart(2, "0")}`.padEnd(64, "0");
-        const labels: Record<string, string> = {};
-        for (let index = 0; index < args.length; index += 1) {
-          if (args[index] !== "--label") continue;
-          const [key = "", ...rest] = (args[index + 1] ?? "").split("=");
-          labels[key] = rest.join("=");
-        }
-        containers.set(id, {
-          labels,
-          autoRemove: args.includes("--rm"),
-          running: false,
-          restored: undefined,
-        });
-        stdout = id;
-      } else if (args[0] === "start") {
-        const container = containers.get(args[1] ?? "");
-        if (
-          opts.failStart === true ||
-          container === undefined ||
-          (opts.failRestart === true && container.everStarted)
-        ) {
-          exitCode = 1;
-        } else {
-          container.running = true;
-          container.everStarted = true;
-        }
-      } else if (args[0] === "stop") {
-        const id = args[1] ?? "";
-        const container = containers.get(id);
-        if (container === undefined) exitCode = 1;
-        else {
-          container.running = false;
-          // Docker destroys an `--rm` container the moment it exits, `docker stop` included —
-          // verified against Docker 29. This is exactly why the cold export path drops `--rm`.
-          if (container.autoRemove) containers.delete(id);
-        }
-      } else if (args[0] === "rm") {
-        containers.delete(args[args.length - 1] ?? "");
-      } else if (args[0] === "cp" && args[1] === "-") {
-        // Secret copy is `docker cp - <id>:/`; restore is `docker cp - <id>:<pgdata parent>`.
-        // Both use stdin, so failCopyIn must apply only to the restore — otherwise a warm
-        // fallback test kills the pgsodium root-key copy and never reaches the archive.
-        const [id = "", containerPath = ""] = (args[2] ?? "").split(":");
-        const container = containers.get(id);
-        const received = yield* readStdin(command);
-        const isSecret = containerPath === "" || containerPath === "/";
-        if (container === undefined || (!isSecret && opts.failCopyIn === true)) {
-          exitCode = 1;
-          stderr = "no such container";
-        } else if (!isSecret) {
-          container.restored = `${containerPath}::${received}`;
-        }
-      } else if (args[0] === "cp" && args[2] === "-") {
-        // Export: `docker cp <id>:<containerPath> -`, tar on stdout.
-        const [id = ""] = (args[1] ?? "").split(":");
-        const container = containers.get(id);
-        if (opts.failCopyOut === true || container === undefined) {
-          exitCode = 1;
-          stderr = "no such container";
-        } else {
-          stdout = FAKE_PGDATA_TAR;
-        }
-      } else if (args[0] === "container" && args[1] === "inspect") {
-        const container = containers.get(args[2] ?? "");
-        exitCode = container === undefined ? 1 : 0;
-        stdout =
-          container === undefined
-            ? ""
-            : JSON.stringify({
-                Running: container.running,
-                Status: container.running ? "running" : "exited",
-                Health: { Status: "healthy" },
-              });
-      }
-
-      return ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        // `docker cp … -` writes the raw archive, every other call a trailing newline.
-        stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(stdout)] : []),
-        stderr: Stream.fromIterable(stderr.length > 0 ? [encoder.encode(stderr)] : []),
-        all: Stream.empty,
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
-        isRunning: Effect.succeed(false),
-        stdin: Sink.drain,
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
-      });
-    }),
-  );
-
-  /**
-   * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
-   * rather than raw argv. `cp` is split three ways because the shadow issues three different
-   * copies: the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the
-   * baseline export (`cp-out`), and the baseline restore (`cp-in`).
-   */
-  const stepOf = (args: ReadonlyArray<string>): string => {
-    if (args[0] === "network") return "network";
-    if (args[0] === "container" && args[1] === "inspect") return "inspect";
-    if (args[0] === "cp") {
-      if (args[1] === "-") {
-        const dest = args[2] ?? "";
-        const containerPath = dest.slice(dest.indexOf(":") + 1);
-        return containerPath === "" || containerPath === "/" ? "cp-secret" : "cp-in";
-      }
-      if (args[2] === "-") return "cp-out";
-      return "cp-secret";
-    }
-    return args[0] ?? "";
-  };
-
-  return {
-    spawner,
-    spawned,
-    containers,
-    /** Every argv whose first token is `verb` (`create`/`rm`/`stop`/`start`/`cp`). */
-    calls: (verb: string) => spawned.filter((args) => args[0] === verb),
-    /** Every argv classified as `step` — see {@link stepOf}. */
-    stepCalls: (step: string) => spawned.filter((args) => stepOf(args) === step),
-    /** The full step sequence, with the `network` bookkeeping calls dropped as noise. */
-    steps: () => spawned.map(stepOf).filter((step) => step !== "network"),
-    ids: () => [...containers.keys()],
-  };
-}
 
 // ---------------------------------------------------------------------------
 // A fake Postgres the readiness probe can connect to
@@ -399,7 +178,7 @@ const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path
 
 /** A full cold run: acquire, export the baseline, release. */
 const coldRun = (
-  docker: ReturnType<typeof fakeDockerDaemon>,
+  docker: ReturnType<typeof mockLegacyDockerDaemonCliSpawner>,
   input: LegacyShadowSetupInput<never>,
   opts: LegacyShadowCacheOpts = {},
 ) =>
@@ -412,7 +191,7 @@ const coldRun = (
 
 describe("legacyAcquireShadowDatabase", () => {
   it.live("is today's bare create when the cache is explicitly disabled", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -439,7 +218,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("bypassCache acquires an uncached shadow even when a warm tar exists", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -467,7 +246,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("stays uncached on PG14, whose setup mutates role defaults mid-session", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -495,7 +274,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("a warm hit also sweeps abandoned partials left by a killed concurrent writer", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -524,7 +303,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("stays uncached for an OrioleDB cluster even with the cache enabled", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -549,7 +328,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("takes the cache path when the env var is unset (default ON)", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -565,7 +344,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("cold run stops, exports the tar, and starts the container again", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -605,7 +384,7 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(tars).toHaveLength(1);
         expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]{16}\.tar$/u);
         expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
-          FAKE_PGDATA_TAR,
+          LEGACY_FAKE_PGDATA_TAR,
         );
         const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
         expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
@@ -618,7 +397,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("warm run restores the tar into a FRESH container before starting it", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -645,7 +424,7 @@ describe("legacyAcquireShadowDatabase", () => {
           `${warm.containerId}:${LEGACY_PGDATA_PARENT_PATH}`,
         ]);
         expect(docker.containers.get(warm.containerId)?.restored).toBe(
-          `${LEGACY_PGDATA_PARENT_PATH}::${FAKE_PGDATA_TAR}`,
+          `${LEGACY_PGDATA_PARENT_PATH}::${LEGACY_FAKE_PGDATA_TAR}`,
         );
 
         // Nothing more is exported: the baseline is already on disk.
@@ -657,7 +436,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("a pre-created permissive temp file cannot leak into the published tar's mode", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -684,13 +463,13 @@ describe("legacyAcquireShadowDatabase", () => {
         const info = yield* fs.stat(tarPath);
         // 0o600 exactly — not the pre-created file's 0o666.
         expect((Number(info.mode) & 0o777).toString(8)).toBe("600");
-        expect(yield* fs.readFileString(tarPath)).toBe(FAKE_PGDATA_TAR);
+        expect(yield* fs.readFileString(tarPath)).toBe(LEGACY_FAKE_PGDATA_TAR);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
   it.live("a cold export sweeps abandoned partial temp files but never fresh ones", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -719,7 +498,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("publishing distinct keys keeps both tars until LRU/TTL eviction", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -764,7 +543,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("worktrees with identical settings share a warm hit from the global cache", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -795,7 +574,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("a changed published host port is still a warm hit", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -821,7 +600,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("legacy forced-on webhooks and next config-following webhooks do not share a tar", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -856,7 +635,7 @@ describe("legacyAcquireShadowDatabase", () => {
   });
 
   it.live("a changed internal image registry is a different key, not a warm hit", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -872,7 +651,7 @@ describe("legacyAcquireShadowDatabase", () => {
         // The one-shot migrate jobs resolve their images through
         // `SUPABASE_INTERNAL_IMAGE_REGISTRY`, so a different registry can bake different
         // realtime/storage/auth schema under identical tags — the snapshot must not be shared.
-        const mirrored = yield* withEnv(
+        const mirrored = yield* legacyWithEnv(
           "SUPABASE_INTERNAL_IMAGE_REGISTRY",
           "mirror.internal.example",
           coldRun(docker, input),
@@ -890,7 +669,7 @@ describe("legacyAcquireShadowDatabase", () => {
   it.live(
     "a shadow that cannot come back after the snapshot fails the run, not just the cache",
     () => {
-      const docker = fakeDockerDaemon({ failRestart: true });
+      const docker = mockLegacyDockerDaemonCliSpawner({ failRestart: true });
       const cluster = fakeCluster();
       const out = mockOutput();
       return withShadowCacheHome(
@@ -912,7 +691,7 @@ describe("legacyAcquireShadowDatabase", () => {
   );
 
   it.live("a failed export warns, leaves no tar, and still brings the container back up", () => {
-    const docker = fakeDockerDaemon({ failCopyOut: true });
+    const docker = mockLegacyDockerDaemonCliSpawner({ failCopyOut: true });
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -937,7 +716,7 @@ describe("legacyAcquireShadowDatabase", () => {
   it.live(
     "a failed warm restore falls back cold, keeping the tar until its export replaces it",
     () => {
-      const docker = fakeDockerDaemon({ failCopyIn: true });
+      const docker = mockLegacyDockerDaemonCliSpawner({ failCopyIn: true });
       const cluster = fakeCluster();
       const out = mockOutput();
       return withShadowCacheHome(
@@ -971,7 +750,7 @@ describe("legacyAcquireShadowDatabase", () => {
   );
 
   it.live("a restored shadow that never becomes ready is removed before the cold retry", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const out = mockOutput();
     return withShadowCacheHome(
       "1",
@@ -1007,7 +786,7 @@ describe("legacyAcquireShadowDatabase", () => {
 
 describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
   it.live("emits export and restore phase lines when the debug env var is set", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(
@@ -1038,7 +817,7 @@ describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
   });
 
   it.live("emits no shadow-debug lines when the debug env var is unset", () => {
-    const docker = fakeDockerDaemon();
+    const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
     return withShadowCacheHome(

@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Redacted, Sink, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Predicate, Redacted, Sink, Stream } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
+import type { ChildProcess } from "effect/unstable/process";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -699,6 +700,33 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
 }
 
 /**
+ * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
+ * restoring whatever was there before — including whatever a surrounding `beforeEach` such as
+ * {@link useLegacyShadowCacheDisabled} put there. Scoping the override to the effect rather than
+ * to a nested `describe` keeps it independent of vitest's hook ordering, so a single test can
+ * opt back INTO a variable its file pins off.
+ */
+export const legacyWithEnv = <A, E, R>(
+  name: string,
+  value: string | undefined,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      return previous;
+    }),
+    () => body,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }),
+  );
+
+/**
  * Pins `SUPABASE_SHADOW_CACHE=0` for every test in the calling file, restoring whatever the host
  * had afterwards. Like {@link useLegacyTempWorkdir} it calls vitest's `beforeEach`/`afterEach`
  * internally, so it must be invoked at module scope (or inside the surrounding `describe`).
@@ -964,6 +992,216 @@ export function mockLegacyShadowContainerCliSpawner(
   );
 
   return { layer, spawned };
+}
+
+// ---------------------------------------------------------------------------
+// A minimal, stateful Docker model — the shadow BASELINE CACHE's round trip
+// (`docker stop` -> `docker cp <id>:PGDATA -` -> `docker start`, and the warm
+// `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
+// `mockLegacyShadowContainerCliSpawner` above deliberately does not model.
+// ---------------------------------------------------------------------------
+
+/** The bytes the fake `docker cp <id>:PGDATA -` emits — stands in for a real ~90MB PGDATA tar. */
+export const LEGACY_FAKE_PGDATA_TAR = "data/PG_VERSION\n17\n";
+
+interface LegacyFakeContainer {
+  readonly labels: Readonly<Record<string, string>>;
+  readonly autoRemove: boolean;
+  running: boolean;
+  /** Whether this container has ever been `docker start`ed — distinguishes a RE-start for `failRestart`. */
+  everStarted?: boolean;
+  /** What a previous `docker cp - <id>:<path>` unpacked into this container, if anything. */
+  restored: string | undefined;
+}
+
+/**
+ * Every `docker` call a shadow provision issues, backed by ONE stateful container table:
+ * `create`/`start`/`stop`/`rm` mutate it, and `docker cp` really carries bytes in and out. Use
+ * this instead of {@link mockLegacyShadowContainerCliSpawner} whenever the shadow BASELINE CACHE
+ * is enabled for the test — the cold export's stop/copy-out/start round trip and the warm
+ * restore's copy-in have no meaning against a stateless spawner, and a failed export is
+ * fail-open (a warning, no tar), so a stateless fake makes cache assertions pass vacuously.
+ *
+ * `container inspect supabase_db_<projectId>` reports "no such container" here (the table only
+ * holds shadows), i.e. the local stack is DOWN — fine for every non-`--use-pgadmin` path, which
+ * never issues that probe.
+ */
+export function mockLegacyDockerDaemonCliSpawner(
+  opts: {
+    readonly failStart?: boolean;
+    /** Fails only RE-starts (a `docker start` after the container has already run once) — the cold export's revive step. */
+    readonly failRestart?: boolean;
+    readonly failCopyOut?: boolean;
+    readonly failCopyIn?: boolean;
+  } = {},
+) {
+  const containers = new Map<string, LegacyFakeContainer>();
+  const spawned: Array<ReadonlyArray<string>> = [];
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let nextId = 0;
+
+  /**
+   * Drains a `Stream` passed as a command's `stdin` into a string, the way the real
+   * `NodeChildProcessSpawner` runs a user-supplied stdin stream into the child's stdin sink — a
+   * fake that ignored it would never notice the restore tar was not actually delivered.
+   */
+  const readStdin = Effect.fnUntraced(function* (command: ChildProcess.Command) {
+    const configured = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+    // A caller may pass either a bare `CommandInput` or a `StdinConfig` wrapping one.
+    const input = Stream.isStream(configured)
+      ? configured
+      : Predicate.hasProperty(configured, "stream")
+        ? configured.stream
+        : undefined;
+    if (!Stream.isStream(input)) return "";
+    return yield* Stream.runFold(
+      input,
+      () => "",
+      (text: string, chunk) => text + decoder.decode(chunk as Uint8Array, { stream: true }),
+    ).pipe(Effect.orElseSucceed(() => ""));
+  });
+
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawned.push(args);
+
+      let exitCode = 0;
+      let stdout = "";
+      let stderr = "";
+
+      if (args[0] === "network" && args[1] === "inspect") {
+        exitCode = 1;
+      } else if (args[0] === "create") {
+        nextId += 1;
+        const id = `shadowcontainer${String(nextId).padStart(2, "0")}`.padEnd(64, "0");
+        const labels: Record<string, string> = {};
+        for (let index = 0; index < args.length; index += 1) {
+          if (args[index] !== "--label") continue;
+          const [key = "", ...rest] = (args[index + 1] ?? "").split("=");
+          labels[key] = rest.join("=");
+        }
+        containers.set(id, {
+          labels,
+          autoRemove: args.includes("--rm"),
+          running: false,
+          restored: undefined,
+        });
+        stdout = id;
+      } else if (args[0] === "start") {
+        const container = containers.get(args[1] ?? "");
+        if (
+          opts.failStart === true ||
+          container === undefined ||
+          (opts.failRestart === true && container.everStarted)
+        ) {
+          exitCode = 1;
+        } else {
+          container.running = true;
+          container.everStarted = true;
+        }
+      } else if (args[0] === "stop") {
+        const id = args[1] ?? "";
+        const container = containers.get(id);
+        if (container === undefined) exitCode = 1;
+        else {
+          container.running = false;
+          // Docker destroys an `--rm` container the moment it exits, `docker stop` included —
+          // verified against Docker 29. This is exactly why the cold export path drops `--rm`.
+          if (container.autoRemove) containers.delete(id);
+        }
+      } else if (args[0] === "rm") {
+        containers.delete(args[args.length - 1] ?? "");
+      } else if (args[0] === "cp" && args[1] === "-") {
+        // Secret copy is `docker cp - <id>:/`; restore is `docker cp - <id>:<pgdata parent>`.
+        // Both use stdin, so failCopyIn must apply only to the restore — otherwise a warm
+        // fallback test kills the pgsodium root-key copy and never reaches the archive.
+        const [id = "", containerPath = ""] = (args[2] ?? "").split(":");
+        const container = containers.get(id);
+        const received = yield* readStdin(command);
+        const isSecret = containerPath === "" || containerPath === "/";
+        if (container === undefined || (!isSecret && opts.failCopyIn === true)) {
+          exitCode = 1;
+          stderr = "no such container";
+        } else if (!isSecret) {
+          container.restored = `${containerPath}::${received}`;
+        }
+      } else if (args[0] === "cp" && args[2] === "-") {
+        // Export: `docker cp <id>:<containerPath> -`, tar on stdout.
+        const [id = ""] = (args[1] ?? "").split(":");
+        const container = containers.get(id);
+        if (opts.failCopyOut === true || container === undefined) {
+          exitCode = 1;
+          stderr = "no such container";
+        } else {
+          stdout = LEGACY_FAKE_PGDATA_TAR;
+        }
+      } else if (args[0] === "container" && args[1] === "inspect") {
+        const container = containers.get(args[2] ?? "");
+        exitCode = container === undefined ? 1 : 0;
+        stdout =
+          container === undefined
+            ? ""
+            : JSON.stringify({
+                Running: container.running,
+                Status: container.running ? "running" : "exited",
+                Health: { Status: "healthy" },
+              });
+      }
+
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        // `docker cp … -` writes the raw archive, every other call a trailing newline.
+        stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(stdout)] : []),
+        stderr: Stream.fromIterable(stderr.length > 0 ? [encoder.encode(stderr)] : []),
+        all: Stream.empty,
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+
+  /**
+   * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
+   * rather than raw argv. `cp` is split three ways because the shadow issues three different
+   * copies: the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the
+   * baseline export (`cp-out`), and the baseline restore (`cp-in`).
+   */
+  const stepOf = (args: ReadonlyArray<string>): string => {
+    if (args[0] === "network") return "network";
+    if (args[0] === "container" && args[1] === "inspect") return "inspect";
+    if (args[0] === "cp") {
+      if (args[1] === "-") {
+        const dest = args[2] ?? "";
+        const containerPath = dest.slice(dest.indexOf(":") + 1);
+        return containerPath === "" || containerPath === "/" ? "cp-secret" : "cp-in";
+      }
+      if (args[2] === "-") return "cp-out";
+      return "cp-secret";
+    }
+    return args[0] ?? "";
+  };
+
+  return {
+    /** Ready to merge into a test runtime; `spawner` is the bare handler for direct callers. */
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    spawner,
+    spawned,
+    containers,
+    /** Every argv whose first token is `verb` (`create`/`rm`/`stop`/`start`/`cp`). */
+    calls: (verb: string) => spawned.filter((args) => args[0] === verb),
+    /** Every argv classified as `step` — see {@link stepOf}. */
+    stepCalls: (step: string) => spawned.filter((args) => stepOf(args) === step),
+    /** The full step sequence, with the `network` bookkeeping calls dropped as noise. */
+    steps: () => spawned.map(stepOf).filter((step) => step !== "network"),
+    ids: () => [...containers.keys()],
+  };
 }
 
 // ---------------------------------------------------------------------------
