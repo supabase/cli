@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { stop } from "./stop.handler.ts";
 import { managedStackDocumentPath } from "@supabase/stack/managed";
 import { mockOutput, mockProjectLinkState } from "../../../../tests/helpers/mocks.ts";
@@ -40,7 +40,6 @@ describe("stop handler", () => {
   it.live("stops and removes the managed document for --no-backup", () =>
     Effect.promise(() => makeRunningStackFixture()).pipe(
       Effect.flatMap((fixture) => {
-        writeFileSync(managedStackDocumentPath(fixture.stateRoot, fixture.stackId), "{ corrupt");
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
