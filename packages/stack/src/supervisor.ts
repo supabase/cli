@@ -663,8 +663,10 @@ export const supervisorLayer = (
     return yield* Effect.gen(function* () {
       const responseFiber = yield* waitForStarted(child).pipe(
         Effect.timeout(SUPERVISOR_HANDSHAKE_TIMEOUT),
-        Effect.mapError(
-          () => new SupervisorStartError({ message: "Timed out waiting for supervisor startup" }),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.fail(
+            new SupervisorStartError({ message: "Timed out waiting for supervisor startup" }),
+          ),
         ),
         Effect.forkChild({ startImmediately: true }),
       );

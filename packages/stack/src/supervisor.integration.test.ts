@@ -30,6 +30,9 @@ import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervi
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
 );
+const errorChildEntryPoint = fileURLToPath(
+  new URL("../tests/helpers/supervisor-error-child.ts", import.meta.url),
+);
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
@@ -456,6 +459,27 @@ describe("detached supervisor child journeys", () => {
       if (exit._tag === "Failure") {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "InvalidManagedStackNameError",
+        });
+      }
+    } finally {
+      cleanupRoots(roots);
+    }
+  });
+
+  test("preserves a supervisor startup error reported by the child", async () => {
+    const roots = await workspace();
+    try {
+      const exit = await Effect.runPromiseExit(
+        managedDaemonLayer(messageFor(roots), errorChildEntryPoint).pipe(
+          Effect.provide(httpTransportClientLayer),
+          Effect.provide(NodeFileSystem.layer),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "SupervisorStartError",
+          message: "Supervisor test runtime failed after binding",
         });
       }
     } finally {
