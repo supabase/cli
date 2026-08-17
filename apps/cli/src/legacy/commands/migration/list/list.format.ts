@@ -1,8 +1,8 @@
-import { legacySortMigrationVersions } from "../../../shared/legacy-migration-history.ts";
 import {
   LEGACY_MIGRATION_VERSION_MAX,
   legacyFormatTimestampVersion,
   legacyParseMigrationVersion,
+  legacySortMigrationVersions,
 } from "../../../shared/legacy-migration-timestamp.format.ts";
 
 /** A merged local/remote migration row. `local`/`remote` are empty when absent. */

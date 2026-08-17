@@ -7,7 +7,9 @@ import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   LEGACY_MIGRATION_VERSION_MAX,
+  legacyCompareMigrationVersions,
   legacyParseMigrationVersion,
+  legacySortMigrationVersions,
 } from "./legacy-migration-timestamp.format.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
@@ -304,10 +306,6 @@ export const legacyLoadLocalVersions = (
 /** Basename of a path, handling both `/` and `\` separators (keeps the helper pure). */
 const baseName = (filePath: string): string => filePath.split(/[\\/]/u).pop() ?? filePath;
 
-/** Lexical version order, shared by both sorters so the walks cannot drift apart. */
-const legacyCompareMigrationVersions = (a: string, b: string): number =>
-  a < b ? -1 : a > b ? 1 : 0;
-
 /**
  * Orders local migration paths by version so they line up with
  * `schema_migrations` (`ORDER BY version`) before a two-pointer walk compares
@@ -325,19 +323,6 @@ export function legacySortMigrationPathsByVersion(
     const versionB = MIGRATE_FILE_PATTERN.exec(baseName(b))?.[1] ?? "";
     return legacyCompareMigrationVersions(versionA, versionB);
   });
-}
-
-/**
- * Orders bare version strings the way `ORDER BY version` returns them, for the
- * walks that compare version lists rather than paths. `version` is a `text`
- * column, so Postgres orders it lexically and a prefix always precedes its
- * extension — exactly what {@link legacySortMigrationPathsByVersion} reproduces
- * for the path-shaped walks.
- */
-export function legacySortMigrationVersions(
-  versions: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  return [...versions].sort(legacyCompareMigrationVersions);
 }
 
 /** Outcome of `legacyFindPendingMigrations` — `(slice, error)` as a tagged union. */
