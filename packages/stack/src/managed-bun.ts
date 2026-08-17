@@ -5,11 +5,7 @@ import {
   type ManagedDaemonStartInput,
 } from "./supervisor.ts";
 import { daemonEntryPoint as managedDaemonEntryPoint } from "./platform-bun.ts";
-import {
-  createManagedStackManager as createManagedStackManagerCore,
-  managedStackManagerLayer as managedStackManagerLayerCore,
-  type ManagedStackManagerHandle,
-} from "./managed/manager.ts";
+import { managedStackManagerLayer as managedStackManagerLayerCore } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { controlTransportLayer } from "./platform-bun.ts";
 
@@ -23,11 +19,6 @@ export const managedStackManagerLayer = (options: { readonly stateRoot: string }
       EffectLayer.mergeAll(BunServices.layer, gitConfigStoreLayer, controlTransportLayer),
     ),
   );
-
-export const createManagedStackManager = (options: {
-  readonly stateRoot: string;
-}): Promise<ManagedStackManagerHandle> =>
-  createManagedStackManagerCore(managedStackManagerLayer(options));
 
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,

@@ -10,7 +10,6 @@ import {
   Layer,
   ManagedRuntime,
   Schedule,
-  Scope,
   Stream,
 } from "effect";
 import { HttpServer } from "effect/unstable/http";
@@ -30,7 +29,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import {
-  createManagedStackManager,
   deriveRepairOwnershipId,
   ManagedStackManager,
   managedStackManagerLayer,
@@ -1116,50 +1114,6 @@ describe("managed stack journeys", () => {
     );
   });
 
-  it.live("keeps Promise allocation ports bound until disposal", () => {
-    const { layer, workspace } = setup();
-    return Effect.promise(async () => {
-      const platformLayer = Layer.mergeAll(
-        NodeFileSystem.layer,
-        NodePath.layer,
-        gitConfigStoreLayer,
-        controlTransportLayer,
-      );
-      const manager = await createManagedStackManager(layer.pipe(Layer.provide(platformLayer)));
-      const environment = await Effect.runPromise(
-        ensureEnvironment(workspace).pipe(Effect.provide(platformLayer)),
-      );
-      const stackId = deriveStackId(environment.identity, "default");
-      const ownerScope = await Effect.runPromise(Scope.make());
-      const ownership = await Effect.runPromise(
-        acquireControl({ stackId })
-          .pipe(Effect.provideService(Scope.Scope, ownerScope))
-          .pipe(Effect.provide(controlTransportLayer)),
-      );
-      if (ownership._tag !== "Owned") throw new Error("expected ownership");
-      const allocation = await manager.startStack({
-        workspacePath: workspace,
-        portDocument: automaticDocument(),
-        ownership,
-      });
-      const port = allocation.ports.apiPort;
-      if (port === undefined) throw new Error("expected API port");
-      const blocked = await Effect.runPromise(
-        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
-          Effect.exit,
-        ),
-      );
-      expect(Exit.isFailure(blocked)).toBe(true);
-      await allocation.releaseAll();
-      const rebound = await Effect.runPromise(
-        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]),
-      );
-      await Effect.runPromise(rebound.releaseAll);
-      await Effect.runPromise(Scope.close(ownerScope, Exit.void));
-      await manager[Symbol.asyncDispose]();
-    });
-  });
-
   it.live("repairs a moved workspace without changing stack id or ports", () => {
     const { layer, stateRoot } = setup();
     return Effect.scoped(
@@ -1223,7 +1177,7 @@ describe("managed stack journeys", () => {
         const stillNeedsRepair = yield* manager.discoverWorkspace(movedFirstProject);
         expect(stillNeedsRepair.state).toBe("needsRepair");
         const repaired = yield* manager.repairWorkspace(discovery.repair);
-        expect(repaired.state).toBe("healthy");
+        expect(repaired.state).toBe("ready");
         const stack = yield* manager.inspectStack(originalId);
         expect(stack?.id).toBe(originalId);
         expect(stack?.ports[0]?.port).toBe(originalPort);

@@ -6,7 +6,6 @@ import {
   Exit,
   FileSystem,
   Layer,
-  ManagedRuntime,
   Path,
   PlatformError,
   Schedule,
@@ -124,14 +123,6 @@ export interface ManagedPortLease {
   readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
   readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
   readonly releaseAll: Effect.Effect<void>;
-}
-
-/** A Promise-facade allocation whose port bindings remain live until disposal. */
-export interface ManagedStackAllocationHandle extends AsyncDisposable {
-  readonly stack: ManagedStack;
-  readonly ports: PortSet;
-  readonly release: (fields: ReadonlyArray<PortField>) => Promise<void>;
-  readonly releaseAll: () => Promise<void>;
 }
 
 export type ManagedDeleteResult =
@@ -903,83 +894,3 @@ export const managedStackManagerLayer = (options: {
 export const makeManagedStackManager = (
   stateRoot: string,
 ): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> => makeManager(stateRoot);
-
-/** Minimal Promise facade over the same Effect manager service. */
-export interface ManagedStackManagerHandle extends AsyncDisposable {
-  readonly stateRoot: string;
-  readonly discoverWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
-  readonly ensureWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
-  readonly readStack: (request: ReadStackRequest) => Promise<ManagedStack | undefined>;
-  readonly startStack: (request: StartStackRequest) => Promise<ManagedStackAllocationHandle>;
-  readonly inspectStack: (stackId: string) => Promise<ManagedStack | undefined>;
-  readonly listStacks: () => Promise<ReadonlyArray<ManagedStackListing>>;
-  readonly recordLifecycle: (
-    ownership: ControlOwnership,
-    update: ManagedStackLifecycleUpdate,
-  ) => Promise<ManagedStack>;
-  readonly updateLaunch: (
-    ownership: ControlOwnership,
-    update: ManagedStackLaunchUpdate,
-  ) => Promise<ManagedStack>;
-  readonly repairWorkspace: (request: RepairRequest) => Promise<WorkspaceDiscovery>;
-  readonly deleteStack: (stackId: string) => Promise<ManagedDeleteResult>;
-}
-
-export const createManagedStackManager = async (
-  layer: Layer.Layer<ManagedStackManager, never, never>,
-): Promise<ManagedStackManagerHandle> => {
-  const runtime = ManagedRuntime.make(layer);
-  const context = await runtime.context();
-  const manager = Context.get(context, ManagedStackManager);
-  const close = (): Promise<void> => runtime.dispose();
-  async function startStack(request: StartStackRequest): Promise<ManagedStackAllocationHandle> {
-    const scope = await runtime.runPromise(Scope.make());
-    try {
-      const result = await runtime.runPromise(
-        manager.startStack(request).pipe(Effect.provideService(Scope.Scope, scope)),
-      );
-      let released: Promise<void> | undefined;
-      const closeAllocation = (): Promise<void> => {
-        released ??= runtime.runPromise(Scope.close(scope, Exit.void));
-        return released;
-      };
-      return {
-        stack: result.stack,
-        ports: result.lease.ports,
-        release: (fields) => runtime.runPromise(result.lease.release(fields)),
-        releaseAll: closeAllocation,
-        [Symbol.asyncDispose]: closeAllocation,
-      };
-    } catch (error) {
-      await runtime.runPromise(Scope.close(scope, Exit.die(error)));
-      throw error;
-    }
-  }
-  return {
-    stateRoot: manager.stateRoot,
-    discoverWorkspace: (path) => runtime.runPromise(manager.discoverWorkspace(path)),
-    ensureWorkspace: (path) => runtime.runPromise(manager.ensureWorkspace(path)),
-    readStack: (request) => runtime.runPromise(manager.readStack(request)),
-    startStack,
-    inspectStack: (stackId) => runtime.runPromise(manager.inspectStack(stackId)),
-    listStacks: () => runtime.runPromise(manager.listStacks()),
-    recordLifecycle: (ownership, update) =>
-      runtime.runPromise(manager.recordLifecycle(ownership, update)),
-    updateLaunch: (ownership, update) =>
-      runtime.runPromise(manager.updateLaunch(ownership, update)),
-    repairWorkspace: (request) => runtime.runPromise(manager.repairWorkspace(request)),
-    deleteStack: (stackId) =>
-      runtime.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const acquisition = yield* manager.acquireControl(stackId);
-            if (!isOwned(acquisition)) {
-              return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
-            }
-            return yield* manager.deleteStack(stackId, acquisition);
-          }),
-        ),
-      ),
-    [Symbol.asyncDispose]: close,
-  };
-};

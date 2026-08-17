@@ -1,17 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { createServer, type Server } from "node:net";
-import {
-  Context,
-  Data,
-  Duration,
-  Effect,
-  Fiber,
-  Layer,
-  Schedule,
-  Scope,
-  Schema,
-  Stream,
-} from "effect";
+import { Context, Data, Duration, Effect, Fiber, Layer, Schedule, Scope, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -42,14 +30,6 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
 
-/** Explicit substitutions used by integration tests. Never inferred from paths. */
-export type SupervisorTestMode =
-  | "bind-all"
-  | "fail-after-bind"
-  | "hold-reservations"
-  | "hold-start"
-  | "hold-stop";
-
 /** The only message sent across the detached child IPC boundary. */
 export interface SupervisorStartMessage {
   readonly type: "start";
@@ -59,7 +39,6 @@ export interface SupervisorStartMessage {
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
-  readonly testMode?: SupervisorTestMode;
 }
 
 export interface SupervisorStartedMessage {
@@ -73,15 +52,7 @@ interface SupervisorErrorMessage {
   readonly message: string;
 }
 
-interface SupervisorTestStageMessage {
-  readonly type: "test-stage";
-  readonly stage: "attached-before-ready";
-}
-
-type SupervisorMessage =
-  | SupervisorStartedMessage
-  | SupervisorErrorMessage
-  | SupervisorTestStageMessage;
+type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
 /** Input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
   readonly workspacePath: string;
@@ -106,15 +77,6 @@ const supervisorStartMessageSchema = Schema.Struct({
   config: Schema.Record(Schema.String, Schema.Unknown),
   portIntents: supervisorPortIntentSchema,
   launch: Schema.optionalKey(managedStackLaunchSchema),
-  testMode: Schema.optionalKey(
-    Schema.Literals([
-      "bind-all",
-      "fail-after-bind",
-      "hold-reservations",
-      "hold-start",
-      "hold-stop",
-    ]),
-  ),
 });
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -152,13 +114,6 @@ class SupervisorOwnerReacquirePending extends Data.TaggedError(
 const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
 const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
 
-const supervisorResolutionTimeout = (): Duration.Input => {
-  const testTimeoutMs = Number(process.env["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
-  return Number.isFinite(testTimeoutMs) && testTimeoutMs > 0
-    ? `${testTimeoutMs} millis`
-    : SUPERVISOR_STARTUP_TIMEOUT;
-};
-
 const awaitOwnerReady = (
   acquisition: ControlAttached,
   onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
@@ -191,100 +146,16 @@ const awaitOwnerReady = (
     ),
   );
 
-/** Minimal Stack implementation used only by explicit supervisor test mode. */
-const supervisorTestStackLayer = (
-  config: ResolvedDaemonConfig,
-  mode?: SupervisorTestMode,
-): Layer.Layer<Stack> => {
-  const info = {
-    url: `http://127.0.0.1:${config.apiPort}`,
-    dbUrl: `postgresql://postgres:postgres@127.0.0.1:${config.dbPort}/postgres`,
-    publishableKey: config.publishableKey,
-    secretKey: config.secretKey,
-    anonJwt: config.anonJwt,
-    serviceRoleJwt: config.serviceRoleJwt,
-    serviceEndpoints: {},
-  };
-  const stack: Stack["Service"] = {
-    getInfo: () => Effect.succeed(info),
-    start: () => Effect.void,
-    stop: () => (mode === "hold-stop" ? Effect.never : Effect.void),
-    dispose: () => Effect.void,
-    startService: () => Effect.void,
-    stopService: () => Effect.void,
-    restartService: () => Effect.void,
-    reloadFunctions: () => Effect.void,
-    reloadEdgeRuntime: () => Effect.void,
-    getState: () => Effect.die("test stack has no external service state"),
-    getAllStates: () => Effect.succeed([]),
-    stateChanges: () => Effect.succeed(Stream.empty),
-    allStateChanges: () => Stream.empty,
-    waitReady: () => Effect.void,
-    waitAllReady: () => Effect.void,
-    subscribeLogs: () => Stream.empty,
-    subscribeAllLogs: () => Stream.empty,
-    logHistory: () => Effect.succeed([]),
-    logHistoryAll: () => Effect.succeed([]),
-  };
-  return Layer.succeed(Stack, stack);
-};
-
-const bindTestPort = (port: number): Effect.Effect<Server> =>
-  Effect.callback((resume) => {
-    const server = createServer((socket) => socket.destroy());
-    const onError = (cause: Error) => resume(Effect.die(cause));
-    server.once("error", onError);
-    server.listen(port, "127.0.0.1", () => {
-      server.off("error", onError);
-      resume(Effect.succeed(server));
-    });
-    return Effect.sync(() => server.close());
-  });
-
-const closeTestPorts = (servers: ReadonlyArray<Server>): Effect.Effect<void> =>
-  Effect.forEach(
-    servers,
-    (server) =>
-      Effect.callback<void>((resume) => {
-        if (!server.listening) {
-          resume(Effect.void);
-          return Effect.void;
-        }
-        server.close(() => resume(Effect.void));
-        return Effect.void;
-      }),
-    { discard: true },
-  );
-
-/** Shared external-service substitution for detached supervisor journeys. */
-export const supervisorTestRuntime: NonNullable<SupervisorPlatform["testRuntime"]> = ({
-  config,
-  lease,
-  mode,
-}) =>
-  Effect.gen(function* () {
-    if (mode === "hold-start") yield* Effect.never;
-    const servers: Array<Server> = [];
-    if (mode !== "hold-reservations") {
-      for (const field of PORT_FIELDS) {
-        const port = config.ports[field];
-        if (port === undefined) continue;
-        yield* lease.release([field]);
-        servers.push(yield* bindTestPort(port));
-      }
-    }
-    yield* Effect.addFinalizer(() => closeTestPorts(servers));
-    return supervisorTestStackLayer(config, mode);
-  });
-
 export interface SupervisorPlatform {
   readonly platformFactory: PlatformFactory;
-  /** Explicit external-service substitution used only when testMode is set. */
-  readonly testRuntime?: (input: {
+  /** Optional platform-owned runtime layer, primarily for non-Docker environments. */
+  readonly runtimeLayer?: (input: {
     readonly config: ResolvedDaemonConfig;
     readonly lease: PortLease;
-    readonly mode: SupervisorTestMode;
   }) => Effect.Effect<Layer.Layer<Stack>, unknown, Scope.Scope>;
+  /** Optional notification hook for an attached owner that is not ready yet. */
+  readonly onAttachedBeforeReady?: () => Effect.Effect<void, SupervisorStartError>;
+  readonly resolutionTimeout?: Duration.Input;
   readonly managerLayer: (
     stateRoot: string,
   ) => Layer.Layer<
@@ -376,19 +247,19 @@ const startDaemon = (input: {
   readonly ownership: ControlOwnership;
   readonly platform: SupervisorPlatform;
   readonly scope: Scope.Scope;
-  readonly stackLayer?: Layer.Layer<Stack>;
   readonly launchUpdate?: (
     launch: NonNullable<import("./managed/document.ts").ManagedStackDocument["launch"]>,
   ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
   { readonly daemon: DaemonServer["Service"] },
   unknown,
-  import("effect").FileSystem.FileSystem | import("effect").Path.Path
+  import("effect").FileSystem.FileSystem | import("effect").Path.Path | Scope.Scope
 > =>
   Effect.gen(function* () {
     const appLayer =
-      input.stackLayer ??
-      foregroundLayer(input.config, input.platform.platformFactory, input.lease);
+      input.platform.runtimeLayer === undefined
+        ? foregroundLayer(input.config, input.platform.platformFactory, input.lease)
+        : yield* input.platform.runtimeLayer({ config: input.config, lease: input.lease });
     const appServices = yield* Layer.buildWithScope(appLayer, input.scope);
     const localStack = Context.get(appServices, Stack);
     const daemonLayer = DaemonServer.layerWithShutdown(
@@ -409,20 +280,6 @@ const startDaemon = (input: {
     const daemonServices = yield* Layer.buildWithScope(daemonLayer, input.scope);
     const daemon = Context.get(daemonServices, DaemonServer);
     return { daemon };
-  });
-
-const installTestRuntime = (
-  platform: SupervisorPlatform,
-  mode: SupervisorTestMode | undefined,
-  config: ResolvedDaemonConfig,
-  lease: PortLease,
-): Effect.Effect<Layer.Layer<Stack> | undefined, unknown, Scope.Scope> =>
-  Effect.suspend(() => {
-    const testRuntime = platform.testRuntime;
-    if (mode === undefined || testRuntime === undefined) return Effect.succeed(undefined);
-    return Effect.gen(function* () {
-      return yield* testRuntime({ config, lease, mode });
-    });
   });
 
 const runManaged = (
@@ -485,9 +342,7 @@ const runManaged = (
       initialAcquisition._tag === "Attached"
         ? awaitOwnerReady(
             initialAcquisition,
-            input.testMode === "hold-start"
-              ? sendMessage({ type: "test-stage", stage: "attached-before-ready" })
-              : Effect.void,
+            platform.onAttachedBeforeReady?.() ?? Effect.void,
           ).pipe(
             Effect.as(initialAcquisition),
             Effect.catch((error) =>
@@ -498,7 +353,7 @@ const runManaged = (
           )
         : Effect.succeed(initialAcquisition);
     const acquisition = yield* attachedResolution.pipe(
-      Effect.timeout(supervisorResolutionTimeout()),
+      Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
       Effect.catch((error) =>
         typeof error === "object" &&
         error !== null &&
@@ -559,17 +414,6 @@ const runManaged = (
         name: input.stackName,
         projectDir: configInput.projectDir ?? input.workspacePath,
       };
-      const testStackLayer = yield* installTestRuntime(
-        platform,
-        input.testMode,
-        config,
-        leaseFacade(started.lease),
-      );
-      if (input.testMode === "fail-after-bind" && testStackLayer !== undefined) {
-        return yield* Effect.fail(
-          new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
-        );
-      }
       yield* manager.recordLifecycle(ownership, {
         stackId: started.stack.id,
         lifecycle: "starting",
@@ -580,7 +424,6 @@ const runManaged = (
         ownership,
         platform,
         scope,
-        stackLayer: testStackLayer,
         launchUpdate: (launch) =>
           manager
             .updateLaunch(ownership, { stackId: started.stack.id, launch })
@@ -776,7 +619,6 @@ export const supervisorLayer = (
 export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
   entryPoint: string,
-  options: { readonly testMode?: SupervisorTestMode } = {},
 ): Effect.Effect<
   Layer.Layer<Stack>,
   SupervisorStartError | import("./managed/model.ts").InvalidManagedStackNameError,
@@ -794,7 +636,6 @@ export const managedDaemonLayer = (
       },
       portIntents: input.portIntents,
       ...(input.launch === undefined ? {} : { launch: input.launch }),
-      ...(options.testMode === undefined ? {} : { testMode: options.testMode }),
     },
     entryPoint,
   );

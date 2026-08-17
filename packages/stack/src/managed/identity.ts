@@ -105,11 +105,6 @@ const readIdentity = async (
   }
 };
 
-export const readOrdinaryWorkspaceIdentity = (
-  workspacePath: string,
-): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
-  failsWithIdentity(Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: asRaised }));
-
 /** Read-only marker probe through Effect FileSystem; absence remains undefined. */
 export const readOrdinaryWorkspaceIdentityWithFileSystem = (
   workspacePath: string,

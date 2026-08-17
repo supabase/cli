@@ -101,6 +101,10 @@ const managedStackDocumentSchema = Schema.Struct({
 
 const ManagedStackDocumentSchema = Schema.fromJsonString(managedStackDocumentSchema);
 
+const hasCorePortAssignments = (document: Pick<ManagedStackDocument, "ports">): boolean =>
+  document.ports.some((assignment) => assignment.key === "api.port") &&
+  document.ports.some((assignment) => assignment.key === "db.port");
+
 export class InvalidManagedStackDocumentError extends Data.TaggedError(
   "InvalidManagedStackDocumentError",
 )<{
@@ -121,10 +125,7 @@ export const decodeManagedStackDocument = (
   Effect.try({
     try: () => {
       const document = decodeDocument(content);
-      if (
-        !document.ports.some((assignment) => assignment.key === "api.port") ||
-        !document.ports.some((assignment) => assignment.key === "db.port")
-      ) {
+      if (!hasCorePortAssignments(document)) {
         throw new Error("Managed document is missing core port assignments");
       }
       return document;
@@ -138,10 +139,7 @@ export const encodeManagedStackDocument = (
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
   Effect.try({
     try: () => {
-      if (
-        !document.ports.some((assignment) => assignment.key === "api.port") ||
-        !document.ports.some((assignment) => assignment.key === "db.port")
-      ) {
+      if (!hasCorePortAssignments(document)) {
         throw new Error("Managed document is missing core port assignments");
       }
       return JSON.stringify(encodeDocument(document), null, 2) + "\n";

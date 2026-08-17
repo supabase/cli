@@ -1,7 +1,7 @@
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach } from "vitest";
 import {
@@ -73,6 +73,39 @@ describe("managed Git workspace identity", () => {
         const failure = yield* Effect.flip(inspectWorkspace(path));
         expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
       }
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("rejects a repository configured for reftable refs", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      git(repository, "config", "extensions.refStorage", "reftable");
+
+      const failure = yield* Effect.flip(inspectWorkspace(repository));
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(failure).toMatchObject({ workspaceCause: "reftable" });
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("parses quoted plain config values and ignores subsections", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      const configPath = join(repository, ".git", "config");
+      writeFileSync(
+        configPath,
+        `${readFileSync(configPath, "utf8")}
+[extensions "unrelated"]
+  refStorage = reftable
+[extensions]
+  refStorage = "files"
+[core "unrelated"]
+  bare = true
+[core]
+  bare = "false"
+`,
+      );
+      const checkout = yield* inspectCheckout(repository);
+      expect(checkout.checkoutKind).toBe("primary");
     }).pipe(Effect.provide(gitLayer)),
   );
 

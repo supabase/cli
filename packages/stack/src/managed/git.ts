@@ -932,35 +932,6 @@ export const ensureGitCheckoutIdentity = (
     }),
   );
 
-/** {@link ensureGitCheckoutIdentity} without the claim: absent stays absent. */
-export const readGitCheckoutIdentity = (
-  inspection: GitCheckoutInspection,
-): Effect.Effect<
-  GitCheckoutIdentityState,
-  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
-> =>
-  failsWithIdentity(
-    Effect.gen(function* () {
-      const workspaceId = yield* readConfigId(
-        gitConfigPath(inspection.commonDirectory),
-        GIT_WORKSPACE_ID_KEY,
-        "workspaceId",
-      );
-      const identity = yield* Effect.tryPromise({
-        try: () => readCheckoutIdentity(inspection.gitDirectory),
-        catch: asRaised,
-      });
-      return {
-        workspaceId,
-        checkoutId: identity?.checkoutId,
-        workspacePath: undefined,
-        workspaceIdentityLocation: inspection.commonDirectory,
-        checkoutIdentityLocation: inspection.gitDirectory,
-      };
-    }),
-  );
-
 /** Read-only checkout marker probe through Effect FileSystem. */
 export const readGitCheckoutIdentityWithFileSystem = (
   inspection: GitCheckoutInspection,

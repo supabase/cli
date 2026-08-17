@@ -16,8 +16,12 @@ import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
 
-const childEntryPoint = fileURLToPath(new URL("./daemon-node.ts", import.meta.url));
+const childEntryPoint = fileURLToPath(
+  new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
+);
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
+
+type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
 interface ChildHandle {
   readonly child: ChildProcess;
@@ -57,20 +61,29 @@ const messageFor = (
     pooler: false,
   },
   portIntents: { activeFields: ["apiPort", "dbPort"], document: {} },
-  testMode: "bind-all",
   ...overrides,
 });
 
 const spawnChild = (
   input: SupervisorStartMessage,
-  environment: Readonly<Record<string, string>> = {},
+  options: {
+    readonly testMode?: TestMode;
+    readonly environment?: Readonly<Record<string, string>>;
+  } = {},
 ): ChildHandle => {
   const child = fork(childEntryPoint, [], {
     execPath: bunExecutable,
     execArgv: [],
     detached: false,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-    env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1", ...environment },
+    env: {
+      ...process.env,
+      SUPABASE_STACK_RUN_DAEMON: "1",
+      ...(options.testMode === undefined
+        ? {}
+        : { SUPABASE_STACK_TEST_RUNTIME_MODE: options.testMode }),
+      ...options.environment,
+    },
   });
   let stderr = "";
   child.stderr?.on("data", (chunk: Uint8Array) => {
@@ -402,7 +415,7 @@ describe("detached supervisor child journeys", () => {
 
   test("publishes stopping before a slow owner shutdown can finish", async () => {
     const roots = workspace();
-    const child = spawnChild(messageFor(roots, { testMode: "hold-stop" }));
+    const child = spawnChild(messageFor(roots), { testMode: "hold-stop" });
     try {
       const started = await child.started;
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
@@ -425,7 +438,7 @@ describe("detached supervisor child journeys", () => {
 
   test("stops a blocked starting owner through its control endpoint", async () => {
     const roots = workspace();
-    const child = spawnChild(messageFor(roots, { testMode: "hold-start" }));
+    const child = spawnChild(messageFor(roots), { testMode: "hold-start" });
     void child.started.catch(() => undefined);
     try {
       const document = await waitForStackDocument(roots, "starting");
@@ -474,8 +487,8 @@ describe("detached supervisor child journeys", () => {
 
   test("reacquires and restarts after an attached owner dies during readiness", async () => {
     const roots = workspace();
-    const input = messageFor(roots, { testMode: "hold-start" });
-    const owner = spawnChild(input);
+    const input = messageFor(roots);
+    const owner = spawnChild(input, { testMode: "hold-start" });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     try {
@@ -486,7 +499,7 @@ describe("detached supervisor child journeys", () => {
         ready: false,
       });
 
-      contender = spawnChild(input);
+      contender = spawnChild(input, { testMode: "hold-start" });
       void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
 
@@ -511,16 +524,16 @@ describe("detached supervisor child journeys", () => {
 
   test("bounds attached-owner recovery to one startup deadline", async () => {
     const roots = workspace();
-    const input = messageFor(roots, { testMode: "hold-start" });
+    const input = messageFor(roots);
     const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
-    const owner = spawnChild(input, environment);
+    const owner = spawnChild(input, { testMode: "hold-start", environment });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
     try {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
-      contender = spawnChild(input, environment);
+      contender = spawnChild(input, { testMode: "hold-start", environment });
       void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
 
@@ -553,8 +566,8 @@ describe("detached supervisor child journeys", () => {
 
   test("reallocates after a child is killed during startup", async () => {
     const roots = workspace();
-    const input = messageFor(roots, { testMode: "hold-start" });
-    const killed = spawnChild(input);
+    const input = messageFor(roots);
+    const killed = spawnChild(input, { testMode: "hold-start" });
     void killed.started.catch(() => undefined);
     try {
       const document = await waitForStackDocument(roots, "starting");

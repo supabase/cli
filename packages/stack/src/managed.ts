@@ -6,7 +6,6 @@ export {
   gitBranchContextIdKey,
   inspectWorkspace,
   readBranchContextId,
-  readGitCheckoutIdentity,
   gitConfigStoreLayer,
 } from "./managed/git.ts";
 export type {
@@ -20,10 +19,7 @@ export type {
   EnsureGitCheckoutIdentityResult,
 } from "./managed/git.ts";
 
-export {
-  ensureOrdinaryWorkspaceIdentity,
-  readOrdinaryWorkspaceIdentity,
-} from "./managed/identity.ts";
+export { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 export type { EnsureOrdinaryWorkspaceIdentityResult } from "./managed/identity.ts";
 export * from "./managed/ids.ts";
 export * from "./managed/environment.ts";
@@ -54,7 +50,6 @@ export {
   ManagedStackManager,
   managedStackManagerLayer,
   makeManagedStackManager,
-  createManagedStackManager,
   deriveRepairOwnershipId,
   ManagedStackControlRequiredError,
   ManagedStackAttachedError,
@@ -64,11 +59,9 @@ export type {
   ManagedStack,
   ManagedStackManagerShape,
   ManagedStackManagerError,
-  ManagedStackManagerHandle,
   ManagedStackStartResult,
   ManagedStackLifecycleUpdate,
   ManagedPortLease,
-  ManagedStackAllocationHandle,
   ManagedPortAllocation,
   ManagedDeleteResult,
   AllocateManagedPortsRequest,

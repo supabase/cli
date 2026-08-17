@@ -55,9 +55,8 @@ export interface RepairRequest {
 interface WorkspaceDiscoveryBase {
   readonly path: string;
   readonly workspace: WorkspaceDescriptor;
-  /** The complete identity, including deterministic values for missing claims. */
+  /** The complete identity, including deterministic values for unregistered claims. */
   readonly identity: EnvironmentIdentity;
-  readonly missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">;
 }
 
 type PartialEnvironmentIdentity = {
@@ -66,12 +65,8 @@ type PartialEnvironmentIdentity = {
   contextId?: string;
 };
 
-export interface HealthyWorkspaceDiscovery extends WorkspaceDiscoveryBase {
-  readonly state: "healthy";
-}
-
-export interface UnregisteredWorkspaceDiscovery extends WorkspaceDiscoveryBase {
-  readonly state: "unregistered";
+export interface ReadyWorkspaceDiscovery extends WorkspaceDiscoveryBase {
+  readonly state: "ready";
 }
 
 export interface RepairWorkspaceDiscovery extends WorkspaceDiscoveryBase {
@@ -80,10 +75,7 @@ export interface RepairWorkspaceDiscovery extends WorkspaceDiscoveryBase {
   readonly repair: RepairRequest;
 }
 
-export type WorkspaceDiscovery =
-  | HealthyWorkspaceDiscovery
-  | UnregisteredWorkspaceDiscovery
-  | RepairWorkspaceDiscovery;
+export type WorkspaceDiscovery = ReadyWorkspaceDiscovery | RepairWorkspaceDiscovery;
 
 type EnvironmentError = InvalidManagedIdentityError | UnsupportedGitWorkspaceError;
 
@@ -185,24 +177,10 @@ const localProjectKeyFor = (
   return Effect.succeed(key.length === 0 ? "." : key);
 };
 
-const missingFor = (
-  inspection: WorkspaceInspection,
-  values: PartialEnvironmentIdentity,
-  location: string | undefined,
-): ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location"> => {
-  const missing: Array<"workspaceId" | "checkoutId" | "contextId" | "location"> = [];
-  if (values.workspaceId === undefined) missing.push("workspaceId");
-  if (values.checkoutId === undefined) missing.push("checkoutId");
-  if (values.contextId === undefined) missing.push("contextId");
-  if (inspection.kind === "git-checkout" && location === undefined) missing.push("location");
-  return missing;
-};
-
 const makeRepairDiscovery = (
   path: string,
   workspace: WorkspaceDescriptor,
   identity: EnvironmentIdentity,
-  missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">,
   reason: RepairReason,
   repair: RepairRequest,
 ): RepairWorkspaceDiscovery => ({
@@ -212,18 +190,13 @@ const makeRepairDiscovery = (
   path,
   workspace,
   identity,
-  missing,
 });
 
 const makeRegistrationDiscovery = (
   path: string,
   workspace: WorkspaceDescriptor,
   identity: EnvironmentIdentity,
-  missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">,
-): HealthyWorkspaceDiscovery | UnregisteredWorkspaceDiscovery =>
-  missing.length === 0
-    ? { state: "healthy", path, workspace, identity, missing }
-    : { state: "unregistered", path, workspace, identity, missing };
+): ReadyWorkspaceDiscovery => ({ state: "ready", path, workspace, identity });
 
 const discoverInternal = (
   workspacePath: string,
@@ -253,7 +226,6 @@ const discoverInternal = (
       location = yield* readGitCheckoutLocation(inspection.gitDirectory);
     }
     const identity = partialIdentity(inspection, values, localProjectKey);
-    const missing = missingFor(inspection, values, location);
     const workspace = descriptor(inspection);
     if (
       inspection.kind === "git-checkout" &&
@@ -280,9 +252,9 @@ const discoverInternal = (
         identity,
         updates: [{ kind: "checkout-location", from: location, to: inspection.workspaceRoot }],
       };
-      return makeRepairDiscovery(canonicalPath, workspace, identity, missing, reason, repair);
+      return makeRepairDiscovery(canonicalPath, workspace, identity, reason, repair);
     }
-    return makeRegistrationDiscovery(canonicalPath, workspace, identity, missing);
+    return makeRegistrationDiscovery(canonicalPath, workspace, identity);
   });
 
 export const discoverEnvironment = (workspacePath: string) => discoverInternal(workspacePath);
