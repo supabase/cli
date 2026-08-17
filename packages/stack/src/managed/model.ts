@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Effect } from "effect";
 import type { ConfigPortKey, PortField } from "../PortCatalog.ts";
 import { causeMessage } from "./failure.ts";
 
@@ -55,7 +55,7 @@ export type ManagedPortRequest =
 export interface ManagedPortDrift {
   readonly key: ConfigPortKey;
   readonly actualIntent: ManagedPortIntent;
-  readonly actualPort: number;
+  readonly actualPort?: number;
   readonly configuredIntent: ManagedPortIntent;
   readonly configuredPort?: number;
 }
@@ -65,6 +65,42 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
 }> {
   readonly code = "INVALID_MANAGED_IDENTITY" as const;
 }
+
+export class InvalidManagedStackNameError extends Data.TaggedError("InvalidManagedStackNameError")<{
+  readonly name: string;
+  readonly reason: "empty" | "control-character";
+  readonly characterCode?: number;
+}> {
+  readonly code = "INVALID_MANAGED_STACK_NAME" as const;
+
+  override get message(): string {
+    if (this.reason === "empty") return "Managed stack name must not be empty";
+    const code =
+      this.characterCode === undefined
+        ? "an"
+        : `U+${this.characterCode.toString(16).toUpperCase().padStart(4, "0")}`;
+    return `Managed stack name contains ASCII control character ${code}`;
+  }
+}
+
+export const validateManagedStackName = (
+  name: string,
+): Effect.Effect<string, InvalidManagedStackNameError> => {
+  if (name.length === 0) {
+    return Effect.fail(new InvalidManagedStackNameError({ name, reason: "empty" }));
+  }
+  const character = [...name].find((value) => {
+    const code = value.codePointAt(0);
+    return code !== undefined && (code <= 0x1f || code === 0x7f);
+  });
+  const characterCode = character?.codePointAt(0);
+  if (characterCode !== undefined && (characterCode <= 0x1f || characterCode === 0x7f)) {
+    return Effect.fail(
+      new InvalidManagedStackNameError({ name, reason: "control-character", characterCode }),
+    );
+  }
+  return Effect.succeed(name);
+};
 
 export class NoRunningStackError extends Data.TaggedError("NoRunningStackError")<{
   readonly cwd: string;
@@ -150,6 +186,7 @@ export class UnsafeManagedStackPathError extends Data.TaggedError("UnsafeManaged
 
 export type ManagedStackError =
   | InvalidManagedIdentityError
+  | InvalidManagedStackNameError
   | UnsupportedGitWorkspaceError
   | ManagedExactPortOccupiedError
   | ManagedPortAllocationError
@@ -167,6 +204,7 @@ function exhaustiveArrayOf<T extends string>() {
 
 export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "INVALID_MANAGED_IDENTITY",
+  "INVALID_MANAGED_STACK_NAME",
   "UNSUPPORTED_GIT_WORKSPACE",
   "MANAGED_EXACT_PORT_OCCUPIED",
   "MANAGED_PORT_ALLOCATION_FAILED",
@@ -177,6 +215,7 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
 
 export const MANAGED_ERROR_TAG_BY_CODE = {
   INVALID_MANAGED_IDENTITY: "InvalidManagedIdentityError",
+  INVALID_MANAGED_STACK_NAME: "InvalidManagedStackNameError",
   UNSUPPORTED_GIT_WORKSPACE: "UnsupportedGitWorkspaceError",
   MANAGED_EXACT_PORT_OCCUPIED: "ManagedExactPortOccupiedError",
   MANAGED_PORT_ALLOCATION_FAILED: "ManagedPortAllocationError",

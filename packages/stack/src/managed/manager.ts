@@ -36,6 +36,7 @@ import {
   ensureEnvironment,
   validateEnvironmentRepair,
   type EnvironmentIdentity,
+  type RepairReason,
   type RepairRequest,
   type WorkspaceDiscovery,
 } from "./environment.ts";
@@ -43,12 +44,14 @@ import { GitConfigStore, inspectWorkspace } from "./git.ts";
 import { updateGitCheckoutLocationOwned } from "./identity.ts";
 import {
   ManagedExactPortOccupiedError,
+  InvalidManagedStackNameError,
   ManagedPortAllocationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   type ManagedPortAssignment,
   type ManagedPortDrift,
   type ManagedPortIntentDocument,
+  validateManagedStackName,
 } from "./model.ts";
 import {
   managedPortReservationsConflict,
@@ -157,12 +160,24 @@ export class ManagedWorkspaceRepairConflictError extends Data.TaggedError(
   "ManagedWorkspaceRepairConflictError",
 )<{
   readonly stackId?: string;
+  readonly repairReason?: RepairReason;
   readonly reason: string;
 }> {
   override get message(): string {
     return this.reason;
   }
 }
+
+export const workspaceRepairConflict = (
+  repairReason: RepairReason,
+): ManagedWorkspaceRepairConflictError =>
+  new ManagedWorkspaceRepairConflictError({
+    repairReason,
+    reason:
+      repairReason === "moved"
+        ? "Moved checkout requires repair; call repairWorkspace with the discovery repair request"
+        : "Duplicate checkout requires an explicit ownership decision; repairWorkspace cannot adopt it",
+  });
 
 export type ManagedStackManagerError =
   | ManagedStackControlRequiredError
@@ -175,6 +190,7 @@ export type ManagedStackManagerError =
   | PlatformError.PlatformError
   | import("./document.ts").InvalidManagedStackDocumentError
   | import("./model.ts").InvalidManagedIdentityError
+  | InvalidManagedStackNameError
   | import("./model.ts").UnsupportedGitWorkspaceError
   | import("./control.ts").InvalidControlOwnershipIdError
   | import("./control.ts").ControlBindError
@@ -284,28 +300,24 @@ const stackDrift = (
   return resolvePortIntents(portDocument).flatMap((request) => {
     const actual = current.get(request.key);
     if (actual === undefined) {
-      return [
-        {
-          key: request.key,
-          actualIntent: "automatic",
-          actualPort: -1,
-          configuredIntent: request.intent,
-          ...(request.intent === "exact" ? { configuredPort: request.port } : {}),
-        } satisfies ManagedPortDrift,
-      ];
+      const missing: ManagedPortDrift = {
+        key: request.key,
+        actualIntent: "automatic",
+        configuredIntent: request.intent,
+        ...(request.intent === "exact" ? { configuredPort: request.port } : {}),
+      };
+      return [missing];
     }
     const configuredPort = request.intent === "exact" ? request.port : actual.port;
-    return actual.intent === request.intent && actual.port === configuredPort
-      ? []
-      : [
-          {
-            key: request.key,
-            actualIntent: actual.intent,
-            actualPort: actual.port,
-            configuredIntent: request.intent,
-            ...(request.intent === "exact" ? { configuredPort: request.port } : {}),
-          } satisfies ManagedPortDrift,
-        ];
+    if (actual.intent === request.intent && actual.port === configuredPort) return [];
+    const mismatch: ManagedPortDrift = {
+      key: request.key,
+      actualIntent: actual.intent,
+      actualPort: actual.port,
+      configuredIntent: request.intent,
+      ...(request.intent === "exact" ? { configuredPort: request.port } : {}),
+    };
+    return [mismatch];
   });
 };
 
@@ -572,13 +584,11 @@ const makeManager = (
       request: ReadStackRequest,
     ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError> =>
       Effect.gen(function* () {
+        const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(
-            new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
-          );
+          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
-        const stackName = request.stackName ?? "default";
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
         if (existing === undefined) return undefined;
@@ -594,13 +604,11 @@ const makeManager = (
       import("effect/Scope").Scope
     > =>
       Effect.gen(function* () {
+        const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(
-            new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
-          );
+          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
-        const stackName = request.stackName ?? "default";
         const stackId = deriveStackId(discovery.identity, stackName);
         const repairId = deriveRepairOwnershipId(discovery.identity);
         const repairAcquisition = yield* provideDependencies(
@@ -624,9 +632,7 @@ const makeManager = (
         return yield* Effect.gen(function* () {
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
           if (refreshed.state === "needsRepair") {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
-            );
+            return yield* Effect.fail(workspaceRepairConflict(refreshed.reason));
           }
           const refreshedStackId = deriveStackId(refreshed.identity, stackName);
           if (refreshedStackId !== stackId) {
@@ -753,6 +759,9 @@ const makeManager = (
     ): Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError> =>
       Effect.scoped(
         Effect.gen(function* () {
+          if (request.reason === "duplicate") {
+            return yield* Effect.fail(workspaceRepairConflict("duplicate"));
+          }
           const repairId = deriveRepairOwnershipId(request.identity);
           const repairAcquisition = yield* provideDependencies(
             acquireControl({ stackId: repairId }),

@@ -162,6 +162,30 @@ const releaseLease = (result: ManagedStackStartResult): Effect.Effect<void> =>
   result.lease.releaseAll;
 
 describe("managed stack journeys", () => {
+  it.live("rejects empty and ASCII-control stack names before resolving a stack", () => {
+    const { layer, workspace } = setup();
+    return Effect.gen(function* () {
+      const manager = yield* ManagedStackManager;
+      for (const stackName of ["", "bad\nname"]) {
+        const exit = yield* manager
+          .readStack({ workspacePath: workspace, stackName, portDocument: automaticDocument() })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toMatchObject({
+            _tag: "InvalidManagedStackNameError",
+          });
+        }
+      }
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("lets a concurrent start own the endpoint while status checks liveness", () => {
     const { layer, stateRoot, workspace } = setup();
     return Effect.gen(function* () {
@@ -782,6 +806,13 @@ describe("managed stack journeys", () => {
           portDocument: exactDocument("apiPort", changed),
         });
         expect(status?.drift).toHaveLength(1);
+        const missingAssignment = yield* manager.readStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument("studioPort"),
+        });
+        const missingDrift = missingAssignment?.drift?.find((drift) => drift.key === "studio.port");
+        expect(missingDrift).toBeDefined();
+        expect(missingDrift?.actualPort).toBeUndefined();
         yield* releaseLease(running);
         yield* manager.recordLifecycle(initialOwnership, { stackId, lifecycle: "stopped" });
         yield* initialOwnership.close;
@@ -1156,6 +1187,20 @@ describe("managed stack journeys", () => {
         const movedSecondProject = realpathSync(join(moved, "apps", "second"));
         const discovery = yield* manager.discoverWorkspace(movedFirstProject);
         if (discovery.state !== "needsRepair") throw new Error("expected repair");
+        const blockedRead = yield* manager
+          .readStack({ workspacePath: movedFirstProject, portDocument: automaticDocument() })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(blockedRead)).toBe(true);
+        if (Exit.isFailure(blockedRead)) {
+          const blockedError = Cause.squash(blockedRead.cause);
+          expect(blockedError).toMatchObject({
+            _tag: "ManagedWorkspaceRepairConflictError",
+            repairReason: "moved",
+          });
+          if (blockedError instanceof Error) {
+            expect(blockedError.message).toContain("repairWorkspace");
+          }
+        }
         const deleteBeforeRepair = yield* deleteManagedStack({
           workspacePath: movedFirstProject,
         }).pipe(Effect.exit);

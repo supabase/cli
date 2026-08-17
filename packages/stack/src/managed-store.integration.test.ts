@@ -15,6 +15,7 @@ const CORRUPT_ID = "22222222-2222-4222-8222-222222222222";
 
 const filesystemLayer = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const temporaryRoots: Array<string> = [];
+let resetDisappearance: (() => void) | undefined;
 
 const failingWriteFileSystemLayer = Layer.effect(
   FileSystem.FileSystem,
@@ -34,6 +35,36 @@ const failingWriteFileSystemLayer = Layer.effect(
         }),
       ),
   })),
+).pipe(Layer.provide(NodeFileSystem.layer));
+
+const disappearingDocumentFileSystemLayer = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.gen(function* () {
+    const base = yield* FileSystem.FileSystem;
+    let disappearNext = true;
+    resetDisappearance = () => {
+      disappearNext = true;
+    };
+    return {
+      ...base,
+      readFileString: (path: string, options?: Parameters<typeof base.readFileString>[1]) => {
+        if (path.endsWith("stack.json") && disappearNext) {
+          disappearNext = false;
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "test",
+              method: "readFileString",
+              description: "injected disappearance",
+            }),
+          );
+        }
+        return base.readFileString(path, options);
+      },
+      exists: (path: string) =>
+        path.endsWith("stack.json") && disappearNext ? Effect.succeed(true) : base.exists(path),
+    } satisfies FileSystem.FileSystem;
+  }),
 ).pipe(Layer.provide(NodeFileSystem.layer));
 
 afterEach(() => {
@@ -145,5 +176,18 @@ describe("managed stack document store", () => {
         expect(Cause.squash(exit.cause)).toBeInstanceOf(PlatformError.PlatformError);
       }
     }).pipe(Effect.provide(Layer.mergeAll(failingWriteFileSystemLayer, NodePath.layer))),
+  );
+
+  it.live(
+    "treats a document that disappears after exists as absent and skips it from listings",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* makeTempStackStore();
+        yield* store.write(document());
+        expect(yield* store.read(STACK_ID)).toBeUndefined();
+        if (resetDisappearance === undefined) throw new Error("expected injected filesystem");
+        resetDisappearance();
+        expect(yield* store.list()).toEqual([]);
+      }).pipe(Effect.provide(Layer.mergeAll(disappearingDocumentFileSystemLayer, NodePath.layer))),
   );
 });

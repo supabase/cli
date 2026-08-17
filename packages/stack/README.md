@@ -34,6 +34,10 @@ provides `connectManagedStack`, `updateManagedLaunch`, `stopManagedStack`, and
 `deleteManagedStack` so consumers do not manipulate documents or control
 routes directly.
 
+Workspace discovery can require repair after a checkout moves or is duplicated.
+`repairWorkspace` supports moved-checkout repair; duplicate checkout adoption is
+intentionally unsupported and requires an explicit ownership decision.
+
 The CLI normally uses `@supabase/stack/effect`:
 
 ```ts

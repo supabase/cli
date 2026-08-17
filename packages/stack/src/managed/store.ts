@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect, Exit, FileSystem, Path, PlatformError } from "effect";
+import { Effect, FileSystem, Path, PlatformError } from "effect";
 import {
   decodeManagedStackDocument,
   encodeManagedStackDocument,
@@ -81,24 +81,22 @@ const decodeAtPath = (
     return document;
   });
 
+const isNotFound = (error: PlatformError.PlatformError): boolean =>
+  error.reason._tag === "NotFound";
+
 const makeListEntry = (
   fs: FileSystem.FileSystem,
   stateRoot: string,
   stackId: string,
-): Effect.Effect<ManagedStackListing> => {
+): Effect.Effect<ManagedStackListing | undefined, PlatformError.PlatformError> => {
   const documentPath = managedStackDocumentPath(stateRoot, stackId);
-  return Effect.exit(
-    Effect.gen(function* () {
-      if (!(yield* fs.exists(documentPath))) {
-        return yield* new InvalidManagedStackDocumentError({ path: documentPath });
-      }
-      return yield* decodeAtPath(fs, documentPath, stackId);
-    }),
-  ).pipe(
-    Effect.map((exit) =>
-      Exit.isSuccess(exit)
-        ? { id: stackId, status: "healthy", document: exit.value }
-        : { id: stackId, status: "corrupt", path: documentPath },
+  return decodeAtPath(fs, documentPath, stackId).pipe(
+    Effect.map((document): ManagedStackListing => ({ id: stackId, status: "healthy", document })),
+    Effect.catchTag("InvalidManagedStackDocumentError", () =>
+      Effect.succeed<ManagedStackListing>({ id: stackId, status: "corrupt", path: documentPath }),
+    ),
+    Effect.catchTag("PlatformError", (error) =>
+      isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
     ),
   );
 };
@@ -118,12 +116,11 @@ export const makeStackStore = (
       InvalidManagedStackDocumentError | PlatformError.PlatformError
     > => {
       const documentPath = managedStackDocumentPath(resolvedStateRoot, stackId);
-      return Effect.gen(function* () {
-        if (!(yield* fs.exists(documentPath))) {
-          return undefined;
-        }
-        return yield* decodeAtPath(fs, documentPath, stackId);
-      });
+      return decodeAtPath(fs, documentPath, stackId).pipe(
+        Effect.catchTag("PlatformError", (error) =>
+          isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+        ),
+      );
     };
 
     const list = (): Effect.Effect<
@@ -135,7 +132,15 @@ export const makeStackStore = (
         if (!(yield* fs.exists(stacksRoot))) {
           return [];
         }
-        const names = [...(yield* fs.readDirectory(stacksRoot))]
+        const names = [
+          ...(yield* fs
+            .readDirectory(stacksRoot)
+            .pipe(
+              Effect.catchTag("PlatformError", (error) =>
+                isNotFound(error) ? Effect.succeed<ReadonlyArray<string>>([]) : Effect.fail(error),
+              ),
+            )),
+        ]
           .filter((name) => {
             try {
               managedStackPaths(resolvedStateRoot, name);
@@ -145,9 +150,10 @@ export const makeStackStore = (
             }
           })
           .sort((left, right) => left.localeCompare(right));
-        return yield* Effect.all(
+        const entries = yield* Effect.all(
           names.map((stackId) => makeListEntry(fs, resolvedStateRoot, stackId)),
         );
+        return entries.filter((entry): entry is ManagedStackListing => entry !== undefined);
       });
 
     const write = (
