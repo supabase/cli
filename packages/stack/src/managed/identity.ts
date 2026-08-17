@@ -170,7 +170,6 @@ const ensureIdentity = async (
   await mkdir(dirname(markerPath), { recursive: true });
   const outcome = await claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
     mode: 0o600,
-    temporaryId: createManagedUuid(idFactory, "identity temporary id"),
   });
   if (outcome === "claimed") {
     return { identity, created: true, markerPath };
@@ -259,7 +258,7 @@ export const ensureDetachedContextIdentity = (
         const outcome = await claimFileAtomically(
           markerPath,
           `${JSON.stringify({ version: DETACHED_CONTEXT_VERSION, contextId }, null, 2)}\n`,
-          { mode: 0o600, temporaryId: createManagedUuid(idFactory, "context temporary id") },
+          { mode: 0o600 },
         );
         if (outcome === "claimed") return { contextId, created: true };
         const winner = await readDetachedContextId(gitDirectory);
@@ -322,7 +321,6 @@ const decodeLocation = (content: string): string => {
 export const ensureGitCheckoutLocation = (
   gitDirectory: string,
   workspacePath: string,
-  temporaryId: string = randomUUID(),
 ): Effect.Effect<
   { readonly workspacePath: string; readonly created: boolean },
   InvalidManagedIdentityError
@@ -343,7 +341,7 @@ export const ensureGitCheckoutLocation = (
         const outcome = await claimFileAtomically(
           markerPath,
           `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
-          { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "location temporary id") },
+          { mode: 0o600 },
         );
         if (outcome === "claimed") return { workspacePath, created: true };
         const winner = decodeLocation(await readFile(markerPath, "utf8"));

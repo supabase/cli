@@ -279,11 +279,7 @@ export const ensureEnvironment = (
       } else {
         yield* ensureBranchContextId(inspection, inspection.head.branch, factory);
       }
-      yield* ensureGitCheckoutLocation(
-        inspection.gitDirectory,
-        inspection.workspaceRoot,
-        factory(),
-      );
+      yield* ensureGitCheckoutLocation(inspection.gitDirectory, inspection.workspaceRoot);
     }
     return yield* discoverInternal(before.path);
   });

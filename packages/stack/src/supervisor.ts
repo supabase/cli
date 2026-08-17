@@ -127,6 +127,7 @@ class SupervisorOwnerReacquirePending extends Data.TaggedError(
 )<{}> {}
 
 const OWNER_STOPPED_AFTER_TAKEOVER = "Attached supervisor owner stopped before takeover";
+const STACK_STOPPED_DURING_STARTUP = "Stack was stopped during startup";
 
 const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
 const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
@@ -134,6 +135,9 @@ const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
 const awaitOwnerReady = (
   acquisition: ControlAttached,
   onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
+  onStatus: (
+    status: import("./managed/control.ts").ControlOwnerStatus,
+  ) => Effect.Effect<void, SupervisorStartError> = () => Effect.void,
 ): Effect.Effect<
   import("./managed/control.ts").ControlOwnerStatus,
   | SupervisorStartError
@@ -143,6 +147,7 @@ const awaitOwnerReady = (
   | import("./managed/control.ts").ControlAddressConflictError
 > =>
   acquisition.ownerStatus.pipe(
+    Effect.tap(onStatus),
     Effect.flatMap((status) => {
       if (status.state === "running" && status.ready) return Effect.succeed(status);
       return Effect.fail(
@@ -313,6 +318,7 @@ const runManaged = (
 > => {
   let owner: ControlOwnership | undefined;
   let managerService: ManagedStackManager["Service"] | undefined;
+  let claimedStack = false;
   return Effect.gen(function* () {
     yield* validateManagedStackName(input.stackName);
     const configInput = toDaemonConfig(input.config);
@@ -336,7 +342,10 @@ const runManaged = (
           initialAcquisition.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
-    if (discoveryResult._tag === "stopped") return;
+    if (discoveryResult._tag === "stopped") {
+      yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
+      return;
+    }
     const stackId = deriveStackId(discoveryResult.discovery.identity, input.stackName);
     if (stackId !== input.stackId) {
       return yield* Effect.fail(
@@ -385,6 +394,10 @@ const runManaged = (
                 : awaitOwnerReady(
                     initialAcquisition,
                     platform.onAttachedBeforeReady?.() ?? Effect.void,
+                    (nextStatus) =>
+                      Effect.sync(() => {
+                        attachedOwnerWasStopping ||= nextStatus.state === "stopping";
+                      }),
                   ),
             ),
             Effect.as(initialAcquisition),
@@ -450,6 +463,7 @@ const runManaged = (
         lifecycle: "starting",
         launch: input.launch,
       });
+      claimedStack = true;
       const resolved = yield* Effect.tryPromise({
         try: () =>
           resolveConfig(
@@ -510,6 +524,7 @@ const runManaged = (
       if (current !== undefined) {
         yield* manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" });
       }
+      yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
       return;
     }
     const { started, built } = startupResult;
@@ -527,7 +542,9 @@ const runManaged = (
       if (failure instanceof SupervisorStartError && failure.reason === "owner-stopped") {
         return Effect.failCause(cause);
       }
-      if (owner === undefined || managerService === undefined) return Effect.failCause(cause);
+      if (!claimedStack || owner === undefined || managerService === undefined) {
+        return Effect.failCause(cause);
+      }
       return managerService
         .recordLifecycle(owner, {
           stackId: owner.ownershipId,

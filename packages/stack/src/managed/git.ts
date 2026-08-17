@@ -833,7 +833,6 @@ const ensureCheckoutIdentity = async (
       `${JSON.stringify(identity, null, 2)}\n`,
       {
         mode: 0o600,
-        temporaryId: createManagedUuid(idFactory, "git checkout identity temporary id"),
       },
     );
   } catch (error: unknown) {
@@ -917,11 +916,7 @@ export const ensureGitCheckoutIdentity = (
         try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
         catch: asRaised,
       });
-      yield* ensureGitCheckoutLocation(
-        inspection.gitDirectory,
-        inspection.workspaceRoot,
-        createManagedUuid(idFactory, "location temporary id"),
-      );
+      yield* ensureGitCheckoutLocation(inspection.gitDirectory, inspection.workspaceRoot);
       return {
         workspaceId,
         checkoutId: checkoutClaim.checkoutId,

@@ -193,6 +193,7 @@ export const makeStackStore = (
           yield* fs.remove(path.join(safeRoot, entry), { recursive: true, force: true });
         }
         yield* fs.remove(managedStackDocumentPath(resolvedStateRoot, stackId), {
+          recursive: true,
           force: true,
         });
         yield* fs.remove(safeRoot, { recursive: true, force: true });

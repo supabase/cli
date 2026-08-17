@@ -322,6 +322,53 @@ const listenStartingOwner = async (
   throw new Error(`timed out binding fake owner at ${endpoint.url}`);
 };
 
+const listenOwnerSequence = async (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+  states: ReadonlyArray<"starting" | "stopping">,
+  onRead: (state: "starting" | "stopping") => void = () => undefined,
+): Promise<ReturnType<typeof createHttpServer>> => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    let reads = 0;
+    const server = createHttpServer((request, response) => {
+      if (request.method !== "GET" || request.url !== "/owner") {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+      const state = states[Math.min(reads, states.length - 1)] ?? "starting";
+      reads += 1;
+      onRead(state);
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          protocolVersion: 1,
+          ownershipId,
+          state,
+          ready: false,
+        }),
+        () => {
+          if (reads >= states.length) server.close();
+        },
+      );
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint.port, endpoint.hostname, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+      return server;
+    } catch {
+      server.close();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+};
+
 const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
   rmSync(roots.root, { recursive: true, force: true });
   rmSync(roots.stateRoot, { recursive: true, force: true });
@@ -564,10 +611,35 @@ describe("detached supervisor child journeys", () => {
       const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
       expect(response.status).toBe(202);
       writeFileSync(ensureRelease, "release");
+      await expect(child.started).rejects.toThrow("Stack was stopped during startup");
       await waitForExit(child.child);
       expect(readStackDocument(roots)).toBeUndefined();
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("does not mark an existing stopped document failed when discovery fails after control bind", async () => {
+    const roots = workspace();
+    const initial = spawnChild(messageFor(roots));
+    try {
+      const started = await initial.started;
+      await remoteStop(started.endpoint);
+      await waitForExit(initial.child);
+      expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
+
+      writeFileSync(join(roots.root, ".supabase", "identity.json"), "not-json\n");
+      const failed = spawnChild(messageFor(roots));
+      try {
+        await expect(failed.started).rejects.toThrow("ordinary workspace identity");
+        await waitForExit(failed.child);
+        expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
+      } finally {
+        if (failed.child.exitCode === null) await kill(failed.child);
+      }
+    } finally {
+      if (initial.child.exitCode === null) await kill(initial.child);
       cleanupRoots(roots);
     }
   });
@@ -694,6 +766,42 @@ describe("detached supervisor child journeys", () => {
       expect(restarted).toBe(true);
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("reacquires after an attached owner reports stopping before disconnect", async () => {
+    const roots = workspace();
+    const input = messageFor(roots);
+    const initial = spawnChild(input);
+    let contender: ChildHandle | undefined;
+    let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    const observedStates: Array<"starting" | "stopping"> = [];
+    try {
+      const started = await initial.started;
+      await remoteStop(started.endpoint);
+      await waitForExit(initial.child);
+      const document = await waitForStackDocument(roots, "stopped");
+      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
+      fakeOwner = await listenOwnerSequence(
+        endpoint,
+        document.id,
+        ["starting", "stopping"],
+        (state) => observedStates.push(state),
+      );
+      contender = spawnChild(input);
+      void contender.started.catch(() => undefined);
+
+      const restarted = await contender.started;
+      expect(observedStates).toEqual(["starting", "stopping"]);
+      expect(restarted.attached).not.toBe(true);
+      expect(await fetchOwner(restarted.endpoint)).toMatchObject({ state: "running", ready: true });
+      await remoteStop(restarted.endpoint);
+      await waitForExit(contender.child);
+    } finally {
+      fakeOwner?.close();
+      if (initial.child.exitCode === null) await kill(initial.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
     }

@@ -884,13 +884,16 @@ const makeManager = (
         Effect.gen(function* () {
           const acquisition = ownedBy;
           yield* requireOwnedForStack(acquisition, stackId);
-          const current = yield* store
-            .read(stackId)
-            .pipe(
-              Effect.catchTag("InvalidManagedStackDocumentError", () =>
-                store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
-              ),
-            );
+          const current = yield* store.read(stackId).pipe(
+            Effect.catchTag("InvalidManagedStackDocumentError", () =>
+              store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
+            ),
+            Effect.catchTag("PlatformError", (error) =>
+              error.reason._tag === "NotFound"
+                ? Effect.succeed(undefined)
+                : store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
+            ),
+          );
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
           yield* acquisition.setState("deleting", false);

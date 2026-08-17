@@ -1080,6 +1080,44 @@ describe("managed stack journeys", () => {
     );
   });
 
+  it.live("deletes an owned stack when its document path is a directory", () => {
+    const { layer, stateRoot, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected ownership");
+        const started = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "stopped",
+        });
+        yield* started.lease.releaseAll;
+
+        const documentPath = managedStackDocumentPath(stateRoot, stackId);
+        rmSync(documentPath);
+        mkdirSync(documentPath);
+        mkdirSync(join(documentPath, "nested"));
+        writeFileSync(join(documentPath, "nested", "orphaned"), "corrupt");
+
+        expect(yield* manager.deleteStack(stackId, owner)).toEqual({
+          outcome: "removed",
+          stackId,
+        });
+        expect(existsSync(managedStackPaths(stateRoot, stackId).root)).toBe(false);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("repairs a moved workspace after reclaiming a stale running owner", () => {
     const { layer } = setup();
     return Effect.scoped(
