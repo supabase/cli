@@ -131,7 +131,6 @@ use. The package API itself keeps eager startup as its default.
 Useful companion docs:
 
 - [`../../packages/stack/docs/architecture.md`](../../packages/stack/docs/architecture.md)
-- [`../../packages/stack/docs/detach-mode.md`](../../packages/stack/docs/detach-mode.md)
 - [`docs/ui.md`](./docs/ui.md)
 
 ## Development

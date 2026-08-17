@@ -8,12 +8,6 @@ export interface FileClaimOptions {
   /** Mode for the published file; defaults to the process umask. */
   readonly mode?: number;
   /**
-   * Distinguishes one claimant's temporary file from another's; defaults to a
-   * random UUID. Callers that already draw identifiers from an injected factory
-   * pass one from there, so a deterministic run stays deterministic.
-   */
-  readonly temporaryId?: string;
-  /**
    * The hardlink step, overridable so a test can drive the hardlink-less
    * fallback on a filesystem that does support hardlinks.
    */
@@ -50,9 +44,8 @@ const createExclusively = async (
  *
  * A `SIGKILL` between the temporary write and its removal strands a
  * `.tmp.<id>` sibling. Nothing ever reads those, so a stranded one is junk
- * rather than a claim anybody can observe, and a retry that reuses the same
- * temporary id overwrites it — which is why the temporary write is not
- * exclusive.
+ * rather than a claim anybody can observe, and every attempt gets a fresh
+ * temporary path so a concurrent claimant cannot overwrite its source.
  */
 export const claimFileAtomically = async (
   targetPath: string,
@@ -60,7 +53,7 @@ export const claimFileAtomically = async (
   options: FileClaimOptions = {},
 ): Promise<FileClaimOutcome> => {
   const linkFile = options.linkFile ?? link;
-  const temporaryPath = `${targetPath}.tmp.${options.temporaryId ?? randomUUID()}`;
+  const temporaryPath = `${targetPath}.tmp.${randomUUID()}`;
   await writeFile(temporaryPath, content, { mode: options.mode });
   try {
     await linkFile(temporaryPath, targetPath);

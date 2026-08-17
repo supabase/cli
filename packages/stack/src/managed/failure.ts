@@ -1,5 +1,16 @@
 import { Effect } from "effect";
 
+/** A stable human-readable rendering for failures crossing process boundaries. */
+export const causeMessage = (cause: unknown): string => {
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
+  try {
+    const serialized = JSON.stringify(cause);
+    return serialized === undefined ? String(cause) : serialized;
+  } catch {
+    return String(cause);
+  }
+};
+
 /**
  * The managed guards in `ids.ts`, `paths.ts`, and `repository.ts` are pure
  * synchronous functions that throw their own tagged failures, and both registry
@@ -41,14 +52,6 @@ export const failsWith =
     }
     throw error;
   };
-
-/**
- * The `catch` handler for a synchronous call that has no domain failure at all:
- * every throw is a defect.
- */
-export const neverFails = (error: unknown): never => {
-  throw error;
-};
 
 /**
  * Narrows an effect's error channel to the one failure class a protocol reports,

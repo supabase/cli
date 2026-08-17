@@ -12,11 +12,11 @@ import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { StackBuildError } from "./errors.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { functionsRuntimeConfigPath, type ResolvedFunctionsBundle } from "./functions.ts";
-import type { AllocatedPorts, PortField, PortLease } from "./PortAllocator.ts";
+import type { AllocatedPorts, PortField, ResolvedPorts } from "./PortCatalog.ts";
+import type { PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
 import { localStackLayer } from "./LocalStack.ts";
-import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
@@ -124,7 +124,7 @@ const functionsBundle = (root: string, value: string): ResolvedFunctionsBundle =
   ],
 });
 
-const noopPortLease = (ports: AllocatedPorts): PortLease => ({
+const noopPortLease = (ports: ResolvedPorts): PortLease => ({
   ports,
   reserve: () => Effect.void,
   release: () => Effect.void,
@@ -141,7 +141,6 @@ function setupLayer(
   const layer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
-    Layer.provide(StackMetadataPersistence.noop),
     Layer.provide(spawner.layer),
     Layer.provide(BunServices.layer),
   );
@@ -211,7 +210,6 @@ describe("Stack", () => {
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
       Layer.provide(builderLayer),
       Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(mockChildProcessSpawner().layer),
       Layer.provide(BunServices.layer),
     );
@@ -434,7 +432,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
     );
     const providedLayer = layer.pipe(
       Layer.provide(spawner.layer),
@@ -461,7 +458,7 @@ describe("Stack", () => {
   it.live("starts the readiness deadline after artifact preparation", () => {
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres"],
-      downloadDelayMs: 1_000,
+      downloadDelayMs: 300,
     });
     const spawner = mockChildProcessSpawner();
     const config = {
@@ -475,7 +472,6 @@ describe("Stack", () => {
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );
@@ -485,7 +481,7 @@ describe("Stack", () => {
       const startedAt = Date.now();
       const exit = yield* stack.start().pipe(Effect.exit);
 
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
   });
@@ -547,7 +543,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
     );
     const providedLayer = layer.pipe(
       Layer.provide(spawner.layer),
@@ -591,7 +586,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );
@@ -646,14 +640,13 @@ describe("Stack", () => {
     const layer = localStackLayer(
       {
         ...defaultConfig,
-        readiness: { mode: "finite", timeoutMs: 1_000 },
+        readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       },
       noopPortLease(defaultConfig.ports),
     ).pipe(
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );
@@ -906,7 +899,7 @@ describe("Stack", () => {
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 1_000 },
+        readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
@@ -927,7 +920,7 @@ describe("Stack", () => {
         expect(error._tag).toBe("StackReadinessError");
         if (error._tag === "StackReadinessError") {
           expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(1_000);
+          expect(error.timeoutMs).toBe(100);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;

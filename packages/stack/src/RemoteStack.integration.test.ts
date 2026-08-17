@@ -10,7 +10,8 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type EdgeRuntimeReloadConfig, type StackInfo } from "./Stack.ts";
 import type { ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+import { HttpTransportClient, HttpTransportClientError } from "./HttpTransportClient.ts";
+import type { ControlEndpoint } from "./managed/control.ts";
 
 // ---------------------------------------------------------------------------
 // Test fixtures
@@ -256,19 +257,29 @@ function buildServerLayer(
   );
 }
 
+function testEndpoint(url = "http://127.0.0.1:1"): ControlEndpoint {
+  const parsed = new URL(url);
+  return {
+    hostname: parsed.hostname,
+    port: Number(parsed.port || 80),
+    url,
+  };
+}
+
 function buildClientLayer(url: string): Layer.Layer<Stack, never, never> {
-  const clientLayer = Layer.succeed(UnixHttpClient, {
-    request: (socketPath, path, init) =>
+  const clientLayer = Layer.succeed(HttpTransportClient, {
+    request: (endpoint, path, init) =>
       Effect.tryPromise({
         try: () => fetch(`${url}${path}`, init),
-        catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
+        catch: (cause) =>
+          new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
       }),
   });
-  return RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer));
+  return RemoteStack.layer(testEndpoint(url)).pipe(Layer.provide(clientLayer));
 }
 
 // ---------------------------------------------------------------------------
-// Tests — RemoteStack talks to DaemonServer via TCP (same logic as Unix socket)
+// Tests — RemoteStack talks to DaemonServer via TCP.
 // ---------------------------------------------------------------------------
 
 describe("RemoteStack integration", () => {
@@ -402,8 +413,8 @@ describe("RemoteStack integration", () => {
       notifyRequestStarted = resolve;
     });
     let aborted = false;
-    const clientLayer = Layer.succeed(UnixHttpClient, {
-      request: (socketPath, path, init) =>
+    const clientLayer = Layer.succeed(HttpTransportClient, {
+      request: (endpoint, path, init) =>
         Effect.tryPromise({
           try: () =>
             new Promise<Response>((_resolve, reject) => {
@@ -418,11 +429,11 @@ describe("RemoteStack integration", () => {
               );
             }),
           catch: (cause) =>
-            new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
+            new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
         }),
     });
     const runtime = ManagedRuntime.make(
-      RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+      RemoteStack.layer(testEndpoint()).pipe(Layer.provide(clientLayer)),
     );
     try {
       const fiber = runtime.runFork(Effect.flatMap(Stack, (stack) => stack.waitReady("auth")));
@@ -447,11 +458,11 @@ describe("RemoteStack integration", () => {
     ] as const;
 
     for (const scenario of scenarios) {
-      const clientLayer = Layer.succeed(UnixHttpClient, {
+      const clientLayer = Layer.succeed(HttpTransportClient, {
         request: () => Effect.succeed(scenario.response),
       });
       const runtime = ManagedRuntime.make(
-        RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+        RemoteStack.layer(testEndpoint()).pipe(Layer.provide(clientLayer)),
       );
       try {
         const exit = await runtime.runPromise(
@@ -462,7 +473,7 @@ describe("RemoteStack integration", () => {
           const defect = Cause.findDefect(exit.cause);
           expect(Result.isSuccess(defect)).toBe(true);
           if (Result.isSuccess(defect)) {
-            expect(defect.success).toBeInstanceOf(UnixHttpClientError);
+            expect(defect.success).toBeInstanceOf(HttpTransportClientError);
             expect(defect.success).toMatchObject({ reason: scenario.reason, path: "/status" });
           }
         }
@@ -486,11 +497,11 @@ describe("RemoteStack integration", () => {
     ] as const;
 
     for (const scenario of scenarios) {
-      const clientLayer = Layer.succeed(UnixHttpClient, {
+      const clientLayer = Layer.succeed(HttpTransportClient, {
         request: () => Effect.succeed(scenario.response()),
       });
       const runtime = ManagedRuntime.make(
-        RemoteStack.layer("test.sock").pipe(Layer.provide(clientLayer)),
+        RemoteStack.layer(testEndpoint()).pipe(Layer.provide(clientLayer)),
       );
       try {
         const exit = await runtime.runPromise(
@@ -503,7 +514,7 @@ describe("RemoteStack integration", () => {
           const defect = Cause.findDefect(exit.cause);
           expect(Result.isSuccess(defect)).toBe(true);
           if (Result.isSuccess(defect)) {
-            expect(defect.success).toBeInstanceOf(UnixHttpClientError);
+            expect(defect.success).toBeInstanceOf(HttpTransportClientError);
             expect(defect.success).toMatchObject({ reason: scenario.reason, path: "/logs" });
           }
         }

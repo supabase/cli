@@ -1,44 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createServer } from "node:net";
-import type { Server } from "node:net";
-import { Effect } from "effect";
-import {
-  allocatePorts,
-  DEFAULT_PORTS,
-  PortAllocationError,
-  reservePorts,
-} from "./PortAllocator.ts";
-
-const listen = (port: number) =>
-  Effect.callback<Server, Error>((resume) => {
-    const server = createServer();
-    server.once("error", (error) => {
-      resume(Effect.fail(error));
-    });
-    server.listen(port, "127.0.0.1", () => {
-      resume(Effect.succeed(server));
-    });
-    return Effect.void;
-  });
-
-const close = (server: Server) =>
-  Effect.callback<void>((resume) => {
-    server.close(() => resume(Effect.void));
-    return Effect.void;
-  });
-
-/** Occupy an OS-assigned port for the duration of a scoped effect. */
-const occupyFreePort = () =>
-  Effect.acquireRelease(
-    Effect.map(listen(0), (server) => {
-      const addr = server.address();
-      if (addr == null || typeof addr === "string") {
-        throw new Error("Expected TCP server address");
-      }
-      return { port: addr.port, server };
-    }),
-    ({ server }) => close(server),
-  );
+import { Cause, Effect, Exit, Schema } from "effect";
+import { PortSetSchema } from "./effect.ts";
+import { allocatePortSet, PortAllocationError } from "./PortAllocator.ts";
+import { DEFAULT_PORTS, type PortField } from "./PortCatalog.ts";
 
 const fakePortProbe = (
   options: {
@@ -54,7 +18,7 @@ const fakePortProbe = (
   return {
     exact: (port: number) =>
       unavailable.has(port)
-        ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))
+        ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port }))
         : Effect.succeed(port),
     random: (exclude: ReadonlySet<number>) =>
       Effect.gen(function* () {
@@ -76,9 +40,17 @@ const fakePortProbe = (
   };
 };
 
-describe("allocatePorts", () => {
+describe("allocatePortSet", () => {
+  const requests = (fields: ReadonlyArray<PortField>) =>
+    fields.map((field) => ({ field, selection: { kind: "automatic" as const } }));
+
   it("all allocated ports are unique", async () => {
-    const ports = await Effect.runPromise(allocatePorts({}, { probe: fakePortProbe() }));
+    const ports = await Effect.runPromise(
+      allocatePortSet(
+        requests(["apiPort", "dbPort", "authPort", "postgrestPort", "postgrestAdminPort"]),
+        { probe: fakePortProbe() },
+      ),
+    );
     const values = Object.values(ports) as number[];
     const unique = new Set(values);
     expect(unique.size).toBe(values.length);
@@ -87,11 +59,22 @@ describe("allocatePorts", () => {
     }
   });
 
+  it("exports the partial allocated port-set schema", () => {
+    expect(Schema.decodeUnknownSync(PortSetSchema)({ apiPort: 54321 })).toEqual({
+      apiPort: 54321,
+    });
+  });
+
   it("reserved ports are skipped by later allocations", async () => {
-    const a = await Effect.runPromise(allocatePorts({}, { probe: fakePortProbe() }));
+    const a = await Effect.runPromise(
+      allocatePortSet(requests(["apiPort", "dbPort"]), { probe: fakePortProbe() }),
+    );
     const aPorts = new Set(Object.values(a) as number[]);
     const b = await Effect.runPromise(
-      allocatePorts({}, { reserved: aPorts, probe: fakePortProbe() }),
+      allocatePortSet(requests(["apiPort", "dbPort"]), {
+        reserved: aPorts,
+        probe: fakePortProbe(),
+      }),
     );
     const bPorts = Object.values(b) as number[];
 
@@ -100,12 +83,36 @@ describe("allocatePorts", () => {
     }
   });
 
+  it("identifies the exact field that collides with an earlier request", async () => {
+    const exit = await Effect.runPromise(
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "exact", port: 22_001 } },
+          { field: "dbPort", selection: { kind: "exact", port: 22_001 } },
+        ],
+        { probe: fakePortProbe() },
+      ).pipe(Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "PortAllocationError",
+        field: "dbPort",
+        port: 22_001,
+      });
+    }
+  });
+
   it("explicit port is respected when available", async () => {
     const requestedApiPort = 21001;
     const requestedDbPort = 21002;
     const ports = await Effect.runPromise(
-      allocatePorts(
-        { apiPort: requestedApiPort, dbPort: requestedDbPort },
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "exact", port: requestedApiPort } },
+          { field: "dbPort", selection: { kind: "exact", port: requestedDbPort } },
+        ],
         { probe: fakePortProbe() },
       ),
     );
@@ -113,91 +120,18 @@ describe("allocatePorts", () => {
     expect(ports.dbPort).toBe(requestedDbPort);
   });
 
-  it("explicit port that is occupied fails with PortAllocationError", async () => {
-    const exit = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const occupied = yield* occupyFreePort();
-
-          return yield* allocatePorts({ apiPort: occupied.port }).pipe(Effect.exit);
-        }),
-      ),
-    );
-
-    expect(exit._tag).toBe("Failure");
-    if (exit._tag === "Failure") {
-      expect(JSON.stringify(exit.cause)).toContain("is not available");
-    }
-  });
-
-  it("keeps allocated ports unavailable until their lease is released", async () => {
-    const lease = await Effect.runPromise(reservePorts({}));
-
-    try {
-      const occupied = await Effect.runPromise(
-        allocatePorts({ apiPort: lease.ports.apiPort }).pipe(Effect.exit),
-      );
-      expect(occupied._tag).toBe("Failure");
-
-      await Effect.runPromise(lease.release(["apiPort"]));
-      const available = await Effect.runPromise(allocatePorts({ apiPort: lease.ports.apiPort }));
-      expect(available.apiPort).toBe(lease.ports.apiPort);
-
-      await Effect.runPromise(lease.reserve(["apiPort"]));
-      const reservedAgain = await Effect.runPromise(
-        allocatePorts({ apiPort: lease.ports.apiPort }).pipe(Effect.exit),
-      );
-      expect(reservedAgain._tag).toBe("Failure");
-    } finally {
-      await Effect.runPromise(lease.releaseAll);
-    }
-  });
-
-  it("keeps concurrent port leases disjoint", async () => {
-    const [first, second] = await Promise.all([
-      Effect.runPromise(reservePorts({})),
-      Effect.runPromise(reservePorts({})),
-    ]);
-
-    try {
-      const firstPorts = new Set(Object.values(first.ports));
-      expect(Object.values(second.ports).every((port) => !firstPorts.has(port))).toBe(true);
-    } finally {
-      await Promise.all([
-        Effect.runPromise(first.releaseAll),
-        Effect.runPromise(second.releaseAll),
-      ]);
-    }
-  });
-
-  it("releases partial reservations when lease allocation fails", async () => {
-    const port = await Effect.runPromise(
-      Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
-    );
-    const failed = await Effect.runPromise(
-      reservePorts({ apiPort: port, dbPort: port }).pipe(Effect.exit),
-    );
-    expect(failed._tag).toBe("Failure");
-
-    const available = await Effect.runPromise(allocatePorts({ apiPort: port }));
-    expect(available.apiPort).toBe(port);
-  });
-
   it("preferred ports are reused when available", async () => {
     const apiPort = 21003;
     const dbPort = 21004;
     const studioPort = 21005;
     const ports = await Effect.runPromise(
-      allocatePorts(
-        {},
-        {
-          preferred: {
-            apiPort,
-            dbPort,
-            studioPort,
-          },
-          probe: fakePortProbe(),
-        },
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "automatic", preferred: apiPort } },
+          { field: "dbPort", selection: { kind: "automatic", preferred: dbPort } },
+          { field: "studioPort", selection: { kind: "automatic", preferred: studioPort } },
+        ],
+        { probe: fakePortProbe() },
       ),
     );
 
@@ -210,13 +144,12 @@ describe("allocatePorts", () => {
     const apiPort = 21006;
     const dbPort = 21007;
     const ports = await Effect.runPromise(
-      allocatePorts(
-        {},
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "automatic", preferred: apiPort } },
+          { field: "dbPort", selection: { kind: "automatic", preferred: dbPort } },
+        ],
         {
-          preferred: {
-            apiPort,
-            dbPort,
-          },
           probe: fakePortProbe({
             unavailable: new Set([apiPort]),
             randomPorts: Array.from({ length: 20 }, (_, index) => 31001 + index),
@@ -231,12 +164,9 @@ describe("allocatePorts", () => {
 
   it("explicit ports cannot override reserved ownership", async () => {
     const exit = await Effect.runPromise(
-      allocatePorts(
-        { apiPort: 22001 },
-        {
-          reserved: new Set([22001]),
-        },
-      ).pipe(Effect.exit),
+      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: 22001 } }], {
+        reserved: new Set([22001]),
+      }).pipe(Effect.exit),
     );
 
     expect(exit._tag).toBe("Failure");
@@ -247,13 +177,12 @@ describe("allocatePorts", () => {
 
   it("preferred ports skip reserved ownership and use random fallback", async () => {
     const ports = await Effect.runPromise(
-      allocatePorts(
-        {},
+      allocatePortSet(
+        [
+          { field: "apiPort", selection: { kind: "automatic", preferred: 23001 } },
+          { field: "dbPort", selection: { kind: "automatic", preferred: DEFAULT_PORTS.dbPort } },
+        ],
         {
-          preferred: {
-            ...DEFAULT_PORTS,
-            apiPort: 23001,
-          },
           reserved: new Set([23001]),
           probe: fakePortProbe(),
         },

@@ -42,11 +42,6 @@ function projectLayer(cwd: string) {
         projectLinkPath: join(projectHomeDir, "project.json"),
         projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
         ensureProjectHomeDir: Effect.void,
-        stackDir: (name) => join(projectHomeDir, "stacks", name),
-        stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-        stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-        stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-        stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
       }),
     ),
   );

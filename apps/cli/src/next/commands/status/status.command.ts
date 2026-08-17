@@ -5,7 +5,6 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
-import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
@@ -24,7 +23,6 @@ const statusRuntimeLayer = provideProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
-    projectStackStateManagerLayer,
     commandRuntimeLayer(["status"]),
   ),
 );

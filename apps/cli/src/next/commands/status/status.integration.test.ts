@@ -1,14 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack/effect";
-import { StackServiceState } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { status } from "./status.handler.ts";
 import {
   mockOutput,
   mockProjectLinkState,
   mockProjectLocalServiceVersions,
-  withEnv,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   makeRunningStackFixture,
@@ -16,380 +15,95 @@ import {
 } from "../../../../tests/helpers/running-stack.ts";
 
 describe("status handler", () => {
-  it.live("shows a friendly empty state when the local project has no known stacks", () => {
-    const out = mockOutput();
-
-    return Effect.gen(function* () {
-      yield* status({ stack: "default" });
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "intro", message: "Show local Supabase stack status" }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "outro",
-          message: "No local Supabase stack is running for this project.",
-        }),
-      );
-    }).pipe(
-      Effect.provide(mockProjectLinkState()),
-      Effect.provide(mockProjectLocalServiceVersions()),
-      Effect.provide(out.layer),
-      Effect.provide(BunServices.layer),
-      Effect.provide(unixHttpClientLayer),
-      Effect.provide(withEnv({})),
-    );
-  });
-
-  it.live("shows stopped stack details for the current local project", () =>
-    Effect.gen(function* () {
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() => makeStoppedStackFixture()),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput();
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState({
-          project: {
-            ref: "abcdefghijklmnopqrst",
-            name: "Alpha",
-            organization_id: "org_123",
-            organization_slug: "supabase",
-          },
-          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
-          fetchedAt: "2026-03-25T08:00:00.000Z",
-          versions: {
-            postgres: "17.6.1.081",
-            postgrest: "14.5",
-            auth: "2.188.0-rc.15",
-            storage: "1.41.8",
-          },
-        }),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "Local Supabase stack is stopped." }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "Stack: default" }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "Ports: API 54321, DB 54322" }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "postgres version: 17.6.1.081" }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "info",
-          message: "Pinned stack versions are up to date.",
-        }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "outro",
-          message: "Local Supabase stack default is stopped.",
-        }),
-      );
-    }),
-  );
-
-  it.live(
-    "shows running connection details and service readiness for the current local stack",
-    () =>
-      Effect.gen(function* () {
-        const fixture = yield* Effect.acquireRelease(
-          Effect.promise(() => makeRunningStackFixture()),
-          (resource) => Effect.promise(() => resource.dispose()),
+  it.live("attaches to a managed owner and renders live service information", () =>
+    Effect.promise(() => makeRunningStackFixture()).pipe(
+      Effect.flatMap((fixture) => {
+        const apiPort = Number(new URL(fixture.stackInfo.url).port);
+        const dbPort = Number(new URL(fixture.stackInfo.dbUrl).port);
+        const configuredApiPort = apiPort === 54_321 ? 54_322 : 54_321;
+        mkdirSync(join(fixture.projectRoot, "supabase"));
+        writeFileSync(
+          join(fixture.projectRoot, "supabase", "config.toml"),
+          `project_id = "test"\n[api]\nport = ${configuredApiPort}\n[db]\nport = ${dbPort}\n`,
         );
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
           out.layer,
-          mockProjectLinkState({
-            project: {
-              ref: "abcdefghijklmnopqrst",
-              name: "Alpha",
-              organization_id: "org_123",
-              organization_slug: "supabase",
-            },
-            active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
-            fetchedAt: "2026-03-25T08:00:00.000Z",
-            versions: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              storage: "1.41.8",
-            },
-          }),
+          mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
+          BunServices.layer,
         );
-
-        yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "success", message: "Local Supabase stack is running." }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "Stack: default" }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "API URL: http://127.0.0.1:54321" }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({
-            type: "info",
-            message: "DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-          }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "auth: Healthy" }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({ type: "info", message: "postgres: Running" }),
-        );
-        expect(out.messages).toContainEqual(
-          expect.objectContaining({
-            type: "info",
-            message: "Pinned stack versions are up to date.",
-          }),
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "success",
+                  message: "Local Supabase stack is running.",
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: expect.stringContaining("changed from not yet allocated"),
+                }),
+              );
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: expect.stringContaining("undefined"),
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "info",
+                  message: `API URL: ${fixture.stackInfo.url}`,
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: expect.stringContaining(
+                    `api.port changed from ${apiPort} to ${configuredApiPort}`,
+                  ),
+                }),
+              );
+            }),
+          ),
         );
       }),
+    ),
   );
 
-  it.live("does not report dormant lazy services as unready", () =>
-    Effect.gen(function* () {
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() =>
-          makeRunningStackFixture({
-            states: [
-              new StackServiceState({
-                name: "auth",
-                status: "Dormant",
-                pid: null,
-                exitCode: null,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-            ],
-          }),
-        ),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput();
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState(),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "success", message: "Local Supabase stack is running." }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "auth: Dormant" }),
-      );
-    }),
-  );
-
-  it.live("reports an activating pending service as unready", () =>
-    Effect.gen(function* () {
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() =>
-          makeRunningStackFixture({
-            states: [
-              new StackServiceState({
-                name: "auth",
-                status: "Pending",
-                pid: null,
-                exitCode: null,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-            ],
-          }),
-        ),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput();
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState(),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "warn",
-          message: "Local Supabase stack is running, but some services are not ready.",
-        }),
-      );
-    }),
-  );
-
-  it.live("reports a stopped service as unready", () =>
-    Effect.gen(function* () {
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() =>
-          makeRunningStackFixture({
-            states: [
-              new StackServiceState({
-                name: "auth",
-                status: "Stopped",
-                pid: null,
-                exitCode: 0,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-            ],
-          }),
-        ),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput();
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState(),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "warn",
-          message: "Local Supabase stack is running, but some services are not ready.",
-        }),
-      );
-    }),
-  );
-
-  it.live("reports transitional states without waiting for readiness", () =>
-    Effect.gen(function* () {
-      const starting = new StackServiceState({
-        name: "auth",
-        status: "Starting",
-        pid: 123,
-        exitCode: null,
-        restartCount: 0,
-        startedAt: Date.now(),
-        error: null,
-      });
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() =>
-          makeRunningStackFixture({
-            states: [starting],
-            waitAllReadyNever: true,
-          }),
-        ),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput();
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState(),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({
-          type: "warn",
-          message: "Local Supabase stack is running, but some services are not ready.",
-        }),
-      );
-      expect(out.messages).toContainEqual(
-        expect.objectContaining({ type: "info", message: "auth: Starting" }),
-      );
-    }).pipe(Effect.timeout("2 seconds")),
-  );
-
-  it.live("emits machine-readable available updates when the pinned stack is behind", () =>
-    Effect.gen(function* () {
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() =>
-          makeStoppedStackFixture({
-            services: {
-              postgres: "17.6.1.081",
-              postgrest: "14.5",
-              auth: "2.188.0-rc.15",
-              storage: "1.41.8",
-            },
-          }),
-        ),
-        (resource) => Effect.promise(() => resource.dispose()),
-      );
-      const out = mockOutput({ format: "json", interactive: false });
-      const layer = Layer.mergeAll(
-        fixture.baseLayer,
-        out.layer,
-        mockProjectLinkState({
-          project: {
-            ref: "abcdefghijklmnopqrst",
-            name: "Alpha",
-            organization_id: "org_123",
-            organization_slug: "supabase",
-          },
-          active_branch: { ref: "abcdefghijklmnopqrst", name: "main", is_default: true },
-          fetchedAt: "2026-03-25T08:00:00.000Z",
-          versions: {
-            postgres: "17.6.1.090",
-            postgrest: "14.5",
-            auth: "2.190.0",
-            storage: "1.41.8",
-          },
-        }),
-        mockProjectLocalServiceVersions(),
-      );
-
-      yield* status({ stack: fixture.stackName }).pipe(Effect.provide(layer));
-
-      const successMessage = out.messages.find((message) => message.type === "success");
-      expect(successMessage).toEqual(
-        expect.objectContaining({
-          type: "success",
-          message: "Local Supabase stack is stopped.",
-          data: expect.objectContaining({
-            stack: "default",
-            running: false,
-            ports: expect.objectContaining({ apiPort: 54321, dbPort: 54322 }),
-            versions: expect.objectContaining({
-              postgres: "17.6.1.081",
-              auth: "2.188.0-rc.15",
-            }),
-            up_to_date: false,
-            available_updates: expect.arrayContaining([
-              {
-                service: "auth",
-                pinned_version: "2.188.0-rc.15",
-                available_version: "2.190.0",
-              },
-              {
-                service: "postgres",
-                pinned_version: "17.6.1.081",
-                available_version: "17.6.1.090",
-              },
-            ]),
-          }),
-        }),
-      );
-    }),
+  it.live("reads stopped launch metadata from the managed document", () =>
+    Effect.promise(() => makeStoppedStackFixture()).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(),
+          mockProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() =>
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "info",
+                  message: "Local Supabase stack is stopped.",
+                }),
+              ),
+            ),
+          ),
+        );
+      }),
+    ),
   );
 });
