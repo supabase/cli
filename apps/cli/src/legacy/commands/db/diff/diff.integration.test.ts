@@ -1640,24 +1640,6 @@ describe("legacy db diff", () => {
   it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
     // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
     // migrations catalog is built from the remote-merged config (explicit.go).
-    const s = setup(tmp.current, {
-      isLocal: false,
-      linkedRef: "abcdefghijklmnopqrst",
-      diffSql: "create table m ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
-      expect(s.explicitDiffCalls[0]?.desired).toEqual({
-        kind: "migrations",
-        projectRef: "abcdefghijklmnopqrst",
-      });
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
-    // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
-    // yet — the catalog (and its shadow's own container spec) must use base config
-    // (no ref forwarded), matching order.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1679,8 +1661,52 @@ describe("legacy db diff", () => {
       diffSql: "create table m ();\n",
     });
     return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
+      expect(s.explicitDiffCalls[0]?.desired).toEqual({
+        kind: "migrations",
+        projectRef: "abcdefghijklmnopqrst",
+      });
+      // Opposite direction of the sibling "migrations --to linked" test below: linked
+      // resolves FIRST here, so the remote-merged config (major_version = 14) is what
+      // must reach the migrations shadow/catalog.
+      expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
+    // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
+    // yet — the catalog (and its shadow's own container spec) must use base config
+    // (no ref forwarded), matching order.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db]",
+        "major_version = 17",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.db]",
+        "major_version = 14",
+        "",
+        // Set ONLY under the remote block: proves the strategy-received toml is the
+        // base config, not the linked-merged one (which would flip this to true).
+        "[remotes.staging.experimental.webhooks]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
+      expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(17);
+      expect(s.explicitDiffCalls[0]?.toml?.webhooksEnabled).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
