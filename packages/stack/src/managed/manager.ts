@@ -565,8 +565,12 @@ const makeManager = (
             reserve: (fields) =>
               Effect.all(
                 [
-                  exactLease?.reserve(fields) ?? Effect.void,
-                  automaticLease?.reserve(fields) ?? Effect.void,
+                  exactLease?.reserve(
+                    fields.filter((field) => exactLease.ports[field] !== undefined),
+                  ) ?? Effect.void,
+                  automaticLease?.reserve(
+                    fields.filter((field) => automaticLease.ports[field] !== undefined),
+                  ) ?? Effect.void,
                 ],
                 { discard: true },
               ),

@@ -528,7 +528,7 @@ describe("managed stack journeys", () => {
     );
   });
 
-  it.live("restarts the same environment with the same automatic ports", () => {
+  it.live("retains the same automatic ports while stopped", () => {
     const { layer, workspace } = setup();
     return Effect.scoped(
       Effect.gen(function* () {
@@ -545,12 +545,48 @@ describe("managed stack journeys", () => {
         yield* releaseLease(first);
         const second = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: { activeFields: ["apiPort", "dbPort"], document: {} },
+          portDocument: {
+            activeFields: [],
+            disabledFields: ["apiPort", "dbPort"],
+            document: {},
+          },
           ownership,
         });
         if (first === undefined || second === undefined) throw new Error("expected stack");
         expect(second.stack.id).toBe(first.stack.id);
         expect(second.stack.ports).toEqual(first.stack.ports);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
+  it.live("reserves exact durable and automatic runtime ports through one lease", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const apiPort = yield* freePort();
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected ownership");
+        const started = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: {
+            activeFields: ["apiPort", "dbPort", "authPort"],
+            document: { api: { port: apiPort } },
+          },
+          ownership,
+        });
+        const fields = ["apiPort", "dbPort", "authPort"] as const;
+        yield* started.lease.release(fields);
+        yield* started.lease.reserve(fields);
+        yield* releaseLease(started);
       }),
     ).pipe(
       Effect.provide(layer),
@@ -992,7 +1028,11 @@ describe("managed stack journeys", () => {
         if (nextOwner._tag !== "Owned") throw new Error("expected reattached ownership");
         const recovered = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: automaticDocument(),
+          portDocument: {
+            activeFields: [],
+            disabledFields: ["apiPort", "dbPort"],
+            document: {},
+          },
           ownership: nextOwner,
           lifecycle: "stopped",
         });

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { runSupabase } from "./cli.ts";
 
@@ -51,7 +51,12 @@ interface StackE2eCleanupManager {
 }
 
 function normalizeDir(dir: string): string {
-  return path.resolve(dir);
+  const resolved = path.resolve(dir);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -278,7 +283,10 @@ function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnap
       const document = JSON.parse(readFileSync(documentFile, "utf8")) as {
         readonly workspace?: { readonly path?: string };
       };
-      if (document.workspace?.path !== normalized) {
+      if (
+        document.workspace?.path === undefined ||
+        normalizeDir(document.workspace.path) !== normalized
+      ) {
         continue;
       }
     } catch {
