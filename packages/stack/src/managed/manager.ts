@@ -404,7 +404,14 @@ const makeManager = (
           );
         for (const document of matching) {
           const persistedPath = document.workspace.path;
-          if (!(yield* fileSystem.exists(persistedPath))) continue;
+          const persistedInfo = yield* fileSystem
+            .stat(persistedPath)
+            .pipe(
+              Effect.catchTag("PlatformError", (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+              ),
+            );
+          if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
           const canonicalPersistedPath = yield* provideDependencies(
             canonicalizeManagedWorkspacePathWithFileSystem(persistedPath),
           );
@@ -669,6 +676,7 @@ const makeManager = (
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
         if (existing === undefined) return undefined;
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         const drift = stackDrift(existing, request.portDocument);
         return drift.length === 0 ? existing : { ...existing, drift };
       });

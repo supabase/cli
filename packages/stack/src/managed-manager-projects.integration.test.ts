@@ -1,13 +1,23 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
@@ -23,6 +33,89 @@ afterEach(() => cleanupRoots(roots));
 const setup = () => setupManagedManager(roots);
 
 describe("managed stack projects journeys", () => {
+  it.live("rejects copied ordinary workspace identity until the original path is moved", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+        const initial = yield* manager.startStack({
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        yield* initial.lease.releaseAll;
+
+        const copied = join(workspace, "..", "workspace-copy");
+        cpSync(workspace, copied, { recursive: true });
+        const copiedDiscovery = yield* manager.discoverWorkspace(copied).pipe(Effect.exit);
+        expect(Exit.isFailure(copiedDiscovery)).toBe(true);
+        if (Exit.isFailure(copiedDiscovery)) {
+          const error = Cause.squash(copiedDiscovery.cause);
+          expect(error).toMatchObject({ _tag: "InvalidManagedIdentityError" });
+          if (error instanceof Error) {
+            expect(error.message).toContain("Delete");
+            expect(error.message).toContain(".supabase/identity.json");
+          }
+        }
+        const copiedEnsure = yield* manager.ensureWorkspace(copied).pipe(Effect.exit);
+        expect(Exit.isFailure(copiedEnsure)).toBe(true);
+        if (Exit.isFailure(copiedEnsure)) {
+          expect(Cause.squash(copiedEnsure.cause)).toMatchObject({
+            _tag: "InvalidManagedIdentityError",
+          });
+        }
+
+        const copiedStart = yield* manager
+          .startStack({
+            workspacePath: copied,
+            stackName: "default",
+            portDocument: automaticDocument(),
+            ownership,
+            lifecycle: "stopped",
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(copiedStart)).toBe(true);
+        if (Exit.isFailure(copiedStart)) {
+          const error = Cause.squash(copiedStart.cause);
+          expect(error).toMatchObject({ _tag: "InvalidManagedIdentityError" });
+          if (error instanceof Error) {
+            expect(error.message).toContain("Delete");
+            expect(error.message).toContain(".supabase/identity.json");
+          }
+        }
+
+        rmSync(copied, { recursive: true, force: true });
+        renameSync(workspace, copied);
+        const movedDiscovery = yield* manager.discoverWorkspace(copied);
+        expect(movedDiscovery.state).toBe("ready");
+        writeFileSync(workspace, "stale workspace path");
+        const moved = yield* manager.startStack({
+          workspacePath: copied,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        expect(moved.stack.id).toBe(stackId);
+        expect(moved.stack.workspace.path).toBe(realpathSync(copied));
+        expect((yield* manager.inspectStack(stackId))?.workspace.path).toBe(realpathSync(copied));
+        yield* moved.lease.releaseAll;
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("rejects empty and ASCII-control stack names before resolving a stack", () => {
     const { layer, workspace } = setup();
     return Effect.gen(function* () {

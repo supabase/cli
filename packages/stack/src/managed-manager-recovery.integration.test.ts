@@ -1,9 +1,10 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer, ManagedRuntime } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import {
   chmodSync,
+  cpSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -13,7 +14,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { deriveRepairOwnershipId, ManagedStackManager } from "./managed/manager.ts";
+import {
+  deriveRepairOwnershipId,
+  ManagedStackManager,
+  managedStackManagerLayer,
+} from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { acquireControl, ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
@@ -40,6 +45,88 @@ afterEach(() => cleanupRoots(roots));
 const setup = () => setupManagedManager(roots);
 
 describe("managed stack recovery journeys", () => {
+  it.live("revalidates a copied ordinary workspace after a concurrent first start", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-manager-race-test-"));
+    roots.push(root);
+    const workspace = join(root, "workspace");
+    const copied = join(root, "workspace-copy");
+    const stateRoot = join(root, "state");
+    mkdirSync(workspace);
+    const gate = { enabled: true, blocked: false };
+    const gatedFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          readFileString: (path: string, options?: Parameters<typeof base.readFileString>[1]) => {
+            if (!gate.enabled || gate.blocked || !path.endsWith("stack.json")) {
+              return base.readFileString(path, options);
+            }
+            gate.blocked = true;
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(readStarted, void 0);
+              yield* Deferred.await(releaseRead);
+              return yield* base.readFileString(path, options);
+            });
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
+    const managerLayer = managedStackManagerLayer({ stateRoot }).pipe(
+      Layer.provide(gatedFileSystemLayer),
+      Layer.provide(NodePath.layer),
+      Layer.provide(gitConfigStoreLayer),
+      Layer.provide(controlTransportLayer),
+    );
+    let readStarted!: Deferred.Deferred<void>;
+    let releaseRead!: Deferred.Deferred<void>;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        readStarted = yield* Deferred.make<void>();
+        releaseRead = yield* Deferred.make<void>();
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        cpSync(workspace, copied, { recursive: true });
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+
+        const readFiber = yield* Effect.forkScoped(
+          manager.readStack({ workspacePath: copied, portDocument: automaticDocument() }),
+        );
+        yield* Deferred.await(readStarted);
+        const startFiber = yield* Effect.forkScoped(
+          Effect.gen(function* () {
+            const started = yield* manager.startStack({
+              workspacePath: workspace,
+              portDocument: automaticDocument(),
+              ownership,
+              lifecycle: "stopped",
+            });
+            yield* started.lease.releaseAll;
+          }),
+        );
+        yield* Fiber.join(startFiber);
+        gate.enabled = false;
+        yield* Deferred.succeed(releaseRead, void 0);
+        const read = yield* Fiber.join(readFiber).pipe(Effect.exit);
+        expect(Exit.isFailure(read)).toBe(true);
+        if (Exit.isFailure(read)) {
+          expect(Cause.squash(read.cause)).toMatchObject({
+            _tag: "InvalidManagedIdentityError",
+          });
+        }
+      }),
+    ).pipe(
+      Effect.provide(managerLayer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("fences start publication while checkout repair is owned", () => {
     const { layer, workspace } = setup();
     return Effect.gen(function* () {
