@@ -124,14 +124,11 @@ export const stopManagedStack = (
   Effect.scoped(
     Effect.gen(function* () {
       const manager = yield* ManagedStackManager;
-      const document = yield* resolveManagedDocument(input).pipe(
-        Effect.catchTag("InvalidManagedStackDocumentError", () => Effect.succeed(undefined)),
-      );
-      const stackId = document?.id ?? (yield* stackIdForInput(manager, input));
+      const document = yield* resolveManagedDocument(input);
+      const stackId = document.id;
       const acquisition = yield* manager.acquireControl(stackId);
       if (acquisition._tag === "Owned") {
         if (
-          document === undefined ||
           document.lifecycle === "running" ||
           document.lifecycle === "starting" ||
           document.lifecycle === "failed"
@@ -139,18 +136,12 @@ export const stopManagedStack = (
           yield* dockerForceRemove(
             SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
           );
-          if (document !== undefined) {
-            yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
-          }
+          yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
         }
         yield* acquisition.close;
         return;
       }
-      if (
-        document !== undefined &&
-        document.lifecycle !== "running" &&
-        document.lifecycle !== "starting"
-      ) {
+      if (document.lifecycle !== "running" && document.lifecycle !== "starting") {
         return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
       }
       const client = yield* HttpTransportClient;
@@ -160,9 +151,7 @@ export const stopManagedStack = (
             yield* dockerForceRemove(
               SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
             );
-            if (document !== undefined) {
-              yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
-            }
+            yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
           }),
           owned.close,
         );
@@ -242,19 +231,15 @@ export const stopManagedStack = (
         const stack = yield* Stack;
         yield* stack.stop();
       }).pipe(Effect.provide(layer));
-      if (document !== undefined) {
-        yield* manager.inspectStack(stackId).pipe(
-          Effect.flatMap((current) =>
-            current?.lifecycle === "stopped"
-              ? Effect.succeed(current)
-              : Effect.fail(new ManagedStopPending()),
-          ),
-          Effect.retry(
-            Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
-          ),
-          Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
-        );
-      }
+      yield* manager.inspectStack(stackId).pipe(
+        Effect.flatMap((current) =>
+          current?.lifecycle === "stopped"
+            ? Effect.succeed(current)
+            : Effect.fail(new ManagedStopPending()),
+        ),
+        Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
+        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
+      );
       const released = yield* manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate) =>
           candidate._tag === "Owned"
