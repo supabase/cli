@@ -36,7 +36,10 @@ import {
   LegacyLoginVerificationError,
 } from "../../src/legacy/commands/login/login.errors.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
-import { LEGACY_PGDATA_PATH } from "../../src/legacy/shared/db-bootstrap/pgdata-snapshot.ts";
+import {
+  LEGACY_PGDATA_BASELINE_MARKER_NAME,
+  LEGACY_PGDATA_PATH,
+} from "../../src/legacy/shared/db-bootstrap/pgdata-snapshot.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
@@ -1004,7 +1007,7 @@ export function mockLegacyShadowContainerCliSpawner(
 // ---------------------------------------------------------------------------
 
 /**
- * A real (if tiny) POSIX tar, byte for byte — `legacyPgDataArchiveHasCluster`
+ * A real (if tiny) POSIX tar, byte for byte — `legacyValidatePgDataArchive`
  * (`db-bootstrap/pgdata-snapshot.ts`) walks the header stream and checksum-validates every block
  * before a warm restore, so the fake export has to be a genuine archive rather than a stand-in
  * string. Every byte stays ASCII (padding is NUL), which is why the spawner's `TextEncoder` and
@@ -1059,8 +1062,35 @@ export const LEGACY_FAKE_UNSTAMPED_PGDATA_TAR = `${legacyFakeTarEntry("data/", "
  * The bytes the fake `docker cp <id>:PGDATA -` emits once the export path has stamped the
  * container — stands in for a real ~90MB PGDATA tar, with the same top-level `data/` member,
  * `data/PG_VERSION` cluster file, and `data/SUPABASE_BASELINE` marker a real export carries.
+ *
+ * `markerContent` is whatever the export ACTUALLY stamped, carried through rather than fixed: the
+ * marker binds a snapshot to its cache key, so a fake that always emitted the same marker would
+ * make every key-binding assertion pass vacuously — a production regression stamping the wrong key
+ * (or a fixed one) has to show up as a warm-path mismatch here too.
  */
-export const LEGACY_FAKE_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${legacyFakeTarEntry("data/SUPABASE_BASELINE", "1\n", "0")}${LEGACY_FAKE_TAR_END}`;
+export const legacyFakePgDataTar = (markerContent: string): string =>
+  `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${legacyFakeTarEntry("data/SUPABASE_BASELINE", markerContent, "0")}${LEGACY_FAKE_TAR_END}`;
+
+/**
+ * The `SUPABASE_BASELINE` member's content inside a `docker cp - <id>:<PGDATA>` stamp payload — a
+ * plain 512-block walk over the archive `legacyPgDataBaselineMarkerTar` built, so the fake export
+ * below can carry the real stamp forward. `undefined` when the payload has no such member, which
+ * is the fake's "this container was never really stamped" signal.
+ */
+const legacyFakeStampedMarkerContent = (stamp: string): string | undefined => {
+  let offset = 0;
+  while (offset + 512 <= stamp.length) {
+    const header = stamp.slice(offset, offset + 512);
+    offset += 512;
+    const name = (header.slice(0, 100).split("\0")[0] ?? "").replace(/^\.\//u, "");
+    if (name.length === 0) return undefined; // the end-of-archive marker
+    const size = Number.parseInt((header.slice(124, 136).split("\0")[0] ?? "").trim(), 8);
+    if (!Number.isInteger(size) || size < 0) return undefined;
+    if (name === LEGACY_PGDATA_BASELINE_MARKER_NAME) return stamp.slice(offset, offset + size);
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return undefined;
+};
 
 /**
  * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
@@ -1217,10 +1247,15 @@ export function mockLegacyDockerDaemonCliSpawner(
           exitCode = 1;
           stderr = "no such container";
         } else {
-          stdout =
+          // The marker the stamp really delivered rides along into the exported archive; a
+          // container that was never stamped (or whose stamp carried no marker member) exports the
+          // bare cluster the warm path must reject.
+          const marker =
             container.stamp === undefined
-              ? LEGACY_FAKE_UNSTAMPED_PGDATA_TAR
-              : LEGACY_FAKE_PGDATA_TAR;
+              ? undefined
+              : legacyFakeStampedMarkerContent(container.stamp);
+          stdout =
+            marker === undefined ? LEGACY_FAKE_UNSTAMPED_PGDATA_TAR : legacyFakePgDataTar(marker);
         }
       } else if (args[0] === "container" && args[1] === "inspect") {
         const container = containers.get(args[2] ?? "");
