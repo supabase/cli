@@ -1,6 +1,6 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Layer, ManagedRuntime, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -55,7 +55,12 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 // Mock Stack
 // ---------------------------------------------------------------------------
 
-function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
+function mockStack(
+  options: {
+    readonly startTimeoutMs?: number;
+    readonly stopEffect?: Effect.Effect<void>;
+  } = {},
+) {
   let stopped = false;
   let stopCalls = 0;
   const serviceCalls: string[] = [];
@@ -74,9 +79,10 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
             }),
           ),
     stop: () =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         stopped = true;
         stopCalls += 1;
+        if (options.stopEffect !== undefined) yield* options.stopEffect;
       }),
     dispose: () =>
       Effect.sync(() => {
@@ -515,6 +521,44 @@ describe("DaemonServer", () => {
       expect(concurrentMock.stopCalls).toBe(1);
     } finally {
       await concurrentRuntime.dispose();
+    }
+  });
+
+  test("an interrupted shutdown caller cannot strand the cached transaction", async () => {
+    const stopEntered = await Effect.runPromise(Deferred.make<void>());
+    const releaseStop = await Effect.runPromise(Deferred.make<void>());
+    const gatedMock = mockStack({
+      stopEffect: Effect.gen(function* () {
+        yield* Deferred.succeed(stopEntered, void 0);
+        yield* Deferred.await(releaseStop);
+      }),
+    });
+    const gatedRuntime = ManagedRuntime.make(buildDaemonLayer(gatedMock));
+    try {
+      const daemon = await gatedRuntime.runPromise(DaemonServer);
+      const first = gatedRuntime.runFork(daemon.beginShutdown);
+      await gatedRuntime.runPromise(Deferred.await(stopEntered));
+      const interrupt = gatedRuntime.runFork(Fiber.interrupt(first));
+      await gatedRuntime.runPromise(Deferred.succeed(releaseStop, void 0));
+
+      const interrupted = await Promise.race([
+        gatedRuntime.runPromise(Fiber.join(interrupt)).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(interrupted).toBe(true);
+      const second = await Promise.race([
+        gatedRuntime.runPromise(daemon.beginShutdown).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(second).toBe(true);
+      const completed = await Promise.race([
+        gatedRuntime.runPromise(daemon.awaitShutdown).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+      ]);
+      expect(completed).toBe(true);
+      expect(gatedMock.stopCalls).toBe(1);
+    } finally {
+      await gatedRuntime.dispose();
     }
   });
 

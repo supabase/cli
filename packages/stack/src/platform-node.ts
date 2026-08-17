@@ -36,6 +36,7 @@ const controlTransport: ControlTransport["Service"] = {
   bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) => {
     const rawServer = createServer((request, response) => {
       if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
+        if (rawServer.listenerCount("request") > 1) return;
         onStop();
         response.writeHead(202, { "content-type": "application/json" });
         response.end(JSON.stringify({ ok: true }));

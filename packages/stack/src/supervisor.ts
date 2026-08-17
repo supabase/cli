@@ -1,5 +1,16 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { Context, Data, Duration, Effect, Fiber, Layer, Schedule, Scope, Schema } from "effect";
+import {
+  Cause,
+  Context,
+  Data,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Schedule,
+  Scope,
+  Schema,
+} from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -100,6 +111,7 @@ const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigI
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
+  readonly reason?: "owner-stopped";
 }> {}
 
 class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerUnavailableError")<{
@@ -110,6 +122,8 @@ class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerU
 class SupervisorOwnerReacquirePending extends Data.TaggedError(
   "SupervisorOwnerReacquirePending",
 )<{}> {}
+
+const OWNER_STOPPED_AFTER_TAKEOVER = "Attached supervisor owner stopped before takeover";
 
 const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
 const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
@@ -374,6 +388,18 @@ const runManaged = (
     }
     const ownership = acquisition;
     owner = ownership;
+    if (initialAcquisition._tag === "Attached") {
+      const existing = yield* manager.inspectStack(stackId);
+      if (existing?.lifecycle === "stopped") {
+        yield* ownership.close;
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: OWNER_STOPPED_AFTER_TAKEOVER,
+            reason: "owner-stopped",
+          }),
+        );
+      }
+    }
     const startup = Effect.gen(function* () {
       const existing = yield* manager.inspectStack(stackId);
       if (
@@ -468,6 +494,10 @@ const runManaged = (
     yield* manager.recordLifecycle(ownership, { stackId: started.stack.id, lifecycle: "stopped" });
   }).pipe(
     Effect.catchCause((cause) => {
+      const failure = Cause.squash(cause);
+      if (failure instanceof SupervisorStartError && failure.reason === "owner-stopped") {
+        return Effect.failCause(cause);
+      }
       if (owner === undefined || managerService === undefined) return Effect.failCause(cause);
       return managerService
         .recordLifecycle(owner, {

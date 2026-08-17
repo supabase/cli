@@ -170,6 +170,45 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.live("hands ready-owner stop requests to DaemonServer exactly once", () =>
+    Effect.scoped(
+      live(
+        Effect.gen(function* () {
+          const owner = yield* acquireControl({ stackId: STACK_ID });
+          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          const stopCalls = { value: 0 };
+          const stack = {
+            ...makeStack({ value: false }),
+            stop: () =>
+              Effect.sync(() => {
+                stopCalls.value += 1;
+              }),
+          } satisfies Stack["Service"];
+          const daemonRuntime = ManagedRuntime.make(
+            DaemonServer.layerWithShutdown(
+              owner.setState("stopping", false),
+              owner.ownerStatus,
+            ).pipe(
+              Layer.provide(Layer.succeed(Stack, stack)),
+              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
+            ),
+          );
+          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
+          yield* owner.setState("running");
+
+          const response = yield* Effect.promise(() =>
+            fetch(`${owner.endpoint.url}/stop`, { method: "POST" }),
+          );
+          expect(response.status).toBe(200);
+          expect(yield* Effect.promise(() => response.json())).toEqual({ ok: true });
+          expect(stopCalls.value).toBe(1);
+
+          yield* Effect.promise(() => daemonRuntime.dispose());
+        }),
+      ),
+    ),
+  );
+
   it.live("attaches a concurrent caller to the live owner", () =>
     Effect.scoped(
       live(

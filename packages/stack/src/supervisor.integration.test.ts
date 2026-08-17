@@ -460,6 +460,47 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("does not restart a stopped owner after attached takeover", async () => {
+    const roots = workspace();
+    const input = messageFor(roots);
+    const owner = spawnChild(input, { testMode: "hold-start" });
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    try {
+      const document = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
+      contender = spawnChild(input, { testMode: "hold-start" });
+      void contender.started.catch(() => undefined);
+      await contender.attachedBeforeReady;
+
+      const stopResponse = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      expect(stopResponse.status).toBe(202);
+      await waitForExit(owner.child);
+      expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
+
+      const result = await Promise.race([
+        contender.started.then(
+          () => ({ _tag: "started" as const }),
+          (error: unknown) => ({ _tag: "error" as const, error }),
+        ),
+        new Promise<{ readonly _tag: "timeout" }>((resolve) =>
+          setTimeout(() => resolve({ _tag: "timeout" }), 2_000),
+        ),
+      ]);
+      expect(result._tag).toBe("error");
+      if (result._tag === "error") {
+        expect(result.error).toMatchObject({
+          message: expect.stringContaining("stopped before takeover"),
+        });
+      }
+      expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("attaches a second child as RemoteStack while the owner remains live", async () => {
     const roots = workspace();
     const input = messageFor(roots);

@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Context, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Context, Stream } from "effect";
 import {
   Headers,
   HttpRouter,
@@ -90,11 +90,11 @@ export class DaemonServer extends Context.Service<
             },
             500,
           );
-        const stopStack = yield* Effect.cached(
-          options.stopOnShutdown === false ? Effect.void : stack.stop(),
-        );
-        const beginShutdown = yield* Effect.cached(
-          beforeShutdown.pipe(
+        const shutdownTransaction = Effect.uninterruptible(
+          Effect.gen(function* () {
+            if (options.stopOnShutdown !== false) yield* stack.stop();
+            yield* beforeShutdown;
+          }).pipe(
             Effect.ensuring(
               // The HTTP module has no response-flushed hook. Delay the process
               // shutdown signal long enough for the final JSON response to leave
@@ -102,6 +102,28 @@ export class DaemonServer extends Context.Service<
               Deferred.succeed(shutdownDeferred, void 0).pipe(
                 Effect.delay("25 millis"),
                 Effect.forkDetach,
+              ),
+            ),
+          ),
+        );
+        const shutdownResult = yield* Effect.cached(
+          Effect.uninterruptible(
+            Effect.gen(function* () {
+              const result = yield* Deferred.make<Exit.Exit<void, never>>();
+              yield* shutdownTransaction.pipe(
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(result, exit)),
+                Effect.forkDetach,
+              );
+              return result;
+            }),
+          ),
+        );
+        const beginShutdown = shutdownResult.pipe(
+          Effect.flatMap((result) =>
+            Deferred.await(result).pipe(
+              Effect.flatMap((exit) =>
+                Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
               ),
             ),
           ),
@@ -235,7 +257,6 @@ export class DaemonServer extends Context.Service<
             "POST",
             "/stop",
             Effect.gen(function* () {
-              yield* stopStack;
               yield* beginShutdown;
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }),
