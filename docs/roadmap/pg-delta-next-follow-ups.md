@@ -81,3 +81,9 @@ the command correct, at worst at cold-provision speed.
   later; an edit in that window publishes a tar under a key describing the old contents. Fix:
   thread the captured contents into setup, or re-hash before publishing. (Codex comment
   3789363070.)
+- **Warm restores keep the cold container's id as Realtime's seeded `DB_HOST`**
+  (`shadow-database.ts` + `realtime-env.ts`): the cold one-shot Realtime job seeds
+  `_realtime.extensions` with the exporting container's 12-char id, and a warm restore (different
+  container, job skipped) leaves that dead id in the encrypted settings. Only migrations that
+  inspect or act on Realtime tenant configuration can observe the difference. Fix: normalize the
+  seeded host before snapshotting, or refresh it after restore. (Codex comment 3789481478.)
