@@ -26,6 +26,15 @@ waits for the persisted `stopped` lifecycle, and handles a stale owner with
 deterministic cleanup keyed by stack id. Delete requires owned control and a
 stopped document.
 
+Read-only discovery never acquires control ownership. It probes `/owner` and
+treats an unreachable, incompatible, or colliding listener as non-live;
+mutations still bind the endpoint and fail on a conflict. The endpoint maps 14
+bits of the stack id into `127.0.0.1:49152..65535`, so collisions are possible
+and deliberately fail closed for start/stop/delete. This is pragmatic
+single-user localhost coordination, not a hostile multi-user security
+boundary. We are not adding control tokens until the threat model or a real
+collision rate justifies more protocol and persistence machinery.
+
 ## Why this replaces ADR-0015
 
 ADR-0015 proposed 104 exported contract fixtures, a repository boundary, and
@@ -40,7 +49,8 @@ implemented by the manager and supervisor.
 Tests follow the real consumed boundaries:
 
 - manager integration covers ordinary folders, sibling worktrees, identity,
-  sticky ports, document lifecycle, and stale-owner recovery;
+  sticky ports, document lifecycle, concurrent read/start ownership, stale
+  owner recovery, and interrupted deletion;
 - supervisor integration starts a real detached child, reattaches through the
   control endpoint, updates launch metadata, stops, and deletes; and
 - CLI handler integration covers argument translation, output projections,

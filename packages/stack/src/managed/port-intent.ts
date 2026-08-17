@@ -1,5 +1,5 @@
 import { PORT_CATALOG } from "../PortCatalog.ts";
-import type { ManagedPortIntentDocument, ManagedPortRequest, ManagedPortSource } from "./model.ts";
+import type { ManagedPortIntentDocument, ManagedPortRequest } from "./model.ts";
 
 export type { ManagedPortIntentDocument, ManagedPortRequest } from "./model.ts";
 
@@ -23,15 +23,6 @@ const valueAt = (
   return current;
 };
 
-const pathEquals = (left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean =>
-  left.length === right.length && left.every((segment, index) => segment === right[index]);
-
-const sourceAt = (
-  document: ManagedPortIntentDocument,
-  path: ReadonlyArray<string>,
-): Exclude<ManagedPortSource, "omitted"> | undefined =>
-  document.valueOrigins?.find((origin) => pathEquals(origin.path, path))?.source;
-
 /** Resolve configured sticky port keys from the pre-default effective document. */
 export const resolvePortIntents = (
   document: ManagedPortIntentDocument,
@@ -51,10 +42,9 @@ export const resolvePortIntents = (
           key: entry.configKey,
           intent: "exact",
           port: value,
-          source: sourceAt(document, path) ?? "local",
         },
       ];
     }
 
-    return [{ field, key: entry.configKey, intent: "automatic", source: "omitted" }];
+    return [{ field, key: entry.configKey, intent: "automatic" }];
   });

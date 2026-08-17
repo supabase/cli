@@ -15,8 +15,6 @@ import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { sanitizeDaemonConfigInput, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { DEFAULT_MANAGED_STACK_NAME, defaultCacheRoot } from "./paths.ts";
-import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
-import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 
@@ -106,7 +104,7 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
-  readonly portIntents?: ManagedPortIntentDocument;
+  readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackDocument["launch"];
 };
 
@@ -125,7 +123,7 @@ export const daemonLayer = (
 > =>
   Effect.gen(function* () {
     // Keep managed coordination metadata out of the generic daemon config.
-    const { portIntents: managedPortIntents, launch, ...daemonConfigInput } = input;
+    const { portIntents, launch, ...daemonConfigInput } = input;
     const daemonInput = sanitizeDaemonConfigInput(daemonConfigInput);
     if (daemonInput.stackRoot !== undefined || daemonInput.runtimeRoot !== undefined) {
       return yield* new DaemonStartError({
@@ -136,19 +134,12 @@ export const daemonLayer = (
     const name = daemonInput.name ?? DEFAULT_MANAGED_STACK_NAME;
     const cacheRoot = daemonInput.cacheRoot ?? defaultCacheRoot();
     const stateRoot = join(cacheRoot, "managed");
-    const activeFields = portFieldsForConfigInput(daemonInput);
-    const disabledFields = PORT_FIELDS.filter(
-      (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFields.includes(field),
-    );
     const config: DaemonConfigInput = {
       ...daemonInput,
       cacheRoot,
       projectDir,
       name,
     };
-    const portIntents =
-      managedPortIntents ??
-      ({ activeFields, disabledFields, document: config } satisfies ManagedPortIntentDocument);
     const httpTransportClient = yield* HttpTransportClient;
     const startMsg: SupervisorStartMessage = {
       type: "start",

@@ -11,6 +11,7 @@ import {
 import { PORT_CATALOG, PORT_FIELDS, type ResolvedPorts } from "./PortCatalog.ts";
 import type { PartialVersionManifest } from "./versions.ts";
 import { NoRunningStackError } from "./managed/model.ts";
+import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/model.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import type { Stack } from "./Stack.ts";
 
@@ -25,6 +26,7 @@ export interface StackSummary {
   readonly startedAt?: string;
   readonly lastNotifiedUpdateFingerprint?: string;
   readonly launch?: ManagedStackDocument["launch"];
+  readonly drift?: ReadonlyArray<ManagedPortDrift>;
 }
 
 const portFieldByKey: Readonly<Record<string, keyof ResolvedPorts>> = Object.fromEntries(
@@ -34,7 +36,10 @@ const portFieldByKey: Readonly<Record<string, keyof ResolvedPorts>> = Object.fro
   }),
 );
 
-const summaryForDocument = (document: ManagedStackDocument, running?: boolean): StackSummary => {
+const summaryForDocument = (
+  document: ManagedStackDocument & { readonly drift?: ReadonlyArray<ManagedPortDrift> },
+  running?: boolean,
+): StackSummary => {
   const ports: Record<string, number> = {};
   for (const assignment of document.ports) {
     const field = portFieldByKey[assignment.key];
@@ -54,6 +59,7 @@ const summaryForDocument = (document: ManagedStackDocument, running?: boolean): 
     },
     versions: document.launch?.versions ?? {},
     ...(document.launch === undefined ? {} : { launch: document.launch }),
+    ...(document.drift === undefined ? {} : { drift: document.drift }),
     ...(document.launch?.lastNotifiedUpdateFingerprint === undefined
       ? {}
       : { lastNotifiedUpdateFingerprint: document.launch.lastNotifiedUpdateFingerprint }),
@@ -66,14 +72,9 @@ const liveStatus = (
   manager: ManagedStackManagerShape,
   document: ManagedStackDocument,
 ): Effect.Effect<boolean, ManagedStackManagerError, never> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const ownership = yield* manager.acquireControl(document.id);
-      if (ownership._tag === "Attached") return true;
-      yield* ownership.close;
-      return false;
-    }),
-  );
+  manager
+    .probeControl(document.id)
+    .pipe(Effect.map((status) => status?.state === "running" && status.ready));
 
 export const listStacks = (opts: {
   readonly cacheRoot: string;
@@ -104,6 +105,7 @@ export const resolveStackSummary = (opts: {
   readonly projectDir?: string;
   readonly cwd?: string;
   readonly name: string;
+  readonly portDocument?: ManagedPortIntentDocument;
 }): Effect.Effect<
   StackSummary,
   NoRunningStackError | ManagedStackManagerError,
@@ -114,6 +116,7 @@ export const resolveStackSummary = (opts: {
       workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
       stackName: opts.name,
       cwd: opts.cwd,
+      ...(opts.portDocument === undefined ? {} : { portDocument: opts.portDocument }),
     });
     const manager = yield* ManagedStackManager;
     return summaryForDocument(document, yield* liveStatus(manager, document));

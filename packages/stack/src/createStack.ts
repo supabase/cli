@@ -161,7 +161,9 @@ export async function createStack(
     }
   } catch (error: unknown) {
     await Effect.runPromise(portLease.releaseAll);
-    dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames);
+    await Effect.runPromise(
+      dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames),
+    );
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
   }

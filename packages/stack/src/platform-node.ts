@@ -34,7 +34,12 @@ const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
 const controlTransport: ControlTransport["Service"] = {
   bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus) => {
     const rawServer = createServer((request, response) => {
-      if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") return;
+      if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") {
+        if (rawServer.listenerCount("request") > 1) return;
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "Stack supervisor is starting" }));
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(ownerStatus()));
     });
@@ -87,7 +92,7 @@ const controlTransport: ControlTransport["Service"] = {
                 });
               },
             );
-            request.setTimeout(25, () =>
+            request.setTimeout(500, () =>
               request.destroy(new Error("Control status request timed out")),
             );
             request.once("error", reject);

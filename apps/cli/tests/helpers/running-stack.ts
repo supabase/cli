@@ -120,8 +120,7 @@ export async function makeManagedStackFixture(
         stackId = deriveStackId(environment.identity, stackName);
         const ownership = yield* manager.acquireControl(stackId);
         if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");
-        const started = yield* manager.resolveStack({
-          operation: "start",
+        const started = yield* manager.startStack({
           workspacePath: projectRoot,
           stackName,
           portDocument,

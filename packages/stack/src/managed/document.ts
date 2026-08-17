@@ -130,5 +130,19 @@ export const decodeManagedStackDocument = (
     catch: () => new InvalidManagedStackDocumentError({ path }),
   });
 
-export const encodeManagedStackDocument = (document: ManagedStackDocument): string =>
-  JSON.stringify(encodeDocument(document), null, 2) + "\n";
+export const encodeManagedStackDocument = (
+  path: string,
+  document: ManagedStackDocument,
+): Effect.Effect<string, InvalidManagedStackDocumentError> =>
+  Effect.try({
+    try: () => {
+      if (
+        !document.ports.some((assignment) => assignment.key === "api.port") ||
+        !document.ports.some((assignment) => assignment.key === "db.port")
+      ) {
+        throw new Error("Managed document is missing core port assignments");
+      }
+      return JSON.stringify(encodeDocument(document), null, 2) + "\n";
+    },
+    catch: () => new InvalidManagedStackDocumentError({ path }),
+  });

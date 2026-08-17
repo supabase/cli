@@ -143,6 +143,10 @@ describe("managed control endpoint", () => {
           const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
           expect(before.status).toBe(200);
           expect(yield* Effect.promise(() => before.json())).toMatchObject({ state: "starting" });
+          const beforeRoutes = yield* Effect.promise(() =>
+            fetch(`${owner.endpoint.url}/status`, { signal: AbortSignal.timeout(500) }),
+          );
+          expect(beforeRoutes.status).toBe(503);
           const daemonRuntime = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
               includeOwnerRoute: false,

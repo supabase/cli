@@ -40,11 +40,9 @@ export interface StackStore {
   >;
   readonly write: (
     document: ManagedStackDocument,
-  ) => Effect.Effect<void, PlatformError.PlatformError>;
+  ) => Effect.Effect<void, InvalidManagedStackDocumentError | PlatformError.PlatformError>;
   readonly remove: (stackId: string) => Effect.Effect<void, PlatformError.PlatformError>;
 }
-
-const prettyJson = (document: ManagedStackDocument): string => encodeManagedStackDocument(document);
 
 const writeDocumentAtomically = (
   fs: FileSystem.FileSystem,
@@ -52,13 +50,14 @@ const writeDocumentAtomically = (
   documentPath: string,
   stackRoot: string,
   document: ManagedStackDocument,
-): Effect.Effect<void, PlatformError.PlatformError> =>
+): Effect.Effect<void, InvalidManagedStackDocumentError | PlatformError.PlatformError> =>
   Effect.gen(function* () {
+    const content = yield* encodeManagedStackDocument(documentPath, document);
     yield* fs.makeDirectory(stackRoot, { recursive: true, mode: 0o700 });
     const temporaryPath = path.join(stackRoot, `stack.json.tmp.${randomUUID()}`);
     yield* Effect.ensuring(
       Effect.gen(function* () {
-        yield* fs.writeFileString(temporaryPath, prettyJson(document), { mode: 0o600 });
+        yield* fs.writeFileString(temporaryPath, content, { mode: 0o600 });
         yield* fs.rename(temporaryPath, documentPath);
       }),
       fs.remove(temporaryPath, { force: true }).pipe(Effect.catch(() => Effect.void)),
@@ -153,7 +152,7 @@ export const makeStackStore = (
 
     const write = (
       document: ManagedStackDocument,
-    ): Effect.Effect<void, PlatformError.PlatformError> => {
+    ): Effect.Effect<void, InvalidManagedStackDocumentError | PlatformError.PlatformError> => {
       const paths = managedStackPaths(resolvedStateRoot, document.id);
       return writeDocumentAtomically(
         fs,

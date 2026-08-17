@@ -6,7 +6,6 @@ export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
 
 export type ManagedPortIntent = "automatic" | "exact";
-export type ManagedPortSource = "environment" | "local" | "omitted" | "remote";
 
 export interface OrdinaryWorkspaceIdentity {
   readonly version: typeof ORDINARY_WORKSPACE_IDENTITY_VERSION;
@@ -38,10 +37,6 @@ export interface ManagedPortIntentDocument {
   /** Services omitted from activeFields but intentionally retaining prior intent. */
   readonly disabledFields?: ReadonlyArray<PortField>;
   readonly document?: Readonly<Record<string, unknown>>;
-  readonly valueOrigins?: ReadonlyArray<{
-    readonly path: ReadonlyArray<string>;
-    readonly source: Exclude<ManagedPortSource, "omitted">;
-  }>;
 }
 
 export type ManagedPortRequest =
@@ -50,13 +45,11 @@ export type ManagedPortRequest =
       readonly key: ConfigPortKey;
       readonly intent: "exact";
       readonly port: number;
-      readonly source: Exclude<ManagedPortSource, "omitted">;
     }
   | {
       readonly field: PortField;
       readonly key: ConfigPortKey;
       readonly intent: "automatic";
-      readonly source: "omitted";
     };
 
 export interface ManagedPortDrift {
@@ -124,18 +117,6 @@ export class ManagedPortAllocationError extends Data.TaggedError("ManagedPortAll
   }
 }
 
-export class ManagedRunningStackPortChangeError extends Data.TaggedError(
-  "ManagedRunningStackPortChangeError",
-)<{
-  readonly stackId: string;
-}> {
-  readonly code = "MANAGED_RUNNING_STACK_PORT_CHANGE" as const;
-
-  override get message(): string {
-    return `Managed stack ${this.stackId} cannot change ports while it continues to occupy them`;
-  }
-}
-
 export class ManagedStackNotFoundError extends Data.TaggedError("ManagedStackNotFoundError")<{
   readonly stackId: string;
 }> {
@@ -172,7 +153,6 @@ export type ManagedStackError =
   | UnsupportedGitWorkspaceError
   | ManagedExactPortOccupiedError
   | ManagedPortAllocationError
-  | ManagedRunningStackPortChangeError
   | ManagedStackNotFoundError
   | ManagedStackNotStoppedError
   | UnsafeManagedStackPathError;
@@ -190,7 +170,6 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "UNSUPPORTED_GIT_WORKSPACE",
   "MANAGED_EXACT_PORT_OCCUPIED",
   "MANAGED_PORT_ALLOCATION_FAILED",
-  "MANAGED_RUNNING_STACK_PORT_CHANGE",
   "MANAGED_STACK_NOT_FOUND",
   "MANAGED_STACK_NOT_STOPPED",
   "UNSAFE_MANAGED_STACK_PATH",
@@ -201,7 +180,6 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   UNSUPPORTED_GIT_WORKSPACE: "UnsupportedGitWorkspaceError",
   MANAGED_EXACT_PORT_OCCUPIED: "ManagedExactPortOccupiedError",
   MANAGED_PORT_ALLOCATION_FAILED: "ManagedPortAllocationError",
-  MANAGED_RUNNING_STACK_PORT_CHANGE: "ManagedRunningStackPortChangeError",
   MANAGED_STACK_NOT_FOUND: "ManagedStackNotFoundError",
   MANAGED_STACK_NOT_STOPPED: "ManagedStackNotStoppedError",
   UNSAFE_MANAGED_STACK_PATH: "UnsafeManagedStackPathError",

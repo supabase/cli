@@ -110,8 +110,6 @@ export interface ControlOwnership {
   readonly close: Effect.Effect<void>;
 }
 
-type ControlOwned = ControlOwnership;
-
 export interface ControlAttached {
   readonly _tag: "Attached";
   readonly ownershipId: string;
@@ -125,7 +123,7 @@ export interface ControlAttached {
   >;
 }
 
-export type ControlAcquisition = ControlOwned | ControlAttached;
+export type ControlAcquisition = ControlOwnership | ControlAttached;
 
 const invalidId = (ownershipId: string): Effect.Effect<never, InvalidControlOwnershipIdError> =>
   Effect.fail(new InvalidControlOwnershipIdError({ ownershipId }));
@@ -186,6 +184,49 @@ const defaultStatus = (
 const unavailable = (endpoint: ControlEndpoint, cause: unknown): ControlUnavailableError =>
   new ControlUnavailableError({ endpoint, cause });
 
+const readOwnerStatus = (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+  transport: ControlTransportShape,
+): Effect.Effect<
+  ControlOwnerStatus,
+  | ControlTransportError
+  | ControlProtocolError
+  | ControlProtocolMismatchError
+  | ControlAddressConflictError
+> =>
+  transport.read(endpoint).pipe(
+    Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)),
+    Effect.flatMap((status) =>
+      status.ownershipId === ownershipId
+        ? Effect.succeed(status)
+        : Effect.fail(
+            new ControlAddressConflictError({
+              endpoint,
+              cause: new Error(
+                `Control endpoint is owned by ${status.ownershipId}, not ${ownershipId}`,
+              ),
+            }),
+          ),
+    ),
+  );
+
+/** Reads an existing owner without ever claiming its deterministic endpoint. */
+export const probeControl = (
+  ownershipId: string,
+): Effect.Effect<
+  ControlOwnerStatus | undefined,
+  InvalidControlOwnershipIdError,
+  ControlTransport
+> =>
+  Effect.gen(function* () {
+    const endpoint = yield* controlEndpoint(ownershipId);
+    const transport = yield* ControlTransport;
+    return yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+      Effect.catch(() => Effect.succeed(undefined)),
+    );
+  });
+
 const attach = (
   endpoint: ControlEndpoint,
   ownershipId: string,
@@ -197,54 +238,21 @@ const attach = (
   | ControlProtocolMismatchError
   | ControlAddressConflictError
 > =>
-  transport
-    .read(endpoint)
-    .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)))
-    .pipe(
-      Effect.flatMap((status) =>
-        status.ownershipId === ownershipId
-          ? Effect.succeed(status)
-          : Effect.fail(
-              new ControlAddressConflictError({
-                endpoint,
-                cause: new Error(
-                  `Control endpoint is owned by ${status.ownershipId}, not ${ownershipId}`,
-                ),
-              }),
-            ),
-      ),
-    )
-    .pipe(
-      Effect.map(() => ({
-        _tag: "Attached" as const,
-        ownershipId,
-        endpoint,
-        ownerStatus: transport
-          .read(endpoint)
-          .pipe(Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)))
-          .pipe(
-            Effect.flatMap((status) =>
-              status.ownershipId === ownershipId
-                ? Effect.succeed(status)
-                : Effect.fail(
-                    new ControlAddressConflictError({
-                      endpoint,
-                      cause: new Error(
-                        `Control endpoint is owned by ${status.ownershipId}, not ${ownershipId}`,
-                      ),
-                    }),
-                  ),
-            ),
-          ),
-      })),
-    );
+  readOwnerStatus(endpoint, ownershipId, transport).pipe(
+    Effect.map(() => ({
+      _tag: "Attached" as const,
+      ownershipId,
+      endpoint,
+      ownerStatus: readOwnerStatus(endpoint, ownershipId, transport),
+    })),
+  );
 
 const makeOwned = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   listener: ControlListener,
   statusRef: Ref.Ref<ControlOwnerStatus>,
-): Effect.Effect<ControlOwned> => {
+): Effect.Effect<ControlOwnership> => {
   let closed = false;
   const close = Effect.suspend(() => {
     if (closed) return Effect.void;

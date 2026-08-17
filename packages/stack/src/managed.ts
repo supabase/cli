@@ -71,9 +71,8 @@ export type {
   ManagedPortAllocation,
   ManagedDeleteResult,
   AllocateManagedPortsRequest,
-  ResolveStackRequest,
-  ResolveStackStartRequest,
-  ResolveStackStatusRequest,
+  ReadStackRequest,
+  StartStackRequest,
   ManagedStackLaunchUpdate,
 } from "./managed/manager.ts";
 export {

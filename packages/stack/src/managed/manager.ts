@@ -21,9 +21,10 @@ import {
 } from "../PortAllocator.ts";
 import {
   acquireControl,
-  controlEndpoint,
   ControlTransport,
+  probeControl,
   type ControlAcquisition,
+  type ControlOwnerStatus,
   type ControlOwnership,
 } from "./control.ts";
 import {
@@ -40,7 +41,6 @@ import { updateGitCheckoutLocationOwned } from "./identity.ts";
 import {
   ManagedExactPortOccupiedError,
   ManagedPortAllocationError,
-  ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   type ManagedPortAssignment,
@@ -61,15 +61,13 @@ export interface ManagedStack extends ManagedStackDocument {
   readonly drift?: ReadonlyArray<ManagedPortDrift>;
 }
 
-export interface ResolveStackStatusRequest {
-  readonly operation: "status";
+export interface ReadStackRequest {
   readonly workspacePath: string;
   readonly stackName?: string;
   readonly portDocument: ManagedPortIntentDocument;
 }
 
-export interface ResolveStackStartRequest {
-  readonly operation: "start";
+export interface StartStackRequest {
   readonly workspacePath: string;
   readonly stackName?: string;
   readonly portDocument: ManagedPortIntentDocument;
@@ -79,8 +77,6 @@ export interface ResolveStackStartRequest {
   readonly runtime?: ManagedStackDocument["runtime"];
   readonly launch?: ManagedStackDocument["launch"];
 }
-
-export type ResolveStackRequest = ResolveStackStatusRequest | ResolveStackStartRequest;
 
 export interface AllocateManagedPortsRequest {
   readonly stackId: string;
@@ -168,7 +164,6 @@ export type ManagedStackManagerError =
   | ManagedWorkspaceRepairConflictError
   | ManagedStackNotFoundError
   | ManagedStackNotStoppedError
-  | ManagedRunningStackPortChangeError
   | ManagedExactPortOccupiedError
   | ManagedPortAllocationError
   | PlatformError.PlatformError
@@ -193,18 +188,19 @@ export interface ManagedStackManagerShape {
   readonly acquireControl: (
     stackId: string,
   ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
-  readonly resolveStack: {
-    (
-      request: ResolveStackStatusRequest,
-    ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
-    (
-      request: ResolveStackStartRequest,
-    ): Effect.Effect<
-      ManagedStackStartResult,
-      ManagedStackManagerError,
-      import("effect/Scope").Scope
-    >;
-  };
+  readonly probeControl: (
+    stackId: string,
+  ) => Effect.Effect<ControlOwnerStatus | undefined, ManagedStackManagerError>;
+  readonly readStack: (
+    request: ReadStackRequest,
+  ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
+  readonly startStack: (
+    request: StartStackRequest,
+  ) => Effect.Effect<
+    ManagedStackStartResult,
+    ManagedStackManagerError,
+    import("effect/Scope").Scope
+  >;
   readonly inspectStack: (
     stackId: string,
   ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
@@ -339,14 +335,9 @@ const requireOwnedForStack = (
   ownership: ControlOwnership,
   stackId: string,
 ): Effect.Effect<void, ManagedStackControlRequiredError> =>
-  Effect.gen(function* () {
-    const endpoint = yield* controlEndpoint(stackId).pipe(
-      Effect.mapError(() => new ManagedStackControlRequiredError({ stackId })),
-    );
-    if (ownership.ownershipId !== stackId || ownership.endpoint.url !== endpoint.url) {
-      return yield* Effect.fail(new ManagedStackControlRequiredError({ stackId }));
-    }
-  });
+  ownership.ownershipId === stackId
+    ? Effect.void
+    : Effect.fail(new ManagedStackControlRequiredError({ stackId }));
 
 const conflictError = (
   stackId: string,
@@ -556,42 +547,39 @@ const makeManager = (
         return allocation;
       });
 
-    function resolveStack(
-      request: ResolveStackStatusRequest,
-    ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
-    function resolveStack(
-      request: ResolveStackStartRequest,
-    ): Effect.Effect<
-      ManagedStackStartResult,
-      ManagedStackManagerError,
-      import("effect/Scope").Scope
-    >;
-    function resolveStack(
-      request: ResolveStackRequest,
-    ): Effect.Effect<
-      ManagedStack | undefined | ManagedStackStartResult,
-      ManagedStackManagerError,
-      import("effect/Scope").Scope
-    > {
-      return Effect.gen(function* () {
-        const discovery = yield* provideDependencies(
-          request.operation === "start"
-            ? ensureEnvironment(request.workspacePath)
-            : discoverEnvironment(request.workspacePath),
-        );
+    const readStack = (
+      request: ReadStackRequest,
+    ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError> =>
+      Effect.gen(function* () {
+        const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
         if (discovery.state === "needsRepair") {
           return yield* Effect.fail(
             new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
           );
         }
         const stackName = request.stackName ?? "default";
-        if (request.operation === "status") {
-          const stackId = deriveStackId(discovery.identity, stackName);
-          const existing = yield* store.read(stackId);
-          if (existing === undefined) return undefined;
-          const drift = stackDrift(existing, request.portDocument);
-          return drift.length === 0 ? existing : { ...existing, drift };
+        const stackId = deriveStackId(discovery.identity, stackName);
+        const existing = yield* store.read(stackId);
+        if (existing === undefined) return undefined;
+        const drift = stackDrift(existing, request.portDocument);
+        return drift.length === 0 ? existing : { ...existing, drift };
+      });
+
+    const startStack = (
+      request: StartStackRequest,
+    ): Effect.Effect<
+      ManagedStackStartResult,
+      ManagedStackManagerError,
+      import("effect/Scope").Scope
+    > =>
+      Effect.gen(function* () {
+        const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+        if (discovery.state === "needsRepair") {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({ reason: "Workspace repair is required" }),
+          );
         }
+        const stackName = request.stackName ?? "default";
         const stackId = deriveStackId(discovery.identity, stackName);
         const repairAcquisition = yield* provideDependencies(
           acquireControl({ stackId: deriveRepairOwnershipId(discovery.identity) }),
@@ -657,7 +645,6 @@ const makeManager = (
           return { stack: document, lease: allocation.lease } satisfies ManagedStackStartResult;
         }).pipe(Effect.ensuring(repairAcquisition.close));
       });
-    }
 
     const inspectStack = (
       stackId: string,
@@ -808,11 +795,16 @@ const makeManager = (
       Effect.scoped(
         Effect.gen(function* () {
           const acquisition = ownedBy;
-          if (!isOwned(acquisition)) {
-            return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
-          }
-          const current = yield* store.read(stackId);
+          yield* requireOwnedForStack(acquisition, stackId);
+          const current = yield* store
+            .read(stackId)
+            .pipe(
+              Effect.catchTag("InvalidManagedStackDocumentError", () =>
+                store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
+              ),
+            );
           if (current === undefined) return { outcome: "already-absent", stackId };
+          if ("outcome" in current) return current;
           if (current.lifecycle === "running" || current.lifecycle === "starting") {
             return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
           }
@@ -828,7 +820,9 @@ const makeManager = (
       discoverWorkspace: (path) => provideDependencies(discoverEnvironment(path)),
       ensureWorkspace: (path) => provideDependencies(ensureEnvironment(path)),
       acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
-      resolveStack,
+      probeControl: (stackId) => provideDependencies(probeControl(stackId)),
+      readStack,
+      startStack,
       inspectStack,
       listStacks,
       allocateManagedPorts,
@@ -854,10 +848,8 @@ export interface ManagedStackManagerHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly discoverWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
   readonly ensureWorkspace: (path: string) => Promise<WorkspaceDiscovery>;
-  readonly resolveStack: {
-    (request: ResolveStackStatusRequest): Promise<ManagedStack | undefined>;
-    (request: ResolveStackStartRequest): Promise<ManagedStackAllocationHandle>;
-  };
+  readonly readStack: (request: ReadStackRequest) => Promise<ManagedStack | undefined>;
+  readonly startStack: (request: StartStackRequest) => Promise<ManagedStackAllocationHandle>;
   readonly inspectStack: (stackId: string) => Promise<ManagedStack | undefined>;
   readonly listStacks: () => Promise<ReadonlyArray<ManagedStackListing>>;
   readonly recordLifecycle: (
@@ -879,22 +871,11 @@ export const createManagedStackManager = async (
   const context = await runtime.context();
   const manager = Context.get(context, ManagedStackManager);
   const close = (): Promise<void> => runtime.dispose();
-  async function resolveStack(
-    request: ResolveStackStatusRequest,
-  ): Promise<ManagedStack | undefined>;
-  async function resolveStack(
-    request: ResolveStackStartRequest,
-  ): Promise<ManagedStackAllocationHandle>;
-  async function resolveStack(
-    request: ResolveStackRequest,
-  ): Promise<ManagedStack | undefined | ManagedStackAllocationHandle> {
-    if (request.operation === "status") {
-      return runtime.runPromise(manager.resolveStack(request));
-    }
+  async function startStack(request: StartStackRequest): Promise<ManagedStackAllocationHandle> {
     const scope = await runtime.runPromise(Scope.make());
     try {
       const result = await runtime.runPromise(
-        manager.resolveStack(request).pipe(Effect.provideService(Scope.Scope, scope)),
+        manager.startStack(request).pipe(Effect.provideService(Scope.Scope, scope)),
       );
       let released: Promise<void> | undefined;
       const closeAllocation = (): Promise<void> => {
@@ -917,7 +898,8 @@ export const createManagedStackManager = async (
     stateRoot: manager.stateRoot,
     discoverWorkspace: (path) => runtime.runPromise(manager.discoverWorkspace(path)),
     ensureWorkspace: (path) => runtime.runPromise(manager.ensureWorkspace(path)),
-    resolveStack,
+    readStack: (request) => runtime.runPromise(manager.readStack(request)),
+    startStack,
     inspectStack: (stackId) => runtime.runPromise(manager.inspectStack(stackId)),
     listStacks: () => runtime.runPromise(manager.listStacks()),
     recordLifecycle: (ownership, update) =>

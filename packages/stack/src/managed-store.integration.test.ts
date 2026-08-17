@@ -87,6 +87,15 @@ describe("managed stack document store", () => {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ lifecycle: "starting" }));
       yield* store.write(document({ lifecycle: "running" }));
+      const invalid = yield* store
+        .write(document({ ports: [{ key: "api.port", port: 54321, intent: "automatic" }] }))
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(invalid)).toBe(true);
+      if (Exit.isFailure(invalid)) {
+        expect(Cause.squash(invalid.cause)).toMatchObject({
+          _tag: "InvalidManagedStackDocumentError",
+        });
+      }
       expect(yield* store.read(STACK_ID)).toMatchObject({ lifecycle: "running" });
     }).pipe(Effect.provide(filesystemLayer)),
   );

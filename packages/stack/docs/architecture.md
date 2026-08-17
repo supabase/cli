@@ -51,8 +51,9 @@ parallel `stack.json` format.
 ## Managed lifecycle
 
 The CLI calls the lifecycle facade (`connectManagedStack`, `updateManagedLaunch`,
-`stopManagedStack`, and `deleteManagedStack`). The facade resolves the document
-through `ManagedStackManager`, then acquires deterministic control ownership:
+`stopManagedStack`, and `deleteManagedStack`). Read-only connect/status paths
+probe the owner without binding; mutating paths acquire deterministic control
+ownership:
 
 1. A managed supervisor acquires ownership for the stack id.
 2. The supervisor resolves the stack, allocates/reuses ports from the document,
@@ -66,6 +67,8 @@ through `ManagedStackManager`, then acquires deterministic control ownership:
    If no owner exists, the facade acquires ownership, performs deterministic
    Docker cleanup, and records `stopped` without PID probing.
 6. Delete requires owned control and removes only a stopped managed document.
+   Explicit destructive deletion can also purge an invalid document; ordinary
+   status and start still fail loudly on corruption.
 
 Control ownership is the liveness authority. PID files, process scans, and a
 second metadata file are not part of managed lifecycle decisions.
@@ -79,8 +82,14 @@ in Node and Bun; only listener binding is platform-specific. `ApiProxy`
 continues to own the public service URL, and the control endpoint is never
 exposed as the user-facing API.
 
+The endpoint uses 14 bits of the stack id in the loopback range
+`49152..65535`. A rare hash collision or unrelated listener therefore makes a
+mutation fail with a typed conflict. Read-only liveness treats it as non-live
+and never claims the address. This intentionally favors a small single-user
+localhost mechanism; the control protocol has no token authentication.
+
 The parent sends one managed start message containing the resolved daemon
-configuration, raw project document/value origins for port intent, and launch
+configuration, the raw project document for port intent, and launch
 metadata. Managed-only fields are split from the generic daemon config before
 serialization so they cannot leak into runtime service configuration.
 
@@ -88,7 +97,7 @@ serialization so they cannot leak into runtime service configuration.
 
 Sticky port fields have explicit `exact` or `automatic` intent. Startup derives
 active and disabled fields from the enabled-service configuration and preserves
-the raw project document and value origins. A sibling worktree has its own stack
+the raw project document. A sibling worktree has its own stack
 document: an explicit request asks for that exact port and conflicts with a live
 owner, while omitted fields receive independent automatic allocations. Launch metadata stores
 mode, pinned service versions, excluded services, and the update-notification

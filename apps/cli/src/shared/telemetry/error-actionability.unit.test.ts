@@ -604,18 +604,10 @@ describe("classifyCliErrorActionability", () => {
       "port_conflict",
       "invalid_config",
     ],
-    // The operation pid and the pending-update guard are both internal
-    // invariants: allocation failures are actionable startup problems.
     [
       "ManagedPortAllocationError",
       "MANAGED_PORT_ALLOCATION_FAILED",
       "port_allocation",
-      "invalid_config",
-    ],
-    [
-      "ManagedRunningStackPortChangeError",
-      "MANAGED_RUNNING_STACK_PORT_CHANGE",
-      "managed_port_change",
       "invalid_config",
     ],
     ["ManagedStackNotFoundError", "MANAGED_STACK_NOT_FOUND", "not_found", "invalid_input"],

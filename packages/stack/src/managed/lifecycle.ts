@@ -11,11 +11,13 @@ import {
   ManagedStackAttachedError,
   ManagedStackControlRequiredError,
   ManagedStackManager,
+  ManagedWorkspaceRepairConflictError,
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
 } from "./manager.ts";
 import { controlEndpoint, type ControlEndpoint } from "./control.ts";
 import { ManagedStackNotStoppedError, type ManagedPortIntentDocument } from "./model.ts";
+import { deriveStackId } from "./environment.ts";
 
 /** Inputs shared by all managed lifecycle operations. */
 export interface ManagedLifecycleInput {
@@ -33,6 +35,22 @@ const emptyPortDocument = (): ManagedPortIntentDocument => ({
 const noRunningStack = (input: ManagedLifecycleInput): NoRunningStackError =>
   new NoRunningStackError({ cwd: input.cwd ?? input.workspacePath });
 
+const stackIdForInput = (
+  manager: import("./manager.ts").ManagedStackManagerShape,
+  input: ManagedLifecycleInput,
+): Effect.Effect<string, ManagedStackManagerError> =>
+  manager.discoverWorkspace(input.workspacePath).pipe(
+    Effect.flatMap((discovery) =>
+      discovery.state === "needsRepair"
+        ? Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace repair is required",
+            }),
+          )
+        : Effect.succeed(deriveStackId(discovery.identity, input.stackName ?? "default")),
+    ),
+  );
+
 /** Resolve one document through the managed manager and Git workspace identity. */
 export const resolveManagedDocument = (
   input: ManagedLifecycleInput,
@@ -43,8 +61,7 @@ export const resolveManagedDocument = (
 > =>
   Effect.gen(function* () {
     const manager = yield* ManagedStackManager;
-    const document = yield* manager.resolveStack({
-      operation: "status",
+    const document = yield* manager.readStack({
       workspacePath: input.workspacePath,
       ...(input.stackName === undefined ? {} : { stackName: input.stackName }),
       portDocument: input.portDocument ?? emptyPortDocument(),
@@ -63,9 +80,6 @@ const runtimeEndpoint = (
     const endpoint = yield* controlEndpoint(document.id).pipe(
       Effect.mapError(() => new ManagedStackControlRequiredError({ stackId: document.id })),
     );
-    if (endpoint.url !== document.runtime.controlEndpoint) {
-      return yield* Effect.fail(new ManagedStackControlRequiredError({ stackId: document.id }));
-    }
     return endpoint;
   });
 
@@ -80,22 +94,19 @@ export const connectManagedStack = (
   NoRunningStackError | ManagedStackManagerError,
   ManagedStackManager | HttpTransportClient
 > =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const document = yield* resolveManagedDocument(input);
-      const manager = yield* ManagedStackManager;
-      const acquisition = yield* manager.acquireControl(document.id);
-      if (acquisition._tag === "Owned") {
-        yield* acquisition.close;
-        return yield* Effect.fail(noRunningStack(input));
-      }
-      const endpoint = yield* runtimeEndpoint(document, input);
-      const client = yield* HttpTransportClient;
-      return RemoteStack.layer(acquisition.endpoint ?? endpoint).pipe(
-        Layer.provide(Layer.succeed(HttpTransportClient, client)),
-      );
-    }),
-  );
+  Effect.gen(function* () {
+    const document = yield* resolveManagedDocument(input);
+    const manager = yield* ManagedStackManager;
+    const status = yield* manager.probeControl(document.id);
+    if (status?.state !== "running" || !status.ready) {
+      return yield* Effect.fail(noRunningStack(input));
+    }
+    const endpoint = yield* runtimeEndpoint(document, input);
+    const client = yield* HttpTransportClient;
+    return RemoteStack.layer(endpoint).pipe(
+      Layer.provide(Layer.succeed(HttpTransportClient, client)),
+    );
+  });
 
 /** Ask the owner to stop; the supervisor clears runtime state before exiting. */
 export const stopManagedStack = (
@@ -107,30 +118,31 @@ export const stopManagedStack = (
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const document = yield* resolveManagedDocument(input);
       const manager = yield* ManagedStackManager;
-      const acquisition = yield* manager.acquireControl(document.id);
+      const document = yield* resolveManagedDocument(input).pipe(
+        Effect.catchTag("InvalidManagedStackDocumentError", () => Effect.succeed(undefined)),
+      );
+      const stackId = document?.id ?? (yield* stackIdForInput(manager, input));
+      const acquisition = yield* manager.acquireControl(stackId);
       if (acquisition._tag === "Owned") {
         if (
+          document === undefined ||
           document.lifecycle === "running" ||
           document.lifecycle === "starting" ||
           document.lifecycle === "failed"
         ) {
-          yield* Effect.sync(() => {
-            dockerForceRemove(
-              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${document.id}`)),
-            );
-          });
-          yield* manager.recordLifecycle(acquisition, {
-            stackId: document.id,
-            lifecycle: "stopped",
-          });
+          yield* dockerForceRemove(
+            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+          );
+          if (document !== undefined) {
+            yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
+          }
         }
         yield* acquisition.close;
         return;
       }
-      if (document.lifecycle !== "running") {
-        return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
+      if (document !== undefined && document.lifecycle !== "running") {
+        return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
       }
       const client = yield* HttpTransportClient;
       const layer = RemoteStack.layer(acquisition.endpoint).pipe(
@@ -140,23 +152,27 @@ export const stopManagedStack = (
         const stack = yield* Stack;
         yield* stack.stop();
       }).pipe(Effect.provide(layer));
-      yield* manager.inspectStack(document.id).pipe(
-        Effect.flatMap((current) =>
-          current?.lifecycle === "stopped"
-            ? Effect.succeed(current)
-            : Effect.fail(new ManagedStopPending()),
-        ),
-        Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
-        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId: document.id })),
-      );
-      const released = yield* manager.acquireControl(document.id).pipe(
+      if (document !== undefined) {
+        yield* manager.inspectStack(stackId).pipe(
+          Effect.flatMap((current) =>
+            current?.lifecycle === "stopped"
+              ? Effect.succeed(current)
+              : Effect.fail(new ManagedStopPending()),
+          ),
+          Effect.retry(
+            Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
+          ),
+          Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
+        );
+      }
+      const released = yield* manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate) =>
           candidate._tag === "Owned"
             ? Effect.succeed(candidate)
             : Effect.fail(new ManagedStopPending()),
         ),
         Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
-        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId: document.id })),
+        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
       );
       yield* released.close;
     }),
@@ -167,11 +183,11 @@ export const deleteManagedStack = (
   input: ManagedLifecycleInput,
 ): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
   Effect.gen(function* () {
-    const document = yield* resolveManagedDocument(input);
     const manager = yield* ManagedStackManager;
+    const stackId = yield* stackIdForInput(manager, input);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const acquisition = yield* manager.acquireControl(document.id).pipe(
+        const acquisition = yield* manager.acquireControl(stackId).pipe(
           Effect.flatMap((candidate) =>
             candidate._tag === "Owned"
               ? Effect.succeed(candidate)
@@ -180,9 +196,10 @@ export const deleteManagedStack = (
           Effect.retry(
             Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
           ),
-          Effect.mapError(() => new ManagedStackAttachedError({ stackId: document.id })),
+          Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
-        yield* manager.deleteStack(document.id, acquisition);
+        const result = yield* manager.deleteStack(stackId, acquisition);
+        if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),
     );
   });

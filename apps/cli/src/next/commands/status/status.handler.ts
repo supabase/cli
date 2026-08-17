@@ -1,9 +1,11 @@
 import { Effect, Option } from "effect";
+import { loadProjectConfig } from "@supabase/config";
 import {
   connectLayer,
   fillServiceVersionManifest,
   resolveStackSummary,
   Stack,
+  type StackSummary,
 } from "@supabase/stack/effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
@@ -11,6 +13,8 @@ import { resolveServiceVersionContext } from "../../config/service-version-resol
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { StatusFlags } from "./status.command.ts";
+import { managedPortIntents } from "../../config/managed-port-intents.ts";
+import { isExcludedStackService, toStartStackConfig } from "../../config/stack-config.ts";
 
 function formatServiceStateLine(service: {
   readonly name: string;
@@ -25,6 +29,36 @@ function formatServiceStateLine(service: {
 function formatPortsLine(ports: { readonly apiPort: number; readonly dbPort: number }) {
   return `Ports: API ${ports.apiPort}, DB ${ports.dbPort}`;
 }
+
+const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
+  readonly cacheRoot: string;
+  readonly projectDir: string;
+  readonly cwd: string;
+  readonly name: string;
+}) {
+  const current = yield* resolveStackSummary(input);
+  const loaded = yield* loadProjectConfig(input.projectDir);
+  const excluded = (current.launch?.excludedServices ?? []).filter(isExcludedStackService);
+  return yield* resolveStackSummary({
+    ...input,
+    portDocument: managedPortIntents(
+      toStartStackConfig(excluded, current.launch?.mode ?? "auto"),
+      loaded ?? undefined,
+    ),
+  });
+});
+
+const renderPortDrift = Effect.fnUntraced(function* (drift: NonNullable<StackSummary["drift"]>) {
+  if (drift.length === 0) return;
+  const output = yield* Output;
+  const changes = drift.map(
+    (entry) =>
+      `${entry.key} changed from ${entry.actualPort} to ${entry.configuredPort ?? "automatic"}`,
+  );
+  yield* output.warn(
+    `Port configuration changed while the stack is running: ${changes.join(", ")}. Restart to apply.`,
+  );
+});
 
 const renderUpdateStatus = Effect.fnUntraced(function* (
   updates: ReadonlyArray<{
@@ -68,7 +102,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   );
 
   if (layer._tag === "None") {
-    const summary = yield* resolveStackSummary({
+    const summary = yield* resolveConfiguredSummary({
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
       cwd: runtimeInfo.cwd,
@@ -125,7 +159,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     return;
   }
 
-  const summary = yield* resolveStackSummary({
+  const summary = yield* resolveConfiguredSummary({
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
     cwd: runtimeInfo.cwd,
@@ -145,6 +179,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const message = allReady
     ? "Local Supabase stack is running."
     : "Local Supabase stack is running, but some services are not ready.";
+  yield* renderPortDrift(summary.drift ?? []);
   const data = {
     stack: summary.name,
     running: true,

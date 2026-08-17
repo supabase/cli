@@ -858,10 +858,6 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.stopStack,
     fingerprint_suffix: "managed_stack_not_stopped",
   }),
-  MANAGED_RUNNING_STACK_PORT_CHANGE: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_port_change",
-  }),
   MANAGED_EXACT_PORT_OCCUPIED: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_conflict",

@@ -63,7 +63,9 @@ const controlTransport: ControlTransport["Service"] = {
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
       try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`);
+        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
+          signal: AbortSignal.timeout(500),
+        });
         if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
         return await response.json();
       },

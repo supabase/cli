@@ -1,4 +1,5 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { createServer, type Server } from "node:net";
 import { Context, Data, Effect, Fiber, Layer, Schedule, Scope, Schema, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
@@ -81,14 +82,6 @@ const supervisorPortIntentSchema = Schema.Struct({
   activeFields: Schema.Array(Schema.Literals(PORT_FIELDS)),
   disabledFields: Schema.optionalKey(Schema.Array(Schema.Literals(PORT_FIELDS))),
   document: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-  valueOrigins: Schema.optionalKey(
-    Schema.Array(
-      Schema.Struct({
-        path: Schema.Array(Schema.String),
-        source: Schema.Literals(["environment", "local", "remote"]),
-      }),
-    ),
-  ),
 });
 
 const supervisorStartMessageSchema = Schema.Struct({
@@ -162,7 +155,7 @@ const awaitOwnerReady = (
   );
 
 /** Minimal Stack implementation used only by explicit supervisor test mode. */
-export const supervisorTestStackLayer = (config: ResolvedDaemonConfig): Layer.Layer<Stack> => {
+const supervisorTestStackLayer = (config: ResolvedDaemonConfig): Layer.Layer<Stack> => {
   const info = {
     url: `http://127.0.0.1:${config.apiPort}`,
     dbUrl: `postgresql://postgres:postgres@127.0.0.1:${config.dbPort}/postgres`,
@@ -195,6 +188,54 @@ export const supervisorTestStackLayer = (config: ResolvedDaemonConfig): Layer.La
   };
   return Layer.succeed(Stack, stack);
 };
+
+const bindTestPort = (port: number): Effect.Effect<Server> =>
+  Effect.callback((resume) => {
+    const server = createServer((socket) => socket.destroy());
+    const onError = (cause: Error) => resume(Effect.die(cause));
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", onError);
+      resume(Effect.succeed(server));
+    });
+    return Effect.sync(() => server.close());
+  });
+
+const closeTestPorts = (servers: ReadonlyArray<Server>): Effect.Effect<void> =>
+  Effect.forEach(
+    servers,
+    (server) =>
+      Effect.callback<void>((resume) => {
+        if (!server.listening) {
+          resume(Effect.void);
+          return Effect.void;
+        }
+        server.close(() => resume(Effect.void));
+        return Effect.void;
+      }),
+    { discard: true },
+  );
+
+/** Shared external-service substitution for detached supervisor journeys. */
+export const supervisorTestRuntime: NonNullable<SupervisorPlatform["testRuntime"]> = ({
+  config,
+  lease,
+  mode,
+}) =>
+  Effect.gen(function* () {
+    if (mode === "hold-start") yield* Effect.never;
+    const servers: Array<Server> = [];
+    if (mode !== "hold-reservations") {
+      for (const field of PORT_FIELDS) {
+        const port = config.ports[field];
+        if (port === undefined) continue;
+        yield* lease.release([field]);
+        servers.push(yield* bindTestPort(port));
+      }
+    }
+    yield* Effect.addFinalizer(() => closeTestPorts(servers));
+    return supervisorTestStackLayer(config);
+  });
 
 export interface SupervisorPlatform {
   readonly platformFactory: PlatformFactory;
@@ -391,15 +432,12 @@ const runManaged = (
         existing.lifecycle === "failed" ||
         existing.lifecycle === "deleting")
     ) {
-      yield* Effect.sync(() => {
-        dockerForceRemove(
-          SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-        );
-      });
+      yield* dockerForceRemove(
+        SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+      );
     }
     const portDocument = input.portIntents;
-    const started: ManagedStackStartResult = yield* manager.resolveStack({
-      operation: "start",
+    const started: ManagedStackStartResult = yield* manager.startStack({
       workspacePath: input.workspacePath,
       stackName: input.stackName,
       portDocument,

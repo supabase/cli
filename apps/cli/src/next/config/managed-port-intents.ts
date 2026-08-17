@@ -2,13 +2,12 @@ import type { LoadedProjectConfig } from "@supabase/config";
 import { PORT_CATALOG, PORT_FIELDS, portFieldsForConfigInput } from "@supabase/stack/effect";
 
 /**
- * Preserve the raw project document and value origins alongside the resolved
- * stack config. Managed startup uses these fields to distinguish an explicit
- * sticky port from an omitted (automatic) port across sibling worktrees.
+ * Preserve the raw project document alongside the resolved stack config so
+ * explicit sticky ports remain distinct from omitted automatic ports.
  */
 export const managedPortIntents = (
   stackConfig: Parameters<typeof portFieldsForConfigInput>[0],
-  loadedProjectConfig: Pick<LoadedProjectConfig, "document" | "valueOrigins"> | undefined,
+  loadedProjectConfig: Pick<LoadedProjectConfig, "document"> | undefined,
 ) => {
   const activeFields = portFieldsForConfigInput(stackConfig);
   const disabledFields = PORT_FIELDS.filter(
@@ -18,6 +17,5 @@ export const managedPortIntents = (
     activeFields,
     disabledFields,
     document: loadedProjectConfig?.document ?? {},
-    valueOrigins: loadedProjectConfig?.valueOrigins,
   };
 };
