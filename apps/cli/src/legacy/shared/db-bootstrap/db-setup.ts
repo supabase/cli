@@ -144,7 +144,11 @@ import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migratio
 import { legacyReadMigrationTable } from "../legacy-migration-history.ts";
 import { legacyStatementInstallsPgNet } from "../legacy-pg-net-guidance.ts";
 import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
-import { legacyResolvePgDeltaImplementation } from "../legacy-pgdelta-next-flag.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "../legacy-pgdelta-next-flag.ts";
 import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError, LegacySeedConfig } from "../legacy-seed.ts";
@@ -1203,7 +1207,10 @@ export const legacyStartSetupLocalDatabase = (
       (toml.pgDelta.enabled ||
         legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
     const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
-      toml.envLookup("SUPABASE_USE_PG_DELTA_NEXT"),
+      legacyPgDeltaImplementationFlag(
+        process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+        toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+      ),
     );
     const pgDeltaCtx: LegacyPgDeltaContext = {
       projectId: input.projectId,

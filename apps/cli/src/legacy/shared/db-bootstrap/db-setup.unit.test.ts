@@ -701,6 +701,43 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
+      "skips the legacy catalog when an empty shell value shadows a project .env false (godotenv parity)",
+      () => {
+        // godotenv.Load never replaces a shell value, including an empty one, so
+        // an empty `SUPABASE_USE_PG_DELTA_NEXT` in the shell must suppress the
+        // `supabase/.env` fallback below and resolve to the next implementation —
+        // matching the engine-selector layer's own precedence rather than
+        // `toml.envLookup`'s (which treats an empty shell value as unset).
+        const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+        process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(0);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+              else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.effect(
       "caches the migrations catalog when SUPABASE_EXPERIMENTAL_PG_DELTA is enabled via project .env",
       () => {
         const workdir = makeWorkdir();

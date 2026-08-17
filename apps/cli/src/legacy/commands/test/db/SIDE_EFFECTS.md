@@ -61,6 +61,7 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 | ---- | ---------------------------------------------------------------------------------------------------- |
 | `0`  | all pgTAP tests pass                                                                                 |
 | `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`                        |
+| `1`  | `pg_prove` ran no tests (`Result: NOTESTS`) — `no pgTAP tests found in <paths>`; Go exits `0` here   |
 | `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
 | `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                             |
@@ -82,8 +83,8 @@ invocation path.
 ## Output
 
 `pg_prove`'s TAP output streams to **stdout in every output format** (the docker
-subprocess inherits stdout) — `test db` is a live test
-stream with no structured equivalent.
+subprocess's stdout is forwarded chunk-by-chunk, byte-exact and unframed) —
+`test db` is a live test stream with no structured equivalent.
 
 ### `--output-format text`
 

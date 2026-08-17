@@ -3,10 +3,7 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
-import {
-  legacyPgDeltaImplementationFlag,
-  legacyPgDeltaEngineSelectorLayer,
-} from "./legacy-pgdelta-engine.layer.ts";
+import { legacyPgDeltaEngineSelectorLayer } from "./legacy-pgdelta-engine.layer.ts";
 import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
 
 function debugLayer(messages: Array<string>) {
@@ -119,13 +116,5 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
         ),
       ),
     );
-  });
-});
-
-describe("legacyPgDeltaImplementationFlag", () => {
-  it("prefers shell presence and otherwise uses the project value", () => {
-    expect(legacyPgDeltaImplementationFlag("true", "false")).toBe("true");
-    expect(legacyPgDeltaImplementationFlag("", "false")).toBe("");
-    expect(legacyPgDeltaImplementationFlag(undefined, "false")).toBe("false");
   });
 });

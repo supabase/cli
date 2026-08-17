@@ -258,9 +258,22 @@ export function legacyClassifyDeclarativeLoadCompatibility(opts: {
 export const legacyExtensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
+/**
+ * Shell family the recovery commands are rendered for. The staged-upgrade
+ * recipe contains destructive filesystem operations, so it must be runnable as
+ * printed: POSIX shells get `rm -rf`/`mv` with `&&` and backslash
+ * continuations; Windows gets single-line PowerShell (`Remove-Item`/`Move-Item`
+ * with `;`), which also runs unmodified in Windows Terminal's default shell.
+ */
+export type LegacyShellPlatform = "posix" | "windows";
+
+export const legacyCurrentShellPlatform = (): LegacyShellPlatform =>
+  process.platform === "win32" ? "windows" : "posix";
+
 export interface LegacyStagedExportContext {
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
+  readonly platform: LegacyShellPlatform;
 }
 
 /**
@@ -287,43 +300,75 @@ export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): strin
   return `${trimmed === "" ? declarativeDir : trimmed}-next`;
 };
 
-function shellQuoteArgument(value: string): string {
-  return /^[a-zA-Z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
+const BARE_SAFE_ARGUMENT = /^[a-zA-Z0-9_./:@%+=,-]+$/;
+
+function shellQuoteArgument(value: string, platform: LegacyShellPlatform): string {
+  if (BARE_SAFE_ARGUMENT.test(value)) return value;
+  // PowerShell single-quoted strings escape a quote by doubling it; POSIX
+  // shells need the classic '"'"' dance.
+  return platform === "windows"
+    ? `'${value.replaceAll("'", "''")}'`
+    : `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function schemaArguments(schema: ReadonlyArray<string>): string {
+function schemaArguments(schema: ReadonlyArray<string>, platform: LegacyShellPlatform): string {
   return schema
-    .map((name) => ` --schema ${shellQuoteArgument(legacySchemaToCsvField(name))}`)
+    .map((name) => ` --schema ${shellQuoteArgument(legacySchemaToCsvField(name), platform)}`)
     .join("");
 }
 
-export const legacyFormatDeclarativeSyncCommand = (schema: ReadonlyArray<string>): string =>
-  `  supabase db schema declarative sync --no-apply${schemaArguments(schema)} --experimental`;
+export const legacyFormatDeclarativeSyncCommand = (
+  schema: ReadonlyArray<string>,
+  platform: LegacyShellPlatform,
+): string =>
+  `  supabase db schema declarative sync --no-apply${schemaArguments(schema, platform)} --experimental`;
 
-const adoptionCommand = (declarativeDir: string, stagedDir: string): string =>
-  `  rm -rf ${shellQuoteArgument(declarativeDir)} && mv ${shellQuoteArgument(stagedDir)} ${shellQuoteArgument(declarativeDir)}`;
+const adoptionCommand = (
+  declarativeDir: string,
+  stagedDir: string,
+  platform: LegacyShellPlatform,
+): string => {
+  const dir = shellQuoteArgument(declarativeDir, platform);
+  const staged = shellQuoteArgument(stagedDir, platform);
+  return platform === "windows"
+    ? `  Remove-Item -Recurse -Force -ErrorAction Stop ${dir}; Move-Item ${staged} ${dir}`
+    : `  rm -rf ${dir} && mv ${staged} ${dir}`;
+};
 
 export function legacyFormatStagedExportAdoption({
   declarativeDir,
   schema,
+  platform,
 }: LegacyStagedExportContext): ReadonlyArray<string> {
   const stagedDir = legacyResolveStagedDeclarativeDir(declarativeDir);
   return [
     `Review ${stagedDir}, then adopt it:`,
-    adoptionCommand(declarativeDir, stagedDir),
-    legacyFormatDeclarativeSyncCommand(schema),
+    adoptionCommand(declarativeDir, stagedDir, platform),
+    legacyFormatDeclarativeSyncCommand(schema, platform),
   ];
 }
 
 /** The staged-upgrade recipe, as a copy-pasteable block of indented shell lines. */
 function stagedExportCommands(context: LegacyStagedExportContext): ReadonlyArray<string> {
   const stagedDir = legacyResolveStagedDeclarativeDir(context.declarativeDir);
+  const staged = shellQuoteArgument(stagedDir, context.platform);
+  const schemas = schemaArguments(context.schema, context.platform);
+  // Backslash continuation is POSIX-only; keep the generate command on one line
+  // for Windows so it runs as printed in PowerShell.
+  const generateCommand =
+    context.platform === "windows"
+      ? [
+          `  supabase db schema declarative generate --local --overwrite --output-dir ${staged}${schemas} --experimental`,
+        ]
+      : [
+          "  supabase db schema declarative generate --local --overwrite \\",
+          `    --output-dir ${staged}${schemas} --experimental`,
+        ];
   return [
-    "  supabase db schema declarative generate --local --overwrite \\",
-    `    --output ${shellQuoteArgument(stagedDir)}${schemaArguments(context.schema)} --experimental`,
+    ...generateCommand,
     `  # review ${stagedDir}`,
-    adoptionCommand(context.declarativeDir, stagedDir),
-    legacyFormatDeclarativeSyncCommand(context.schema),
+    adoptionCommand(context.declarativeDir, stagedDir, context.platform),
+    legacyFormatDeclarativeSyncCommand(context.schema, context.platform),
   ];
 }
 

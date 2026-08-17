@@ -6,7 +6,7 @@ import { withJsonErrorHandling } from "../../shared/output/json-error-handling.t
 import { Output } from "../../shared/output/output.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { withLegacyCommandInstrumentation } from "../telemetry/legacy-command-instrumentation.ts";
-import { LegacyTestDbRunError } from "./legacy-test-db.errors.ts";
+import type { LegacyTestDbNoTestsError, LegacyTestDbRunError } from "./legacy-test-db.errors.ts";
 import { legacyTestDb } from "./legacy-test-db.handler.ts";
 
 /**
@@ -21,13 +21,14 @@ export const LEGACY_TEST_DB_SHORT = "Tests local database with pgTAP";
 /**
  * `test db` has no machine-format envelope: its entire output is the streamed
  * pg_prove TAP on stdout (Go has no `--output-format` for it). On a *run* failure
- * (failing tests), the default `withJsonErrorHandling` would append a JSON error
- * object to stdout — after the TAP already streamed — corrupting machine consumers.
+ * (failing tests, or a run that executed none), the default `withJsonErrorHandling`
+ * would append a JSON error object to stdout — after the TAP already streamed —
+ * corrupting machine consumers.
  * So in json/stream-json mode, send the diagnostic to stderr and exit 1 instead,
  * matching Go's `recoverAndExit` (stderr, exit 1). Text mode keeps the normal error
  * rendering; pre-stream errors still flow through `withJsonErrorHandling`.
  */
-const onRunFailure = (error: LegacyTestDbRunError) =>
+const onRunFailure = (error: LegacyTestDbRunError | LegacyTestDbNoTestsError) =>
   Effect.gen(function* () {
     const output = yield* Output;
     if (output.format === "text") return yield* Effect.fail(error);
@@ -114,9 +115,10 @@ export function legacyRunTestDbCommand(
       // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
       // others) are unmarked, so it stays redacted.
     }),
-    // Run failures (failing tests) must not corrupt the TAP stream on stdout in
-    // machine modes; other errors (pre-stream) still get the JSON envelope.
-    Effect.catchTag("LegacyTestDbRunError", onRunFailure),
+    // Run failures (failing tests, or a run that executed none) must not corrupt the
+    // TAP stream on stdout in machine modes; other errors (pre-stream) still get the
+    // JSON envelope.
+    Effect.catchTag(["LegacyTestDbRunError", "LegacyTestDbNoTestsError"], onRunFailure),
     withJsonErrorHandling,
   );
 }

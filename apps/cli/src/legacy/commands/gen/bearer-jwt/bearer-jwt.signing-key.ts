@@ -285,8 +285,8 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   // what a real `text` run already uses) — only on `NonInteractiveError` (the
   // json/stream-json `Output` layers' `promptSelect`/`raw`, `output.layer.ts`) fall
   // back to a REAL, locally-provided `textOutputLayer` instance so the picker still
-  // renders on a genuine TTY. `textOutputLayer` only needs `Tty` (already in scope),
-  // so this fallback is a purely local override; the token itself is still written
+  // renders on a genuine TTY. `textOutputLayer` needs only `Tty` and `Stdio`, both
+  // ambient from the CLI root, so this fallback is a local override; the token is written
   // through the AMBIENT `Output` later, in `bearer-jwt.handler.ts`, completely
   // unaffected by it. See this function's doc comment above for why this
   // picker needs this at all.

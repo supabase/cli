@@ -255,8 +255,10 @@ function legacyNormalizePgDeltaNextDiagnostics<Subject>(
  * enforces — warned by default, blocking under `--strict-coverage`. Built here,
  * where `skipped` originates, so no consumer has to remember to look at the
  * separate `skipped` field (nothing did, and the statements vanished silently).
- * The raw statement stays in `context`/detail rather than the aggregate warning,
- * since a skipped `CREATE ROLE` can carry a password.
+ * The per-diagnostic message deliberately carries the raw statement verbatim:
+ * it is the user's own declarative file content (already on their machine), and
+ * a redacted message would leave `--strict-coverage`/debug failures
+ * unactionable. The default aggregate warning still names files only.
  */
 function legacySkippedStatementDiagnostics(
   skipped: readonly { readonly file: string; readonly stmt: string }[],

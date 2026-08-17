@@ -3,9 +3,7 @@ import {
   InvalidManagedIdentityError,
   UnsupportedGitWorkspaceError,
   type ManagedCheckoutLocation,
-  type ManagedCheckoutKind,
   type ManagedContextDescriptor,
-  type ManagedContextKind,
   type ManagedIdentityTransitionRecord,
   type ManagedIdentityClaims,
   type ManagedOperationRecord,
@@ -20,7 +18,6 @@ import {
   readBranchContextId,
   readGitCheckoutIdentityWithFileSystem,
   type GitCheckoutInspection,
-  type WorkspaceInspection,
 } from "./git.ts";
 import {
   canonicalizeManagedWorkspacePathWithFileSystem,
@@ -32,7 +29,17 @@ import {
   protectedManagedCheckoutLocationIds,
   type ManagedStackRepositoryShape,
 } from "./repository.ts";
-import { checkoutKindOf, newCheckoutTopologyMatches } from "./topology.ts";
+import { newCheckoutTopologyMatches } from "./topology.ts";
+import {
+  workspaceMetadata,
+  type ManagedWorkspaceDiscoveryContext,
+  type ManagedWorkspaceDiscoveryWorkspace,
+} from "./workspace-metadata.ts";
+
+export type {
+  ManagedWorkspaceDiscoveryContext,
+  ManagedWorkspaceDiscoveryWorkspace,
+} from "./workspace-metadata.ts";
 
 export type ManagedWorkspaceDiscoveryState =
   | "adoptable"
@@ -49,20 +56,6 @@ export type ManagedRecoveryOperation =
   | { readonly operation: "rebindCheckout"; readonly checkoutId: string; readonly path: string }
   | { readonly operation: "adoptContext"; readonly contextId: string; readonly branch: string }
   | { readonly operation: "prune"; readonly recordIds: ReadonlyArray<string> };
-
-export interface ManagedWorkspaceDiscoveryWorkspace {
-  readonly checkoutKind: ManagedCheckoutKind;
-  readonly canonicalPath: string;
-  readonly workspaceRoot: string;
-  readonly projectIdentityLocation: string;
-  readonly checkoutIdentityLocation: string;
-}
-
-export interface ManagedWorkspaceDiscoveryContext {
-  readonly kind: ManagedContextKind;
-  readonly branch?: string;
-  readonly commit?: string;
-}
 
 export interface ManagedWorkspaceDiscoveryIdentity {
   readonly projectId?: string;
@@ -149,19 +142,26 @@ const transitionMatches = (
     return transition.path === workspaceRoot && newCheckoutTopologyMatches(transition, context);
   }
   const branch = context.kind === "branch" ? context.branch : undefined;
+  if (
+    (transition.kind === "folder-to-git" ||
+      transition.kind === "adopt-context" ||
+      transition.kind === "branch-copy") &&
+    transition.branch !== branch
+  ) {
+    return false;
+  }
   return (
-    (transition.kind !== "folder-to-git" || transition.branch === branch) &&
-    ((transition.projectId === identity.projectId &&
+    (transition.projectId === identity.projectId &&
       transition.checkoutId === undefined &&
       transition.contextId === undefined &&
       transition.branch === undefined &&
       transition.path === undefined) ||
-      transition.path === workspaceRoot ||
-      (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
-      (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
-      (transition.branch !== undefined &&
-        transition.branch === branch &&
-        transition.projectId === identity.projectId))
+    transition.path === workspaceRoot ||
+    (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
+    (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
+    (transition.branch !== undefined &&
+      transition.branch === branch &&
+      transition.projectId === identity.projectId)
   );
 };
 
@@ -464,48 +464,6 @@ const inspectBranchOwners = (
     return { contextId, claims: liveClaims };
   });
 
-const workspaceMetadata = (
-  inspection: WorkspaceInspection,
-): {
-  readonly workspace: ManagedWorkspaceDiscoveryWorkspace;
-  readonly context: ManagedWorkspaceDiscoveryContext;
-  readonly contextDescriptor: ManagedContextDescriptor;
-} => {
-  if (inspection.kind === "ordinary-folder") {
-    const markerPath = ordinaryWorkspaceIdentityPath(inspection.canonicalPath);
-    return {
-      workspace: {
-        checkoutKind: "ordinary",
-        canonicalPath: inspection.canonicalPath,
-        workspaceRoot: inspection.canonicalPath,
-        projectIdentityLocation: markerPath,
-        checkoutIdentityLocation: markerPath,
-      },
-      context: { kind: "workspace" },
-      contextDescriptor: { kind: "workspace" },
-    };
-  }
-  const context: ManagedWorkspaceDiscoveryContext =
-    inspection.head.kind === "detached"
-      ? { kind: "detached", commit: inspection.head.commit }
-      : { kind: "branch", branch: inspection.head.branch };
-  const contextDescriptor: ManagedContextDescriptor =
-    inspection.head.kind === "detached"
-      ? { kind: "detached" }
-      : { kind: "branch", locator: inspection.head.branch };
-  return {
-    workspace: {
-      checkoutKind: checkoutKindOf(inspection),
-      canonicalPath: inspection.canonicalPath,
-      workspaceRoot: inspection.workspaceRoot,
-      projectIdentityLocation: inspection.commonDirectory,
-      checkoutIdentityLocation: inspection.gitDirectory,
-    },
-    context,
-    contextDescriptor,
-  };
-};
-
 /** Read-only managed identity discovery. No repository or identity writes occur. */
 export const discoverWorkspace = (
   workspacePath: string,
@@ -543,17 +501,14 @@ export const discoverWorkspace = (
       // becoming a repository. It is read as transition evidence only; its
       // values never populate the active Git identity below.
       const markerPath = ordinaryWorkspaceIdentityPath(inspection.workspaceRoot);
-      const fs = yield* FileSystem.FileSystem;
-      const markerExists = yield* fs
-        .exists(markerPath)
-        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
       const marker = yield* readOrdinaryWorkspaceIdentityWithFileSystem(inspection.workspaceRoot);
-      const markerTracked = markerExists
-        ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
-        : false;
+      const markerTracked =
+        marker !== undefined
+          ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
+          : false;
       ordinaryMarker = {
         path: markerPath,
-        present: markerExists,
+        present: marker !== undefined,
         tracked: markerTracked,
         identity: marker,
       };

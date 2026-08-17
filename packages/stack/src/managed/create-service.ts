@@ -156,12 +156,14 @@ const managedStackServiceHandle = async <ER>(
    * message, or stack. While the handle is open, every failure is the failure
    * itself and passes through untouched.
    */
-  const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-    runtime.runPromise(effect).catch((error: unknown) => {
-      throw closed
+  const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => {
+    const callWasClosed = closed;
+    return runtime.runPromise(effect).catch((error: unknown) => {
+      throw callWasClosed
         ? new Error(`The managed stack service handle is closed (${String(error)})`)
         : error;
     });
+  };
 
   /**
    * A function declaration rather than a property initializer, so the handle's
