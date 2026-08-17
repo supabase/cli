@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
@@ -63,30 +63,6 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
     contextId: identityField(value, "contextId"),
   };
 };
-
-/**
- * The canonical path of a workspace directory, whatever it turns out to be.
- *
- * Every resolve starts here, ordinary folders and git checkouts alike: a path
- * that is not a directory is a caller mistake rather than a workspace to
- * classify, and canonicalizing once keeps a symlinked alias from registering as
- * a second location for the same checkout.
- */
-export const canonicalizeManagedWorkspacePath = (
-  workspacePath: string,
-): Effect.Effect<string, InvalidManagedIdentityError> =>
-  failsWithIdentity(
-    Effect.tryPromise({
-      try: async () => {
-        const info = await stat(workspacePath);
-        if (!info.isDirectory()) {
-          throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
-        }
-        return realpath(workspacePath);
-      },
-      catch: asRaised,
-    }),
-  );
 
 /** Effect FileSystem variant used by managed discovery. */
 export const canonicalizeManagedWorkspacePathWithFileSystem = (

@@ -37,6 +37,7 @@ import {
 import type { ManagedIdentityRecoveryError } from "./repository.ts";
 import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
+import { benignConcurrentRegistration } from "./workspace-settlement.ts";
 import {
   makeStackLifecycle,
   type StackLifecycle,
@@ -480,40 +481,10 @@ export class ManagedStackService extends Context.Service<
               resolveOptions.operation === "start"
                 ? yield* workspaceIdentity.discover(resolveOptions.workspacePath)
                 : report;
-            const sameWorkspaceTopology = workspaceIdentity.sameManagedWorkspaceTopology(
-              report,
-              settledReport,
-            );
-            const settledIdentityIsMonotonic = workspaceIdentity.identityPublicationIsMonotonic(
-              report,
-              settledReport,
-            );
-            const settledIdentityPublished =
-              settledReport.identity.projectId !== undefined &&
-              settledReport.identity.checkoutId !== undefined &&
-              settledReport.identity.contextId !== undefined;
-            const settledNewCheckoutReservation =
-              report.state === "unregistered" &&
-              settledReport.state === "transitioning" &&
-              settledReport.activeTransition?.kind === "new-checkout" &&
-              settledReport.activeTransition.path === settledReport.workspace.workspaceRoot &&
-              settledReport.activeTransition.projectIdentityLocation ===
-                settledReport.workspace.projectIdentityLocation &&
-              settledReport.conflicts.length === 0;
-            const benignConcurrentRegistration =
-              report.state === "unregistered" &&
-              sameWorkspaceTopology &&
-              settledIdentityIsMonotonic &&
-              ((settledReport.activeTransition === undefined &&
-                ((settledReport.state === "healthy" &&
-                  settledIdentityPublished &&
-                  settledReport.conflicts.length === 0) ||
-                  workspaceIdentity.concurrentIdentityPublication(report, settledReport))) ||
-                settledNewCheckoutReservation);
             if (
               resolveOptions.operation === "start" &&
               discoveryObservation(report) !== discoveryObservation(settledReport) &&
-              !benignConcurrentRegistration
+              !benignConcurrentRegistration(report, settledReport)
             ) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
@@ -522,44 +493,86 @@ export class ManagedStackService extends Context.Service<
               );
             }
             let recoveryReportForStart = settledReport;
-            if (
-              resolveOptions.operation === "start" &&
-              (settledReport.folderToGitClaims.length > 0 ||
-                (settledReport.state === "transitioning" &&
-                  settledReport.activeTransition?.kind === "folder-to-git"))
-            ) {
-              recoveryReportForStart = yield* workspaceIdentity.migrateFolderToGit(settledReport);
-            }
-            if (resolveOptions.operation === "start" && settledReport.state === "moved") {
-              recoveryReportForStart = yield* workspaceIdentity.rebindCheckout({
-                workspacePath: resolveOptions.workspacePath,
-                checkoutId: settledReport.identity.checkoutId,
-                observation: settledReport,
-              });
-            }
-            if (
-              resolveOptions.operation === "start" &&
-              (((settledReport.state === "adoptable" || settledReport.state === "orphaned") &&
-                settledReport.recoveryOperations.some(
-                  (operation) => operation.operation === "adoptContext",
-                )) ||
-                (settledReport.state === "transitioning" &&
-                  settledReport.activeTransition?.kind === "adopt-context"))
-            ) {
-              recoveryReportForStart = yield* workspaceIdentity.adoptContext({
-                workspacePath: resolveOptions.workspacePath,
-                observation: settledReport,
-              });
-            }
-            if (
-              resolveOptions.operation === "start" &&
-              ((recoveryReportForStart.state === "duplicate" &&
-                workspaceIdentity.branchCopyIsUnambiguous(recoveryReportForStart)) ||
-                (recoveryReportForStart.state === "transitioning" &&
-                  recoveryReportForStart.activeTransition?.kind === "branch-copy"))
-            ) {
-              recoveryReportForStart =
-                yield* workspaceIdentity.repairCopiedBranch(recoveryReportForStart);
+            let identityMarkerCreated = false;
+            if (resolveOptions.operation === "start") {
+              const automaticRecoveryKind = (
+                candidate: ManagedWorkspaceDiscovery,
+              ):
+                | "folder-to-git"
+                | "rebind-checkout"
+                | "adopt-context"
+                | "branch-copy"
+                | undefined => {
+                if (
+                  candidate.folderToGitClaims.length > 0 ||
+                  (candidate.state === "transitioning" &&
+                    candidate.activeTransition?.kind === "folder-to-git")
+                ) {
+                  return "folder-to-git";
+                }
+                if (candidate.state === "moved") return "rebind-checkout";
+                if (
+                  ((candidate.state === "adoptable" || candidate.state === "orphaned") &&
+                    candidate.recoveryOperations.some(
+                      (operation) => operation.operation === "adoptContext",
+                    )) ||
+                  (candidate.state === "transitioning" &&
+                    candidate.activeTransition?.kind === "adopt-context")
+                ) {
+                  return "adopt-context";
+                }
+                if (
+                  (candidate.state === "duplicate" &&
+                    workspaceIdentity.branchCopyIsUnambiguous(candidate)) ||
+                  (candidate.state === "transitioning" &&
+                    candidate.activeTransition?.kind === "branch-copy")
+                ) {
+                  return "branch-copy";
+                }
+                return undefined;
+              };
+              const maxRecoveryIterations = 8;
+              let iteration = 0;
+              while (true) {
+                const kind = automaticRecoveryKind(recoveryReportForStart);
+                if (kind === undefined) break;
+                if (iteration >= maxRecoveryIterations) {
+                  return yield* Effect.fail(
+                    new InvalidManagedIdentityError({
+                      message: "Managed workspace recovery did not converge",
+                    }),
+                  );
+                }
+                const before = discoveryObservation(recoveryReportForStart);
+                if (kind === "folder-to-git") {
+                  const migrated =
+                    yield* workspaceIdentity.migrateFolderToGit(recoveryReportForStart);
+                  recoveryReportForStart = migrated.report;
+                  identityMarkerCreated ||= migrated.identityMarkerCreated;
+                } else if (kind === "rebind-checkout") {
+                  recoveryReportForStart = yield* workspaceIdentity.rebindCheckout({
+                    workspacePath: resolveOptions.workspacePath,
+                    checkoutId: recoveryReportForStart.identity.checkoutId,
+                    observation: recoveryReportForStart,
+                  });
+                } else if (kind === "adopt-context") {
+                  recoveryReportForStart = yield* workspaceIdentity.adoptContext({
+                    workspacePath: resolveOptions.workspacePath,
+                    observation: recoveryReportForStart,
+                  });
+                } else {
+                  recoveryReportForStart =
+                    yield* workspaceIdentity.repairCopiedBranch(recoveryReportForStart);
+                }
+                iteration += 1;
+                if (before === discoveryObservation(recoveryReportForStart)) {
+                  return yield* Effect.fail(
+                    new InvalidManagedIdentityError({
+                      message: "Managed workspace recovery made no progress",
+                    }),
+                  );
+                }
+              }
             }
             const plan: ResolvedWorkspacePlan = {
               workspace: recoveryReportForStart.workspace,
@@ -573,7 +586,7 @@ export class ManagedStackService extends Context.Service<
                       contextId: recoveryReportForStart.registryContextId,
                     }
                   : recoveryReportForStart.identity,
-              identityMarkerCreated: false,
+              identityMarkerCreated,
             };
             if (
               resolveOptions.operation === "start" &&
