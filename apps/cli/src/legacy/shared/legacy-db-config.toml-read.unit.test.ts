@@ -1133,6 +1133,7 @@ describe("legacyReadDbToml", () => {
         Effect.tap((exit) =>
           Effect.sync(() => {
             expect(Exit.isSuccess(exit)).toBe(true);
+            if (Exit.isSuccess(exit)) expect(exit.value.webhooksEnabled).toBe(true);
             if (previous === undefined)
               delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
             else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
@@ -1198,6 +1199,7 @@ describe("legacyReadDbToml", () => {
         Effect.tap((exit) =>
           Effect.sync(() => {
             expect(Exit.isSuccess(exit)).toBe(true);
+            if (Exit.isSuccess(exit)) expect(exit.value.webhooksEnabled).toBe(false);
             if (previous === undefined)
               delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
             else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
@@ -2805,7 +2807,7 @@ describe("legacyReadDbToml [experimental.pgdelta]", () => {
 });
 
 describe("legacyResolveDeclarativeDir", () => {
-  it.effect("uses the default supabase/database when no path is configured", () =>
+  it.effect("uses the default supabase/schemas when no path is configured", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(
@@ -2815,7 +2817,7 @@ describe("legacyResolveDeclarativeDir", () => {
           formatOptions: Option.none(),
           npmVersion: Option.none(),
         }),
-      ).toBe(join("supabase", "database"));
+      ).toBe(join("supabase", "schemas"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -48,6 +48,13 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyPgDeltaLegacyEngineLayer } from "../../../shared/legacy-pgdelta-engine.legacy.layer.ts";
+import {
+  LegacyPgDeltaEngine,
+  LegacyPgDeltaEngineError,
+  type LegacyPgDeltaRemovalSummary,
+  type LegacyPgDeltaRenderedFile,
+} from "../../../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
@@ -72,6 +79,7 @@ interface SetupOpts {
   yes?: boolean;
   stdinIsTty?: boolean;
   diffSql?: string;
+  replannedDiffSql?: string;
   applyFails?: boolean;
   /**
    * Makes the recovery reset's `legacyResetLocalDatabase` fail immediately with
@@ -86,6 +94,10 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   staleLocalImage?: boolean;
   exportJson?: string;
+  engineImplementation?: "legacy" | "next";
+  renderedFiles?: ReadonlyArray<LegacyPgDeltaRenderedFile>;
+  removals?: LegacyPgDeltaRemovalSummary;
+  planErrors?: ReadonlyArray<LegacyPgDeltaEngineError>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -239,31 +251,113 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+  const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
+  const processControl = mockProcessControl();
+  const experimentalFlag = Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true);
+  const cliArgs = Layer.succeed(CliArgs, {
+    args: opts.args ?? ["db", "schema", "declarative", "sync"],
+  });
+  const networkIdFlag = Layer.succeed(
+    LegacyNetworkIdFlag,
+    opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
+  );
+  const debugFlag = Layer.succeed(LegacyDebugFlag, false);
+  const dockerRun = legacyDockerRunLayer.pipe(
+    Layer.provide(child.layer),
+    Layer.provide(processControl.layer),
+  );
+  const engineRuntime = Layer.mergeAll(
+    seam,
+    edge,
+    sslProbe,
+    out.layer,
+    dbConn,
+    runtimeInfo,
+    experimentalFlag,
+    cliArgs,
+    networkIdFlag,
+    debugFlag,
+    processControl.layer,
+    alwaysReadyHttpClientLayer,
+    dockerRun,
+    BunServices.layer,
+    child.layer,
+  );
+  const nextFiles = opts.renderedFiles ?? [];
+  const planErrors = [...(opts.planErrors ?? [])];
+  let planCalls = 0;
+  const declarativeExportCalls: Array<ReadonlyArray<string>> = [];
+  const engine =
+    opts.engineImplementation === "next"
+      ? Layer.succeed(
+          LegacyPgDeltaEngine,
+          LegacyPgDeltaEngine.of({
+            implementation: "next",
+            diffExplicit: () => Effect.die("diffExplicit not used in sync tests"),
+            diffDatabase: () => Effect.die("diffDatabase not used in sync tests"),
+            exportDeclarativeSchema: (input) =>
+              Effect.sync(() => {
+                declarativeExportCalls.push(input.schema);
+                return {
+                  files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
+                  manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+                };
+              }),
+            planDeclarativeSchema: () => {
+              planCalls += 1;
+              const planError = planErrors.shift();
+              if (planError !== undefined) return Effect.fail(planError);
+              const extensionPath = join(workdir, "supabase", "schemas", "extension.sql");
+              const extensionSql = existsSync(extensionPath)
+                ? readFileSync(extensionPath, "utf8")
+                : "";
+              const remainingExtensions = (opts.removals?.extensions ?? []).filter(
+                (extension) => !extensionSql.includes(`"${extension}"`),
+              );
+              const extensionsRepaired =
+                remainingExtensions.length < (opts.removals?.extensions.length ?? 0);
+              return Effect.succeed({
+                changes: nextFiles.length > 0,
+                sql:
+                  extensionsRepaired && opts.replannedDiffSql !== undefined
+                    ? opts.replannedDiffSql
+                    : (opts.diffSql ?? nextFiles.map((file) => file.sql).join("\n")),
+                files: nextFiles,
+                sourceRef: "migrations",
+                targetRef: "declarative",
+                removals:
+                  opts.removals === undefined
+                    ? undefined
+                    : { ...opts.removals, extensions: remainingExtensions },
+              });
+            },
+          }),
+        )
+      : legacyPgDeltaLegacyEngineLayer.pipe(Layer.provide(engineRuntime));
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
     seam,
     edge,
+    engine,
     dbConn,
     resolver,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
-    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "sync"] }),
+    experimentalFlag,
+    cliArgs,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(
-      LegacyNetworkIdFlag,
-      opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
-    ),
+    networkIdFlag,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyDebugFlag, false),
+    debugFlag,
     // Sync diffs against the local DB, which refuses TLS → no SSL env injected.
-    Layer.succeed(LegacyPgDeltaSslProbe, {
-      requireSsl: () => Effect.succeed(false),
-      requireSslForHost: () => Effect.succeed(false),
-    }),
+    sslProbe,
     // The local-reset bucket-seed core statically requires the (lazy) Management-API
     // factory; never invoked on the local recovery reset (projectRef === "").
     Layer.succeed(LegacyPlatformApiFactory, {
@@ -274,13 +368,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // resolves a duplicate service tag to whichever layer is listed LAST, so this
     // mock overrides Bun's real `ChildProcessSpawner` instead of the reverse.
     child.layer,
-    mockRuntimeInfo({ platform: "linux" }),
-    mockProcessControl().layer,
+    runtimeInfo,
+    processControl.layer,
     alwaysReadyHttpClientLayer,
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
+    dockerRun,
   );
   return {
     layer,
@@ -292,6 +383,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     localPostgresImageChecks,
     exportCatalogCalls,
+    declarativeExportCalls,
+    get planCalls() {
+      return planCalls;
+    },
   };
 }
 
@@ -299,6 +394,7 @@ const flags = (
   over: Partial<LegacyDbSchemaDeclarativeSyncFlags> = {},
 ): LegacyDbSchemaDeclarativeSyncFlags => ({
   noCache: over.noCache ?? false,
+  strictCoverage: over.strictCoverage ?? false,
   schema: over.schema ?? [],
   file: over.file ?? Option.none(),
   name: over.name ?? Option.none(),
@@ -310,10 +406,49 @@ const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
 const seedDeclarative = (workdir: string) => {
-  const dir = join(workdir, "supabase", "database");
+  const dir = join(workdir, "supabase", "schemas");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "public.sql"), "create table a();");
 };
+
+const seedLegacyUuidDeclarative = (workdir: string, directory = "schemas") => {
+  const dir = join(workdir, "supabase", directory);
+  mkdirSync(join(dir, "schemas", "app", "tables"), { recursive: true });
+  mkdirSync(join(dir, "schemas", "public", "views"), { recursive: true });
+  writeFileSync(
+    join(dir, "schemas", "app", "tables", "members.sql"),
+    [
+      "create table app.members (",
+      "  email text not null,",
+      "  id uuid not null default extensions.uuid_generate_v4()",
+      ");",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(dir, "schemas", "public", "views", "members.sql"),
+    "create view public.members as select * from app.members;\n",
+  );
+};
+
+const legacyUuidLoadError = () =>
+  new LegacyPgDeltaEngineError({
+    message:
+      "Declarative schema planning failed: shadow load stuck. Tip: split circular REFERENCES clauses.",
+    cause: new Error("shadow load stuck"),
+    diagnostics: [
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message:
+          "0001__schemas/app/tables/members.sql: function extensions.uuid_generate_v4() does not exist (failed identically in 6 rounds)",
+      },
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message: '0002__schemas/public/views/members.sql: relation "app.members" does not exist',
+      },
+    ],
+  });
 
 describe("legacy db schema declarative sync integration", () => {
   const tmp = useLegacyTempWorkdir();
@@ -478,14 +613,35 @@ describe("legacy db schema declarative sync integration", () => {
   });
 
   it.effect("fails when there are no declarative files", () => {
-    const { layer } = setup(tmp.current, { experimental: true });
+    const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect((failError(exit) as { message: string }).message).toContain(
         "no declarative schema found",
       );
-    }).pipe(Effect.provide(layer));
+      // No tree under the former default either — nothing to point at.
+      expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("warns when the tree still lives under the former supabase/database default", () => {
+    // Upgrade path: the implicit default moved from supabase/database to
+    // supabase/schemas. A project that generated under the old default and never
+    // set declarative_schema_path must get an explanation, not a bare
+    // "no declarative schema found".
+    const formerDir = join(tmp.current, "supabase", "database");
+    mkdirSync(formerDir, { recursive: true });
+    writeFileSync(join(formerDir, "public.sql"), "create table a();");
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain('declarative_schema_path = "./database"');
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
@@ -560,7 +716,7 @@ describe("legacy db schema declarative sync integration", () => {
     // `Declarative schema written to <dir>` to stderr AFTER WriteDeclarativeSchemas
     // and the catalog warm (`declarative.go:133→138-155→156`), before sync's own
     // diff (step 2). It prints `utils.GetDeclarativeDir()` — the relative
-    // `supabase/database` default — never the absolute resolved dir (CLI-1980).
+    // `supabase/schemas` default — never the absolute resolved dir (CLI-1980).
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -570,7 +726,7 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const line = `Declarative schema written to ${join("supabase", "schemas")}\n`;
       const written = s.out.rawChunks
         .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
         .filter((c) => c.text === line);
@@ -593,7 +749,7 @@ describe("legacy db schema declarative sync integration", () => {
       // The generated files actually landed in the printed (resolved) dir.
       expect(
         existsSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
         ),
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -614,7 +770,7 @@ describe("legacy db schema declarative sync integration", () => {
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
     }).pipe(Effect.provide(s.layer));
@@ -632,7 +788,7 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) }));
-      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const line = `Declarative schema written to ${join("supabase", "schemas")}\n`;
       const written = s.out.rawChunks
         .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
         .filter((c) => c.text === line);
@@ -935,6 +1091,314 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("refuses a known implicit-extension load failure under --yes", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      yes: true,
+      planErrors: [legacyUuidLoadError()],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        message: expect.stringContaining("schemas/app/tables/members.sql:3"),
+      });
+      const error = failError(exit);
+      expect(error).toMatchObject({
+        message: expect.stringContaining("uuid-ossp"),
+        // Recovery commands ride on `suggestion` so `Output.fail` prints them
+        // instead of the generic "rerun with --debug" footer.
+        suggestion: expect.stringContaining(
+          "supabase db schema declarative generate --local --overwrite",
+        ),
+      });
+      // Hand-editing extension.sql is a false trail non-interactively: each
+      // declaration only unlocks the next refusal.
+      expect(JSON.stringify(error)).not.toContain("extension.sql");
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("adds a missing load-time extension declaration and re-plans", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["repair"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.planCalls).toBe(2);
+      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n',
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages a complete next export without changing the active tree", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const activeMember = join(
+      tmp.current,
+      "supabase",
+      "schemas",
+      "schemas",
+      "app",
+      "tables",
+      "members.sql",
+    );
+    const before = readFileSync(activeMember, "utf8");
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(
+        readFileSync(
+          join(tmp.current, "supabase", "schemas-next", "public", "tables", "players.sql"),
+          "utf8",
+        ),
+      ).toBe("create table players ();");
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages beside a custom active path and preserves --schema for adoption", () => {
+    seedLegacyUuidDeclarative(tmp.current, "custom-declarative");
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "./custom-declarative"',
+        "",
+      ].join("\n"),
+    );
+    const activeMember = join(
+      tmp.current,
+      "supabase",
+      "custom-declarative",
+      "schemas",
+      "app",
+      "tables",
+      "members.sql",
+    );
+    const before = readFileSync(activeMember, "utf8");
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ schema: ["app"], noApply: Option.some(true) }));
+
+      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(
+        existsSync(
+          join(tmp.current, "supabase", "custom-declarative-next", ".pgdelta-export.json"),
+        ),
+      ).toBe(true);
+      expect(s.declarativeExportCalls).toEqual([["app"]]);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "rm -rf supabase/custom-declarative && mv supabase/custom-declarative-next supabase/custom-declarative",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "supabase db schema declarative sync --no-apply --schema app --experimental",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("refuses extension-managed legacy gaps under --yes instead of writing drops", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      yes: true,
+      diffSql:
+        "select cron.unschedule('refresh download metrics');\nDROP EXTENSION \"pgcrypto\";\n",
+      removals: {
+        extensions: ["pgcrypto", "uuid-ossp"],
+        extensionIntents: [
+          { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        // Same unified template as the load-fail gate — only the evidence differs.
+        message: expect.stringContaining(
+          "This supabase/schemas tree looks like a legacy pg-delta export.",
+        ),
+        suggestion: expect.stringContaining(
+          "Upgrade without changing the active supabase/schemas tree:",
+        ),
+      });
+      expect(failError(exit)).toMatchObject({
+        message: expect.stringContaining("  Extension-managed objects: pg_cron job refresh"),
+      });
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("directs pg_net users to enable Database Webhooks before writing", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pg_net";\n',
+      removals: { extensions: ["pg_net"], extensionIntents: [] },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
+      });
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "continues with intentional legacy extension removals only after explicit choice",
+    () => {
+      seedDeclarative(tmp.current);
+      const s = setup(tmp.current, {
+        engineImplementation: "next",
+        stdinIsTty: true,
+        diffSql: 'DROP EXTENSION "pgcrypto";\n',
+        removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+        promptSelectResponses: ["continue"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+        expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("repairs the active tree in place when the user picks the advanced choice", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      replannedDiffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["repair"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n',
+      );
+      expect(s.planCalls).toBe(2);
+      expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages a next export from the repair prompt without touching the tree", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("staged export names its live-database source and honors the reset offer", () => {
+    seedDeclarative(tmp.current);
+    // `legacyResetLocalDatabase`'s container-recreate resolves its own project id
+    // from `@supabase/config` — pin it so the recreated container name matches
+    // the spawner route's assumption (same as the apply-failure reset test).
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [true], // accept the staged export's reset offer
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      // The export source is stated before the snapshot, so stale local drift
+      // cannot silently become the staged declarative tree.
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "Exporting from the running local database (not the migrations state).",
+      );
+      // Accepting the offer really reset the local database before the export.
+      expect(legacyLocalResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("cancels compatibility resolution without schema or migration writes", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "uuid-ossp";\n',
+      removals: { extensions: ["uuid-ossp"], extensionIntents: [] },
+      promptSelectResponses: ["cancel"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("suppresses the compatibility warning when a next export manifest is present", () => {
+    seedDeclarative(tmp.current);
+    writeFileSync(
+      join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
+      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
+    );
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const output = stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""));
+      expect(output).not.toContain("may have been generated by the legacy engine");
+      expect(output).toContain("Found destructive changes");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("--name overrides the migration filename stem", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
@@ -1043,6 +1507,38 @@ describe("legacy db schema declarative sync integration", () => {
       const networkIndex = createArgs?.indexOf("--network") ?? -1;
       expect(networkIndex).toBeGreaterThanOrEqual(0);
       expect(createArgs?.[networkIndex + 1]).toBe("my_net");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next engine preserves ordered migration segments as separate files", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      renderedFiles: [
+        {
+          sequence: 1,
+          name: "transactional",
+          suffix: "_1",
+          sql: "ALTER TABLE a ADD COLUMN b int;",
+          transactionMode: "transactional",
+        },
+        {
+          sequence: 2,
+          name: "non_transactional",
+          suffix: "_2",
+          sql: "ALTER TYPE mood ADD VALUE 'fine';",
+          transactionMode: "none",
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations")).sort();
+      expect(migrations).toHaveLength(2);
+      expect(migrations[0]).toMatch(/^\d{14}_declarative_sync_1\.sql$/);
+      expect(migrations[1]).toMatch(/^\d{14}_declarative_sync_2\.sql$/);
+      expect(s.exportCatalogCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 });

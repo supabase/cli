@@ -1,14 +1,12 @@
 import { Context, Effect, Layer, ManagedRuntime, type FileSystem } from "effect";
-import { fromCallback, isBooleanAnswer, isFinished } from "./callback.ts";
-import { UnsafeManagedStackPathError } from "./model.ts";
+import { fromCallback, isFinished } from "./callback.ts";
+import { IncompatibleManagedRegistryError, UnsafeManagedStackPathError } from "./model.ts";
 import type {
   InvalidManagedOwnerPidError,
-  ManagedCheckoutLocation,
   ManagedOperationRecord,
   ManagedStackConfiguration,
   ManagedStackProjection,
   ManagedStackRecord,
-  UnsupportedManagedRegistryVersionError,
 } from "./model.ts";
 import { failsWith } from "./failure.ts";
 import { gitConfigStoreLayer } from "./git.ts";
@@ -18,7 +16,10 @@ import {
   resolveManagedStateRoot,
 } from "./paths.ts";
 import { assertManagedOwnerPid, ManagedStackRepository } from "./repository.ts";
-import type { ManagedStackRepositoryShape } from "./repository.ts";
+import type {
+  AbandonManagedIdentityTransitionResult,
+  ManagedStackRepositoryShape,
+} from "./repository.ts";
 import {
   ManagedStackService,
   type DeleteManagedStackResult,
@@ -26,8 +27,13 @@ import {
   type ManagedStackServiceOptions,
   type ReconcileAbandonedOperationsResult,
   type ResolveManagedStackOperation,
+  type ManagedCheckoutRecoveryRequest,
+  type ManagedIdentityTransitionAbandonRequest,
   type StartedManagedStackResolution,
+  type ManagedPruneRequest,
+  type ManagedPruneResult,
 } from "./service.ts";
+import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 
 export interface MakeManagedStackServiceOptions extends ManagedStackServiceOptions {
   readonly repository: ManagedStackRepositoryShape;
@@ -82,10 +88,17 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly repository: ManagedStackRepositoryShape;
   /** A `start` always settles on a stack, which the narrower overload reports. */
+  discoverWorkspace(workspacePath: string): Promise<ManagedWorkspaceDiscovery>;
   resolveStack(
     options: ResolveManagedStackRequest & { readonly operation: "start" },
   ): Promise<StartedManagedStackResolution>;
   resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
+  newCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  adoptContext(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  abandonIdentityTransition(
+    options: ManagedIdentityTransitionAbandonRequest,
+  ): Promise<AbandonManagedIdentityTransitionResult>;
   inspectStack(stackId: string): Promise<ManagedStackProjection | undefined>;
   listStacks(options?: {
     readonly includeTombstoned?: boolean;
@@ -101,9 +114,7 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   reconcileAbandonedOperations(
     options: ReconcileAbandonedOperationsRequest,
   ): Promise<ReconcileAbandonedOperationsResult>;
-  pruneCheckoutLocations(
-    shouldPrune: (location: ManagedCheckoutLocation) => boolean | Promise<boolean>,
-  ): Promise<number>;
+  prune(request: ManagedPruneRequest): Promise<ManagedPruneResult>;
   close(): Promise<void>;
 }
 
@@ -145,12 +156,14 @@ const managedStackServiceHandle = async <ER>(
    * message, or stack. While the handle is open, every failure is the failure
    * itself and passes through untouched.
    */
-  const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-    runtime.runPromise(effect).catch((error: unknown) => {
-      throw closed
+  const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> => {
+    const callWasClosed = closed;
+    return runtime.runPromise(effect).catch((error: unknown) => {
+      throw callWasClosed
         ? new Error(`The managed stack service handle is closed (${String(error)})`)
         : error;
     });
+  };
 
   /**
    * A function declaration rather than a property initializer, so the handle's
@@ -186,7 +199,12 @@ const managedStackServiceHandle = async <ER>(
   return {
     stateRoot: service.stateRoot,
     repository,
+    discoverWorkspace: (workspacePath) => run(service.discoverWorkspace(workspacePath)),
     resolveStack,
+    newCheckout: (options) => run(service.newCheckout(options)),
+    rebindCheckout: (options) => run(service.rebindCheckout(options)),
+    adoptContext: (options) => run(service.adoptContext(options)),
+    abandonIdentityTransition: (options) => run(service.abandonIdentityTransition(options)),
     inspectStack: (stackId) => run(service.inspectStack(stackId)),
     listStacks: (options) => run(service.listStacks(options)),
     updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),
@@ -210,12 +228,7 @@ const managedStackServiceHandle = async <ER>(
         ),
       );
     },
-    pruneCheckoutLocations: (shouldPrune) =>
-      run(
-        service.pruneCheckoutLocations((location) =>
-          fromCallback(() => shouldPrune(location), isBooleanAnswer),
-        ),
-      ),
+    prune: (request) => run(service.prune(request)),
     close: dispose,
     [Symbol.asyncDispose]: dispose,
   };
@@ -224,20 +237,17 @@ const managedStackServiceHandle = async <ER>(
 /**
  * What building a managed stack layer can refuse.
  *
- * {@link UnsupportedManagedRegistryVersionError} is the one an embedder can act
- * on — the registry on disk was written by a newer CLI — so it stays in the error
- * channel rather than being turned into a defect: an Effect consumer must be able
- * to `catchTag` it. The other two are option bugs the layer refuses to start
+ * The state-root and owner-pid errors are option bugs the layer refuses to start
  * with.
  */
 export type ManagedStackLayerFailure =
+  | IncompatibleManagedRegistryError
   | InvalidManagedOwnerPidError
-  | UnsafeManagedStackPathError
-  | UnsupportedManagedRegistryVersionError;
+  | UnsafeManagedStackPathError;
 
 const serviceLayer = (
   options: ManagedStackServiceOptions,
-  repositoryLayer: Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  repositoryLayer: Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   ManagedStackService.make(options).pipe(
@@ -266,7 +276,7 @@ export const managedStackLayerWith = (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
   openRepository: (
     registryPath: string,
-  ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  ) => Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   options: CreateManagedStackServiceOptions,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   Layer.unwrap(
@@ -326,7 +336,7 @@ export const createManagedStackServiceWith = async (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
   openRepository: (
     registryPath: string,
-  ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  ) => Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   options: CreateManagedStackServiceOptions,
 ): Promise<ManagedStackServiceHandle> => {
   // Validated here as well as in the layer, so a caller that supplied an

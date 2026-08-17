@@ -6,6 +6,10 @@ health poll → write `.env` → `db push` → start suggestion. Every step is n
 including the migration push (`legacyDbPushCore`, shared with the standalone `supabase db push`
 command — see Notes).
 
+The push step uses the bundled in-process pg-delta engine by default. Set
+`SUPABASE_USE_PG_DELTA_NEXT=false` to retain legacy catalog warming; only that
+path uses the runtime pg-delta package/edge-runtime settings and catalog cache.
+
 ## Files Read
 
 | Path                                                               | Format     | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -20,7 +24,8 @@ command — see Notes).
 | `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `<workdir>/supabase/.temp/edge-runtime-version`                    | plain text | native push step's migrations-catalog cache (pg-delta), when a pinned edge-runtime image tag exists — resolved against the bootstrap workdir explicitly, not `cliConfig.workdir` (which is stale after this handler's own `process.chdir`)                                                                                                                                                                                                                                                                                                 |
+| `<workdir>/supabase/.temp/pgdelta-version`                         | plain text | loaded for compatibility; used only by the legacy pg-delta opt-out                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/.temp/edge-runtime-version`                    | plain text | legacy opt-out's catalog warmup image tag, resolved against the bootstrap workdir                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -31,8 +36,8 @@ command — see Notes).
 | `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)                                                                                                              |
 | `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                                                                                                                             |
 | `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                        |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json`                       | JSON       | native push step, best-effort, after a successful migration apply, when pg-delta is enabled (a failure only warns on stderr and never fails the push)             |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                                              | PEM        | native push step, same pg-delta gate, when the target requires SSL                                                                                                |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json`                       | JSON       | legacy pg-delta opt-out, best-effort after migration apply (write failure only warns)                                                                             |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                                              | PEM        | legacy pg-delta opt-out, when the target requires SSL                                                                                                             |
 | `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliConfig.workdir` |
 | `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)                                                                                                             |
 
@@ -64,17 +69,18 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                                                                                                             | Required? |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_WORKDIR`                 | target dir (`--workdir` flag → env → prompt → cwd)                                                                                                  | no        |
-| `SUPABASE_DB_PASSWORD`             | DB password (`-p` flag → env → prompt/generate)                                                                                                     | no        |
-| `GITHUB_TOKEN`                     | raise the GitHub API rate limit for template fetch                                                                                                  | no        |
-| `SUPABASE_ACCESS_TOKEN`            | auth bypass for ensure-login                                                                                                                        | no        |
-| `SUPABASE_PROFILE`                 | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                        | no        |
-| `SUPABASE_YES`                     | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the push step's migrations-catalog cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware (see Files Read)         | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the push step's pg-delta edge-runtime image registry, read project-`.env`-aware (see Files Read)                                          | no        |
-| `PGDELTA_NPM_REGISTRY`             | overrides the push step's pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward), read project-`.env`-aware (see Files Read) | no        |
+| Variable                           | Purpose                                                                                                              | Required? |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_WORKDIR`                 | target dir (`--workdir` flag → env → prompt → cwd)                                                                   | no        |
+| `SUPABASE_DB_PASSWORD`             | DB password (`-p` flag → env → prompt/generate)                                                                      | no        |
+| `GITHUB_TOKEN`                     | raise the GitHub API rate limit for template fetch                                                                   | no        |
+| `SUPABASE_ACCESS_TOKEN`            | auth bypass for ensure-login                                                                                         | no        |
+| `SUPABASE_PROFILE`                 | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                         | no        |
+| `SUPABASE_YES`                     | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                 | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the legacy opt-out's catalog cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`       | set to `false` for legacy catalog warming, read project-`.env`-aware                                                 | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | legacy opt-out's edge-runtime image registry, read project-`.env`-aware                                              | no        |
+| `PGDELTA_NPM_REGISTRY`             | legacy opt-out's edge-runtime npm registry, read project-`.env`-aware                                                | no        |
 
 ## Exit Codes
 

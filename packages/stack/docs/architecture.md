@@ -7,7 +7,7 @@ delegated to [`@supabase/process-compose`](../../process-compose/docs/architectu
 
 ## Public entrypoints
 
-The package exposes three levels of Interface:
+The package exposes four levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
@@ -15,8 +15,9 @@ The package exposes three levels of Interface:
   Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
 - `@supabase/stack/managed` selects the Node or Bun SQLite Adapter and exposes managed identity,
   discovery, persistence, and lifecycle coordination. Its repository can be replaced by a caller.
-- `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
-  consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
+- `@supabase/stack/testing` exposes test-only tags plus contract fixtures, validators, the
+  in-memory repository seam, and transport helpers. Runtime implementation tags do not leak
+  through the root or Effect barrels.
 
 Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
 socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
@@ -299,7 +300,7 @@ classifier — can branch on failures without requiring an Effect runtime at thi
 boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two so a consumer keying a table by one and
 dispatching on the other cannot drift.
 
-The managed surface owns a versioned SQLite registry with separate records for projects,
+The managed surface owns the current unreleased SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations. A
 checkout records what it physically is — a primary git checkout, a linked worktree, a bare
 repository's worktree, or an ordinary folder — and has exactly one canonical location, which is its
@@ -366,22 +367,31 @@ branch locator — without resolving any workspace. Those joined fields are repo
 authoritative: a canonical path disappears when its location is pruned, and a branch locator is only
 whatever the branch was called when the context was last resolved.
 
+Discovery and recovery deliberately separate observation from mutation. Branch renames and in-place
+ref updates keep the same branch context, while branch copies, detached `HEAD`, linked-worktree
+moves, recycled folders, and folder-to-Git changes are reported as duplicate, moved, orphaned,
+ambiguous, adoptable, or transitioning states. A report can carry a typed `newCheckout`,
+`rebindCheckout`, `adoptContext`, or `prune` operation; callers pass the exact
+operation back to the service after reviewing its IDs and paths. Location history is explicit:
+`active` is the current claim, `superseded` is historical evidence, and `blocked` preserves a
+conflict. Recovery never infers a new identity from a path alone and never removes stack records or
+mutable runtime data.
+
 The managed state root is explicitly injectable. Otherwise it resolves from `SUPABASE_HOME` or
 the platform application-state directory. Every physical stack path is keyed only by its opaque
 stack UUID:
 
 ```text
 <managedStateRoot>/
-  registry-v4.sqlite3
+  registry.sqlite3
   stacks/<stackId>/
     data/
     logs/
     runtime/
 ```
 
-Schema v4 intentionally has no migration path for this unreleased POC. Before first use of v4,
-developers holding any earlier `registry-v*.sqlite3` must remove the old managed state root,
-including its shared `stacks/` directory; registry generations must not be kept side by side.
+The registry format is an unreleased internal contract. It is used directly with no legacy-format or
+compatibility promise; callers should treat the managed state root as belonging to the current build.
 The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
 value fails instead of silently anchoring managed state to the process' working directory. An
 explicit root is a decision and a blank one is a caller bug; a blank environment value is instead
@@ -447,8 +457,11 @@ continues to occupy its ports.
 Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
 tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
 leftover tombstoned data reclamation. Once tombstoned, unsafe or failed filesystem cleanup is
-reported as retained data rather than making future deletion non-idempotent. Prune removes checkout
-location metadata only. The delete outcome describes the registry tombstone, not guaranteed disk
+reported as retained data rather than making future deletion non-idempotent. Prune accepts explicit
+location IDs or a discovery-produced `prune` operation and removes checkout location metadata only.
+Active and blocked history, unfinished-transition references, and the sole evidence of a conflict are
+protected; the result reports removed and preserved IDs. Prune never changes stack rows, mutable data,
+runtime metadata, Git config, or identity markers. The delete outcome describes the registry tombstone, not guaranteed disk
 reclamation: callers must inspect `dataReclamation`, surface retained errors, and arrange a later
 retry. Lifecycle transitions likewise trust the caller to stop the real runtime before declaring a
 port-occupying stack stopped and releasing its lease. Runtime qualification, legacy bootstrap
@@ -465,30 +478,32 @@ The managed surface is two `Context.Service` tags, each with layer factories:
   `Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository())`, since the
   in-memory factory from `@supabase/stack/testing` returns the Effect-shaped service object directly.
   The contract contains no SQLite types, so the adapter is swappable without the policy layer
-  noticing. Opening a registry whose schema version is neither zero nor the supported version fails
-  the layer with `UnsupportedManagedRegistryVersionError`.
-- `ManagedStackService` is the policy layer described above: workspace classification, identity
-  ownership, provisioning order, publication waiting, deletion, and recovery.
+  noticing. A fresh registry creates the current format directly; incomplete existing registries
+  fail closed rather than being migrated.
+- `ManagedStackService` is the public composition facade and orchestration seam over the
+  `workspace-identity.ts` and `stack-lifecycle.ts` policy modules.
   `ManagedStackService.make(options)` returns a layer requiring
   `FileSystem.FileSystem | GitConfigStore | ManagedStackRepository` and failing with
   `InvalidManagedOwnerPidError | UnsafeManagedStackPathError`, so a blank state root or an owner PID
   that could never be probed is refused while the layer is being built rather than at whichever call
   first touches a path.
 
+Current policy ownership is explicit: `workspace-identity.ts` owns workspace discovery, identity,
+and recovery policy; `stack-lifecycle.ts` owns stack lifecycle, operation, and reclamation policy.
+
 `managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
 composed with the platform filesystem and the state root resolved by the one resolver that owns that
 policy. It is the assembly an Effect consumer provides _and_ the one the Promise facade runs behind its
-handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure`: the state-root and
-owner-PID refusals above plus `UnsupportedManagedRegistryVersionError`. Nothing on that path is turned
-into a defect, so the one registry failure a caller can act on — the registry was written by a newer
-CLI — stays recoverable with `catchTag` instead of being unreachable behind an `orDie`.
+handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure` for state-root and
+owner-PID refusals. Callers receive typed option and managed-operation failures declared by each
+method.
 
 Each method declares only the failures it can actually raise, rather than one service-wide union:
 `resolveStack` carries `ResolveManagedStackFailure`, `updateStack` carries
 `UpdateManagedStackConfigurationFailure`, `deleteStack` carries `DeleteManagedStackFailure`, and
-`inspectStack` and `listStacks` cannot fail at all. `deleteStack` and `pruneCheckoutLocations` are additionally generic
-in their callback's error type, so a `stop` callback's own failure reaches the caller unchanged — a
-stack that refused to stop was not deleted. Recovery reports rather than fails: only a forced target
+`inspectStack` and `listStacks` cannot fail at all. `prune` accepts only explicit IDs or a typed
+discovery recovery operation, so it cannot infer a stale path or invoke a caller callback.
+Recovery reports rather than fails: only a forced target
 that is not a pair of managed UUIDs refuses a whole pass, so `reconcileAbandonedOperations` declares
 just `InvalidManagedIdentityError` and returns retained claims, skips, and failures in its result.
 
@@ -574,11 +589,11 @@ than incidental:
 
 - **Acquisition is asynchronous.** Both factories return a `Promise<ManagedStackServiceHandle>` and
   build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
-  file is created and hardened, its schema read, and a cold start may have to wait out another
+  file is created and hardened, and a cold start may have to wait out another
   process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
-  blank state root, an owner PID that could never be probed, and a registry written by an
-  unsupported schema version all reject with the same typed error instances, so a caller has one
-  failure channel instead of a throw plus a rejection.
+  blank state root, an owner PID that could never be probed, an incompatible registry, or invalid
+  options reject with typed error instances, so a caller has one failure channel instead of a throw
+  plus a rejection.
 - **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
   inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
   and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain

@@ -5,6 +5,7 @@ packages:
 
 allowBuilds:
   '@parcel/watcher': true
+  '@launchql/protobufjs': true
   "@swc/core": true
   esbuild: true
   msgpackr-extract: true
@@ -37,6 +38,8 @@ blockExoticSubdeps: true
 
 overrides:
   "@effect/platform-node-shared": "4.0.0-beta.103"
+  # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
+  "@launchql/protobufjs>@types/node": "24.10.4"
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
@@ -46,6 +49,8 @@ minimumReleaseAgeExclude:
   - "@effect/platform-node-shared@4.0.0-beta.103"
   - "@effect/sql-pg@4.0.0-beta.103"
   - "@effect/vitest@4.0.0-beta.103"
+  - "@supabase/pg-delta@1.0.0-alpha.42"
+  - "@supabase/pg-topo@1.0.0-alpha.5"
   - "effect@4.0.0-beta.103"
 
 supportedArchitectures:
@@ -62,3 +67,6 @@ supportedArchitectures:
     - darwin
     - linux
     - win32
+
+patchedDependencies:
+  '@libpg-query/parser@17.6.10': patches/@libpg-query__parser@17.6.10.patch

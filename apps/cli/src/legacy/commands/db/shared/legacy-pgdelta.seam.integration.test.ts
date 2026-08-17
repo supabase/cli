@@ -208,7 +208,7 @@ describe("legacyDeclarativeSeamLayer.exportCatalog", () => {
     "writes catalog-nocache-declarative.json on --no-cache, applying the declarative directory first",
     () => {
       const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const declDir = join(dir, "supabase", "database");
+      const declDir = join(dir, "supabase", "schemas");
       mkdirSync(declDir, { recursive: true });
       writeFileSync(join(declDir, "public.sql"), "create table t ();");
       const { layer, edgeCalls, shadowSpawned } = setup(dir);

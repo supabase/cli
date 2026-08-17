@@ -1,6 +1,9 @@
 // Pure diff-engine resolution shared by `db diff` and `db pull`. No Effect / service
 // dependencies — unit-tested directly.
 
+export const legacySchemaPathsTransitionWarning =
+  "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
+
 /**
  * Whether pg-delta is the active default engine. Mirrors `shouldUsePgDelta`:
  * `utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")`.

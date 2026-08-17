@@ -94,13 +94,8 @@ export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): 
   return resolveManagedStateRoot({ stateRoot });
 };
 
-/**
- * The registry file, named after the schema generation it holds. A generation
- * has no migration path in this unreleased POC, so the name is what keeps an
- * older generation's file from being opened and refused by a newer CLI.
- */
 export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry-v4.sqlite3");
+  join(stateRoot, "registry.sqlite3");
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
   assertManagedUuid(stackId, "stackId");

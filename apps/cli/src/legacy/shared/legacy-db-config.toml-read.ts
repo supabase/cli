@@ -86,6 +86,8 @@ export interface LegacyDbTomlValues {
    * (`db schema declarative generate` / `sync`). Mirrors `PgDeltaConfig`.
    */
   readonly pgDelta: LegacyPgDeltaTomlConfig;
+  /** Effective `[experimental.webhooks].enabled`; false when the section is absent. */
+  readonly webhooksEnabled: boolean;
   /**
    * The subset of config that shapes the shadow-database platform baseline and
    * therefore the declarative catalog-cache key (`setupInputsToken`). Drift in
@@ -195,7 +197,7 @@ export interface LegacyPgDeltaTomlConfig {
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
    * `supabase/`-prefixed path when relative. `None` → callers use the default
-   * `supabase/database` (`legacyResolveDeclarativeDir`).
+   * `supabase/schemas` (`legacyResolveDeclarativeDir`).
    */
   readonly declarativeSchemaPath: Option.Option<string>;
   /** `[experimental.pgdelta] format_options`, a JSON string passed to pg-delta. */
@@ -213,7 +215,7 @@ const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
 const DEFAULT_DENO_VERSION = 2;
 
 /** Default declarative schema dir. */
-const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "database"] as const;
+const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "schemas"] as const;
 
 type RawDoc = { readonly [key: string]: unknown };
 
@@ -979,8 +981,8 @@ const DEFAULT_SUPABASE_ENV = "development";
  * `process.env` (no project-env map path) and must reflect `supabase/.env`:
  * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`) and
  * `PGDELTA_NPM_REGISTRY` (`legacyPgDeltaNpmRegistryOption`, read straight from
- * `process.env` for every pg-delta edge-runtime invocation — diff, declarative
- * export/sync, and the push/pull/dump migrations-catalog cache). Go's
+ * `process.env` for legacy-opt-out pg-delta edge-runtime invocations). The bundled
+ * next implementation never consults it. Go's
  * `godotenv.Load` (`loadNestedEnv`) `os.Setenv`s every key from the project
  * `.env`, so both readers see a `.env`-only value there; omitting either here
  * would leave that one process.env-only reader blind to a project-`.env`-scoped
@@ -1517,9 +1519,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
-  // The pg-delta npm version is read from `.temp/pgdelta-version` (trimmed, non-empty)
-  // during load, never from the TOML. An absent/empty file leaves it `None` (callers
-  // fall back to the default via `legacyEffectivePgDeltaNpmVersion`).
+  // The legacy pg-delta npm version is read from
+  // `.temp/pgdelta-version` (trimmed, non-empty) during Load, never from the
+  // TOML. An absent/empty file leaves it `None` (callers fall back to the
+  // default via `legacyEffectivePgDeltaNpmVersion`). The bundled next engine is
+  // fixed at CLI build time and ignores this compatibility setting.
   const pgDeltaVersionPath = path.join(supabaseDir, ".temp", "pgdelta-version");
   const pgDeltaNpmVersion = yield* fs.readFileString(pgDeltaVersionPath).pipe(
     Effect.map((content) => nonEmptyString(content.trim())),
@@ -2692,6 +2696,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       formatOptions,
       npmVersion: pgDeltaNpmVersion,
     },
+    webhooksEnabled,
     baseline: {
       authEnabled,
       storageEnabled: yield* resolveBoolOrFail(
@@ -2790,7 +2795,7 @@ export const legacyReadDbToml = (
 /**
  * The effective declarative schema directory: the configured
  * `declarative_schema_path` (already `supabase/`-prefixed when relative) or the
- * default `supabase/database`. Mirrors `utils.GetDeclarativeDir`.
+ * default `supabase/schemas`. Mirrors `utils.GetDeclarativeDir`.
  * `path` joins the segments so
  * the separator matches the host platform, as `filepath.Join` does.
  */

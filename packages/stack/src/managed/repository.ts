@@ -8,6 +8,14 @@ import {
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
   DuplicateManagedIdentityError,
+  ManagedCheckoutConflictError,
+  ManagedCopiedBranchConflictError,
+  ManagedIdentityTransitionOwnershipError,
+  ManagedInaccessiblePathError,
+  type ManagedIdentityClaims,
+  type ManagedIdentityTransitionKind,
+  type ManagedIdentityTransitionPhase,
+  type ManagedIdentityTransitionRecord,
   type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
   type ManagedCheckoutScopedContextKind,
@@ -84,11 +92,768 @@ export const decideManagedContextRegistration = (
       checkoutId: input.context.kind === "branch" ? undefined : input.checkoutId,
       kind: input.context.kind,
       locator: input.context.kind === "branch" ? input.context.locator : undefined,
+      ownerBranch: input.context.kind === "branch" ? input.context.locator : undefined,
       createdAt: input.now,
     },
   };
 };
+export interface ApplyManagedCheckoutLocationInput {
+  readonly checkoutId: string;
+  readonly locationId: string;
+  readonly canonicalPath: string;
+  readonly now: string;
+  /**
+   * When returning to a superseded path, the discovery probe must identify the
+   * exact active row it proved missing. The repository rechecks that CAS token
+   * under its transaction so two live locations can never be recovered by
+   * guesswork.
+   */
+  readonly expectedActiveLocationId?: string;
+}
 
+export interface ManagedCheckoutLocationDecision {
+  readonly outcome: "active" | "rebound" | "blocked";
+  readonly location: ManagedCheckoutLocation;
+  readonly supersededLocationId?: string;
+  readonly updates?: ReadonlyArray<ManagedCheckoutLocation>;
+}
+
+export interface ManagedCheckoutLocationDecisionInput {
+  readonly requested: ApplyManagedCheckoutLocationInput;
+  readonly checkoutLocations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly checkoutExists: boolean;
+}
+
+export interface RegisterManagedCheckoutIdentityInput {
+  readonly identity: ManagedIdentityTriple;
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly checkoutRootPath: string;
+  readonly locationId: string;
+  readonly context: ManagedContextDescriptor;
+  readonly now: string;
+}
+
+export interface ManagedCheckoutIdentityRegistration {
+  readonly identity: ManagedIdentityTriple;
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly contextId: string;
+  readonly context: ManagedContextRecord;
+  readonly location: ManagedCheckoutLocation;
+}
+
+export type ManagedCheckoutIdentityRegistrationFailure =
+  | DuplicateManagedIdentityError
+  | ManagedIdentityRecoveryError;
+
+export interface ManagedCheckoutIdentityDecisionInput {
+  readonly requested: RegisterManagedCheckoutIdentityInput;
+  readonly existingCheckout?: { readonly projectId: string; readonly kind: ManagedCheckoutKind };
+  readonly checkoutLocations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly checkoutScopedExisting?: ManagedContextRecord;
+  readonly requestedExisting?: ManagedContextRecord;
+}
+
+export interface ManagedCheckoutIdentityDecision {
+  readonly registration: ManagedCheckoutIdentityRegistration;
+  readonly locationDecision: ManagedCheckoutLocationDecision;
+}
+
+export const decideManagedCheckoutIdentity = (
+  input: ManagedCheckoutIdentityDecisionInput,
+): ManagedCheckoutIdentityDecision => {
+  if (
+    input.existingCheckout !== undefined &&
+    input.existingCheckout.projectId !== input.requested.identity.projectId
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.requested.identity.checkoutId,
+      existingClaim: input.existingCheckout.projectId,
+      requestedClaim: input.requested.identity.projectId,
+    });
+  }
+  const contextDecision = decideManagedContextRegistration({
+    requestedId: input.requested.identity.contextId,
+    projectId: input.requested.identity.projectId,
+    checkoutId: input.requested.identity.checkoutId,
+    context: input.requested.context,
+    now: input.requested.now,
+    checkoutScopedExisting: input.checkoutScopedExisting,
+    requestedExisting: input.requestedExisting,
+  });
+  const context =
+    contextDecision.outcome === "create"
+      ? contextDecision.context
+      : input.requestedExisting === undefined
+        ? input.checkoutScopedExisting
+        : {
+            ...input.requestedExisting,
+            locator: contextDecision.refreshLocator ?? input.requestedExisting.locator,
+          };
+  if (context === undefined) {
+    throw new Error("Managed context decision did not identify a context row");
+  }
+  const locationDecision = decideManagedCheckoutLocation({
+    requested: {
+      checkoutId: input.requested.identity.checkoutId,
+      locationId: input.requested.locationId,
+      canonicalPath: input.requested.checkoutRootPath,
+      now: input.requested.now,
+    },
+    checkoutLocations: input.checkoutLocations,
+    checkoutExists: true,
+  });
+  if (locationDecision.outcome === "blocked") {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.identity.checkoutId,
+      canonicalPath: input.requested.checkoutRootPath,
+    });
+  }
+  return {
+    registration: {
+      identity: {
+        ...input.requested.identity,
+        contextId: context.id,
+      },
+      checkoutKind: input.requested.checkoutKind,
+      contextId: context.id,
+      context,
+      location: locationDecision.location,
+    },
+    locationDecision,
+  };
+};
+
+/** Shared location policy. Adapters only persist the returned rows atomically. */
+export const decideManagedCheckoutLocation = (
+  input: ManagedCheckoutLocationDecisionInput,
+): ManagedCheckoutLocationDecision => {
+  if (input.checkoutExists === false) {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+    });
+  }
+  const byId = input.checkoutLocations.find((row) => row.id === input.requested.locationId);
+  if (
+    byId !== undefined &&
+    (byId.checkoutId !== input.requested.checkoutId ||
+      byId.canonicalPath !== input.requested.canonicalPath)
+  ) {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+      existingCheckoutId: byId.checkoutId,
+    });
+  }
+  if (input.requested.canonicalPath.trim().length === 0) {
+    throw new ManagedInaccessiblePathError({ path: input.requested.canonicalPath });
+  }
+  const checkoutRows = input.checkoutLocations.filter(
+    (row) => row.checkoutId === input.requested.checkoutId,
+  );
+  const pathRows = input.checkoutLocations.filter(
+    (row) => row.canonicalPath === input.requested.canonicalPath,
+  );
+  // A superseded row is historical provenance, not a live claim. It must not
+  // block a different checkout from reusing a path the original checkout has
+  // vacated; active and blocked rows remain hard conflicts.
+  const conflictingPath = pathRows.find(
+    (row) => row.checkoutId !== input.requested.checkoutId && row.state !== "superseded",
+  );
+  if (conflictingPath !== undefined) {
+    const location: ManagedCheckoutLocation = {
+      id: input.requested.locationId,
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+      state: "blocked",
+      lastSeenAt: input.requested.now,
+    };
+    return {
+      outcome: "blocked",
+      location,
+      supersededLocationId: conflictingPath.id,
+      updates: [
+        { ...conflictingPath, state: "blocked", lastSeenAt: input.requested.now },
+        location,
+      ],
+    };
+  }
+  const supersededPath = pathRows.find(
+    (row) => row.checkoutId === input.requested.checkoutId && row.state === "superseded",
+  );
+  const activeCheckoutLocation = checkoutRows.find((row) => row.state === "active");
+  const activePath = pathRows.find(
+    (row) => row.checkoutId === input.requested.checkoutId && row.state === "active",
+  );
+  if (activePath !== undefined) {
+    return {
+      outcome: "active",
+      location: { ...activePath, lastSeenAt: input.requested.now },
+    };
+  }
+  const blockedPath = pathRows.find(
+    (row) => row.checkoutId === input.requested.checkoutId && row.state === "blocked",
+  );
+  if (blockedPath !== undefined) {
+    return {
+      outcome: "blocked",
+      location: { ...blockedPath, lastSeenAt: input.requested.now },
+      updates: [{ ...blockedPath, lastSeenAt: input.requested.now }],
+    };
+  }
+  if (
+    supersededPath !== undefined &&
+    activeCheckoutLocation !== undefined &&
+    input.requested.expectedActiveLocationId === activeCheckoutLocation.id
+  ) {
+    return {
+      outcome: "rebound",
+      supersededLocationId: activeCheckoutLocation.id,
+      updates: [
+        { ...activeCheckoutLocation, state: "superseded", lastSeenAt: input.requested.now },
+      ],
+      location: {
+        id: input.requested.locationId,
+        checkoutId: input.requested.checkoutId,
+        canonicalPath: input.requested.canonicalPath,
+        state: "active",
+        reboundFromLocationId: activeCheckoutLocation.id,
+        lastSeenAt: input.requested.now,
+      },
+    };
+  }
+  if (supersededPath !== undefined && activeCheckoutLocation !== undefined) {
+    const location: ManagedCheckoutLocation = {
+      ...supersededPath,
+      state: "blocked",
+      lastSeenAt: input.requested.now,
+    };
+    return {
+      outcome: "blocked",
+      location,
+      supersededLocationId: activeCheckoutLocation.id,
+      updates: [
+        { ...supersededPath, state: "blocked", lastSeenAt: input.requested.now },
+        { ...activeCheckoutLocation, state: "blocked", lastSeenAt: input.requested.now },
+      ],
+    };
+  }
+  if (supersededPath !== undefined) {
+    return {
+      outcome: "blocked",
+      location: { ...supersededPath, state: "blocked", lastSeenAt: input.requested.now },
+      updates: [{ ...supersededPath, state: "blocked", lastSeenAt: input.requested.now }],
+    };
+  }
+  const active = checkoutRows.find((row) => row.state === "active");
+  if (active === undefined) {
+    return {
+      outcome: "active",
+      location: {
+        id: input.requested.locationId,
+        checkoutId: input.requested.checkoutId,
+        canonicalPath: input.requested.canonicalPath,
+        state: "active",
+        lastSeenAt: input.requested.now,
+      },
+    };
+  }
+  if (
+    input.requested.expectedActiveLocationId !== undefined &&
+    input.requested.expectedActiveLocationId !== active.id
+  ) {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+    });
+  }
+  return {
+    outcome: "rebound",
+    supersededLocationId: active.id,
+    updates: [{ ...active, state: "superseded", lastSeenAt: input.requested.now }],
+    location: {
+      id: input.requested.locationId,
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+      state: "active",
+      reboundFromLocationId: active.id,
+      lastSeenAt: input.requested.now,
+    },
+  };
+};
+
+export interface RefreshManagedContextOwnerInput {
+  readonly contextId: string;
+  readonly ownerBranch: string;
+  readonly locator?: string;
+  /** Require the current owner to still match before publishing a replacement. */
+  readonly expectedOwnerBranch?: string;
+  readonly now: string;
+}
+
+export const decideManagedContextOwnerRefresh = (input: {
+  readonly existing?: ManagedContextRecord;
+  readonly requested: RefreshManagedContextOwnerInput;
+}): ManagedContextRecord => {
+  if (input.existing === undefined || input.existing.kind !== "branch") {
+    throw new ManagedCopiedBranchConflictError({ branch: input.requested.ownerBranch });
+  }
+  if (
+    input.requested.expectedOwnerBranch !== undefined &&
+    input.existing.ownerBranch !== input.requested.expectedOwnerBranch
+  ) {
+    throw new ManagedCopiedBranchConflictError({ branch: input.requested.ownerBranch });
+  }
+  return {
+    ...input.existing,
+    ownerBranch: input.requested.ownerBranch,
+    locator: input.requested.locator ?? input.existing.locator,
+  };
+};
+
+export interface MigrateManagedContextToBranchInput {
+  readonly contextId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly branch: string;
+  readonly now: string;
+}
+
+export type MigrateManagedContextToBranchFailure =
+  | DuplicateManagedIdentityError
+  | ManagedCopiedBranchConflictError;
+
+export interface MigrateManagedContextToDetachedInput {
+  readonly contextId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly now: string;
+}
+
+export type MigrateManagedContextToDetachedFailure = DuplicateManagedIdentityError;
+
+/** Preserves an ordinary context ID while making its ownership checkout-detached. */
+export const decideManagedContextToDetached = (input: {
+  readonly requested: MigrateManagedContextToDetachedInput;
+  readonly existing?: ManagedContextRecord;
+  readonly detachedExisting?: ManagedContextRecord;
+}): ManagedContextRecord => {
+  const { requested, existing, detachedExisting } = input;
+  const requestedClaim = `${requested.projectId}/${requested.checkoutId}/detached`;
+  if (existing === undefined) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: "missing context",
+      requestedClaim,
+    });
+  }
+  if (existing.projectId !== requested.projectId || existing.checkoutId !== requested.checkoutId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: `${existing.projectId}/${existing.checkoutId ?? existing.kind}`,
+      requestedClaim,
+    });
+  }
+  if (detachedExisting !== undefined && detachedExisting.id !== existing.id) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: detachedExisting.id,
+      requestedClaim,
+    });
+  }
+  if (existing.kind === "detached") return existing;
+  if (existing.kind !== "workspace") {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.kind,
+      requestedClaim,
+    });
+  }
+  return { ...existing, kind: "detached", locator: undefined, ownerBranch: undefined };
+};
+
+/**
+ * Decides the one ownership transition that turns an ordinary-folder context
+ * into a project-scoped branch context. Adapters pass every branch context
+ * observed in the same transaction so a copied branch can never win by racing
+ * the conversion. The context id and creation time are deliberately retained:
+ * stacks already pointing at this context remain attached to the same identity.
+ */
+export const decideManagedContextToBranch = (input: {
+  readonly requested: MigrateManagedContextToBranchInput;
+  readonly existing?: ManagedContextRecord;
+  readonly branchContexts: ReadonlyArray<ManagedContextRecord>;
+}): ManagedContextRecord => {
+  const { requested, existing } = input;
+  if (existing === undefined) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: "missing context",
+      requestedClaim: `${requested.projectId}/${requested.checkoutId}`,
+    });
+  }
+  if (existing.projectId !== requested.projectId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.projectId,
+      requestedClaim: requested.projectId,
+    });
+  }
+  const competing = input.branchContexts.find(
+    (candidate) =>
+      candidate.id !== existing.id &&
+      candidate.projectId === requested.projectId &&
+      candidate.kind === "branch" &&
+      (candidate.ownerBranch === requested.branch || candidate.locator === requested.branch),
+  );
+  if (existing.kind === "branch") {
+    if (
+      existing.checkoutId === undefined &&
+      existing.ownerBranch === requested.branch &&
+      existing.locator === requested.branch &&
+      competing === undefined
+    ) {
+      return existing;
+    }
+    throw new ManagedCopiedBranchConflictError({
+      branch: requested.branch,
+      existingContextId: existing.id,
+      requestedContextId: requested.contextId,
+    });
+  }
+  if (existing.kind !== "workspace" || existing.checkoutId !== requested.checkoutId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.checkoutId ?? existing.kind,
+      requestedClaim: requested.checkoutId,
+    });
+  }
+
+  if (competing !== undefined) {
+    throw new ManagedCopiedBranchConflictError({
+      branch: requested.branch,
+      existingContextId: competing.id,
+      requestedContextId: requested.contextId,
+    });
+  }
+
+  return {
+    ...existing,
+    checkoutId: undefined,
+    kind: "branch",
+    locator: requested.branch,
+    ownerBranch: requested.branch,
+  };
+};
+
+export interface ReserveManagedIdentityTransitionInput {
+  readonly id: string;
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly path?: string;
+  readonly projectIdentityLocation?: string;
+  readonly expectedGitValue?: string;
+  readonly targetGitValue?: string;
+  readonly expectedOwnerBranch?: string;
+  readonly now: string;
+}
+
+export interface AdvanceManagedIdentityTransitionInput {
+  readonly id: string;
+  readonly expectedPhase: ManagedIdentityTransitionPhase;
+  readonly phase: ManagedIdentityTransitionPhase;
+  readonly now: string;
+}
+
+export interface FinalizeManagedIdentityTransitionInput {
+  readonly id: string;
+  readonly expectedPhase: ManagedIdentityTransitionPhase;
+  readonly now: string;
+}
+
+export interface AbandonManagedIdentityTransitionInput {
+  readonly id: string;
+  readonly expectedPhase: "reserved";
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly path: string;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly expectedGitValue?: string;
+  readonly targetGitValue?: string;
+  readonly expectedOwnerBranch?: string;
+  readonly projectIdentityLocation?: string;
+}
+
+export type AbandonManagedIdentityTransitionResult =
+  | { readonly outcome: "abandoned" }
+  | { readonly outcome: "already-absent" };
+
+export interface PruneManagedIdentityMetadataInput {
+  readonly locationIds: ReadonlyArray<string>;
+}
+
+export interface PruneManagedIdentityMetadataResult {
+  readonly removed: number;
+  readonly prunedRecordIds: ReadonlyArray<string>;
+  readonly preservedRecordIds: ReadonlyArray<string>;
+  readonly unknownRecordIds: ReadonlyArray<string>;
+}
+
+/** Location rows that discovery may advertise but metadata pruning must retain. */
+export const protectedManagedCheckoutLocationIds = (input: {
+  readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
+}): ReadonlySet<string> => {
+  const protectedIds = new Set(
+    input.locations
+      .filter((location) => location.state === "active" || location.state === "blocked")
+      .map((location) => location.id),
+  );
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const location of input.locations) {
+      if (
+        location.reboundFromLocationId !== undefined &&
+        protectedIds.has(location.id) &&
+        !protectedIds.has(location.reboundFromLocationId)
+      ) {
+        protectedIds.add(location.reboundFromLocationId);
+        expanded = true;
+      }
+    }
+  }
+  for (const transition of input.transitions) {
+    if (transition.phase === "finalized") continue;
+    for (const location of input.locations) {
+      if (
+        (transition.checkoutId !== undefined && transition.checkoutId === location.checkoutId) ||
+        (transition.path !== undefined && transition.path === location.canonicalPath)
+      ) {
+        protectedIds.add(location.id);
+      }
+    }
+  }
+  return protectedIds;
+};
+
+export const decideManagedIdentityMetadataPrune = (input: {
+  readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly locationIds: ReadonlyArray<string>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
+}): PruneManagedIdentityMetadataResult => {
+  const selected = new Set(input.locationIds);
+  const protectedIds = protectedManagedCheckoutLocationIds(input);
+  const prunedRecordIds: string[] = [];
+  const preservedRecordIds: string[] = [];
+  const unknownRecordIds: string[] = [];
+  for (const id of selected) {
+    const location = input.locations.find((candidate) => candidate.id === id);
+    if (location === undefined) {
+      unknownRecordIds.push(id);
+      continue;
+    }
+    if (protectedIds.has(id)) preservedRecordIds.push(id);
+    else prunedRecordIds.push(id);
+  }
+  return {
+    removed: prunedRecordIds.length,
+    prunedRecordIds,
+    preservedRecordIds,
+    unknownRecordIds,
+  };
+};
+
+export type ManagedIdentityRecoveryError =
+  | ManagedCheckoutConflictError
+  | ManagedCopiedBranchConflictError
+  | ManagedIdentityTransitionOwnershipError
+  | ManagedInaccessiblePathError;
+
+export const transitionResourceKeys = (input: {
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly path?: string;
+  readonly projectIdentityLocation?: string;
+}): ReadonlyArray<string> => {
+  const nonEmpty = (value: string | undefined): string | undefined => {
+    const normalized = value?.trim();
+    return normalized === undefined || normalized.length === 0 ? undefined : normalized;
+  };
+  const projectId = nonEmpty(input.projectId);
+  const checkoutId = nonEmpty(input.checkoutId);
+  const contextId = nonEmpty(input.contextId);
+  const branch = nonEmpty(input.branch);
+  const path = nonEmpty(input.path);
+  const projectIdentityLocation = nonEmpty(input.projectIdentityLocation);
+  const keys: string[] = [];
+  if (input.kind === "new-checkout") {
+    if (path !== undefined) keys.push(`path:${path}`);
+    if (projectIdentityLocation !== undefined) {
+      keys.push(`project-identity:${projectIdentityLocation}`);
+    }
+  } else if (input.kind === "rebind-checkout" || input.kind === "folder-to-git") {
+    if (checkoutId !== undefined) keys.push(`checkout:${checkoutId}`);
+    if (path !== undefined) keys.push(`path:${path}`);
+    if (input.kind === "folder-to-git" && projectIdentityLocation !== undefined) {
+      keys.push(`project-identity:${projectIdentityLocation}`);
+    }
+  } else {
+    if (contextId !== undefined) keys.push(`context:${contextId}`);
+    if (projectId !== undefined && branch !== undefined) {
+      keys.push(`branch:${projectId}:${branch}`);
+    }
+  }
+  return keys;
+};
+
+export const decideManagedIdentityTransitionReservation = (input: {
+  readonly requested: ReserveManagedIdentityTransitionInput;
+  readonly existing?: ManagedIdentityTransitionRecord;
+  readonly resourceOwner?: ManagedIdentityTransitionRecord;
+  /** Context owner observed under the adapter's reservation transaction. */
+  readonly contextOwnerBranch?: string;
+  /** Whether the context row was present in that same reservation transaction. */
+  readonly contextPresent?: boolean;
+}): ManagedIdentityTransitionRecord => {
+  const requested = input.requested;
+  const requestedResources = transitionResourceKeys(requested);
+  if (requestedResources.length === 0) {
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: requested.id });
+  }
+  if (input.existing !== undefined) {
+    const same =
+      input.existing.kind === requested.kind &&
+      input.existing.projectId === requested.projectId &&
+      input.existing.checkoutId === requested.checkoutId &&
+      input.existing.contextId === requested.contextId &&
+      input.existing.branch === requested.branch &&
+      input.existing.path === requested.path &&
+      input.existing.projectIdentityLocation === requested.projectIdentityLocation &&
+      input.existing.expectedGitValue === requested.expectedGitValue &&
+      input.existing.targetGitValue === requested.targetGitValue &&
+      input.existing.expectedOwnerBranch === requested.expectedOwnerBranch;
+    if (!same) throw new ManagedIdentityTransitionOwnershipError({ transitionId: requested.id });
+    return input.existing;
+  }
+  if (requested.kind === "adopt-context") {
+    if (
+      requested.contextId === undefined ||
+      input.contextPresent !== true ||
+      requested.branch === undefined ||
+      requested.branch === requested.expectedOwnerBranch ||
+      input.contextOwnerBranch !== requested.expectedOwnerBranch
+    ) {
+      throw new ManagedIdentityTransitionOwnershipError({ transitionId: requested.id });
+    }
+  }
+  if (input.resourceOwner !== undefined && input.resourceOwner.id !== requested.id) {
+    throw new ManagedIdentityTransitionOwnershipError({
+      transitionId: requested.id,
+      resource: requestedResources.join(","),
+    });
+  }
+  return {
+    id: requested.id,
+    kind: requested.kind,
+    phase: "reserved",
+    projectId: requested.projectId,
+    checkoutId: requested.checkoutId,
+    contextId: requested.contextId,
+    branch: requested.branch,
+    path: requested.path,
+    projectIdentityLocation: requested.projectIdentityLocation,
+    expectedGitValue: requested.expectedGitValue,
+    targetGitValue: requested.targetGitValue,
+    expectedOwnerBranch: requested.expectedOwnerBranch,
+    createdAt: requested.now,
+    updatedAt: requested.now,
+  };
+};
+
+export const decideManagedIdentityTransitionAdvance = (
+  existing: ManagedIdentityTransitionRecord,
+  input: AdvanceManagedIdentityTransitionInput,
+): ManagedIdentityTransitionRecord => {
+  if (existing.id !== input.id) {
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  }
+  const predecessor: Readonly<
+    Record<ManagedIdentityTransitionPhase, ManagedIdentityTransitionPhase | undefined>
+  > = {
+    reserved: undefined,
+    "git-written": "reserved",
+    finalized: "git-written",
+  };
+  if (input.phase === existing.phase) {
+    if (
+      input.expectedPhase !== existing.phase &&
+      input.expectedPhase !== predecessor[existing.phase]
+    ) {
+      throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+    }
+    return existing;
+  }
+  if (input.expectedPhase !== existing.phase) {
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  }
+  const nextPhase: Readonly<
+    Record<ManagedIdentityTransitionPhase, ManagedIdentityTransitionPhase | undefined>
+  > = {
+    reserved: "git-written",
+    "git-written": "finalized",
+    finalized: undefined,
+  };
+  if (nextPhase[existing.phase] !== input.phase) {
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  }
+  return { ...existing, phase: input.phase, updatedAt: input.now };
+};
+
+export const decideManagedIdentityTransitionFinalize = (
+  existing: ManagedIdentityTransitionRecord,
+  input: FinalizeManagedIdentityTransitionInput,
+): ManagedIdentityTransitionRecord => {
+  if (input.expectedPhase !== "git-written") {
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  }
+  return decideManagedIdentityTransitionAdvance(existing, {
+    id: input.id,
+    expectedPhase: input.expectedPhase,
+    phase: "finalized",
+    now: input.now,
+  });
+};
+
+export const decideManagedIdentityTransitionAbandon = (
+  existing: ManagedIdentityTransitionRecord | undefined,
+  input: AbandonManagedIdentityTransitionInput,
+): AbandonManagedIdentityTransitionResult => {
+  if (existing === undefined) return { outcome: "already-absent" };
+  const exact =
+    existing.id === input.id &&
+    existing.phase === input.expectedPhase &&
+    existing.kind === input.kind &&
+    existing.path === input.path &&
+    existing.projectId === input.projectId &&
+    existing.checkoutId === input.checkoutId &&
+    existing.contextId === input.contextId &&
+    existing.branch === input.branch &&
+    existing.projectIdentityLocation === input.projectIdentityLocation &&
+    existing.expectedGitValue === input.expectedGitValue &&
+    existing.targetGitValue === input.targetGitValue &&
+    existing.expectedOwnerBranch === input.expectedOwnerBranch;
+  if (!exact) throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  return { outcome: "abandoned" };
+};
 /**
  * Everything one stack registration needs, with every identity already minted by
  * the service: the registry stores the decision, it never makes it.
@@ -170,6 +935,7 @@ export type ReconcileManagedOperationResult =
 
 /** Failures both adapters raise while registering a stack. */
 export type PrepareStackFailure =
+  | ManagedIdentityRecoveryError
   | DuplicateManagedIdentityError
   | DuplicateManagedPortKeyError
   | InvalidManagedOwnerPidError
@@ -218,6 +984,40 @@ export type OwnedManagedStackFailure = ManagedOperationOwnershipError | ManagedS
  * driver error — are defects instead: they are not outcomes a caller can act on.
  */
 export interface ManagedStackRepositoryShape {
+  readonly registerCheckoutIdentity: (
+    input: RegisterManagedCheckoutIdentityInput,
+  ) => Effect.Effect<
+    ManagedCheckoutIdentityRegistration,
+    ManagedCheckoutIdentityRegistrationFailure
+  >;
+  readonly listIdentityClaims: (projectId?: string) => Effect.Effect<ManagedIdentityClaims>;
+  readonly applyCheckoutLocation: (
+    input: ApplyManagedCheckoutLocationInput,
+  ) => Effect.Effect<ManagedCheckoutLocationDecision, ManagedIdentityRecoveryError>;
+  readonly refreshContextOwner: (
+    input: RefreshManagedContextOwnerInput,
+  ) => Effect.Effect<ManagedContextRecord, ManagedIdentityRecoveryError>;
+  readonly migrateContextToBranch: (
+    input: MigrateManagedContextToBranchInput,
+  ) => Effect.Effect<ManagedContextRecord, MigrateManagedContextToBranchFailure>;
+  readonly migrateContextToDetached: (
+    input: MigrateManagedContextToDetachedInput,
+  ) => Effect.Effect<ManagedContextRecord, MigrateManagedContextToDetachedFailure>;
+  readonly reserveIdentityTransition: (
+    input: ReserveManagedIdentityTransitionInput,
+  ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;
+  readonly advanceIdentityTransition: (
+    input: AdvanceManagedIdentityTransitionInput,
+  ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;
+  readonly finalizeIdentityTransition: (
+    input: FinalizeManagedIdentityTransitionInput,
+  ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;
+  readonly abandonIdentityTransition: (
+    input: AbandonManagedIdentityTransitionInput,
+  ) => Effect.Effect<AbandonManagedIdentityTransitionResult, ManagedIdentityRecoveryError>;
+  readonly pruneIdentityMetadata: (
+    input: PruneManagedIdentityMetadataInput,
+  ) => Effect.Effect<PruneManagedIdentityMetadataResult, ManagedIdentityRecoveryError>;
   readonly prepareStack: (
     input: PrepareStackInput,
   ) => Effect.Effect<PrepareStackResult, PrepareStackFailure>;
@@ -288,7 +1088,6 @@ export interface ManagedStackRepositoryShape {
     now: string,
   ) => Effect.Effect<ManagedStackRecord, OwnedManagedStackFailure>;
   readonly listCheckoutLocations: () => Effect.Effect<ReadonlyArray<ManagedCheckoutLocation>>;
-  readonly pruneCheckoutLocations: (locationIds: ReadonlyArray<string>) => Effect.Effect<number>;
 }
 
 /**

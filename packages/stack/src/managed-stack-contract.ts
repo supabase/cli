@@ -24,6 +24,7 @@ export type ManagedStackContractFact =
       readonly kind: "workspace";
       readonly mode: "bare-worktree" | "git" | "linked-worktree" | "ordinary-folder";
       readonly path: string;
+      readonly locationState?: "active" | "superseded" | "blocked";
       readonly canonicalPath?: string;
       readonly previousPath?: string;
       readonly previousPathAccess?: "inaccessible" | "missing" | "reachable";
@@ -34,6 +35,7 @@ export type ManagedStackContractFact =
       readonly kind: "workspace-history";
       readonly path: string;
       readonly previousMode: "ordinary-folder";
+      readonly locationState?: "active" | "superseded" | "blocked";
     }
   | {
       readonly kind: "git-state";
@@ -52,6 +54,7 @@ export type ManagedStackContractFact =
       readonly path?: string;
       readonly owner?: string;
       readonly status: "absent" | "ambiguous" | "duplicate" | "exact";
+      readonly locationState?: "active" | "superseded" | "blocked";
     }
   | {
       readonly kind: "identity-transition";
@@ -72,6 +75,7 @@ export type ManagedStackContractFact =
       readonly from?: string;
       readonly to?: string;
       readonly originalExists?: boolean;
+      readonly phase?: "reserved" | "git-written" | "finalized";
     }
   | {
       readonly kind: "concurrent-operation";
@@ -237,6 +241,11 @@ export interface ManagedStackContractOutput {
   readonly api?: Readonly<Record<string, ManagedStackContractJson>>;
 }
 
+export type ManagedStackContractRecoveryOperation = {
+  readonly operation: "prune";
+  readonly recordIds: ReadonlyArray<string>;
+};
+
 type ManagedStackContractWrite =
   | {
       readonly target: "git-config";
@@ -309,11 +318,13 @@ export interface ManagedStackContractExpectation extends ManagedStackContractEff
     readonly code: string;
     readonly message: string;
     readonly recovery: ReadonlyArray<string>;
+    readonly recoveryOperations?: ReadonlyArray<ManagedStackContractRecoveryOperation>;
   };
   readonly warning?: {
     readonly code: string;
     readonly message: string;
     readonly recovery: ReadonlyArray<string>;
+    readonly recoveryOperations?: ReadonlyArray<ManagedStackContractRecoveryOperation>;
   };
   readonly details?: Readonly<Record<string, ManagedStackContractJson>>;
 }
@@ -802,18 +813,20 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     },
   },
   {
-    id: "identity.manual-ref-replacement-orphans-context",
-    title: "Replacing a branch ref manually creates a new context and orphans the old one",
+    id: "identity.in-place-ref-update-preserves-context",
+    title: "Updating a branch ref in place preserves its context and stack",
     area: "identity",
     given: [
-      ...freshManagedStartFacts("stack-new-default"),
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
+      { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
       {
         kind: "identity-transition",
         operation: "ref-replacement",
         from: "commit-a",
         to: "commit-b",
+        phase: "finalized",
       },
+      { kind: "branch-ref", name: "feat-a", commit: "commit-b" },
       {
         kind: "git-state",
         workspacePath: "checkout-a",
@@ -824,48 +837,33 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         commit: "commit-b",
       },
       {
-        kind: "identity-claim",
-        scope: "context",
-        id: "context-old",
-        owner: "feat-a",
-        status: "absent",
+        kind: "stack",
+        name: "default",
+        stackId: "stack-feat-default",
+        checkoutId: "checkout-a",
+        contextId: "context-feat",
+        lifecycle: "stopped",
       },
     ],
-    when: { interface: "cli", argv: ["start", "--experimental"], cwd: "checkout-a" },
+    when: {
+      interface: "managed-api",
+      method: "resolveStack",
+      input: { cwd: "checkout-a", stackName: "default", operation: "start" },
+    },
     expected: {
-      outcome: "create",
+      outcome: "reuse",
       selection: {
         projectId: "project-a",
         checkoutId: "checkout-a",
-        contextId: "context-new",
-        stackId: "stack-new-default",
+        contextId: "context-feat",
+        stackId: "stack-feat-default",
         stackName: "default",
       },
-      writes: [
-        {
-          target: "git-config",
-          operation: "create",
-          id: "context-new",
-          scope: "common",
-          owner: "feat-a",
-        },
-        { target: "registry", operation: "publish", id: "stack-new-default" },
-        { target: "managed-state", operation: "create", id: "stack-new-default" },
-        { target: "runtime-state", operation: "start", id: "stack-new-default" },
-      ],
-      runtimeEffects: [{ operation: "start", stackId: "stack-new-default" }],
-      details: { orphaned_context_id: "context-old", adoption_required: true },
+      writes: [{ target: "runtime-state", operation: "start", id: "stack-feat-default" }],
+      runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
+      details: { context_preserved: true, ref_update: "in-place" },
       output: {
-        human: {
-          summary: "Created default stack after manual ref replacement",
-          fields: { contextId: "context-new", stackId: "stack-new-default", stack: "default" },
-        },
-        json: {
-          outcome: "create",
-          context_id: "context-new",
-          stack_id: "stack-new-default",
-          orphaned_context_id: "context-old",
-        },
+        api: { outcome: "reuse", contextId: "context-feat", stackId: "stack-feat-default" },
       },
     },
   },
@@ -1537,7 +1535,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         message: "Cannot verify whether /mnt/project-a still owns checkout-a",
         recovery: [
           "Restore access to /mnt/project-a and retry",
-          "Explicitly adopt checkout-a for /new/project-a",
+          "Rediscover the workspace after access is restored",
         ],
       },
       writes: [],
@@ -1548,7 +1546,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           fields: { previousPath: "/mnt/project-a", currentPath: "/new/project-a" },
           recovery: [
             "Restore access to /mnt/project-a and retry",
-            "Explicitly adopt checkout-a for /new/project-a",
+            "Rediscover the workspace after access is restored",
           ],
         },
         json: {
@@ -1557,7 +1555,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           checkout_id: "checkout-a",
           recovery: [
             "Restore access to /mnt/project-a and retry",
-            "Explicitly adopt checkout-a for /new/project-a",
+            "Rediscover the workspace after access is restored",
           ],
         },
       },
@@ -4043,6 +4041,63 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
           pruned_records: ["stack-orphan"],
           pruned_count: 1,
           mutable_data_deleted: false,
+        },
+      },
+    },
+  },
+  {
+    id: "reclamation.prune-preserves-conflict-evidence",
+    title: "Prune removes stale metadata while preserving checkout conflict evidence",
+    area: "reclamation",
+    given: [
+      { kind: "managed-record", stackId: "stack-conflict", status: "orphaned" },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-conflict",
+        checkoutId: "checkout-conflict",
+        contextId: "context-conflict",
+        lifecycle: "stopped",
+        orphaned: true,
+      },
+      {
+        kind: "identity-claim",
+        scope: "checkout",
+        id: "checkout-conflict",
+        path: "/work/conflict",
+        status: "duplicate",
+        locationState: "blocked",
+      },
+    ],
+    when: { interface: "cli", argv: ["stack", "prune", "--experimental"], cwd: "/work/conflict" },
+    expected: {
+      outcome: "update",
+      warning: {
+        code: "PRUNE_CONFLICT_EVIDENCE",
+        message: "Prune preserved conflict evidence for stack-conflict",
+        recovery: ["Review the preserved checkout conflict evidence before reassignment"],
+      },
+      writes: [{ target: "registry", operation: "delete", id: "stack-conflict" }],
+      runtimeEffects: [],
+      details: {
+        metadata_removed: true,
+        mutable_data_deleted: false,
+        conflict_evidence_preserved: true,
+        conflict_record_ids: ["stack-conflict"],
+      },
+      output: {
+        human: {
+          summary: "Pruned stack-conflict metadata and preserved conflict evidence",
+          fields: { stackId: "stack-conflict", dataDeleted: "false" },
+          recovery: ["Review the preserved checkout conflict evidence before reassignment"],
+        },
+        json: {
+          outcome: "update",
+          code: "PRUNE_CONFLICT_EVIDENCE",
+          pruned_records: ["stack-conflict"],
+          conflict_evidence_preserved: true,
+          mutable_data_deleted: false,
+          recovery: ["Review the preserved checkout conflict evidence before reassignment"],
         },
       },
     },

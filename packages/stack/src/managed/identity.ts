@@ -1,17 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Effect } from "effect";
+import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import {
+  GIT_CHECKOUT_IDENTITY_VERSION,
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
+  type GitCheckoutIdentity,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
-import { asRaised, failsOnlyWith } from "./failure.ts";
+import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
+import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import { errorCode } from "./error-code.ts";
-import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
+import { gitCheckoutIdentityPath, ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
 /**
  * The marker's own failures are the only ones this module reports. Every
@@ -61,28 +64,29 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   };
 };
 
-/**
- * The canonical path of a workspace directory, whatever it turns out to be.
- *
- * Every resolve starts here, ordinary folders and git checkouts alike: a path
- * that is not a directory is a caller mistake rather than a workspace to
- * classify, and canonicalizing once keeps a symlinked alias from registering as
- * a second location for the same checkout.
- */
-export const canonicalizeManagedWorkspacePath = (
+/** Effect FileSystem variant used by managed discovery. */
+export const canonicalizeManagedWorkspacePathWithFileSystem = (
   workspacePath: string,
-): Effect.Effect<string, InvalidManagedIdentityError> =>
+): Effect.Effect<string, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   failsWithIdentity(
-    Effect.tryPromise({
-      try: async () => {
-        const info = await stat(workspacePath);
-        if (!info.isDirectory()) {
-          throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
-        }
-        return realpath(workspacePath);
-      },
-      catch: asRaised,
-    }),
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const info = yield* fs.stat(workspacePath);
+      if (info.type !== "Directory") {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` }),
+        );
+      }
+      return yield* fs.realPath(workspacePath);
+    }).pipe(
+      Effect.catchTag("PlatformError", (error: PlatformError.PlatformError) =>
+        Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `Cannot canonicalize ${workspacePath}: ${error.message}`,
+          }),
+        ),
+      ),
+    ),
   );
 
 const readIdentity = async (
@@ -103,6 +107,38 @@ export const readOrdinaryWorkspaceIdentity = (
   workspacePath: string,
 ): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
   failsWithIdentity(Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: asRaised }));
+
+/** Read-only marker probe through Effect FileSystem; absence remains undefined. */
+export const readOrdinaryWorkspaceIdentityWithFileSystem = (
+  workspacePath: string,
+): Effect.Effect<
+  OrdinaryWorkspaceIdentity | undefined,
+  InvalidManagedIdentityError,
+  FileSystem.FileSystem
+> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      try {
+        return decodeIdentity(
+          yield* fs.readFileString(ordinaryWorkspaceIdentityPath(workspacePath)),
+        );
+      } catch (error) {
+        if (error instanceof InvalidManagedIdentityError) return yield* Effect.fail(error);
+        throw error;
+      }
+    }).pipe(
+      Effect.catchTag("PlatformError", (error: PlatformError.PlatformError) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed(undefined)
+          : Effect.fail(
+              new InvalidManagedIdentityError({
+                message: `Ordinary workspace identity is inaccessible (${error.message})`,
+              }),
+            ),
+      ),
+    ),
+  );
 
 export interface EnsureOrdinaryWorkspaceIdentityResult {
   readonly identity: OrdinaryWorkspaceIdentity;
@@ -160,5 +196,140 @@ export const ensureOrdinaryWorkspaceIdentity = (
     Effect.tryPromise({
       try: () => ensureIdentity(workspacePath, idFactory),
       catch: asRaised,
+    }),
+  );
+
+/**
+ * Publishes an exact ordinary-folder identity without adopting or replacing a
+ * competing marker. Recovery transitions use this when their reserved target
+ * was already chosen before publication began.
+ */
+export const publishOrdinaryWorkspaceIdentity = (
+  workspacePath: string,
+  identity: Pick<OrdinaryWorkspaceIdentity, "projectId" | "checkoutId" | "contextId">,
+  temporaryId: string = randomUUID(),
+): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
+  failsWithIdentity(
+    Effect.uninterruptible(
+      Effect.tryPromise({
+        try: async () => {
+          const existing = await readIdentity(workspacePath);
+          const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
+          const target: OrdinaryWorkspaceIdentity = {
+            version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
+            projectId: assertManagedUuid(identity.projectId, "projectId"),
+            checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
+            contextId: assertManagedUuid(identity.contextId, "contextId"),
+          };
+          if (existing !== undefined) {
+            if (
+              existing.projectId !== target.projectId ||
+              existing.checkoutId !== target.checkoutId ||
+              existing.contextId !== target.contextId
+            ) {
+              throw new InvalidManagedIdentityError({
+                message: "Ordinary workspace identity changed before recovery publication",
+              });
+            }
+            return { identity: existing, created: false, markerPath };
+          }
+          await mkdir(dirname(markerPath), { recursive: true });
+          const outcome = await claimFileAtomically(
+            markerPath,
+            `${JSON.stringify(target, null, 2)}\n`,
+            { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
+          );
+          if (outcome === "claimed") return { identity: target, created: true, markerPath };
+          const winner = await readIdentity(workspacePath);
+          if (
+            winner === undefined ||
+            winner.projectId !== target.projectId ||
+            winner.checkoutId !== target.checkoutId ||
+            winner.contextId !== target.contextId
+          ) {
+            throw new InvalidManagedIdentityError({
+              message: "Ordinary workspace identity publication raced without the requested winner",
+            });
+          }
+          return { identity: winner, created: false, markerPath };
+        },
+        catch: asRaised,
+      }),
+    ),
+  );
+
+/**
+ * Publish a caller-selected checkout identity into a git directory without
+ * ever replacing a winner. Folder-to-Git conversion uses this primitive after
+ * reserving its registry transition; an existing matching marker is already
+ * the settled winner, while a different marker is a transition ownership
+ * failure and must not be overwritten.
+ */
+export const publishGitCheckoutIdentity = (
+  gitDirectory: string,
+  checkoutId: string,
+  temporaryId: string = randomUUID(),
+): Effect.Effect<boolean, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const markerPath = gitCheckoutIdentityPath(gitDirectory);
+      const identity: GitCheckoutIdentity = {
+        version: GIT_CHECKOUT_IDENTITY_VERSION,
+        checkoutId: assertManagedUuid(checkoutId, "checkoutId"),
+      };
+      const existing = yield* fs.readFileString(markerPath).pipe(
+        Effect.flatMap((content) =>
+          Effect.try({
+            try: () => decodeGitCheckoutIdentity(content).checkoutId,
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+          }),
+        ),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed<string | undefined>(undefined)
+            : Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: `Git checkout identity is inaccessible (${error.message})`,
+                }),
+              ),
+        ),
+      );
+      if (existing !== undefined) {
+        if (existing !== identity.checkoutId) {
+          return yield* Effect.fail(
+            new InvalidManagedIdentityError({
+              message: "Git checkout identity changed before folder-to-Git migration",
+            }),
+          );
+        }
+        return false;
+      }
+      const outcome = yield* Effect.tryPromise({
+        try: () =>
+          claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
+            mode: 0o600,
+            temporaryId: assertManagedUuid(temporaryId, "git checkout identity temporary id"),
+          }),
+        catch: asRaised,
+      });
+      if (outcome === "claimed") return true;
+      const winner = yield* fs.readFileString(markerPath).pipe(
+        Effect.flatMap((content) =>
+          Effect.try({
+            try: () => decodeGitCheckoutIdentity(content).checkoutId,
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+          }),
+        ),
+        Effect.catchTag("PlatformError", () => Effect.succeed<string | undefined>(undefined)),
+      );
+      if (winner !== identity.checkoutId) {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({
+            message: "Git checkout identity publication raced without the requested winner",
+          }),
+        );
+      }
+      return false;
     }),
   );
