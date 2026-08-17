@@ -83,19 +83,34 @@ interface NativeShadowBase {
 }
 
 interface ProvisionedMigrationsShadow extends LegacyPgDeltaNextMigrationsShadow {
-  readonly restoredFromPgDataSnapshot: boolean;
+  readonly snapshotKey: string | undefined;
 }
 
 interface ProvisionedDeclarativeShadow {
   readonly declarativeUrl: string;
   readonly restoredFromPgDataSnapshot: boolean;
+  readonly snapshotKey: string | undefined;
 }
 
-export function legacyAllowSameDatabaseIdentityForRestoredShadows(
-  migrations: Pick<ProvisionedMigrationsShadow, "restoredFromPgDataSnapshot">,
-  declarative: Pick<ProvisionedDeclarativeShadow, "restoredFromPgDataSnapshot">,
-): boolean {
-  return migrations.restoredFromPgDataSnapshot && declarative.restoredFromPgDataSnapshot;
+/**
+ * Whether pg-delta's same-database guard must be bypassed for this plan's two shadows — i.e.
+ * whether they can legitimately report the same PostgreSQL identity (system identifier +
+ * database OID). That happens exactly when the declarative shadow was physically RESTORED from
+ * the same snapshot key that also produced the migrations shadow's cluster: same key means same
+ * tar, and the migrations side is that tar's lineage whether it warm-restored FROM the tar or
+ * cold-exported it this very run — the baseline handoff, where requiring the migrations handle
+ * itself to be a warm restore would leave the guard armed against its own clone and fail the
+ * first cold plan (review: Codex on #6184, P1). A freshly initdb'd declarative shadow always
+ * carries its own new identity, and different keys mean tars exported from different clusters,
+ * so both of those stay `false` and keep the guard armed. A `true` alongside identities that
+ * happen to differ is harmless by design: pg-delta's bypass only takes effect on an exact
+ * identity match, never on a same-lineage sibling.
+ */
+export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
+  readonly declarativeRestoredFromPgDataSnapshot: boolean;
+  readonly sameSnapshotKey: boolean;
+}): boolean {
+  return opts.declarativeRestoredFromPgDataSnapshot && opts.sameSnapshotKey;
 }
 
 /**
@@ -256,7 +271,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
-          restoredFromPgDataSnapshot: handle.baselinePresent,
+          snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -278,6 +293,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return {
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle.baselinePresent,
+          snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
@@ -312,10 +328,15 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           return {
             migrationsUrl: migrations.migrationsUrl,
             declarativeUrl: declarative.declarativeUrl,
-            allowSameDatabaseIdentity: legacyAllowSameDatabaseIdentityForRestoredShadows(
-              migrations,
-              declarative,
-            ),
+            // Key equality is what encodes lineage: the declarative shadow restored the very tar
+            // the migrations side either restored or exported this run, so the two clusters are
+            // physical clones. An absent key (uncached/bypassed/uncachable) is never lineage.
+            allowSameDatabaseIdentity: legacyAllowSameDatabaseIdentityForPlanShadows({
+              declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
+              sameSnapshotKey:
+                migrations.snapshotKey !== undefined &&
+                migrations.snapshotKey === declarative.snapshotKey,
+            }),
           } satisfies LegacyPgDeltaNextPlanShadows;
         }).pipe(Effect.mapError(nextShadowError)),
     });

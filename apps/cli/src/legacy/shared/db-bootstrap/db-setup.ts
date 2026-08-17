@@ -188,7 +188,12 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
 
-const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+/**
+ * Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), same as
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}: a webhooks-enabled baseline bakes this
+ * statement into PGDATA, so the digest must re-key whenever this text changes across releases.
+ */
+export const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
 // The historical PG14 dump installs pg_net because later statements grant on

@@ -44,6 +44,7 @@ import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import {
+  LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
   LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
   type LegacySetupDatabaseOptions,
 } from "./db-setup.ts";
@@ -234,6 +235,10 @@ const LEGACY_SHADOW_BASELINE_SQL_DIGEST = createHash("sha256")
       LEGACY_START_DB_WEBHOOK_SQL,
       LEGACY_START_DB_SUPABASE_SQL,
       LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
+      // The webhooks-enable statement `legacySetupDatabase` runs for a webhooks-enabled baseline
+      // (`db-setup.ts`). `webhooksEnabled` above only says WHETHER it ran; this line covers the
+      // text it ran, so editing the statement re-keys those tars too (review: Codex on #6184).
+      LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
       // The vault upsert's own SQL (`legacyUpsertVaultSecrets`, `legacy-vault.ts`) runs into the
       // baseline right after the privilege pass — same digest rationale as every line above.
       LEGACY_READ_VAULT_KV,
@@ -801,6 +806,15 @@ export interface LegacyShadowCacheOpts {
  */
 export interface LegacyShadowAcquiredHandle extends LegacyShadowBaselineState {
   readonly containerId: string;
+  /**
+   * The resolved shadow-baseline cache key this handle's cluster is keyed under — present
+   * exactly when the acquisition was cache-eligible (a cold export or a warm restore), absent
+   * for an uncached, `bypassCache`d, or uncachable one. Two handles carrying the SAME key share
+   * the same tar's lineage: one either restored it or exported it this run, so their clusters
+   * are physical clones of each other. `legacy-pgdelta-next-shadow.layer.ts` reads it to decide
+   * whether pg-delta's same-database-identity guard must be bypassed for a plan's two shadows.
+   */
+  readonly snapshotKey?: string;
 }
 
 /** A throwaway shadow with no snapshot step — the cache-off path. */
@@ -835,6 +849,7 @@ const legacyColdCachedShadow = <E>(
   legacyCreateShadowDatabase(spawner, { ...input, autoRemove: false }).pipe(
     Effect.map(({ containerId }) => ({
       containerId,
+      snapshotKey: key,
       baselinePresent: false,
       snapshotRequired: true,
       snapshotBaseline: legacyExportShadowBaseline(spawner, input, key, tarPath, containerId),
@@ -863,6 +878,7 @@ const legacyColdCachedShadow = <E>(
 const legacyWarmShadow = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
+  key: string,
   tarPath: string,
 ): Effect.Effect<
   LegacyShadowAcquiredHandle,
@@ -891,6 +907,7 @@ const legacyWarmShadow = <E>(
     );
     return {
       containerId,
+      snapshotKey: key,
       baselinePresent: true,
       snapshotRequired: false,
       snapshotBaseline: Effect.void,
@@ -963,7 +980,7 @@ export const legacyAcquireShadowDatabase = <E>(
     yield* legacySweepAbandonedShadowBaselinePartials(input);
     yield* legacySweepShadowBaselineRetention(input);
 
-    return yield* legacyWarmShadow(spawner, input, tarPath).pipe(
+    return yield* legacyWarmShadow(spawner, input, key, tarPath).pipe(
       Effect.catch((cause) =>
         Effect.gen(function* () {
           const output = yield* Output;
