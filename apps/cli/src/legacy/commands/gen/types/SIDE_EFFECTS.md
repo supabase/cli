@@ -51,10 +51,16 @@ config for that ref to build the fallback connection (the saved workdir
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
 | `docker`/`podman container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                 |
 | `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
+| `dart run supabase_typegen --input - --output -`                                       | `--lang dart`, after the pg-meta container exits successfully         | turn pg-meta's json metadata into Dart source      |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
 detect TLS support before launching pg-meta, with the default 10s pg-delta probe
 timeout.
+
+For `--lang dart` the pg-meta container runs the `json` generator; its stdout is
+collected instead of printed and piped to the Dart typegen's stdin. The Dart SDK
+must be on PATH and `supabase_typegen` must be a dev dependency of the current
+project.
 
 ## Environment Variables
 
@@ -108,7 +114,8 @@ Not applicable.
 - With `--local`, a missing `supabase/config.toml` uses the embedded config defaults plus
   shell and nested dotenv overrides, matching the legacy CLI.
 - **Sanctioned intentional divergence (CLI-1988 parity ruling):**
-  `--lang` accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref paths
+  `--lang` accepts `typescript` (default), `go`, `swift`, `python`, `dart`, or `json`
+  (the last two are TS-only, see `docs/go-cli-divergences.md`). Project-ref paths
   (`--linked`, `--project-id`, and the implicit linked fallback) use the Management API
   for TypeScript, and run pg-meta locally against the project database (temporary
   login-role credentials, preview-branch fallback) for the other languages. The old Go

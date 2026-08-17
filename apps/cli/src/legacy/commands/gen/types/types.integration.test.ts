@@ -63,6 +63,8 @@ import { legacyGenCommand } from "../gen.command.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { legacyGenTypes } from "./types.handler.ts";
 import {
+  DART_TYPEGEN_ARGS,
+  DART_TYPEGEN_COMMAND,
   localDbContainerId,
   localNetworkId,
   parseQueryTimeoutSeconds,
@@ -1208,6 +1210,123 @@ describe("legacy gen types", () => {
 
           expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
           expect(docker.env.has("PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=public")).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("passes json straight through to pg-meta for --lang json", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer, out } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--lang",
+              "json",
+            ],
+            childStdout: ['{"version":1}'],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                lang: "json",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES=json")).toBe(true);
+          expect(out.stdoutText).toContain('{"version":1}');
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("pipes pg-meta's json metadata through the Dart typegen for --lang dart", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          // First spawn is the pg-meta container emitting the json metadata,
+          // second is the host `dart run supabase_typegen` invocation emitting
+          // the generated code.
+          const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 0, stdout: ["// generated dart"] },
+          ]);
+          const { layer, out } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--lang",
+              "dart",
+            ],
+            childLayer: child.layer,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                lang: "dart",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(child.spawned).toHaveLength(2);
+          const dockerRun = child.spawned[0];
+          expect(dockerRun?.args).toContain("PG_META_GENERATE_TYPES=json");
+          const dart = child.spawned[1];
+          expect(dart?.command).toBe(DART_TYPEGEN_COMMAND);
+          expect(dart?.args).toEqual([...DART_TYPEGEN_ARGS]);
+          // The metadata is piped to the Dart typegen, never printed; only the
+          // generated code reaches stdout.
+          expect(out.stdoutText).toContain("// generated dart");
+          expect(out.stdoutText).not.toContain('"version"');
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("fails with an actionable error when the Dart typegen exits non-zero", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 65, stderr: ["Could not find package `supabase_typegen`"] },
+          ]);
+          const { layer } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--lang",
+              "dart",
+            ],
+            childLayer: child.layer,
+          });
+
+          const exit = await Effect.runPromiseExit(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                lang: "dart",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(String(exit)).toContain("error running the supabase_typegen package: exit 65");
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

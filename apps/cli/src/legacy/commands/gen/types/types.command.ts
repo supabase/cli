@@ -6,7 +6,7 @@ import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { legacyGenTypes } from "./types.handler.ts";
 import { legacyGenTypesRuntimeLayer } from "./types.layers.ts";
 
-const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
+const LANG_VALUES = ["typescript", "go", "swift", "python", "dart", "json"] as const;
 const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
 
 const config = {
@@ -76,6 +76,10 @@ export const legacyGenTypesCommand = Command.make("types", commandConfig).pipe(
     {
       command: "supabase gen types --db-url 'postgresql://...' --schema public --schema auth",
       description: "Generate types from a database URL",
+    },
+    {
+      command: "supabase gen types --local --lang=dart",
+      description: "Generate Dart types from the local dev database",
     },
   ]),
   Command.withHandler((flags) =>

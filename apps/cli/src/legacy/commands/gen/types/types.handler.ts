@@ -1,5 +1,5 @@
 import { loadProjectConfig } from "@supabase/config";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
   LegacyDnsResolverFlag,
@@ -46,6 +46,9 @@ import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from 
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
+  DART_TYPEGEN_ARGS,
+  DART_TYPEGEN_COMMAND,
+  DART_TYPEGEN_UNAVAILABLE_MESSAGE,
   defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
@@ -257,6 +260,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const schemas = flags.schema;
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
+  // Dart types are produced by piping pg-meta's language-neutral `json`
+  // generator metadata through the supabase_typegen package, so the container
+  // always runs the json generator for `--lang dart`.
+  const pgMetaLang = lang === "dart" ? "json" : lang;
 
   const loadConfig = () => loadProjectConfig(cliConfig.workdir, { goViperCompat: true });
   const loadConfigForRef = (projectRef: string) =>
@@ -416,7 +423,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               `PG_META_DB_URL=${target.url}`,
               `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
               `PG_QUERY_TIMEOUT_SECS=${queryTimeoutSeconds}`,
-              `PG_META_GENERATE_TYPES=${lang}`,
+              `PG_META_GENERATE_TYPES=${pgMetaLang}`,
               `PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=${input.includedSchemas}`,
               `PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=${swiftAccessControl}`,
               `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
@@ -456,11 +463,21 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               stderr: "pipe",
             });
 
+            // For `--lang dart` the container emits the json generator
+            // metadata, which is piped into the Dart typegen after the run
+            // instead of being printed.
+            let stdoutText = "";
             let stderrText = "";
             const [exitCode] = yield* Effect.all(
               [
                 child.exitCode.pipe(Effect.map(Number)),
-                forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")),
+                forwardByteStream(child.stdout, (text) =>
+                  lang === "dart"
+                    ? Effect.sync(() => {
+                        stdoutText += text;
+                      })
+                    : output.raw(text, "stdout"),
+                ),
                 forwardByteStream(child.stderr, (text) =>
                   Effect.sync(() => {
                     stderrText += text;
@@ -469,7 +486,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               ],
               { concurrency: "unbounded" },
             );
-            return { exitCode, stderrText };
+            return { exitCode, stderrText, stdoutText };
           });
 
         const runTarget = (conn: LegacyPgConnInput) =>
@@ -497,6 +514,45 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
         if (result.exitCode !== 0) {
           return yield* Effect.fail(new Error(`error running container: exit ${result.exitCode}`));
+        }
+
+        if (lang === "dart") {
+          yield* runDartTypegen(result.stdoutText);
+        }
+      }),
+    );
+
+  // Pipes the json generator metadata into the supabase_typegen package on
+  // the host: the generated Dart code arrives on stdout like every other
+  // language, and the package's own summary line stays on stderr.
+  const runDartTypegen = (metadataJson: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawner
+          .spawn(
+            ChildProcess.make(DART_TYPEGEN_COMMAND, DART_TYPEGEN_ARGS, {
+              stdin: Stream.succeed(new TextEncoder().encode(metadataJson)),
+              stdout: "pipe",
+              stderr: "pipe",
+            }),
+          )
+          .pipe(Effect.mapError(() => new Error(DART_TYPEGEN_UNAVAILABLE_MESSAGE)));
+
+        const [exitCode] = yield* Effect.all(
+          [
+            child.exitCode.pipe(Effect.map(Number)),
+            forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")),
+            forwardByteStream(child.stderr, (text) => output.raw(text, "stderr")),
+          ],
+          { concurrency: "unbounded" },
+        );
+        if (exitCode !== 0) {
+          return yield* Effect.fail(
+            new Error(
+              `error running the supabase_typegen package: exit ${exitCode}. ` +
+                "Add supabase_typegen as a dev dependency of the current project to generate Dart types.",
+            ),
+          );
         }
       }),
     );

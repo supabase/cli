@@ -42,6 +42,29 @@ export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
 
+/**
+ * `--lang dart` pipes pg-meta's `json` generator metadata through the
+ * `supabase_typegen` Dart package. The host's Dart SDK runs the package from
+ * the current working directory, so it must be declared as a (dev) dependency
+ * of the project the command runs in — the invocation and its stdin/stdout
+ * contract (`--input -` reads the metadata document from stdin, `--output -`
+ * writes the generated code to stdout) are pinned here so the handler and
+ * tests share one definition.
+ */
+export const DART_TYPEGEN_COMMAND = "dart";
+
+export const DART_TYPEGEN_ARGS = [
+  "run",
+  "supabase_typegen",
+  "--input",
+  "-",
+  "--output",
+  "-",
+] as const;
+
+export const DART_TYPEGEN_UNAVAILABLE_MESSAGE =
+  "Generating Dart types requires the Dart SDK on PATH. Install it from https://dart.dev/get-dart and add the supabase_typegen package as a dev dependency of the current project.";
+
 export function parseQueryTimeoutSeconds(
   raw: string,
 ): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {
