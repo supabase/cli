@@ -256,59 +256,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
   );
 
-  const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
-  const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
-  const pgDeltaResult = () => {
-    const sql = opts.diffSql ?? "";
-    const files =
-      opts.diffFiles !== undefined
-        ? opts.diffFiles.map((file, index) => ({
-            sequence: index + 1,
-            name: file.name,
-            ...(opts.diffSuffixes?.[index] !== undefined
-              ? { suffix: opts.diffSuffixes[index] }
-              : {}),
-            sql: file.sql,
-            transactionMode: "transactional" as const,
-          }))
-        : sql.length > 0
-          ? [
-              {
-                sequence: 1,
-                name: "schema_changes",
-                sql,
-                transactionMode: "transactional" as const,
-              },
-            ]
-          : [];
-    return {
-      changes: files.length > 0,
-      sql: opts.diffFiles !== undefined ? files.map((file) => file.sql).join("\n\n") : sql,
-      files,
-      ...(opts.hazards !== undefined ? { hazards: opts.hazards } : {}),
-    };
-  };
-  const pgDeltaEngine = Layer.succeed(
-    LegacyPgDeltaEngine,
-    LegacyPgDeltaEngine.of({
-      // The handler must route through this strategy even when the selected
-      // implementation is legacy; the strategy owns edge runtime and shadows.
-      implementation: opts.pgDeltaImplementation ?? "legacy",
-      diffExplicit: (input) =>
-        Effect.sync(() => {
-          explicitDiffCalls.push(input);
-          return pgDeltaResult();
-        }),
-      diffDatabase: (input) =>
-        Effect.sync(() => {
-          databaseDiffCalls.push(input);
-          return pgDeltaResult();
-        }),
-      exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema unused"),
-      planDeclarativeSchema: () => Effect.die("planDeclarativeSchema unused"),
-    }),
-  );
-
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
