@@ -84,6 +84,8 @@ function mockDbConnection(opts: {
           return yield* Effect.fail(new LegacyDbExecError({ message: "cannot drop" }));
         }
       }),
+    // `test db` never runs a migration batch; keep the seam explicit rather than silent.
+    execBatch: () => Effect.die("execBatch unused"),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
     copyToCsv: () => Effect.succeed(new Uint8Array()),

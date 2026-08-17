@@ -16,6 +16,7 @@ import {
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import {
   mockOutput,
@@ -286,6 +287,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
                 ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
                 : Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
             }),
+          // A migration file's statements arrive as one batch; replay them through
+          // `exec`/`query` so the call-order log and failure injection still apply.
+          execBatch: (batch) => legacySequentialExecBatch(session)(batch),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
