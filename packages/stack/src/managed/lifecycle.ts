@@ -11,12 +11,16 @@ import {
   ManagedStackAttachedError,
   ManagedStackControlRequiredError,
   ManagedStackManager,
-  ManagedWorkspaceRepairConflictError,
+  workspaceRepairConflict,
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
 } from "./manager.ts";
 import { ControlTransportError, controlEndpoint, type ControlEndpoint } from "./control.ts";
-import { ManagedStackNotStoppedError, type ManagedPortIntentDocument } from "./model.ts";
+import {
+  ManagedStackNotStoppedError,
+  type ManagedPortIntentDocument,
+  validateManagedStackName,
+} from "./model.ts";
 import { deriveStackId } from "./environment.ts";
 
 /** Inputs shared by all managed lifecycle operations. */
@@ -39,17 +43,14 @@ const stackIdForInput = (
   manager: import("./manager.ts").ManagedStackManagerShape,
   input: ManagedLifecycleInput,
 ): Effect.Effect<string, ManagedStackManagerError> =>
-  manager.discoverWorkspace(input.workspacePath).pipe(
-    Effect.flatMap((discovery) =>
-      discovery.state === "needsRepair"
-        ? Effect.fail(
-            new ManagedWorkspaceRepairConflictError({
-              reason: "Workspace repair is required",
-            }),
-          )
-        : Effect.succeed(deriveStackId(discovery.identity, input.stackName ?? "default")),
-    ),
-  );
+  Effect.gen(function* () {
+    const stackName = yield* validateManagedStackName(input.stackName ?? "default");
+    const discovery = yield* manager.discoverWorkspace(input.workspacePath);
+    if (discovery.state === "needsRepair") {
+      return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+    }
+    return deriveStackId(discovery.identity, stackName);
+  });
 
 /** Resolve one document through the managed manager and Git workspace identity. */
 export const resolveManagedDocument = (
@@ -165,6 +166,7 @@ export const stopManagedStack = (
           }),
           owned.close,
         );
+      let stopRequested = false;
       const awaitOwnerReady: Effect.Effect<
         "ready",
         | ManagedStopPending
@@ -175,9 +177,28 @@ export const stopManagedStack = (
         | import("./control.ts").ControlAddressConflictError
       > = acquisition.ownerStatus.pipe(
         Effect.flatMap(
-          (status): Effect.Effect<"ready", ManagedStopPending | ManagedStopOwnerTerminal> => {
+          (
+            status,
+          ): Effect.Effect<
+            "ready",
+            | ManagedStopPending
+            | ManagedStopOwnerTerminal
+            | ControlTransportError
+            | import("./control.ts").ControlProtocolError
+            | import("./control.ts").ControlProtocolMismatchError
+            | import("./control.ts").ControlAddressConflictError
+          > => {
             if (status.state === "running" && status.ready) return Effect.succeed<"ready">("ready");
-            if (status.state === "starting" || status.state === "stopping") {
+            if (status.state === "starting") {
+              return Effect.gen(function* () {
+                if (!stopRequested) {
+                  stopRequested = true;
+                  yield* acquisition.requestStop;
+                }
+                return yield* Effect.fail(new ManagedStopPending());
+              });
+            }
+            if (status.state === "stopping") {
               return Effect.fail(new ManagedStopPending());
             }
             return Effect.fail(new ManagedStopOwnerTerminal());

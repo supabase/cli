@@ -57,6 +57,7 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 
 function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
   let stopped = false;
+  let stopCalls = 0;
   const serviceCalls: string[] = [];
   const functionReloads: FunctionsReloadConfig[] = [];
 
@@ -75,6 +76,7 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
     stop: () =>
       Effect.sync(() => {
         stopped = true;
+        stopCalls += 1;
       }),
     dispose: () =>
       Effect.sync(() => {
@@ -143,6 +145,9 @@ function mockStack(options: { readonly startTimeoutMs?: number } = {}) {
     layer,
     get stopped() {
       return stopped;
+    },
+    get stopCalls() {
+      return stopCalls;
     },
     serviceCalls,
     functionReloads,
@@ -492,6 +497,25 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(mock.stopped).toBe(true);
+  });
+
+  test("concurrent POST /stop requests share one shutdown", async () => {
+    const concurrentMock = mockStack();
+    const concurrentRuntime = ManagedRuntime.make(
+      buildDaemonLayer(concurrentMock, Effect.sleep("20 millis")),
+    );
+    const concurrentDaemon = await concurrentRuntime.runPromise(DaemonServer);
+    const concurrentUrl = getUrl(concurrentDaemon.address);
+    try {
+      const responses = await Promise.all([
+        fetch(`${concurrentUrl}/stop`, { method: "POST" }),
+        fetch(`${concurrentUrl}/stop`, { method: "POST" }),
+      ]);
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      expect(concurrentMock.stopCalls).toBe(1);
+    } finally {
+      await concurrentRuntime.dispose();
+    }
   });
 
   test("POST /stop unregisters the daemon before responding", async () => {

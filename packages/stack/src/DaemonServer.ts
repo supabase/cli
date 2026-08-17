@@ -90,14 +90,19 @@ export class DaemonServer extends Context.Service<
             },
             500,
           );
-        const beginShutdown = beforeShutdown.pipe(
-          Effect.ensuring(
-            // The HTTP module has no response-flushed hook. Delay the process
-            // shutdown signal long enough for the final JSON response to leave
-            // the socket.
-            Deferred.succeed(shutdownDeferred, void 0).pipe(
-              Effect.delay("25 millis"),
-              Effect.forkDetach,
+        const stopStack = yield* Effect.cached(
+          options.stopOnShutdown === false ? Effect.void : stack.stop(),
+        );
+        const beginShutdown = yield* Effect.cached(
+          beforeShutdown.pipe(
+            Effect.ensuring(
+              // The HTTP module has no response-flushed hook. Delay the process
+              // shutdown signal long enough for the final JSON response to leave
+              // the socket.
+              Deferred.succeed(shutdownDeferred, void 0).pipe(
+                Effect.delay("25 millis"),
+                Effect.forkDetach,
+              ),
             ),
           ),
         );
@@ -230,7 +235,7 @@ export class DaemonServer extends Context.Service<
             "POST",
             "/stop",
             Effect.gen(function* () {
-              if (options.stopOnShutdown !== false) yield* stack.stop();
+              yield* stopStack;
               yield* beginShutdown;
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }),

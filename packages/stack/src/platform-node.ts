@@ -7,6 +7,7 @@ import { Effect, Layer } from "effect";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
+  CONTROL_STOP_PATH,
   ControlBindError,
   ControlProtocolError,
   ControlTransport,
@@ -32,8 +33,14 @@ const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
   });
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus) => {
+  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) => {
     const rawServer = createServer((request, response) => {
+      if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
+        onStop();
+        response.writeHead(202, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
       if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") {
         if (rawServer.listenerCount("request") > 1) return;
         response.writeHead(503, { "content-type": "application/json" });
@@ -123,6 +130,37 @@ const controlTransport: ControlTransport["Service"] = {
         }
         return new ControlTransportError({ endpoint, reason: "transport", cause });
       },
+    }),
+  requestStop: (endpoint: ControlEndpoint) =>
+    Effect.tryPromise({
+      try: async () => {
+        await new Promise<void>((resolve, reject) => {
+          const request = Http.request(
+            {
+              host: endpoint.hostname,
+              port: endpoint.port,
+              path: CONTROL_STOP_PATH,
+              method: "POST",
+            },
+            (response) => {
+              response.resume();
+              response.once("end", () => {
+                if ((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300) {
+                  resolve();
+                } else {
+                  reject(new Error(`Control stop request returned ${response.statusCode ?? 500}`));
+                }
+              });
+            },
+          );
+          request.setTimeout(500, () =>
+            request.destroy(new Error("Control stop request timed out")),
+          );
+          request.once("error", reject);
+          request.end();
+        });
+      },
+      catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
     }),
 };
 

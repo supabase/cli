@@ -1,5 +1,6 @@
-import { Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer } from "effect";
 import { fork, type ChildProcess } from "node:child_process";
+import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import { describe, expect, test } from "vitest";
 import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
+import { managedDaemonLayer } from "./supervisor.ts";
 import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
@@ -59,13 +61,16 @@ const messageFor = (
   ...overrides,
 });
 
-const spawnChild = (input: SupervisorStartMessage): ChildHandle => {
+const spawnChild = (
+  input: SupervisorStartMessage,
+  environment: Readonly<Record<string, string>> = {},
+): ChildHandle => {
   const child = fork(childEntryPoint, [], {
     execPath: bunExecutable,
     execArgv: [],
     detached: false,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-    env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1" },
+    env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1", ...environment },
   });
   let stderr = "";
   child.stderr?.on("data", (chunk: Uint8Array) => {
@@ -229,6 +234,44 @@ const canBind = (port: number): Promise<boolean> =>
     });
   });
 
+const listenStartingOwner = async (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+): Promise<ReturnType<typeof createHttpServer>> => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const server = createHttpServer((request, response) => {
+      if (request.method === "GET" && request.url === "/owner") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            protocolVersion: 1,
+            ownershipId,
+            state: "starting",
+            ready: false,
+          }),
+        );
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint.port, endpoint.hostname, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+      return server;
+    } catch {
+      server.close();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+};
+
 const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
   rmSync(roots.root, { recursive: true, force: true });
   rmSync(roots.stateRoot, { recursive: true, force: true });
@@ -276,6 +319,25 @@ const waitForStackDocument = async (
 };
 
 describe("detached supervisor child journeys", () => {
+  test("rejects an invalid stack name before forking a supervisor", async () => {
+    const roots = workspace();
+    try {
+      const exit = await Effect.runPromiseExit(
+        managedDaemonLayer(messageFor(roots, { stackName: "bad\nname" }), childEntryPoint).pipe(
+          Effect.provide(httpTransportClientLayer),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "InvalidManagedStackNameError",
+        });
+      }
+    } finally {
+      cleanupRoots(roots);
+    }
+  });
+
   test("keeps managed documents, runtime metadata, and persistent data roots separate", async () => {
     const roots = workspace();
     const stackId = "e".repeat(64);
@@ -361,6 +423,30 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("stops a blocked starting owner through its control endpoint", async () => {
+    const roots = workspace();
+    const child = spawnChild(messageFor(roots, { testMode: "hold-start" }));
+    void child.started.catch(() => undefined);
+    try {
+      const document = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
+      expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
+      const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      expect(response.status).toBe(202);
+      await Promise.race([
+        waitForExit(child.child),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("owner did not stop")), 2_000),
+        ),
+      ]);
+      const stopped = await waitForStackDocument(roots, "stopped");
+      expect(stopped.lifecycle).toBe("stopped");
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("attaches a second child as RemoteStack while the owner remains live", async () => {
     const roots = workspace();
     const input = messageFor(roots);
@@ -417,6 +503,48 @@ describe("detached supervisor child journeys", () => {
       }
       expect(restarted).toBe(true);
     } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("bounds attached-owner recovery to one startup deadline", async () => {
+    const roots = workspace();
+    const input = messageFor(roots, { testMode: "hold-start" });
+    const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
+    const owner = spawnChild(input, environment);
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    try {
+      const document = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
+      contender = spawnChild(input, environment);
+      void contender.started.catch(() => undefined);
+      await contender.attachedBeforeReady;
+
+      await kill(owner.child);
+      fakeOwner = await listenStartingOwner(endpoint, document.id);
+      const resolutionStarted = Date.now();
+      const result = await Promise.race([
+        contender.started.then(
+          () => ({ _tag: "started" as const }),
+          (error: unknown) => ({ _tag: "error" as const, error }),
+        ),
+        new Promise<{ readonly _tag: "timeout" }>((resolve) =>
+          setTimeout(() => resolve({ _tag: "timeout" }), 1_200),
+        ),
+      ]);
+      expect(result._tag).toBe("error");
+      if (result._tag === "error") {
+        expect(result.error).toMatchObject({
+          message: expect.stringContaining("Timed out resolving attached supervisor owner"),
+        });
+      }
+      expect(Date.now() - resolutionStarted).toBeLessThan(900);
+    } finally {
+      fakeOwner?.close();
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);

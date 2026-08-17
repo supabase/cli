@@ -5,6 +5,7 @@ import { Effect, Exit, Layer, Scope } from "effect";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
+  CONTROL_STOP_PATH,
   ControlBindError,
   ControlProtocolError,
   ControlTransport,
@@ -20,7 +21,7 @@ const errorCode = (cause: unknown): string | undefined => {
 };
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus) =>
+  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
     // constructor yields to register its scope finalizer. Keep only this
     // acquisition window uninterruptible; request handling and listener close
@@ -40,6 +41,15 @@ const controlTransport: ControlTransport["Service"] = {
                   status: 200,
                   headers: { "content-type": "application/json" },
                 }),
+            },
+            [CONTROL_STOP_PATH]: {
+              POST: () => {
+                onStop();
+                return new Response(JSON.stringify({ ok: true }), {
+                  status: 202,
+                  headers: { "content-type": "application/json" },
+                });
+              },
             },
           },
         }).pipe(
@@ -83,6 +93,17 @@ const controlTransport: ControlTransport["Service"] = {
         }
         return new ControlTransportError({ endpoint, reason: "unreachable", cause });
       },
+    }),
+  requestStop: (endpoint: ControlEndpoint) =>
+    Effect.tryPromise({
+      try: async () => {
+        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
+          method: "POST",
+          signal: AbortSignal.timeout(500),
+        });
+        if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
+      },
+      catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
     }),
 };
 

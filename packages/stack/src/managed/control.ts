@@ -1,4 +1,4 @@
-import { Data, Effect, Context, Ref, Result, Schedule, Schema } from "effect";
+import { Data, Deferred, Effect, Context, Ref, Result, Schedule, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import {
   ControlOwnerStatusSchema,
@@ -10,6 +10,8 @@ export type { ControlOwnerState, ControlOwnerStatus } from "../DaemonProtocol.ts
 
 /** The owner status path exposed once the daemon routes are installed. */
 export const CONTROL_STATUS_PATH = "/owner";
+/** The early shutdown path exposed by the deterministic control listener. */
+export const CONTROL_STOP_PATH = "/stop";
 
 const CONTROL_PROTOCOL_VERSION = 1 as const;
 const CONTROL_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -85,10 +87,14 @@ export interface ControlTransportShape {
   readonly bind: (
     endpoint: ControlEndpoint,
     ownerStatus: () => ControlOwnerStatus,
+    onStop: () => void,
   ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
   readonly read: (
     endpoint: ControlEndpoint,
   ) => Effect.Effect<unknown, ControlTransportError | ControlProtocolError>;
+  readonly requestStop: (
+    endpoint: ControlEndpoint,
+  ) => Effect.Effect<void, ControlTransportError | ControlProtocolError>;
 }
 
 /** Runtime-specific loopback bind/connect operations supplied by Node or Bun. */
@@ -110,6 +116,8 @@ export interface ControlOwnership {
   readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
   readonly setOwnerStatus: (status: ControlOwnerStatus) => Effect.Effect<void>;
   readonly setState: (state: ControlOwnerState, ready?: boolean) => Effect.Effect<void>;
+  readonly requestStop: Effect.Effect<void>;
+  readonly stopRequested: Effect.Effect<void>;
   readonly close: Effect.Effect<void>;
 }
 
@@ -124,6 +132,7 @@ export interface ControlAttached {
     | ControlProtocolMismatchError
     | ControlAddressConflictError
   >;
+  readonly requestStop: Effect.Effect<void, ControlTransportError | ControlProtocolError>;
 }
 
 export type ControlAcquisition = ControlOwnership | ControlAttached;
@@ -248,6 +257,7 @@ const attach = (
       ownershipId,
       endpoint,
       ownerStatus: readOwnerStatus(endpoint, ownershipId, transport),
+      requestStop: transport.requestStop(endpoint),
     })),
   );
 
@@ -256,6 +266,7 @@ const makeOwned = (
   ownershipId: string,
   listener: ControlListener,
   statusRef: Ref.Ref<ControlOwnerStatus>,
+  stopRequested: Deferred.Deferred<void>,
 ): Effect.Effect<ControlOwnership> => {
   let closed = false;
   const close = Effect.suspend(() => {
@@ -278,6 +289,8 @@ const makeOwned = (
         state,
         ready,
       }),
+    requestStop: Deferred.succeed(stopRequested, void 0).pipe(Effect.asVoid),
+    stopRequested: Deferred.await(stopRequested),
     close,
   });
 };
@@ -297,6 +310,7 @@ const acquireAtEndpoint = (
   import("effect/Scope").Scope
 > => {
   const statusRef = Ref.makeUnsafe(status);
+  const stopRequested = Deferred.makeUnsafe<void>();
   const attempt: Effect.Effect<
     ControlAcquisition,
     | ControlBindError
@@ -308,10 +322,22 @@ const acquireAtEndpoint = (
     import("effect/Scope").Scope
   > = Effect.gen(function* () {
     const bound = yield* transport
-      .bind(endpoint, () => Ref.getUnsafe(statusRef))
+      .bind(
+        endpoint,
+        () => Ref.getUnsafe(statusRef),
+        () => {
+          Effect.runSync(Deferred.succeed(stopRequested, void 0));
+        },
+      )
       .pipe(Effect.result);
     if (Result.isSuccess(bound)) {
-      const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef);
+      const owned = yield* makeOwned(
+        endpoint,
+        ownershipId,
+        bound.success,
+        statusRef,
+        stopRequested,
+      );
       yield* Effect.addFinalizer(() => owned.close);
       return owned;
     }
