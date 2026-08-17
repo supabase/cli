@@ -1096,8 +1096,16 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       yield* stack.start();
+      // `stopService` applies its transition through the orchestrator's event queue and
+      // the projection sync, so await the projected `Stopped` state off the event
+      // stream (subscribed before the trigger) instead of sleeping through the hops.
+      const stoppedFiber = yield* stack.allStateChanges().pipe(
+        Stream.filter((state) => state.name === "auth" && state.status === "Stopped"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
       yield* stack.stopService("auth");
-      yield* Effect.sleep("20 millis");
+      expect((yield* Fiber.join(stoppedFiber))._tag).toBe("Some");
       expect((yield* stack.getState("auth")).status).toBe("Stopped");
 
       yield* stack.stop();
