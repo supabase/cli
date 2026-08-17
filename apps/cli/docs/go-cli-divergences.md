@@ -94,7 +94,13 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   files or an export manifest — telling the user to set
   `declarative_schema_path = "./database"` or move the tree. The warning never changes
   behavior or exit codes; a non-interactive sync still fails with Go's
-  "no declarative schema found" message.
+  "no declarative schema found" message. Inside that directory the bundled (default) pg-delta
+  engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go reference,
+  and the opt-out legacy engine (`SUPABASE_USE_PG_DELTA_NEXT=false`, which runs the pinned
+  `[experimental.pgdelta] npm_version` in Edge Runtime), instead nest everything one level
+  deeper as `schemas/<schema>/…` plus `cluster/…`, so a legacy-engine export lands at
+  `supabase/schemas/schemas/public/tables/x.sql`.
 - Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
   installed unconditionally: `db-webhook.sql` no longer creates the extension at container
   init, `supabase start`/`db start` install it (with grants reapplied via the

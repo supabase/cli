@@ -246,7 +246,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           );
         }
         return Effect.succeed({
-          files: [{ name: "schemas/public/t.sql", sql: "create table t ();" }],
+          files: [{ name: "public/t.sql", sql: "create table t ();" }],
           manifest: {
             redactSecrets: true,
             scope: "database",
@@ -858,9 +858,7 @@ describe("legacy db pull", () => {
       // (established output contract).
       expect(err).toContain(`Declarative schema written to ${join("supabase", "schemas")}\n`);
       expect(err).not.toContain(tmp.current);
-      expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
-      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(
         JSON.parse(
           readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
@@ -869,7 +867,7 @@ describe("legacy db pull", () => {
         formatVersion: 1,
         redactSecrets: true,
         scope: "database",
-        files: ["schemas/public/t.sql"],
+        files: ["public/t.sql"],
       });
       // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
       // up a platform baseline or `contrib_regression` template — the only connect is
@@ -1048,9 +1046,7 @@ describe("legacy db pull", () => {
       expect(s.engineCalls[0]?.operation).toBe("export");
       // Reaching the declarative write (rather than a migration file / history
       // upsert) proves the declarative export path ran.
-      expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
-      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });

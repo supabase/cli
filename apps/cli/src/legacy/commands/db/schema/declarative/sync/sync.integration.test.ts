@@ -282,9 +282,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               Effect.sync(() => {
                 declarativeExportCalls.push(input.schema);
                 return {
-                  files: [
-                    { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
-                  ],
+                  files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
                   manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
                 };
               }),
@@ -1121,15 +1119,7 @@ describe("legacy db schema declarative sync integration", () => {
       expect(readFileSync(activeMember, "utf8")).toBe(before);
       expect(
         readFileSync(
-          join(
-            tmp.current,
-            "supabase",
-            "schemas-next",
-            "schemas",
-            "public",
-            "tables",
-            "players.sql",
-          ),
+          join(tmp.current, "supabase", "schemas-next", "public", "tables", "players.sql"),
           "utf8",
         ),
       ).toBe("create table players ();");

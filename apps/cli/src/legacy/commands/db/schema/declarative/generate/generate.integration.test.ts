@@ -229,9 +229,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               Effect.die("planDeclarativeSchema not used in generate tests"),
             exportDeclarativeSchema: () =>
               Effect.succeed({
-                files: [
-                  { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
-                ],
+                files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
                 manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
               }),
           }),
@@ -528,17 +526,14 @@ describe("legacy db schema declarative generate integration", () => {
         );
 
         expect(
-          readFileSync(
-            join(tmp.current, destination, "schemas", "public", "tables", "players.sql"),
-            "utf8",
-          ),
+          readFileSync(join(tmp.current, destination, "public", "tables", "players.sql"), "utf8"),
         ).toBe("create table players ();");
         expect(
           JSON.parse(readFileSync(join(tmp.current, destination, ".pgdelta-export.json"), "utf8")),
         ).toMatchObject({
           formatVersion: 1,
           profile: "supabase",
-          files: ["schemas/public/tables/players.sql"],
+          files: ["public/tables/players.sql"],
         });
         expect(
           readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
@@ -1209,7 +1204,7 @@ describe("legacy db schema declarative generate integration", () => {
         formatVersion: 1,
         redactSecrets: true,
         scope: "database",
-        files: ["schemas/public/tables/players.sql"],
+        files: ["public/tables/players.sql"],
       });
       expect(s.seamCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
