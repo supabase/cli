@@ -55,7 +55,7 @@ export interface RepairRequest {
 interface WorkspaceDiscoveryBase {
   readonly path: string;
   readonly workspace: WorkspaceDescriptor;
-  /** The complete identity, including deterministic values for unregistered claims. */
+  /** The complete identity, including deterministic values for all workspace claims. */
   readonly identity: EnvironmentIdentity;
 }
 

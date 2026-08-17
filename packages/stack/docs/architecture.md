@@ -92,12 +92,13 @@ continues to own the public service URL, and the control endpoint is never
 exposed as the user-facing API.
 
 The endpoint uses the stack id to select a port across the reserved loopback
-range `10000..32767`. Every port in this range is excluded from managed service
-allocation, so a service cannot squat on a current or future control endpoint.
-A rare hash collision or unrelated listener therefore makes a mutation fail
-with a typed conflict. Read-only liveness treats it as non-live and never
-claims the address. This intentionally favors a small single-user localhost
-mechanism; the control protocol has no token authentication.
+range `10000..32767`. Automatic managed service allocation excludes this whole
+range, while explicit service ports remain available unless they match the
+incoming stack's endpoint or a known persisted stack's endpoint. A rare hash
+collision or unrelated listener therefore makes a mutation fail with a typed
+conflict. Read-only liveness treats it as non-live and never claims the address.
+This intentionally favors a small single-user localhost mechanism; the control
+protocol has no token authentication.
 
 The parent sends one managed start message containing the resolved daemon
 configuration, the raw project document for port intent, and launch

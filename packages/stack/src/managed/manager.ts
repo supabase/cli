@@ -23,6 +23,7 @@ import {
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
+  controlEndpoint,
   ControlTransport,
   probeControl,
   type ControlAcquisition,
@@ -403,10 +404,38 @@ const makeManager = (
           const requests = portRequests(plan);
           const exactRequests = requests.filter((item) => item.selection.kind === "exact");
           const automaticRequests = requests.filter((item) => item.selection.kind === "automatic");
-          const strictReserved = new Set<number>();
-          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
-            strictReserved.add(port);
+          const invalidPersistedAutomatic = plan.durable.find(
+            (entry) =>
+              entry.intent === "automatic" &&
+              entry.selection.kind === "exact" &&
+              entry.selection.port >= CONTROL_PORT_RANGE.min &&
+              entry.selection.port <= CONTROL_PORT_RANGE.max,
+          );
+          const invalidInactiveAutomatic = plan.inactiveAssignments.find(
+            (assignment) =>
+              assignment.intent === "automatic" &&
+              assignment.port >= CONTROL_PORT_RANGE.min &&
+              assignment.port <= CONTROL_PORT_RANGE.max,
+          );
+          const invalidPersistedPort =
+            invalidPersistedAutomatic?.selection.kind === "exact"
+              ? invalidPersistedAutomatic.selection.port
+              : invalidInactiveAutomatic?.port;
+          const invalidPersistedField =
+            invalidPersistedAutomatic?.field ??
+            Object.values(PORT_CATALOG).find(
+              (entry) => entry.configKey === invalidInactiveAutomatic?.key,
+            )?.field;
+          if (invalidPersistedField !== undefined && invalidPersistedPort !== undefined) {
+            return yield* Effect.fail(
+              new ManagedPortAllocationError({
+                fields: [invalidPersistedField],
+                cause: `Persisted automatic port ${invalidPersistedPort} is reserved for managed control endpoints`,
+              }),
+            );
           }
+          const strictReserved = new Set<number>();
+          const exactReserved = new Set<number>([(yield* controlEndpoint(request.stackId)).port]);
           const owners = new Map<
             number,
             ReadonlyArray<{
@@ -415,6 +444,7 @@ const makeManager = (
             }>
           >();
           for (const listing of listings.filter(isHealthyDocument)) {
+            exactReserved.add((yield* controlEndpoint(listing.document.id)).port);
             if (listing.document.id === request.stackId) continue;
             for (const assignment of listing.document.ports) {
               const liveExact =
@@ -478,7 +508,7 @@ const makeManager = (
           const exactLease =
             exactRequests.length === 0
               ? undefined
-              : yield* reservePortSet(exactRequests, { reserved: strictReserved }).pipe(
+              : yield* reservePortSet(exactRequests, { reserved: exactReserved }).pipe(
                   Effect.mapError((cause) => {
                     const entry =
                       cause.field === undefined
@@ -499,7 +529,11 @@ const makeManager = (
                   }),
                 );
           if (exactLease !== undefined) partialLeases.push(exactLease);
-          const automaticReserved = new Set(strictReserved);
+          const automaticReserved = new Set<number>();
+          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
+            automaticReserved.add(port);
+          }
+          for (const port of strictReserved) automaticReserved.add(port);
           for (const [port] of owners) {
             automaticReserved.add(port);
           }
