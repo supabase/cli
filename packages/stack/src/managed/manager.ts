@@ -13,7 +13,7 @@ import {
   Scope,
 } from "effect";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { PortField, PortSet } from "../PortCatalog.ts";
+import { PORT_CATALOG, type PortField, type PortSet } from "../PortCatalog.ts";
 import {
   reservePortSet,
   type PortAllocationError,
@@ -22,6 +22,7 @@ import {
 } from "../PortAllocator.ts";
 import {
   acquireControl,
+  CONTROL_PORT_RANGE,
   ControlTransport,
   probeControl,
   type ControlAcquisition,
@@ -395,6 +396,9 @@ const makeManager = (
           const exactRequests = requests.filter((item) => item.selection.kind === "exact");
           const automaticRequests = requests.filter((item) => item.selection.kind === "automatic");
           const strictReserved = new Set<number>();
+          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
+            strictReserved.add(port);
+          }
           const owners = new Map<
             number,
             ReadonlyArray<{
@@ -467,13 +471,24 @@ const makeManager = (
             exactRequests.length === 0
               ? undefined
               : yield* reservePortSet(exactRequests, { reserved: strictReserved }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ManagedPortAllocationError({
-                        fields: exactRequests.map((item) => item.field),
-                        cause,
-                      }),
-                  ),
+                  Effect.mapError((cause) => {
+                    const entry =
+                      cause.field === undefined
+                        ? undefined
+                        : plan.durable.find((candidate) => candidate.field === cause.field);
+                    const key =
+                      entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
+                    return key !== undefined && cause.port !== undefined
+                      ? new ManagedExactPortOccupiedError({
+                          key,
+                          port: cause.port,
+                          stackId: request.stackId,
+                        })
+                      : new ManagedPortAllocationError({
+                          fields: exactRequests.map((item) => item.field),
+                          cause,
+                        });
+                  }),
                 );
           if (exactLease !== undefined) partialLeases.push(exactLease);
           const automaticReserved = new Set(strictReserved);

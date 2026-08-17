@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
@@ -25,7 +26,7 @@ import {
 import type { ManagedStackStartResult } from "./managed/manager.ts";
 import { ManagedExactPortOccupiedError } from "./managed/model.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, controlEndpoint, ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
@@ -110,6 +111,18 @@ const freePort = (): Effect.Effect<number, unknown, import("effect/Scope").Scope
     yield* lease.releaseAll;
     if (port === undefined) return yield* Effect.fail(new Error("missing free port"));
     return port;
+  });
+
+const listenExternal = (port: number): Promise<Server> =>
+  new Promise((resolve, reject) => {
+    const server = createServer((_request, response) => response.end("external"));
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve(server));
+  });
+
+const closeExternal = (server: Server): Promise<void> =>
+  new Promise((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
   });
 
 const startWithOwner = (
@@ -444,6 +457,89 @@ describe("managed stack journeys", () => {
     );
   });
 
+  it.live("attributes an exact API port collision with another stack control endpoint", () => {
+    const { layer, workspace } = setup();
+    const otherWorkspace = join(workspace, "other");
+    mkdirSync(otherWorkspace);
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const otherEnvironment = yield* ensureEnvironment(otherWorkspace);
+        const otherStackId = deriveStackId(otherEnvironment.identity, "default");
+        const otherEndpoint = yield* controlEndpoint(otherStackId);
+
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack ownership");
+        const rejected = yield* manager
+          .startStack({
+            workspacePath: workspace,
+            portDocument: exactDocument("apiPort", otherEndpoint.port),
+            ownership,
+          })
+          .pipe(Effect.exit);
+
+        expect(Exit.isFailure(rejected)).toBe(true);
+        if (Exit.isFailure(rejected)) {
+          expect(Cause.squash(rejected.cause)).toMatchObject({
+            _tag: "ManagedExactPortOccupiedError",
+            key: "api.port",
+            port: otherEndpoint.port,
+          });
+        }
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
+  it.live("attributes an exact API port collision with an external listener", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const port = yield* freePort();
+        const external = yield* Effect.acquireRelease(
+          Effect.promise(() => listenExternal(port)),
+          (server) => Effect.promise(() => closeExternal(server)),
+        );
+        expect(external.listening).toBe(true);
+
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack ownership");
+        const rejected = yield* manager
+          .startStack({
+            workspacePath: workspace,
+            portDocument: exactDocument("apiPort", port),
+            ownership,
+          })
+          .pipe(Effect.exit);
+
+        expect(Exit.isFailure(rejected)).toBe(true);
+        if (Exit.isFailure(rejected)) {
+          expect(Cause.squash(rejected.cause)).toMatchObject({
+            _tag: "ManagedExactPortOccupiedError",
+            key: "api.port",
+            port,
+          });
+        }
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("keeps automatic ports exclusive while stopped", () => {
     const { layer } = setup();
     const root = mkdtempSync(join(tmpdir(), "managed-auto-test-"));
@@ -478,6 +574,11 @@ describe("managed stack journeys", () => {
           })
           .pipe(Effect.exit);
         expect(Exit.isFailure(restart)).toBe(true);
+        if (Exit.isFailure(restart)) {
+          expect(Cause.squash(restart.cause)).toMatchObject({
+            _tag: "ManagedPortAllocationError",
+          });
+        }
         yield* external.releaseAll;
         const second = yield* startWithOwner(manager, secondWorkspace, automaticDocument());
         expect(second.stack.ports[0]?.port).not.toBe(first.stack.ports[0]?.port);

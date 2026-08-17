@@ -14,6 +14,9 @@ export const CONTROL_STATUS_PATH = "/owner";
 const CONTROL_PROTOCOL_VERSION = 1 as const;
 const CONTROL_ID_PATTERN = /^[0-9a-f]{64}$/;
 
+/** Reserved loopback TCP range for deterministic managed control endpoints. */
+export const CONTROL_PORT_RANGE = { min: 10_000, max: 32_767 } as const;
+
 export interface ControlEndpoint {
   readonly hostname: string;
   readonly port: number;
@@ -136,14 +139,15 @@ const ownershipBytes = (ownershipId: string): ReadonlyArray<number> => {
   return bytes;
 };
 
-/** Derives a deterministic loopback address and high port from a stack id. */
+/** Derives a deterministic loopback address and reserved port from a stack id. */
 export const controlEndpoint = (
   ownershipId: string,
 ): Effect.Effect<ControlEndpoint, InvalidControlOwnershipIdError> => {
   if (!CONTROL_ID_PATTERN.test(ownershipId)) return invalidId(ownershipId);
   const bytes = ownershipBytes(ownershipId);
   const value = (bytes[3]! << 8) | bytes[4]!;
-  const port = 49152 + (value % 16384);
+  const port =
+    CONTROL_PORT_RANGE.min + (value % (CONTROL_PORT_RANGE.max - CONTROL_PORT_RANGE.min + 1));
   const host = "127.0.0.1";
   const url = `http://${host}:${port}`;
   return Effect.succeed({ hostname: host, port, url });
@@ -326,7 +330,7 @@ const acquireAtEndpoint = (
 
   return attempt.pipe(
     Effect.retry({
-      schedule: Schedule.spaced("5 millis").pipe(Schedule.upTo({ times: 40 })),
+      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 60 })),
       while: (error) => error._tag === "ControlUnavailableError",
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>

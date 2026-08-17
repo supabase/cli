@@ -30,6 +30,7 @@ export * from "./managed/environment.ts";
 export {
   acquireControl,
   controlEndpoint,
+  CONTROL_PORT_RANGE,
   ControlAddressConflictError,
   ControlBindError,
   ControlProtocolError,

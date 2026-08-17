@@ -94,7 +94,7 @@ describe("managed control endpoint", () => {
   it.live("derives one deterministic loopback endpoint from the ownership id", () => {
     return Effect.sync(() => {
       const endpoint = Effect.runSync(controlEndpoint(STACK_ID));
-      expect(endpoint.url).toBe("http://127.0.0.1:59273");
+      expect(endpoint.url).toBe("http://127.0.0.1:13737");
     });
   });
 
