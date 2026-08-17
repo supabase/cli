@@ -8,6 +8,8 @@ import { Stack } from "./Stack.ts";
 import { foregroundLayer } from "./layers.ts";
 import {
   acquireControl,
+  ControlTransportError,
+  type ControlAcquisition,
   type ControlAttached,
   type ControlEndpoint,
   type ControlOwnership,
@@ -34,7 +36,8 @@ export type SupervisorTestMode =
   | "bind-all"
   | "fail-after-bind"
   | "hold-reservations"
-  | "hold-start";
+  | "hold-start"
+  | "hold-stop";
 
 /** The only message sent across the detached child IPC boundary. */
 export interface SupervisorStartMessage {
@@ -93,7 +96,13 @@ const supervisorStartMessageSchema = Schema.Struct({
   portIntents: supervisorPortIntentSchema,
   launch: Schema.optionalKey(managedStackLaunchSchema),
   testMode: Schema.optionalKey(
-    Schema.Literals(["bind-all", "fail-after-bind", "hold-reservations", "hold-start"]),
+    Schema.Literals([
+      "bind-all",
+      "fail-after-bind",
+      "hold-reservations",
+      "hold-start",
+      "hold-stop",
+    ]),
   ),
 });
 
@@ -125,12 +134,23 @@ class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerU
   readonly detail: string;
 }> {}
 
+class SupervisorOwnerReacquirePending extends Data.TaggedError(
+  "SupervisorOwnerReacquirePending",
+)<{}> {}
+
 const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
 
 const awaitOwnerReady = (
   acquisition: ControlAttached,
   onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
-) =>
+): Effect.Effect<
+  import("./managed/control.ts").ControlOwnerStatus,
+  | SupervisorStartError
+  | import("./managed/control.ts").ControlTransportError
+  | import("./managed/control.ts").ControlProtocolError
+  | import("./managed/control.ts").ControlProtocolMismatchError
+  | import("./managed/control.ts").ControlAddressConflictError
+> =>
   acquisition.ownerStatus.pipe(
     Effect.flatMap((status) => {
       if (status.state === "running" && status.ready) return Effect.succeed(status);
@@ -151,11 +171,13 @@ const awaitOwnerReady = (
     Effect.catchTag("SupervisorOwnerUnavailableError", (error) =>
       Effect.fail(new SupervisorStartError({ message: error.detail })),
     ),
-    Effect.asVoid,
   );
 
 /** Minimal Stack implementation used only by explicit supervisor test mode. */
-const supervisorTestStackLayer = (config: ResolvedDaemonConfig): Layer.Layer<Stack> => {
+const supervisorTestStackLayer = (
+  config: ResolvedDaemonConfig,
+  mode?: SupervisorTestMode,
+): Layer.Layer<Stack> => {
   const info = {
     url: `http://127.0.0.1:${config.apiPort}`,
     dbUrl: `postgresql://postgres:postgres@127.0.0.1:${config.dbPort}/postgres`,
@@ -168,7 +190,7 @@ const supervisorTestStackLayer = (config: ResolvedDaemonConfig): Layer.Layer<Sta
   const stack: Stack["Service"] = {
     getInfo: () => Effect.succeed(info),
     start: () => Effect.void,
-    stop: () => Effect.void,
+    stop: () => (mode === "hold-stop" ? Effect.never : Effect.void),
     dispose: () => Effect.void,
     startService: () => Effect.void,
     stopService: () => Effect.void,
@@ -234,7 +256,7 @@ export const supervisorTestRuntime: NonNullable<SupervisorPlatform["testRuntime"
       }
     }
     yield* Effect.addFinalizer(() => closeTestPorts(servers));
-    return supervisorTestStackLayer(config);
+    return supervisorTestStackLayer(config, mode);
   });
 
 export interface SupervisorPlatform {
@@ -353,11 +375,13 @@ const startDaemon = (input: {
     const localStack = Context.get(appServices, Stack);
     const daemonLayer = DaemonServer.layerWithShutdown(
       Effect.gen(function* () {
+        yield* input.ownership.setState("stopping", false);
         yield* localStack.stop();
       }),
       input.ownership.ownerStatus,
       {
         includeOwnerRoute: false,
+        stopOnShutdown: false,
         ...(input.launchUpdate === undefined ? {} : { launchUpdate: input.launchUpdate }),
       },
     ).pipe(
@@ -410,14 +434,60 @@ const runManaged = (
     }
     const discovery = yield* manager.ensureWorkspace(input.workspacePath);
     const stackId = deriveStackId(discovery.identity, input.stackName);
-    const acquisition = yield* acquireControl({ stackId });
-    if (acquisition._tag === "Attached") {
-      yield* awaitOwnerReady(
-        acquisition,
-        input.testMode === "hold-start"
-          ? sendMessage({ type: "test-stage", stage: "attached-before-ready" })
-          : Effect.void,
+    const initialAcquisition = yield* acquireControl({ stackId });
+    const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
+      manager.acquireControl(stackId).pipe(
+        Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
+          if (candidate._tag === "Owned") return Effect.succeed(candidate);
+          return candidate.ownerStatus.pipe(
+            Effect.flatMap(
+              (status): Effect.Effect<never, unknown> =>
+                status.state === "starting"
+                  ? Effect.fail(new SupervisorOwnerReacquirePending())
+                  : Effect.fail(
+                      new SupervisorStartError({
+                        message: `Attached supervisor owner is ${status.state} after disconnect`,
+                      }),
+                    ),
+            ),
+            Effect.catch((error) =>
+              error instanceof ControlTransportError && error.reason === "unreachable"
+                ? Effect.fail(new SupervisorOwnerReacquirePending())
+                : Effect.fail(error),
+            ),
+          );
+        }),
+        Effect.retry({
+          schedule: Schedule.spaced("25 millis").pipe(
+            Schedule.upTo({ duration: SUPERVISOR_STARTUP_TIMEOUT }),
+          ),
+          while: (error) => error instanceof SupervisorOwnerReacquirePending,
+        }),
+        Effect.catch((error) =>
+          error instanceof SupervisorOwnerReacquirePending
+            ? Effect.fail(
+                new SupervisorStartError({ message: "Timed out reacquiring supervisor owner" }),
+              )
+            : Effect.fail(error),
+        ),
       );
+    const acquisition =
+      initialAcquisition._tag === "Attached"
+        ? yield* awaitOwnerReady(
+            initialAcquisition,
+            input.testMode === "hold-start"
+              ? sendMessage({ type: "test-stage", stage: "attached-before-ready" })
+              : Effect.void,
+          ).pipe(
+            Effect.as(initialAcquisition),
+            Effect.catch((error) =>
+              error instanceof ControlTransportError && error.reason === "unreachable"
+                ? reacquireAfterDeath()
+                : Effect.fail(error),
+            ),
+          )
+        : initialAcquisition;
+    if (acquisition._tag === "Attached") {
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;

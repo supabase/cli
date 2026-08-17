@@ -338,6 +338,29 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("publishes stopping before a slow owner shutdown can finish", async () => {
+    const roots = workspace();
+    const child = spawnChild(messageFor(roots, { testMode: "hold-stop" }));
+    try {
+      const started = await child.started;
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
+      void fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
+      const deadline = Date.now() + 2_000;
+      let stopping = false;
+      while (Date.now() < deadline) {
+        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
+          stopping = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(stopping).toBe(true);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("attaches a second child as RemoteStack while the owner remains live", async () => {
     const roots = workspace();
     const input = messageFor(roots);
@@ -363,7 +386,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("waits for a starting owner before reporting terminal attach failure", async () => {
+  test("reacquires and restarts after an attached owner dies during readiness", async () => {
     const roots = workspace();
     const input = messageFor(roots, { testMode: "hold-start" });
     const owner = spawnChild(input);
@@ -371,15 +394,28 @@ describe("detached supervisor child journeys", () => {
     let contender: ChildHandle | undefined;
     try {
       const document = await waitForStackDocument(roots, "starting");
-      const endpoint = await Effect.runPromise(controlEndpoint(document.id));
-      expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
+      const restartedEndpoint = await Effect.runPromise(controlEndpoint(document.id));
+      expect(await fetchOwner(restartedEndpoint)).toMatchObject({
+        state: "starting",
+        ready: false,
+      });
 
       contender = spawnChild(input);
+      void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
 
       await kill(owner.child);
       await expect(owner.started).rejects.toThrow();
-      await expect(contender.started).rejects.toThrow();
+      const deadline = Date.now() + 3_000;
+      let restarted = false;
+      while (Date.now() < deadline) {
+        if ((await fetchOwner(restartedEndpoint).catch(() => undefined))?.state === "starting") {
+          restarted = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(restarted).toBe(true);
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);

@@ -36,6 +36,8 @@ export class DaemonServer extends Context.Service<
     options: {
       readonly includeOwnerRoute?: boolean;
       readonly launchUpdate?: (launch: ManagedStackLaunch) => Effect.Effect<void, unknown>;
+      /** Supervisor-owned shutdown callbacks already stop the local stack. */
+      readonly stopOnShutdown?: boolean;
     } = {},
   ): Layer.Layer<DaemonServer, never, Stack | HttpServer.HttpServer> =>
     Layer.effect(
@@ -228,7 +230,7 @@ export class DaemonServer extends Context.Service<
             "POST",
             "/stop",
             Effect.gen(function* () {
-              yield* stack.stop();
+              if (options.stopOnShutdown !== false) yield* stack.stop();
               yield* beginShutdown;
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }),

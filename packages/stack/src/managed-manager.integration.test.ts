@@ -1,6 +1,18 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Scope, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Schedule,
+  Scope,
+  Stream,
+} from "effect";
 import { HttpServer } from "effect/unstable/http";
 import {
   chmodSync,
@@ -330,6 +342,157 @@ describe("managed stack journeys", () => {
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(controlTransportLayer),
       Effect.provide(httpTransportClientLayer),
+    );
+  });
+
+  it.live("stops an owner whose document is still starting", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected ownership");
+        const started = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "starting",
+        });
+        yield* releaseLease(started);
+        const stopped = { value: false };
+        const localStack = {
+          ...controlStack(),
+          stop: () => Effect.sync(() => void (stopped.value = true)),
+        } satisfies Stack["Service"];
+        const daemonRuntime = ManagedRuntime.make(
+          DaemonServer.layerWithShutdown(
+            Effect.gen(function* () {
+              yield* localStack.stop();
+              yield* manager.recordLifecycle(owner, { stackId, lifecycle: "stopped" });
+            }).pipe(Effect.asVoid, Effect.orDie),
+            owner.ownerStatus,
+            { includeOwnerRoute: false },
+          ).pipe(
+            Layer.provide(Layer.succeed(Stack, localStack)),
+            Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
+          ),
+        );
+        yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
+        yield* owner.setState("running", true);
+
+        const stopFiber = yield* Effect.forkScoped(stopManagedStack({ workspacePath: workspace }));
+        yield* manager.inspectStack(stackId).pipe(
+          Effect.flatMap((current) =>
+            current?.lifecycle === "stopped"
+              ? Effect.succeed(current)
+              : Effect.fail(new Error("stop pending")),
+          ),
+          Effect.retry(Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "2 seconds" }))),
+        );
+        yield* owner.close;
+        yield* Fiber.join(stopFiber);
+        expect(stopped.value).toBe(true);
+        expect((yield* manager.inspectStack(stackId))?.lifecycle).toBe("stopped");
+        yield* Effect.promise(() => daemonRuntime.dispose());
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
+  it.live("preserves launch metadata when lifecycle stop races its document update", () => {
+    const { stateRoot, workspace } = setup();
+    const gate = { enabled: false, reads: 0 };
+    let firstRead!: Deferred.Deferred<void>;
+    let secondRead!: Deferred.Deferred<void>;
+    let releaseFirst!: Deferred.Deferred<void>;
+    let releaseSecond!: Deferred.Deferred<void>;
+    const gatedFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          readFileString: (path: string, options?: Parameters<typeof base.readFileString>[1]) => {
+            if (!gate.enabled || !path.endsWith("stack.json")) {
+              return base.readFileString(path, options);
+            }
+            gate.reads += 1;
+            const signal = gate.reads === 1 ? firstRead : secondRead;
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(signal, void 0);
+              yield* Deferred.await(gate.reads === 1 ? releaseFirst : releaseSecond);
+              return yield* base.readFileString(path, options);
+            });
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
+    const managerLayer = managedStackManagerLayer({ stateRoot }).pipe(
+      Layer.provide(gatedFileSystemLayer),
+      Layer.provide(NodePath.layer),
+      Layer.provide(gitConfigStoreLayer),
+      Layer.provide(controlTransportLayer),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        firstRead = yield* Deferred.make<void>();
+        secondRead = yield* Deferred.make<void>();
+        releaseFirst = yield* Deferred.make<void>();
+        releaseSecond = yield* Deferred.make<void>();
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected ownership");
+        const initial = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "running",
+        });
+        yield* releaseLease(initial);
+        const launch = { mode: "auto" as const, versions: { postgres: "17.6.1" } };
+        gate.enabled = true;
+        const launchFiber = yield* Effect.forkScoped(
+          manager.updateLaunch(owner, { stackId, launch }),
+        );
+        const stopFiber = yield* Effect.forkScoped(
+          manager.recordLifecycle(owner, { stackId, lifecycle: "stopped" }),
+        );
+        yield* Deferred.await(firstRead);
+        const secondAlreadyRead = yield* Effect.race(
+          Deferred.await(secondRead).pipe(Effect.as(true)),
+          Effect.sleep("100 millis").pipe(Effect.as(false)),
+        );
+        if (secondAlreadyRead) {
+          yield* Deferred.succeed(releaseFirst, void 0);
+          yield* Deferred.succeed(releaseSecond, void 0);
+        } else {
+          yield* Deferred.succeed(releaseFirst, void 0);
+          yield* Deferred.await(secondRead);
+          yield* Deferred.succeed(releaseSecond, void 0);
+        }
+        gate.enabled = false;
+        yield* Fiber.join(launchFiber);
+        yield* Fiber.join(stopFiber);
+        const final = yield* manager.inspectStack(stackId);
+        expect(final?.lifecycle).toBe("stopped");
+        expect(final?.launch).toEqual(launch);
+      }),
+    ).pipe(
+      Effect.provide(managerLayer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
     );
   });
 
@@ -718,6 +881,72 @@ describe("managed stack journeys", () => {
         expect(recovered.stack.lifecycle).toBe("stopped");
         expect(recovered.stack.ports).toEqual(starting.stack.ports);
         yield* releaseLease(recovered);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
+  it.live("deletes a stale running document after its owner closes", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected ownership");
+        const running = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "running",
+          runtime: { pid: 1, controlEndpoint: owner.endpoint.url, protocolVersion: 1 },
+        });
+        yield* releaseLease(running);
+        yield* owner.close;
+
+        yield* deleteManagedStack({ workspacePath: workspace });
+        expect(yield* manager.inspectStack(stackId)).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
+  it.live("repairs a moved workspace after reclaiming a stale running owner", () => {
+    const { layer } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const root = mkdtempSync(join(tmpdir(), "managed-stale-repair-test-"));
+        roots.push(root);
+        const repository = makeRepository(root);
+        const project = join(repository, "apps", "project");
+        mkdirSync(project, { recursive: true });
+        const manager = yield* ManagedStackManager;
+        const owner = yield* Effect.scoped(
+          startWithOwner(manager, project, automaticDocument(), "running"),
+        );
+        const stackId = owner.stack.id;
+        const moved = join(root, "moved");
+        renameSync(repository, moved);
+        const movedProject = realpathSync(join(moved, "apps", "project"));
+        const discovery = yield* manager.discoverWorkspace(movedProject);
+        if (discovery.state !== "needsRepair") throw new Error("expected repair");
+        yield* manager.repairWorkspace(discovery.repair);
+
+        const repaired = yield* manager.inspectStack(stackId);
+        expect(repaired?.lifecycle).toBe("failed");
+        expect(repaired?.runtime).toBeUndefined();
+        expect(repaired?.workspace.path).toBe(movedProject);
       }),
     ).pipe(
       Effect.provide(layer),

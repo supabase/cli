@@ -10,6 +10,7 @@ import {
   Path,
   PlatformError,
   Schedule,
+  Semaphore,
   Scope,
 } from "effect";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -57,6 +58,9 @@ import {
 import { resolvePortIntents } from "./port-intent.ts";
 import { makeStackStore, type ManagedStackListing } from "./store.ts";
 import type { ManagedStackDocument } from "./document.ts";
+import { dockerForceRemove } from "../cleanup.ts";
+import { SERVICE_NAMES } from "../ServiceCatalog.ts";
+import { dockerContainerName } from "../StackIdentity.ts";
 
 /** A document joined with a transient drift report for read-only callers. */
 export interface ManagedStack extends ManagedStackDocument {
@@ -371,6 +375,7 @@ const makeManager = (
         Effect.provideService(ControlTransport, controlTransport),
       );
     const store = yield* makeStackStore(stateRoot);
+    const lifecycleLock = Semaphore.makeUnsafe(1);
 
     const allocateManagedPorts = (
       ownership: ControlOwnership,
@@ -683,57 +688,65 @@ const makeManager = (
       ownership: ControlOwnership,
       update: ManagedStackLifecycleUpdate,
     ): Effect.Effect<ManagedStack, ManagedStackManagerError> =>
-      Effect.gen(function* () {
-        yield* requireOwnedForStack(ownership, update.stackId);
-        const current = yield* store.read(update.stackId);
-        if (current === undefined) {
-          return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
-        }
-        const ownerState =
-          update.lifecycle === "running"
-            ? "running"
-            : update.lifecycle === "starting"
-              ? "starting"
-              : update.lifecycle === "deleting"
-                ? "deleting"
-                : update.lifecycle === "failed"
-                  ? "failed"
-                  : "stopping";
-        yield* ownership.setState(ownerState, update.lifecycle === "running");
-        let next: ManagedStackDocument = {
-          ...current,
-          lifecycle: update.lifecycle,
-          updatedAt: now(),
-        };
-        if (
-          update.runtime !== undefined ||
-          update.lifecycle === "stopped" ||
-          update.lifecycle === "failed"
-        ) {
-          const { runtime: _runtime, ...withoutRuntime } = next;
-          next = withoutRuntime;
-        }
-        if (update.runtime !== undefined && update.runtime !== null) {
-          next = { ...next, runtime: update.runtime };
-        }
-        yield* store.write(next);
-        return next;
-      });
+      lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          yield* requireOwnedForStack(ownership, update.stackId);
+          const current = yield* store.read(update.stackId);
+          if (current === undefined) {
+            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+          }
+          const ownerState =
+            update.lifecycle === "running"
+              ? "running"
+              : update.lifecycle === "starting"
+                ? "starting"
+                : update.lifecycle === "deleting"
+                  ? "deleting"
+                  : update.lifecycle === "failed"
+                    ? "failed"
+                    : "stopping";
+          yield* ownership.setState(ownerState, update.lifecycle === "running");
+          let next: ManagedStackDocument = {
+            ...current,
+            lifecycle: update.lifecycle,
+            updatedAt: now(),
+          };
+          if (
+            update.runtime !== undefined ||
+            update.lifecycle === "stopped" ||
+            update.lifecycle === "failed"
+          ) {
+            const { runtime: _runtime, ...withoutRuntime } = next;
+            next = withoutRuntime;
+          }
+          if (update.runtime !== undefined && update.runtime !== null) {
+            next = { ...next, runtime: update.runtime };
+          }
+          yield* store.write(next);
+          return next;
+        }),
+      );
 
     const updateLaunch = (
       ownership: ControlOwnership,
       update: ManagedStackLaunchUpdate,
     ): Effect.Effect<ManagedStack, ManagedStackManagerError> =>
-      Effect.gen(function* () {
-        yield* requireOwnedForStack(ownership, update.stackId);
-        const current = yield* store.read(update.stackId);
-        if (current === undefined) {
-          return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
-        }
-        const next: ManagedStackDocument = { ...current, launch: update.launch, updatedAt: now() };
-        yield* store.write(next);
-        return next;
-      });
+      lifecycleLock.withPermit(
+        Effect.gen(function* () {
+          yield* requireOwnedForStack(ownership, update.stackId);
+          const current = yield* store.read(update.stackId);
+          if (current === undefined) {
+            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+          }
+          const next: ManagedStackDocument = {
+            ...current,
+            launch: update.launch,
+            updatedAt: now(),
+          };
+          yield* store.write(next);
+          return next;
+        }),
+      );
 
     const repairWorkspace = (
       request: RepairRequest,
@@ -764,14 +777,6 @@ const makeManager = (
             .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
           const stackOwners: Array<ControlOwnership> = [];
           for (const document of affected) {
-            if (document.lifecycle !== "stopped" && document.lifecycle !== "failed") {
-              return yield* Effect.fail(
-                new ManagedWorkspaceRepairConflictError({
-                  stackId: document.id,
-                  reason: `Managed stack ${document.id} is live and cannot be repaired`,
-                }),
-              );
-            }
             const acquisition = yield* provideDependencies(
               acquireControl({ stackId: document.id }),
             );
@@ -796,12 +801,14 @@ const makeManager = (
           }
           const updatedAt = now();
           const checkoutRoot = revalidated.path;
-          for (const document of affected) {
+          const updates = affected.map((document) => {
             const projectPath =
               document.identity.localProjectKey === "."
                 ? checkoutRoot
                 : resolve(checkoutRoot, ...document.identity.localProjectKey.split("/"));
-            const escaped = relative(checkoutRoot, projectPath);
+            return { document, projectPath, escaped: relative(checkoutRoot, projectPath) };
+          });
+          for (const { document, escaped } of updates) {
             if (isAbsolute(escaped) || escaped === ".." || escaped.startsWith("../")) {
               return yield* Effect.fail(
                 new ManagedWorkspaceRepairConflictError({
@@ -810,8 +817,13 @@ const makeManager = (
                 }),
               );
             }
+          }
+          for (const { document, projectPath } of updates) {
+            const stale = document.lifecycle === "running" || document.lifecycle === "starting";
+            const { runtime: _runtime, ...withoutRuntime } = document;
             yield* store.write({
-              ...document,
+              ...withoutRuntime,
+              ...(stale ? { lifecycle: "failed" as const } : {}),
               workspace: { ...document.workspace, path: projectPath },
               updatedAt,
             });
@@ -843,10 +855,12 @@ const makeManager = (
             );
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
-          if (current.lifecycle === "running" || current.lifecycle === "starting") {
-            return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
-          }
-          const deleting = { ...current, lifecycle: "deleting" as const, updatedAt: now() };
+          yield* acquisition.setState("deleting", false);
+          yield* dockerForceRemove(
+            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+          );
+          const { runtime: _runtime, ...withoutRuntime } = current;
+          const deleting = { ...withoutRuntime, lifecycle: "deleting" as const, updatedAt: now() };
           yield* store.write(deleting);
           yield* store.remove(stackId);
           return { outcome: "removed", stackId };

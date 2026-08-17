@@ -15,7 +15,7 @@ import {
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
 } from "./manager.ts";
-import { controlEndpoint, type ControlEndpoint } from "./control.ts";
+import { ControlTransportError, controlEndpoint, type ControlEndpoint } from "./control.ts";
 import { ManagedStackNotStoppedError, type ManagedPortIntentDocument } from "./model.ts";
 import { deriveStackId } from "./environment.ts";
 
@@ -74,7 +74,10 @@ const runtimeEndpoint = (
   input: ManagedLifecycleInput,
 ): Effect.Effect<ControlEndpoint, NoRunningStackError | ManagedStackControlRequiredError> =>
   Effect.gen(function* () {
-    if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
+    if (
+      (document.lifecycle !== "running" && document.lifecycle !== "starting") ||
+      (document.lifecycle === "running" && document.runtime?.controlEndpoint === undefined)
+    ) {
       return yield* Effect.fail(noRunningStack(input));
     }
     const endpoint = yield* controlEndpoint(document.id).pipe(
@@ -84,6 +87,7 @@ const runtimeEndpoint = (
   });
 
 class ManagedStopPending extends Data.TaggedError("ManagedStopPending")<{}> {}
+class ManagedStopOwnerTerminal extends Data.TaggedError("ManagedStopOwnerTerminal")<{}> {}
 class ManagedDeletePending extends Data.TaggedError("ManagedDeletePending")<{}> {}
 
 /** Connect to the deterministic endpoint persisted by the managed supervisor. */
@@ -141,10 +145,75 @@ export const stopManagedStack = (
         yield* acquisition.close;
         return;
       }
-      if (document !== undefined && document.lifecycle !== "running") {
+      if (
+        document !== undefined &&
+        document.lifecycle !== "running" &&
+        document.lifecycle !== "starting"
+      ) {
         return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
       }
       const client = yield* HttpTransportClient;
+      const cleanupOwned = (owned: import("./control.ts").ControlOwnership) =>
+        Effect.ensuring(
+          Effect.gen(function* () {
+            yield* dockerForceRemove(
+              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+            );
+            if (document !== undefined) {
+              yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
+            }
+          }),
+          owned.close,
+        );
+      const awaitOwnerReady: Effect.Effect<
+        "ready",
+        | ManagedStopPending
+        | ManagedStopOwnerTerminal
+        | ControlTransportError
+        | import("./control.ts").ControlProtocolError
+        | import("./control.ts").ControlProtocolMismatchError
+        | import("./control.ts").ControlAddressConflictError
+      > = acquisition.ownerStatus.pipe(
+        Effect.flatMap(
+          (status): Effect.Effect<"ready", ManagedStopPending | ManagedStopOwnerTerminal> => {
+            if (status.state === "running" && status.ready) return Effect.succeed<"ready">("ready");
+            if (status.state === "starting" || status.state === "stopping") {
+              return Effect.fail(new ManagedStopPending());
+            }
+            return Effect.fail(new ManagedStopOwnerTerminal());
+          },
+        ),
+        Effect.retry({
+          schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
+          while: (error) => error instanceof ManagedStopPending,
+        }),
+      );
+      const ready = yield* awaitOwnerReady.pipe(
+        Effect.catchTag("ManagedStopOwnerTerminal", () =>
+          Effect.fail(new ManagedStackAttachedError({ stackId })),
+        ),
+        Effect.catch((error) =>
+          error instanceof ControlTransportError && error.reason === "unreachable"
+            ? Effect.succeed<"dead">("dead")
+            : Effect.fail(error),
+        ),
+        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
+      );
+      if (ready === "dead") {
+        const released = yield* manager.acquireControl(stackId).pipe(
+          Effect.flatMap((candidate) =>
+            candidate._tag === "Owned"
+              ? Effect.succeed(candidate)
+              : Effect.fail(new ManagedStopPending()),
+          ),
+          Effect.retry(
+            Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
+          ),
+          Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
+        );
+        yield* cleanupOwned(released);
+        return;
+      }
       const layer = RemoteStack.layer(acquisition.endpoint).pipe(
         Layer.provide(Layer.succeed(HttpTransportClient, client)),
       );
