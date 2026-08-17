@@ -446,12 +446,18 @@ export function legacyTransportFailure(
  * given status code. Useful for the direct-service mock when the handler under
  * test branches on `HttpClientError.isHttpClientError(cause)` + `cause.response.status`.
  */
-export function legacyStatusCodeFailure(status: number): HttpClientError.HttpClientError {
+export function legacyStatusCodeFailure(
+  status: number,
+  body?: unknown,
+): HttpClientError.HttpClientError {
   const request = HttpClientRequestModule.get("https://api.supabase.com/mock");
-  const response = HttpClientResponse.fromWeb(
-    request,
-    new Response("", { status, headers: { "content-type": "application/json" } }),
-  );
+  const response =
+    body === undefined
+      ? HttpClientResponse.fromWeb(
+          request,
+          new Response("", { status, headers: { "content-type": "application/json" } }),
+        )
+      : legacyJsonResponse(request, status, body);
   return new HttpClientError.HttpClientError({
     reason: new HttpClientError.StatusCodeError({ request, response }),
   });

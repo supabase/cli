@@ -306,6 +306,48 @@ unchanged — see [Legacy Port Status and Go CLI Authority](#legacy-port-status-
 
 ---
 
+## Plan-gate envelope and the JSON error contract
+
+The management API marks entitlement denials with a structured envelope in the error body:
+`{ "message": "...", "error": { "code": "entitlement_required", "feature": "<key>", "upgrade_url": "<billing url>" } }`.
+
+Handling is CENTRAL — never add per-command wiring for envelope-carrying gates:
+
+- `mapLegacyHttpError` (`src/legacy/shared/legacy-http-errors.ts`) parses the envelope from the
+  raw response text (pre-truncation), attaches optional `entitlement` + `suggestion` +
+  `upgradeSuggested` fields to the tagged status error, and fires `cli_upgrade_suggested` exactly
+  once per denial (`trackUpgradeSuggested: false` opts out — vanity check-availability, Go
+  parity). `upgradeSuggested` feeds `statusCodeActionability` (see Error Classification): an
+  error class on a gated route declares the optional field and passes it through, and denials
+  classify as `plan_limit` with zero per-command wiring. For an envelope-less gate confirmed by
+  the fallback, callers pass the boolean per call: `mapper(cause, { upgradeSuggested })`.
+- The shared contract module is `src/shared/api/plan-gate.ts` (`PlanGateEntitlement`, parser,
+  `errorEntitlement` reader, hint prose). The next shell must reuse it and emit the identical
+  field shape.
+- Output: text mode prints the upgrade hint centrally in `textOutputLayer.fail` when the
+  normalized error carries `entitlement` (hint, then red message, then the --debug line);
+  json / stream-json carry the fields on the error object:
+  `{ "_tag": "Error", "error": { "code", "message", "suggestion", "entitlement": { "feature", "upgrade_url" } } }`.
+  `entitlement` presence is the machine-readable discriminator; consumers must treat it as an
+  optional enhancement (absent on envelope-less servers and older CLI versions).
+- `legacySuggestUpgrade` (`src/legacy/shared/legacy-upgrade-suggest.ts`) is only the
+  entitlements-lookup FALLBACK for envelope-less denials (v1 SSO, older servers). When the
+  response carries an envelope it returns the confirmed-gated boolean but performs no side
+  effects — hint, telemetry, and error fields are the central handler's. New commands must not
+  call it for envelope-emitting routes.
+- Known central-handler bypasses (all dormant while v1 SSO emits no envelope; fix when the routes
+  gain it): `sso add` POST and `sso update` PUT construct status errors without
+  `mapLegacyHttpError` (no attach), and `sso list`/`sso remove`/`sso show`/`sso update`'s GET
+  swap the mapped error for a bare replacement error on 404 (fields discarded — `NotFoundError`
+  variants; `list` uses `SamlDisabledError`). Route these through `mapLegacyHttpError` (or attach
+  via `src/shared/api/plan-gate.ts`) before enveloping SSO server-side.
+- Go divergence (deliberate, 2026-07-28): the Go binary kept per-site `SuggestUpgradeOnError`
+  wiring; the TS handler is central. Consistent with
+  [Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority), the 1:1
+  parity doctrine covers this subsystem's user-visible output only, not its internal structure.
+
+---
+
 ## Legacy Port: Go Parity Checklist
 
 When porting a Management-API-style command, verify each item before marking the command as `ported`:
@@ -346,12 +388,12 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
 - **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested` — note that most `internal/<command>/` packages were deleted in CLI-1970 once their commands went fully native, so this grep only finds something for the still-`wrapped` commands; check out commit `7b469f5b3` to grep an already-ported command's former Go source. The current Go custom events that legacy ports must reproduce when natively ported (already captured below, so this is only needed for a command not yet in this table):
 
-  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                                                                                       |
-  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296` (deleted in CLI-1970; last present at commit 7b469f5b3)                                       |
-  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60` (deleted in CLI-1970; last present at commit 7b469f5b3)                                              |
-  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2)                  |
-  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/` (deleted in CLI-1970; last present at commit 7b469f5b3) |
+  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                                                                                                                                                                                                                                                                                      | Go source                                                                                                                       |
+  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                                                                                                                                                                                                                                                                             | `internal/login/login.go:283-296` (deleted in CLI-1970; last present at commit 7b469f5b3)                                       |
+  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                                                                                                                                                                                                                                                                                     | `internal/link/link.go:60` (deleted in CLI-1970; last present at commit 7b469f5b3)                                              |
+  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                                                                                                                                                                                                                                                                                           | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2)                  |
+  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`. TS divergence (deliberate): envelope denials fire centrally at envelope parse in `mapLegacyHttpError` (feature from the envelope, org from `upgrade_url`; check-availability suppression = `trackUpgradeSuggested: false` on its mapper); the per-site `legacySuggestUpgrade` fallback fires only for envelope-less denials. Go stays per-site (`SuggestUpgradeOnError`, envelope-first). | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/` (deleted in CLI-1970; last present at commit 7b469f5b3) |
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
 

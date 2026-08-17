@@ -117,21 +117,7 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         Effect.catch(
           legacyGateMapError(
             { projectRef: ref, featureKey: "branching_limit" },
-            (cause, upgradeSuggested) =>
-              Effect.gen(function* () {
-                const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
-                if (mapped._tag === "LegacyBranchesCreateUnexpectedStatusError") {
-                  return yield* Effect.fail(
-                    new LegacyBranchesCreateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
-                }
-                return yield* Effect.fail(mapped);
-              }),
+            (cause, upgradeSuggested) => mapCreateErrorRaw(cause, { upgradeSuggested }),
           ),
         ),
       );

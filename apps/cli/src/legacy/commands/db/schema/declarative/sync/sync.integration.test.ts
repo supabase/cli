@@ -26,6 +26,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
+import { mockAnalytics } from "../../../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
@@ -219,6 +220,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   const layer = Layer.mergeAll(
+    mockAnalytics().layer,
     out.layer,
     telemetry.layer,
     cache.layer,

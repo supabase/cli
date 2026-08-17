@@ -1,6 +1,7 @@
 import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { errorEntitlement } from "../../../../shared/api/plan-gate.ts";
 import { Command } from "effect/unstable/cli";
 
 import {
@@ -408,34 +409,41 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("envelope on 402 suggests upgrade with no extra API calls", () => {
-    const { layer, out, analytics, api } = setup({
-      status: 402,
-      response: {
-        message: "Branching is supported only on the Pro plan or above",
-        error: {
-          code: "entitlement_required",
+  it.live(
+    "envelope on 402 carries entitlement and fires central telemetry with no extra API calls",
+    () => {
+      const { layer, out, analytics, api } = setup({
+        status: 402,
+        response: {
+          message: "Branching is supported only on the Pro plan or above",
+          error: {
+            code: "entitlement_required",
+            feature: "branching_limit",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        } as unknown as CreatedBranch,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(errorEntitlement(Option.getOrUndefined(Exit.findErrorOption(exit)))).toEqual({
           feature: "branching_limit",
           upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
-        },
-      } as unknown as CreatedBranch,
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.url).toContain("/branches");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_limit", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(api.requests[0]?.url).toContain("/branches");
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toEqual([
+          {
+            event: "cli_upgrade_suggested",
+            properties: { feature_key: "branching_limit", org_slug: "env-org" },
+          },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("does NOT fire upgrade suggested on 500 (Go skips 5xx)", () => {
     const { layer, analytics } = setup({ status: 500 });

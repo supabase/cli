@@ -725,6 +725,38 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("fail carries entitlement and suggestion on the JSON error object", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "LegacyDomainsUnexpectedStatusError",
+          message: "unexpected get hostname status 403: {}",
+          suggestion:
+            "Your organization does not have access to this feature. Upgrade your plan: https://supabase.com/dashboard/org/env-org/billing",
+          entitlement: {
+            feature: "custom_domain",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        });
+        expect(JSON.parse(mock.stdout[0]!)).toEqual({
+          _tag: "Error",
+          error: {
+            code: "LegacyDomainsUnexpectedStatusError",
+            message: "unexpected get hostname status 403: {}",
+            suggestion:
+              "Your organization does not have access to this feature. Upgrade your plan: https://supabase.com/dashboard/org/env-org/billing",
+            entitlement: {
+              feature: "custom_domain",
+              upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+            },
+          },
+        });
+        expect(mock.stderr).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    });
+
     // CLI-2167 follow-up: `MachineErrorContext` is a command-scoped, opt-in
     // cell — merged ALONGSIDE the output layer (not nested inside its own
     // `Layer.provide`), matching how a real command runtime composes it, so
@@ -1009,6 +1041,37 @@ describe("Output", () => {
           code: "E_FAIL",
           message: "boom",
           suggestion: "try again",
+        });
+        expect(parsed.timestamp).toBeDefined();
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fail carries entitlement on the error event", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({
+          code: "LegacyDomainsUnexpectedStatusError",
+          message: "unexpected get hostname status 403: {}",
+          suggestion:
+            "Your organization does not have access to this feature. Upgrade your plan: https://supabase.com/dashboard/org/env-org/billing",
+          entitlement: {
+            feature: "custom_domain",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed.type).toBe("error");
+        expect(parsed.error).toEqual({
+          code: "LegacyDomainsUnexpectedStatusError",
+          message: "unexpected get hostname status 403: {}",
+          suggestion:
+            "Your organization does not have access to this feature. Upgrade your plan: https://supabase.com/dashboard/org/env-org/billing",
+          entitlement: {
+            feature: "custom_domain",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
         });
         expect(parsed.timestamp).toBeDefined();
       }).pipe(Effect.provide(layer));

@@ -7,7 +7,6 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { emitLegacyHostnameResult } from "../domains.emit.ts";
 import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import type { LegacyDomainsGetFlags } from "./get.command.ts";
 
 const mapGetError = mapLegacyDomainsHttpError("get");
@@ -32,7 +31,7 @@ export const legacyDomainsGet = Effect.fn("legacy.domains.get")(function* (
         : undefined;
     const response = yield* api.v1.getHostnameConfig({ ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(legacyGateMapError({ projectRef: ref }, mapGetError)),
+      Effect.catch(mapGetError),
     );
     yield* fetching?.clear() ?? Effect.void;
 

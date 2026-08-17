@@ -3,6 +3,19 @@ import { Effect } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
+import type { PlanGateEntitlement } from "../../shared/api/plan-gate.ts";
+import {
+  orgSlugFromUpgradeUrl,
+  parsePlanGateEnvelopeText,
+  planGateSuggestion,
+} from "../../shared/api/plan-gate.ts";
+import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import {
+  EventUpgradeSuggested,
+  PropFeatureKey,
+  PropOrgSlug,
+} from "../../shared/telemetry/event-catalog.ts";
+
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
 // failure). Anything in this set surfaces as an `UnexpectedStatusError`; everything else maps
 // to a `NetworkError`.
@@ -69,6 +82,9 @@ export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly entitlement?: PlanGateEntitlement;
+  readonly suggestion?: string;
+  readonly upgradeSuggested?: boolean;
 }) => E;
 
 /**
@@ -85,10 +101,22 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
+  /**
+   * Set false where the Go twin fires no `TrackUpgradeSuggested` on an
+   * envelope denial (vanity check-availability), keeping telemetry 1:1.
+   */
+  readonly trackUpgradeSuggested?: boolean;
 }): (
   cause: SupabaseApiError,
-) => Effect.Effect<never, N | S | SupabaseApiInputError | HttpBody.HttpBodyError> {
-  return (cause) =>
+  extra?: {
+    /**
+     * Producer-confirmed plan-gate signal for envelope-less denials (the
+     * `legacySuggestUpgrade` fallback). Envelope denials set it centrally.
+     */
+    readonly upgradeSuggested?: boolean;
+  },
+) => Effect.Effect<never, N | S | SupabaseApiInputError | HttpBody.HttpBodyError, Analytics> {
+  return (cause, extra) =>
     Effect.gen(function* () {
       if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
         // These failures occur while the generated client validates or builds
@@ -102,12 +130,26 @@ export function mapLegacyHttpError<N, S>(opts: {
           const rawBody = yield* cause.response.text.pipe(
             Effect.orElseSucceed(() => cause.reason.description ?? ""),
           );
+          const entitlement = parsePlanGateEnvelopeText(rawBody);
+          if (entitlement !== undefined && opts.trackUpgradeSuggested !== false) {
+            const analytics = yield* Analytics;
+            yield* analytics.capture(EventUpgradeSuggested, {
+              [PropFeatureKey]: entitlement.feature,
+              [PropOrgSlug]: orgSlugFromUpgradeUrl(entitlement.upgrade_url),
+            });
+          }
           const body = sanitizeLegacyErrorBody(rawBody);
           return yield* Effect.fail(
             new opts.statusError({
               status,
               body,
               message: opts.statusMessage(status, body),
+              ...(entitlement !== undefined
+                ? { entitlement, suggestion: planGateSuggestion(entitlement.upgrade_url) }
+                : {}),
+              ...(entitlement !== undefined || extra?.upgradeSuggested === true
+                ? { upgradeSuggested: true }
+                : {}),
             }),
           );
         }

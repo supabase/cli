@@ -7,7 +7,6 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { emitLegacyHostnameResult } from "../domains.emit.ts";
 import { mapLegacyDomainsHttpError } from "../domains.errors.ts";
-import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import type { LegacyDomainsActivateFlags } from "./activate.command.ts";
 
 const mapActivateError = mapLegacyDomainsHttpError("activate");
@@ -28,7 +27,7 @@ export const legacyDomainsActivate = Effect.fn("legacy.domains.activate")(functi
       output.format === "text" ? yield* output.task("Activating custom hostname...") : undefined;
     const response = yield* api.v1.activateCustomHostname({ ref }).pipe(
       Effect.tapError(() => activating?.fail() ?? Effect.void),
-      Effect.catch(legacyGateMapError({ projectRef: ref }, mapActivateError)),
+      Effect.catch(mapActivateError),
     );
     yield* activating?.clear() ?? Effect.void;
 

@@ -16,6 +16,7 @@ import {
 import { styleText } from "node:util";
 import { Effect, Layer, Option, Stdio, Stream } from "effect";
 
+import { type PlanGateEntitlement, planGateSuggestion } from "../api/plan-gate.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { MachineErrorContext } from "./machine-error-context.service.ts";
@@ -367,18 +368,33 @@ export const textOutputLayer = Layer.effect(
           };
         }),
       success: (message: string) => Effect.sync(() => log.success(message)),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.sync(() => {
           // Matches Go's `recoverAndExit` (apps/cli-go/cmd/root.go:300-303): a
-          // red-styled message on stderr, optionally followed by a suggestion.
+          // red-styled message on stderr, optionally followed by a suggestion;
+          // entitlement denials print Go's upgrade hint before the message.
           // Bypasses clack's `log.error` framing (`│` guide + `■` icon) so the
           // output byte-matches the Go CLI for parity tests.
+          if (err.entitlement !== undefined) {
+            process.stderr.write(
+              planGateSuggestion(styleText("bold", err.entitlement.upgrade_url)) + "\n",
+            );
+          }
           process.stderr.write(styleText("red", err.message) + "\n");
           if (err.detail !== undefined && err.detail !== err.message) {
             process.stderr.write(styleText("gray", err.detail) + "\n");
           }
-          if (err.suggestion !== undefined) {
-            process.stderr.write(err.suggestion + "\n");
+          // Entitlement errors' `suggestion` is the hint already rendered above;
+          // consume the slot so the --debug line keeps printing.
+          const suggestion = err.entitlement === undefined ? err.suggestion : undefined;
+          if (suggestion !== undefined) {
+            process.stderr.write(suggestion + "\n");
           } else if (
             err.message !== CONTEXT_CANCELED_MESSAGE &&
             !process.argv.includes("--debug")
@@ -457,7 +473,13 @@ export const jsonOutputLayer = Layer.effect(
         }),
       success: (message: string, data?: Record<string, unknown>) =>
         writeStdout(JSON.stringify({ ...data, message }) + "\n"),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
           // `extra` spreads FIRST so the envelope's own `_tag`/`error` can
@@ -552,7 +574,13 @@ export const streamJsonOutputLayer = Layer.effect(
             timestamp: new Date().toISOString(),
           }) + "\n",
         ),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+      fail: (err: {
+        code: string;
+        message: string;
+        detail?: string;
+        suggestion?: string;
+        entitlement?: PlanGateEntitlement;
+      }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
           const event: StreamEvent = {

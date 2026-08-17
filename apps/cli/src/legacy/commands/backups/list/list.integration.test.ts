@@ -6,8 +6,9 @@ import { type V1ListAllBackupsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
+import { errorEntitlement } from "../../../../shared/api/plan-gate.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
@@ -43,7 +44,7 @@ const LOGICAL_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  response?: typeof V1ListAllBackupsOutput.Type;
+  response?: unknown;
   status?: number;
   network?: "fail";
   apiUrl?: string;
@@ -54,6 +55,7 @@ const tempRoot = useLegacyTempWorkdir("supabase-backups-list-int-");
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
+  const analytics = mockAnalytics();
   const api = mockLegacyPlatformApi({
     response: { status: opts.status ?? 200, body: opts.response ?? PITR_RESPONSE },
     network: opts.network,
@@ -69,9 +71,10 @@ function setup(opts: SetupOpts = {}) {
     out,
     api,
     cliConfig,
+    analytics,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
-  return { layer, out, api };
+  return { layer, out, api, analytics };
 }
 
 describe("legacy backups list integration", () => {
@@ -340,6 +343,40 @@ WalgEnabled = true
         expect(headers?.["user-agent"]).toBe("SupabaseCLI/1.42.0");
         expect(headers?.["x-supabase-command"]).toBeUndefined();
         expect(headers?.["x-supabase-command-run-id"]).toBeUndefined();
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "carries entitlement and fires central telemetry on a gated denial with zero wiring",
+    () => {
+      const { layer, out, analytics } = setup({
+        status: 403,
+        response: {
+          message: "Physical backups require the Pro plan",
+          error: {
+            code: "entitlement_required",
+            feature: "physical_backups",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyBackupsList({ projectRef: Option.some(LEGACY_VALID_REF) }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(errorEntitlement(Option.getOrUndefined(Exit.findErrorOption(exit)))).toEqual({
+          feature: "physical_backups",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        });
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toEqual([
+          {
+            event: "cli_upgrade_suggested",
+            properties: { feature_key: "physical_backups", org_slug: "env-org" },
+          },
+        ]);
       }).pipe(Effect.provide(layer));
     },
   );

@@ -2,6 +2,7 @@ import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
+import { errorEntitlement } from "../../../../shared/api/plan-gate.ts";
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
@@ -304,33 +305,39 @@ describe("legacy domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
-    const { layer, out, analytics, api } = setup({
-      status: 400,
-      response: {
-        message:
-          "Custom domains require the Custom Domain add-on, available on the Pro plan and above.",
-        error: {
-          code: "entitlement_required",
+  it.live(
+    "carries entitlement and fires central telemetry on an entitlement_required envelope",
+    () => {
+      const { layer, out, analytics, api } = setup({
+        status: 400,
+        response: {
+          message:
+            "Custom domains require the Custom Domain add-on, available on the Pro plan and above.",
+          error: {
+            code: "entitlement_required",
+            feature: "custom_domain",
+            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+          },
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(errorEntitlement(Option.getOrUndefined(Exit.findErrorOption(exit)))).toEqual({
           feature: "custom_domain",
           upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
-        },
-      },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(api.requests).toHaveLength(1);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toEqual([
+          {
+            event: "cli_upgrade_suggested",
+            properties: { feature_key: "custom_domain", org_slug: "env-org" },
+          },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("plain 404 without envelope produces no upgrade hint", () => {
     const { layer, out, analytics, api } = setup({

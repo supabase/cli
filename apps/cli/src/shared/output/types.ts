@@ -1,3 +1,5 @@
+import type { PlanGateEntitlement } from "../api/plan-gate.ts";
+
 export type OutputFormat = "text" | "json" | "stream-json";
 
 export type StreamEvent =
@@ -27,6 +29,7 @@ export type StreamEvent =
         readonly message: string;
         readonly detail?: string;
         readonly suggestion?: string;
+        readonly entitlement?: PlanGateEntitlement;
       };
       readonly timestamp: string;
     }

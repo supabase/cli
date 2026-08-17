@@ -135,7 +135,9 @@ const waitForTempRole = Effect.fnUntraced(function* (
 ) {
   const dbConn = yield* LegacyDbConnection;
   const debug = yield* LegacyDebugLogger;
-  const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
+  const attempt = (
+    n: number,
+  ): Effect.Effect<void, LegacyDbConfigError, Analytics | LegacyPlatformApiFactory> =>
     // The temp-role probe always targets the remote Supavisor pooler, so it
     // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
     // honors `--dns-resolver` (`ConnectByConfigStream` installs the DoH
@@ -442,6 +444,7 @@ export const legacyDbConfigLayer = Layer.effect(
     // `BunServices.layer` is included as a concrete layer (not a captured-value
     // `Layer.succeed`) because it provides FileSystem/Path, which have no single
     // tag to snapshot and which `legacyManagementApiRuntimeLayer` does not expose.
+    const analytics = yield* Analytics;
     const ambientLayer = Layer.mergeAll(
       Layer.succeed(LegacyProfileFlag, yield* LegacyProfileFlag),
       Layer.succeed(LegacyWorkdirFlag, yield* LegacyWorkdirFlag),
@@ -452,7 +455,7 @@ export const legacyDbConfigLayer = Layer.effect(
       // built linked stack stays fully self-provided (`resolve`'s R stays `never`).
       Layer.succeed(LegacyDnsResolverFlag, yield* LegacyDnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
-      Layer.succeed(Analytics, yield* Analytics),
+      Layer.succeed(Analytics, analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, yield* Output),
@@ -598,6 +601,10 @@ export const legacyDbConfigLayer = Layer.effect(
                   Layer.provide(ambientLayer),
                 ),
                 localAmbientServices,
+                // The mappers' central envelope telemetry reads Analytics from the
+                // resolve effect itself, not the runtime layer; re-provide the
+                // snapshot so `resolve`'s R stays `never`.
+                Layer.succeed(Analytics, analytics),
               ),
             ),
           );
@@ -660,6 +667,7 @@ export const legacyDbConfigLayer = Layer.effect(
             Layer.mergeAll(
               legacyLinkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
               localAmbientServices,
+              Layer.succeed(Analytics, analytics),
             ),
           ),
         );
