@@ -458,7 +458,7 @@ describe("Stack", () => {
   it.live("starts the readiness deadline after artifact preparation", () => {
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres"],
-      downloadDelayMs: 1_000,
+      downloadDelayMs: 300,
     });
     const spawner = mockChildProcessSpawner();
     const config = {
@@ -481,7 +481,7 @@ describe("Stack", () => {
       const startedAt = Date.now();
       const exit = yield* stack.start().pipe(Effect.exit);
 
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(900);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
   });
@@ -640,7 +640,7 @@ describe("Stack", () => {
     const layer = localStackLayer(
       {
         ...defaultConfig,
-        readiness: { mode: "finite", timeoutMs: 1_000 },
+        readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       },
       noopPortLease(defaultConfig.ports),
@@ -899,7 +899,7 @@ describe("Stack", () => {
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 1_000 },
+        readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
@@ -920,7 +920,7 @@ describe("Stack", () => {
         expect(error._tag).toBe("StackReadinessError");
         if (error._tag === "StackReadinessError") {
           expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(1_000);
+          expect(error.timeoutMs).toBe(100);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;
