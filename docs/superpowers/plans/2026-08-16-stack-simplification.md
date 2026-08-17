@@ -31,12 +31,14 @@
 ### Task 1: Internal stack document store
 
 **Files:**
+
 - Create: `packages/stack/src/managed/document.ts`
 - Create: `packages/stack/src/managed/store.ts`
 - Create: `packages/stack/src/managed-store.integration.test.ts`
 - Modify: `packages/stack/src/managed/paths.ts`
 
 **Interfaces:**
+
 - Produces: `ManagedStackDocument`, `ManagedStackListing`, `StackStore`, and `makeStackStore(stateRoot)`.
 - Consumes: `ManagedPortAssignment`, existing managed path safety checks, and Effect `FileSystem`, `Path`, and `Schema`.
 - Later tasks rely on `StackStore.read`, `StackStore.list`, `StackStore.write`, and `StackStore.remove` being internal Effect interfaces with no public entrypoint export.
@@ -66,7 +68,6 @@
       ]);
     }),
   );
-
   ```
 
 - [ ] **Step 2: Run the new integration file and verify RED**
@@ -107,6 +108,7 @@
 ### Task 2: Deterministic environment identity and explicit repair classification
 
 **Files:**
+
 - Create: `packages/stack/src/managed/environment.ts`
 - Create: `packages/stack/src/managed-environment.integration.test.ts`
 - Modify: `packages/stack/src/managed/identity.ts`
@@ -116,6 +118,7 @@
   to compile; Task 2 must not recreate or extend those state machines.
 
 **Interfaces:**
+
 - Produces: `EnvironmentIdentity`, `WorkspaceDiscovery`, `RepairRequest`, `deriveStackId(identity, name)`, `discoverEnvironment(path)`, `ensureEnvironment(path)`, and `validateEnvironmentRepair(request)`.
 - Consumes: `StackStore` from Task 1, current Git config and marker primitives, and real Git workspace metadata.
 - `deriveStackId` hashes four length-prefixed UTF-8 values with SHA-256 and returns 64 lowercase hexadecimal characters.
@@ -218,6 +221,7 @@
 ### Task 3: Control endpoint as lifecycle ownership and reattachment seam
 
 **Files:**
+
 - Create: `packages/stack/src/managed/control.ts`
 - Create: `packages/stack/src/managed-control.integration.test.ts`
 - Modify: `packages/stack/src/DaemonProtocol.ts`
@@ -227,6 +231,7 @@
 - Modify: `packages/stack/src/platform-bun.ts`
 
 **Interfaces:**
+
 - Produces: `ControlEndpoint`, `ControlOwnership`, `controlEndpointPath(runtimeRoot, stackId)`, `acquireControl(input)`, and protocol owner states `starting | running | stopping | deleting | failed` with `protocolVersion: 1`.
 - Consumes: existing validated daemon HTTP/SSE transport and a deterministic loopback address
   derived from the stack ID.
@@ -309,6 +314,7 @@
 ### Task 4: Simplified managed manager and port transaction
 
 **Files:**
+
 - Create: `packages/stack/src/managed/manager.ts`
 - Create: `packages/stack/src/managed-manager.integration.test.ts`
 - Modify: `packages/stack/src/managed/port-plan.ts`
@@ -319,6 +325,7 @@
 - Modify: `packages/stack/src/managed/create-service.ts`
 
 **Interfaces:**
+
 - Produces: internal `ManagedStackManager`, `managedStackManagerLayer({ stateRoot })`, minimal Promise facade, `allocateManagedPorts(ownership, request)`, and lean listing/repair/delete results.
 - Consumes: `StackStore`, deterministic environment identity, `ControlOwnership`, existing port intent/planning, and `reservePortSet`.
 - Removes from the public interface: repository access/injection, owner PID, publication timing, liveness callbacks, initialization callbacks, runtime-inspection callbacks, operation reconciliation, transition abandonment, prune, and individual adopt/rebind methods.
@@ -394,6 +401,7 @@
 ### Task 5: One Effect-native detached supervisor
 
 **Files:**
+
 - Create: `packages/stack/src/supervisor.ts`
 - Create: `packages/stack/src/supervisor.integration.test.ts`
 - Modify: `packages/stack/src/daemon-bun.ts`
@@ -412,6 +420,7 @@
 - Delete: `packages/stack/src/managed-daemon-test-bun.ts`
 
 **Interfaces:**
+
 - Produces: one `runSupervisor(platform)` Effect program and one serializable start protocol carrying managed identity/paths, stack config, and port intents.
 - Consumes: `ManagedStackManager`, `ControlOwnership`, foreground stack layers, `DaemonServer`, and existing fork/self-dispatch platform hooks.
 - `managedDaemonLayer` and ordinary `daemonLayer` both spawn this program; managed/unmanaged changes input policy, not entrypoint topology.
@@ -476,6 +485,7 @@
 ### Task 6: Delete the managed state machine and replace the oversized test suite
 
 **Files:**
+
 - Delete: `packages/stack/src/managed/sqlite.ts`
 - Delete: `packages/stack/src/managed/sqlite-bun.ts`
 - Delete: `packages/stack/src/managed/sqlite-node.ts`
@@ -498,6 +508,7 @@
 - Modify: `packages/stack/package.json`
 
 **Interfaces:**
+
 - Consumes: the passing replacement manager, environment, store, control, and supervisor scenarios from Tasks 1-5.
 - Produces: a lean package with no SQLite dependency, no public repository/testing adapter, and no duplicate fixture language.
 
@@ -556,17 +567,19 @@
 ### Task 7: Update CLI consumers, documentation, ADRs, and targeted e2e coverage
 
 **Files:**
+
 - Modify: `apps/cli/src/shared/telemetry/error-actionability.ts`
 - Modify: `apps/cli/src/shared/telemetry/error-actionability-coverage.unit.test.ts`
 - Modify callers found by `rg '@supabase/stack/(managed|managed-model)' apps/cli`
 - Modify: `packages/stack/README.md`
 - Modify: `packages/stack/docs/architecture.md`
-- Modify: `packages/stack/docs/detach-mode.md`
+- Consolidate: `packages/stack/docs/architecture.md` (the former detached-mode walkthrough)
 - Modify: `docs/adr/0015-managed-stack-contract-fixtures.md`
 - Create: `docs/adr/0017-simplified-managed-stack-ownership.md`
 - Modify or create targeted e2e files under `packages/stack/tests/` for detached lifecycle and parallel worktrees only.
 
 **Interfaces:**
+
 - Consumes: final managed error codes and public interfaces from Tasks 4-6.
 - Produces: compiling CLI consumers, current architecture documentation, superseded ADR-0015, a replacement ADR, and no more than three targeted stack e2e journeys.
 

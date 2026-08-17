@@ -222,11 +222,15 @@ The public managed interface is deliberately smaller:
 interface ManagedStackManager {
   readonly stateRoot: string;
   readonly discoverWorkspace: (path: string) => Effect.Effect<WorkspaceDiscovery, DiscoveryError>;
-  readonly resolveStack: (request: ResolveStackRequest) => Effect.Effect<ManagedStack, ResolveError>;
+  readonly resolveStack: (
+    request: ResolveStackRequest,
+  ) => Effect.Effect<ManagedStack, ResolveError>;
   readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStack | undefined>;
   readonly listStacks: () => Effect.Effect<ReadonlyArray<ManagedStackListing>>;
   readonly deleteStack: (stackId: string) => Effect.Effect<DeleteResult, DeleteError>;
-  readonly repairWorkspace: (request: RepairRequest) => Effect.Effect<WorkspaceDiscovery, RepairError>;
+  readonly repairWorkspace: (
+    request: RepairRequest,
+  ) => Effect.Effect<WorkspaceDiscovery, RepairError>;
 }
 ```
 
@@ -297,9 +301,8 @@ deleted. Any scenario not protecting an observable workflow is deleted rather th
 
 This design supersedes ADR-0015's decisions to make typed fixtures normative, expose repository
 injection, and require conformance against memory and persistent adapters. ADR-0015 is updated to
-`superseded` and links here. `packages/stack/docs/architecture.md`, detach-mode documentation, and
-the package README describe only the resulting design; they do not retain a historical walkthrough
-of the removed machinery.
+`superseded` and links here. `packages/stack/docs/architecture.md` and the package README describe
+only the resulting design; they do not retain a historical walkthrough of the removed machinery.
 
 ## Acceptance criteria
 

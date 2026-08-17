@@ -1,153 +1,269 @@
-# Stack architecture
+# How `@supabase/stack` works
 
-`@supabase/stack` has two intentionally separate runtime surfaces:
+`@supabase/stack` is the local Supabase runtime for Node and Bun. It has two
+runtime modes that share the same service graph, port allocator, and HTTP
+proxy:
 
-- the direct `createStack`/foreground API for an in-process stack; and
-- the managed detached API used by the CLI and sibling worktrees.
+- **Direct** (`createStack`) keeps the stack in the caller's process and lets
+  the caller own its lifecycle.
+- **Managed** (`daemonLayer` and the managed lifecycle facade) runs one
+  supervisor child per deterministic stack identity. The CLI uses this mode
+  when a stack must outlive one command, be reattached by another command, or
+  be isolated from a sibling worktree.
 
-The managed API is a small coordination layer. It does not contain a second
-service registry, SQLite adapter, repository contract, or compatibility facade.
-The managed document, manager, supervisor, and control transport are the
-authoritative state and lifecycle path.
+Choose direct mode for an application, test, or script that can keep a handle
+open and dispose it. Choose managed mode for a CLI workflow or any caller that
+needs detached ownership, durable status, sticky ports, logs, or reattachment.
+Managed mode is a coordination layer around the direct runtime; it does not
+introduce a second service registry, repository contract, or SQLite adapter.
 
-## Entrypoints
+## Managed startup at a glance
 
-The root entrypoint (`@supabase/stack`) is Promise-based and exposes direct
-stack creation. `@supabase/stack/effect` exposes the Effect layers consumed by
-the CLI. `@supabase/stack/managed` exposes managed identity, control,
-document, manager, and lifecycle operations. `@supabase/stack/testing` contains
-runtime test seams only; production contract fixtures are not part of the
-managed API.
+The parent resolves the workspace identity before forking. During normal
+startup, the child owns the lease, binds the control endpoint, and performs the
+manager writes under that ownership. Recovery operations can acquire the same
+ownership through the lifecycle facade.
 
-Node and Bun entrypoints bind the same platform-neutral implementation to
-their filesystem, path, process, HTTP, and control-transport services.
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Parent as supervisor parent
+    participant Child as managed child
+    participant Manager as ManagedStackManager
+    participant Control as loopback control endpoint
+    participant Runtime as direct Stack runtime
+
+    CLI->>Parent: daemonLayer(config, port intents, launch)
+    Parent->>Child: fork + start message (resolved stack id)
+    Child->>Manager: ensure workspace + verify stack id
+    Child->>Control: acquire ownership + bind deterministic endpoint
+    Child->>Manager: resolve document, allocate/reuse ports
+    Child->>Manager: write starting
+    Child->>Runtime: build Stack, ApiProxy, and DaemonServer
+    Child->>Manager: write running + runtime endpoint
+    Child-->>Parent: started(endpoint)
+    Parent-->>CLI: RemoteStack layer
+    CLI->>Control: stack.start(), status, logs, or service operation
+```
+
+`running` in the managed document means that the supervisor and control owner
+are ready. The service states are published by the same `Stack` runtime and
+move when the caller invokes `stack.start()` or an individual service
+operation.
+
+## Public entrypoints
+
+The package exposes the same platform-neutral contracts through conditional
+Node and Bun bindings:
+
+- `@supabase/stack` is the Promise-based direct API (`createStack`, `prefetch`,
+  and the stack types).
+- `@supabase/stack/effect` provides the platform-bound Effect layers. It
+  includes `foregroundLayer` for direct use, `daemonLayer` to launch a managed
+  supervisor, `connectLayer` to reattach, and lifecycle/discovery helpers such
+  as `stopDaemon` and `updateManagedLaunch`.
+- `@supabase/stack/managed` exposes managed identity, control, document,
+  manager, and lifecycle operations for consumers that need those boundaries
+  directly.
+- `@supabase/stack/testing` exposes only runtime seams used to build integration
+  tests; it is not a production repository or fixture contract.
+
+`@supabase/stack/daemon-bun` is an internal compiled-Bun re-entry target. The
+Node and Bun entrypoints provide filesystem, path, process, HTTP, and control
+transport services to the shared implementation.
 
 ## Direct runtime
 
-`createStack` allocates a private port lease, resolves a stack configuration,
-starts local services, and returns a scoped handle. The foreground Effect layer
-owns service processes and releases its lease when the scope closes. Direct
-stacks never inspect or reserve managed documents.
+`createStack` resolves configuration, reserves a private port lease, and
+prepares/builds a scoped runtime and handle. It does **not** start service
+processes. Asset preparation and process-compose graph construction happen
+when the handle is first started or a service is activated.
 
-## Managed document and identity
+`stack.start()` starts services according to the configured startup mode and
+waits for the selected readiness policy. The handle also exposes status, logs,
+per-service operations, and graceful `stop()`/`dispose()` methods. Its scope
+owns service processes and releases the lease when disposed. A direct stack
+never reads or writes managed documents and never coordinates with a sibling
+stack.
 
-Every managed stack has one document under the configured managed state root:
+## Managed lifecycle
+
+### One document and one owner
+
+Each managed stack has one durable document under:
 
 ```text
 <supabase-home>/managed/stacks/<stack-id>/stack.json
 ```
 
-The document records the deterministic stack identity (workspace lineage,
-checkout, branch context, canonical local-project key, and name), canonical
-project-root path, sticky-port assignments and intent, launch selections,
-lifecycle, and runtime control endpoint. `workspaceId` is local repository or
-folder lineage, not a remote Supabase project identity. A stopped document
-remains available for inspection and restart; deletion removes that document
-and its managed data root.
+The same directory contains `data/` for managed service data, `logs/` for
+runtime logs, and `runtime/` for supervisor-owned runtime files. The
+`ManagedStackManager` is the only component that writes `stack.json`.
 
-For Git checkouts, `localProjectKey` is the canonical Supabase project root
-relative to the canonical enclosing checkout root, normalized with `/` and `.`
-for the root. It is independent of `supabase/config.toml` and remote link
-state. Sibling nested projects therefore receive distinct stack IDs and
-automatic ports even with the default name. A local project directory rename
-intentionally creates a new identity; no migration is attempted.
+Control ownership is the liveness and mutation authority. `acquireControl`
+returns `Owned` for the process that bound the deterministic endpoint or
+`Attached` for a live owner. An attached caller uses the owner's endpoint for
+runtime requests; it never edits the document directly.
 
-Identity comes from Git checkout metadata where available and from an explicit
-ordinary-folder marker otherwise. The marker and document are private,
-unreleased storage owned by the current build. There is no migration layer or
-parallel `stack.json` format.
+### Start and attach
 
-## Managed lifecycle
+1. `daemonLayer` discovers the workspace and derives the stack id before the
+   parent forks a supervisor child. Managed-only port intents and launch
+   metadata stay separate from the generic daemon configuration.
+2. The child binds the loopback control endpoint first, re-checks workspace
+   discovery, and refuses to continue if the identity no longer derives the
+   same id.
+3. The manager resolves the existing document, cleans stale Docker resources
+   when required, allocates or reuses ports, and records `starting`.
+4. The child builds the direct runtime and `DaemonServer`, records `running`
+   with its control endpoint, and sends the endpoint to the parent.
+5. The parent returns a `RemoteStack` layer. The CLI then calls
+   `stack.start()` over the control transport when service startup is needed.
 
-The CLI calls the lifecycle facade (`connectManagedStack`, `updateManagedLaunch`,
-`stopManagedStack`, and `deleteManagedStack`). Read-only connect/status paths
-probe the owner without binding; mutating paths acquire deterministic control
-ownership:
+`connectManagedStack` reads the document, probes the deterministic endpoint
+without binding it, and returns a `RemoteStack` only when the owner reports a
+ready running state. Read-only status and discovery therefore do not claim an
+endpoint; mutating operations acquire control ownership.
 
-1. A managed supervisor acquires ownership for the stack id.
-2. The supervisor resolves the stack, allocates/reuses ports from the document,
-   starts the local `Stack`, and records `starting` then `running`.
-3. The parent receives the loopback control endpoint and can attach through the
-   same endpoint. Runtime requests use the deterministic endpoint derived from
-   the stack id; a persisted endpoint is accepted only when it matches.
-4. Launch updates are owner-gated. An attached client posts `/managed/launch` to
-   the owner; the owner writes the document through the manager.
-5. Stop asks the owner to stop and polls the manager document until `stopped`.
-   If no owner exists, the facade acquires ownership, performs deterministic
-   Docker cleanup, and records `stopped` without PID probing.
-6. Delete requires owned control and removes only a stopped managed document.
-   Explicit destructive deletion can also purge an invalid document; ordinary
-   status and start still fail loudly on corruption.
+### Update, stop, and delete
 
-Control ownership is the liveness authority. PID files, process scans, and a
-second metadata file are not part of managed lifecycle decisions.
+- `updateManagedLaunch` is owner-gated. An attached client posts the validated
+  launch payload to `/managed/launch`; the owner invokes
+  `ManagedStackManager.updateLaunch`, and the caller re-reads the document.
+- `stopManagedStack` asks an attached owner to perform a graceful
+  `RemoteStack.stop()`, waits for the document to become `stopped`, and lets
+  the owner close the runtime before releasing control. If the old owner is
+  gone, the facade acquires control, removes Docker containers named for the
+  stack id, records `stopped`, and does not inspect PIDs or scan processes.
+- `deleteManagedStack` requires owned control and removes only a stopped
+  document and its managed data root. The explicit destructive path can also
+  remove an invalid document after ownership is acquired; ordinary status and
+  start operations report corruption instead of guessing.
 
-Read-only project-scoped discovery treats unsupported or unreadable Git metadata
-as no managed stacks for that project. Mutating operations such as start still
-fail loudly so they cannot create identity or runtime state against ambiguous
-repository metadata.
+### Failure and recovery
 
-## Detached transport
+The owner records `starting`, `running`, `stopped`, `failed`, and `deleting`
+transitions. A startup error records `failed` and releases the port lease. A
+graceful stop closes the direct runtime before recording `stopped`.
 
-The supervisor child hosts `DaemonServer` on a deterministic local loopback TCP
-endpoint derived from the managed stack id. `RemoteStack` is the typed client for stack status, service
-operations, logs, and graceful stop. The shared fetch-based HTTP client works
-in Node and Bun; only listener binding is platform-specific. `ApiProxy`
-continues to own the public service URL, and the control endpoint is never
-exposed as the user-facing API.
+If a supervisor crashes, its document and possible runtime artifacts remain.
+The next managed start acquires control, reconciles Docker resources by stack
+id, and reuses sticky ports according to their persisted `exact` or `automatic`
+intent. No PID file, process scan, second metadata file, or registry surgery is
+needed for recovery.
 
-The endpoint uses the stack id to select a port across the reserved loopback
-range `10000..32767`. Automatic managed service allocation excludes this whole
-range, while explicit service ports remain available unless they match the
-incoming stack's endpoint or a known persisted stack's endpoint. A rare hash
-collision or unrelated listener therefore makes a mutation fail with a typed
-conflict. Read-only liveness treats it as non-live and never claims the address.
-An exact port can still match the future endpoint of an identity that has never
-started and therefore has no document. That low-probability collision fails at
-control acquisition; it is accepted instead of forbidding 22,768 otherwise
-valid explicit ports or adding a global registry.
-This intentionally favors a small single-user localhost mechanism; the control
-protocol has no token authentication.
+## Identity and state
 
-The parent resolves the workspace identity and stack id before forking, then
-sends that id with the resolved daemon configuration, raw project document for
-port intent, and launch metadata. The child binds the deterministic control
-endpoint first, performs workspace discovery, and verifies the identity still
-derives the same id before publishing stack state. Managed-only fields are split
-from the generic daemon config before serialization so they cannot leak into
-runtime service configuration.
+The stack id is a deterministic hash of workspace lineage, checkout lineage,
+branch or detached context, the canonical local project key, and the managed
+stack name. `workspaceId` identifies a local repository or ordinary-folder
+lineage; it is not a remote Supabase project id.
 
-## Ports and launch metadata
+For a Git checkout, `localProjectKey` is the canonical project-root path
+relative to the enclosing checkout root, normalized with `/` and `.` for the
+root. Sibling nested projects therefore get different identities and ports
+even when they use the default name. Renaming a local project directory
+intentionally creates a new identity; migration is not attempted.
 
-Sticky port fields have explicit `exact` or `automatic` intent. Startup derives
-active and disabled fields from the enabled-service configuration and preserves
-the raw project document. A sibling worktree or nested project has its own stack
-document: an explicit request asks for that exact port and conflicts with a live
-owner, while omitted fields receive independent automatic allocations. Launch metadata stores
-mode, pinned service versions, excluded services, and the update-notification
-fingerprint consumed by the CLI.
+Git metadata supplies checkout and branch context. An ordinary folder receives
+an explicit private marker under `.supabase/`. Git checkout markers and
+ordinary-folder markers are private, unreleased storage owned by the current
+build; there is no migration layer or parallel document format.
 
-## Cleanup and failure handling
+Moved checkouts can be repaired with `repairWorkspace`, preserving the identity
+and ports. Duplicate checkout adoption is intentionally unsupported and
+requires an explicit ownership decision. Read-only project discovery treats
+unsupported or unreadable Git metadata as no managed stack; mutating operations
+fail loudly rather than creating state against ambiguous identity evidence.
 
-The owner records lifecycle transitions before and after startup. On startup
-failure it records `failed` and releases the lease. On graceful stop it closes
-the runtime before recording `stopped`; stale owners use best-effort Docker
-container removal keyed by the managed stack id. Data and runtime paths are
-under the managed stack directory and are removed only by an explicit delete or
-the corresponding cleanup operation.
+## Ports and control ownership
 
-Typed failures are limited to errors reachable from these public surfaces:
-configuration/port failures, control transport failures, managed identity and
-document failures, and lifecycle failures such as `NoRunningStackError` or
-`ManagedStackAttachedError`. Private supervisor implementation errors are
-converted at the boundary and are not a public error registry.
+Managed port assignments preserve both a port and its intent:
+
+- `exact` means the caller requested that number and a live conflicting owner
+  is an error.
+- `automatic` means the assignment is sticky for the document but may be
+  allocated independently for a sibling worktree or nested project.
+
+Startup derives active and disabled fields from the enabled-service
+configuration and preserves the raw project document so omitted values remain
+automatic. Automatic managed service allocation excludes the entire loopback
+control range (`10000..32767`). Explicit service ports may use that range, but
+they still conflict with the incoming stack's deterministic endpoint, a known
+persisted endpoint, or another stack's reservation under the normal exact-port
+rules. A persisted automatic assignment in the control range is invalid and
+fails loudly rather than being silently migrated.
+
+The control endpoint is derived from the stack id and served on loopback. A
+persisted endpoint is accepted only when it matches that derivation. A rare
+hash collision or unrelated listener makes control acquisition fail with a
+typed conflict; a read-only probe treats the address as non-live and never
+claims it. An exact service port can still equal the future endpoint of an
+identity that has never started, so that low-probability conflict is rejected
+when ownership is acquired rather than forbidding every explicit port in the
+reserved range.
+
+This is deliberately a small single-user localhost mechanism. The control
+protocol has no token authentication; ownership, endpoint identity, and
+protocol-version checks provide the lifecycle boundary. `DaemonServer` exposes
+status, service operations, logs, graceful stop, and launch-update routes;
+`RemoteStack` is the typed client used by consumers.
+
+## Service execution and `ApiProxy`
+
+`StackPreparation` resolves each enabled service to a verified native binary or
+a Docker image. `mode: "native"` uses the supported native services and rejects
+Docker-only services; `mode: "docker"` resolves every service to an image;
+`mode: "auto"` prefers native artifacts and falls back to Docker. The
+`StackBuilder` turns those resolutions into one process-compose graph, so a
+stack can run native and Docker-backed services together. Docker resources are
+namespaced with the managed stack id; when native Postgres is combined with
+Docker services, the graph supplies the platform-specific host address so the
+containers can reach it.
+
+`ApiProxy` listens on the configured public `apiPort` and routes Supabase API
+paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,
+`/analytics`, and related endpoints) to the service ports. The database URL
+and direct service endpoints remain available from `Stack.getInfo()`. The
+loopback control endpoint is management traffic and is never the user-facing
+API URL.
+
+## Platform re-entry: compiled Bun
+
+In source mode, Node and Bun supervisors fork the adjacent `daemon-node.ts` or
+`daemon-bun.ts` entrypoint. A Bun single-file executable cannot fork a source
+URL from Bun's virtual filesystem, so the child re-enters the compiled CLI
+instead. The parent sets `SUPABASE_STACK_RUN_DAEMON=1`; the CLI entrypoint
+handles that marker before normal command dispatch and invokes the same
+`runBunDaemon()` supervisor entrypoint. This is the only stack-specific
+self-dispatch path; the daemon branch does not run normal CLI command dispatch.
+
+## Component map
+
+| Concern                                           | Owner                                                             |
+| ------------------------------------------------- | ----------------------------------------------------------------- |
+| Public Promise and Effect entrypoints             | `src/{node,bun,effect-node,effect-bun}.ts`                        |
+| Identity discovery and stack id                   | `managed/environment.ts`, `managed/identity.ts`, `managed/git.ts` |
+| Document paths, schema, and atomic persistence    | `managed/paths.ts`, `managed/document.ts`, `managed/store.ts`     |
+| Managed reads, writes, ports, and lifecycle state | `managed/manager.ts`, `managed/lifecycle.ts`, `discovery.ts`      |
+| Ownership and deterministic endpoint              | `managed/control.ts`                                              |
+| Detached child protocol and startup               | `supervisor.ts`, `daemon-node.ts`, `daemon-bun.ts`                |
+| Runtime control routes and client                 | `DaemonServer.ts`, `RemoteStack.ts`, `HttpTransportClient.ts`     |
+| Direct runtime construction and service lifecycle | `createStack.ts`, `layers.ts`, `LocalStack.ts`, `Stack.ts`        |
+| Asset resolution and native/Docker graph          | `StackPreparation.ts`, `StackBuilder.ts`, `ServiceCatalog.ts`     |
+| Public API routing                                | `ApiProxy.ts`                                                     |
+| Platform listeners and process services           | `platform-node.ts`, `platform-bun.ts`                             |
 
 ## Testing boundary
 
-Integration tests exercise the consumed surfaces: manager identity, sibling
-worktree and nested-project allocation, supervisor detached
-start/reattach/launch-update/stop,
-and lifecycle stale-owner recovery. Unit tests remain for pure port/document
-algorithms and platform seams. The test entrypoint exposes only the
-`DaemonServer` and transport seams needed to build those journeys; it does not
-recreate a repository or contract-fixture implementation.
+Integration tests exercise the surfaces a consumer uses: manager identity and
+documents, sibling worktrees and nested projects, detached start/reattach,
+launch updates, status and logs, graceful stop, stale-owner recovery, and
+deletion. A small number of end-to-end tests cover real subprocess and runtime
+boundaries.
+
+Unit tests are reserved for pure identity, port, document, projection, and
+platform algorithms or for branches unreachable through the public runtime
+surface. The testing entrypoint exposes only the `DaemonServer` and transport
+seams needed to build those journeys; it does not recreate a repository,
+SQLite adapter, or contract-fixture implementation.
