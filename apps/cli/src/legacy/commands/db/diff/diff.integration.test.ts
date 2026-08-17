@@ -80,6 +80,7 @@ interface SetupOpts {
   // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
   // instead of succeeding.
   readonly catalogExportFailWith?: string;
+  readonly diffFailWith?: string;
   // When set, the shadow's own PG15+ one-shot platform-baseline job(s) exit
   // non-zero, exercising cleanup-on-partial-failure (the shadow is still removed).
   readonly failShadowSetupJob?: boolean;
@@ -245,6 +246,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           );
         }
         return Effect.succeed({ stdout: '{"tables":[]}', stderr: "" });
+      }
+      if (opts.diffFailWith !== undefined) {
+        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.diffFailWith }));
       }
       const diffSql = opts.diffSql ?? "";
       // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
@@ -1903,6 +1907,18 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags());
       expect(stderr(s.out)).toContain("No schema changes found");
       expect(stdout(s.out)).toBe("");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("surfaces a crashed migra script instead of reporting no schema changes", () => {
+    const s = setup(tmp.current, {
+      diffFailWith:
+        "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stderr(s.out)).not.toContain("No schema changes found");
     }).pipe(Effect.provide(s.layer));
   });
 
