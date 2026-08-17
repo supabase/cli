@@ -2,7 +2,7 @@ import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
-import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -529,7 +529,7 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     // Receives an already-read/parsed file (the read
     // happens earlier, which wraps the open
@@ -672,6 +672,10 @@ const execMigrationBatch = <E>(
 
           yield* execute.pipe(
             Effect.mapError((cause) => {
+              // Acquiring the batch's connection failed: there is no failing
+              // statement to name, so the connect error (and its suggestion) is
+              // surfaced verbatim instead of being rendered as `At statement: N`.
+              if (cause instanceof LegacyDbConnectError) return cause;
               const globalIndex = base + (cause.statementIndex ?? completed);
               return legacyFormatExecBatchError(
                 cause,
@@ -701,7 +705,13 @@ const execMigrationBatch = <E>(
       yield* flushBatch(version.length > 0);
     }).pipe(
       Effect.mapError((error) =>
-        mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
+        // A batch connection failure is not an execution failure: it keeps its own
+        // error class (and `suggestion`) all the way out, exactly like the connect
+        // failure a caller would have seen from `connect` itself, instead of being
+        // relabeled as this file's statement-execution failure.
+        error instanceof LegacyDbConnectError
+          ? error
+          : mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
   });
@@ -737,7 +747,7 @@ export const legacyApplyMigrationFile = <E>(
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string, dbError?: LegacyDbExecError) => E,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
@@ -765,7 +775,7 @@ export const legacyApplyMigrations = <E>(
   path: Path.Path,
   pending: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     if (pending.length === 0) return;
@@ -793,7 +803,7 @@ export const legacySeedGlobals = <E>(
   path: Path.Path,
   globals: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     for (const globalPath of globals) {
@@ -829,7 +839,7 @@ export const legacyExecSqlFile = <E>(
   mapError: (message: string, phase: "read" | "exec") => E,
   displayPath?: string,
   projectEnv?: Readonly<Record<string, string>>,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
 
 /**
@@ -876,7 +886,7 @@ export const legacyApplySchemaFiles = <E>(
   schemaPaths: ReadonlyArray<string>,
   mapError: (message: string, suggestion?: string) => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
     if (files.length === 0) {

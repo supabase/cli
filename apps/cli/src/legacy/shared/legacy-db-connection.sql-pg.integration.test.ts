@@ -8,7 +8,7 @@
  */
 import * as net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Duration, Effect } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
@@ -174,6 +174,8 @@ const fakeBatchServer = (
     readonly failExecuteAt?: number;
     readonly failOnSync?: boolean;
     readonly emptyAt?: number;
+    /** Never answer an extended-protocol frame, so a batch hangs until interrupted. */
+    readonly stall?: boolean;
   } = {},
 ): Promise<{
   readonly port: number;
@@ -219,6 +221,7 @@ const fakeBatchServer = (
             continue;
           }
           state.frameTypes.push(type);
+          if (options.stall === true) continue;
           if (type === "P") {
             activeIndex += 1;
             const [, sqlOffset] = readCString(body, 0);
@@ -506,6 +509,16 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
 });
 
 describe("legacyDbConnectionSqlPgLayer extended batches", () => {
+  /**
+   * Narrow a batch failure to its statement-execution error. `execBatch` also fails
+   * with `LegacyDbConnectError` when it cannot check a connection out of the pool,
+   * which the server-side statement failures below never produce.
+   */
+  const asBatchExecError = (error: LegacyDbConnectError | LegacyDbExecError): LegacyDbExecError => {
+    if (error._tag === "LegacyDbExecError") return error;
+    throw new Error(`expected a batch exec failure, got ${error._tag}`);
+  };
+
   const runWithBatchServer = <A>(
     server: Awaited<ReturnType<typeof fakeBatchServer>>,
     use: (session: LegacyDbSession) => Effect.Effect<A, unknown>,
@@ -519,6 +532,8 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           user: "postgres",
           password: "postgres",
           database: "postgres",
+          // Set so a batch-connection failure can assert the suggestion survives.
+          suggestionContext: SUGGESTION_CONTEXT,
         },
         { isLocal: true, dnsResolver: "native" },
       );
@@ -584,11 +599,13 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         const execBatch = session.execBatch;
         if (execBatch === undefined) return Effect.die("execBatch is unavailable");
         return Effect.gen(function* () {
-          const error = yield* execBatch([
-            { sql: "SELECT 1" },
-            { sql: "-- comment only" },
-            { sql: "SELECT bad" },
-          ]).pipe(Effect.flip);
+          const error = asBatchExecError(
+            yield* execBatch([
+              { sql: "SELECT 1" },
+              { sql: "-- comment only" },
+              { sql: "SELECT bad" },
+            ]).pipe(Effect.flip),
+          );
           expect(error.statementIndex).toBe(2);
           expect(error.code).toBe("42601");
           expect(error.detail).toBe("batch detail");
@@ -609,8 +626,9 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
           .pipe(
             Effect.flip,
-            Effect.tap((error) =>
+            Effect.tap((cause) =>
               Effect.sync(() => {
+                const error = asBatchExecError(cause);
                 expect(error.statementIndex).toBe(1);
                 expect(error.code).toBe("23505");
                 expect(error.detail).toBe("runtime detail");
@@ -629,14 +647,47 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
         return session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
           Effect.flip,
-          Effect.tap((error) =>
+          Effect.tap((cause) =>
             Effect.sync(() => {
+              const error = asBatchExecError(cause);
               expect(error.statementIndex).toBe(2);
               expect(error.code).toBe("23514");
             }),
           ),
         );
       });
+    }),
+  );
+
+  it.live("classifies a failed batch-connection acquisition as a connect error", () =>
+    // A batch checks its own connection out of the pool, so a refused checkout is a
+    // CONNECTION failure — not statement 0 failing. Misclassifying it as an exec error
+    // would drop the connect suggestion and make the migration-apply formatter blame
+    // the migration's first statement for the database being unreachable.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ stall: true }));
+      const error = yield* runWithBatchServer(server, (session) => {
+        const execBatch = session.execBatch;
+        if (execBatch === undefined) return Effect.die("execBatch is unavailable");
+        return Effect.gen(function* () {
+          // Interrupting a batch discards its pooled connection, so the next batch has
+          // to dial again — and by then the server has stopped listening.
+          yield* execBatch([{ sql: "SELECT 1" }]).pipe(
+            Effect.timeout(Duration.millis(100)),
+            Effect.ignore,
+          );
+          yield* Effect.sync(server.close);
+          return yield* execBatch([{ sql: "SELECT 1" }]).pipe(Effect.flip);
+        });
+      });
+      expect(error._tag).toBe("LegacyDbConnectError");
+      if (error._tag === "LegacyDbConnectError") {
+        expect(error.message).toBe(
+          "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: " +
+            `dial error (connect ECONNREFUSED 127.0.0.1:${server.port})`,
+        );
+        expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
+      }
     }),
   );
 });

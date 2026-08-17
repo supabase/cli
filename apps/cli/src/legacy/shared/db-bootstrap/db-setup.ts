@@ -1032,7 +1032,13 @@ export const legacySetupDatabase = (
   options: LegacySetupDatabaseOptions = {},
 ): Effect.Effect<
   void,
-  LegacyDbSetupError | LegacyMigrationVaultError | LegacyImagePrepullError,
+  | LegacyDbSetupError
+  | LegacyMigrationVaultError
+  | LegacyImagePrepullError
+  // A batched SQL file whose pooled connection cannot be acquired fails with the
+  // driver's own connect error, surfaced verbatim (never relabeled as a setup
+  // failure) like every other connection failure on this path.
+  | LegacyDbConnectError,
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
@@ -1118,7 +1124,10 @@ export const legacyStartSetupLocalDatabase = (
   input: LegacyStartSetupLocalDatabaseInput,
 ): Effect.Effect<
   void,
-  LegacyStartSetupLocalDatabaseError,
+  // `LegacyDbConnectError` rides alongside the alias (as in `legacyRunFreshDbSetup`)
+  // because a batch that cannot check a connection out of the pool fails with the
+  // driver's connect error verbatim, suggestion included.
+  LegacyStartSetupLocalDatabaseError | LegacyDbConnectError,
   | Output
   | LegacyDockerRun
   | RuntimeInfo
