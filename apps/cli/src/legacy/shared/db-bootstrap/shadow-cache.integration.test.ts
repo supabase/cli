@@ -744,6 +744,13 @@ describe("legacyAcquireShadowDatabase", () => {
         const stray = path.join(shadowCacheDir(path), "catalog-abc.json");
         yield* fs.writeFileString(stray, "{}");
 
+        // mtime is the LRU ordinal, and the rapid-fire publishes below can land within the
+        // filesystem's timestamp granularity — an mtime tie makes "oldest" ambiguous and the
+        // eviction pick arbitrary (observed as a CI-only failure). Age the first tar explicitly:
+        // this test asserts the keep-cap behavior, not tie-breaking.
+        const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        yield* fs.utimes(path.join(shadowCacheDir(path), first[0] ?? ""), anHourAgo, anHourAgo);
+
         // Fill to the keep-cap + 1 with more distinct keys; the oldest (first) is evicted.
         for (let i = 0; i < LEGACY_SHADOW_BASELINE_KEEP - 1; i++) {
           yield* coldRun(docker, shadowInput(fs, path, { jwtExpiry: 8000 + i }));
