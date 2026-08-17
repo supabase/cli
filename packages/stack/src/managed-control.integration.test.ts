@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
@@ -389,18 +389,16 @@ describe("managed control endpoint", () => {
     ),
   );
 
-  it.live("rebinds after a concurrent graceful close", () =>
+  it.live("attaches before close and rebinds after close", () =>
     live(
       Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
-          const contender = yield* acquireControl({ stackId: STACK_ID }).pipe(
-            Effect.forkChild({ startImmediately: true }),
-          );
-          yield* Effect.sleep("1 millis");
+          const attached = yield* acquireControl({ stackId: STACK_ID });
+          expect(attached._tag).toBe("Attached");
           yield* owner.close;
-          const next = yield* Fiber.join(contender);
+          const next = yield* acquireControl({ stackId: STACK_ID });
           expect(next._tag).toBe("Owned");
         }),
       ),

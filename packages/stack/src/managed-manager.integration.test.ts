@@ -124,11 +124,40 @@ const exactDocument = (
   document: field === "apiPort" ? { api: { port } } : { studio: { port } },
 });
 
+const exactCoreDocument = (apiPort: number, dbPort: number): ManagedPortIntentDocument => ({
+  activeFields: ["apiPort", "dbPort"],
+  document: { api: { port: apiPort }, db: { port: dbPort } },
+});
+
+const FREE_PORT_FIELDS = [
+  "authPort",
+  "postgrestPort",
+  "postgrestAdminPort",
+  "realtimePort",
+] as const;
+
+const freePorts = (
+  count: number,
+): Effect.Effect<ReadonlyArray<number>, unknown, import("effect/Scope").Scope> =>
+  Effect.gen(function* () {
+    const lease = yield* reservePortSet(
+      FREE_PORT_FIELDS.slice(0, count).map((field) => ({
+        field,
+        selection: { kind: "automatic" as const },
+      })),
+    );
+    const ports = FREE_PORT_FIELDS.slice(0, count).flatMap((field) => {
+      const port = lease.ports[field];
+      return port === undefined ? [] : [port];
+    });
+    yield* lease.releaseAll;
+    if (ports.length !== count) return yield* Effect.fail(new Error("missing free ports"));
+    return ports;
+  });
+
 const freePort = (): Effect.Effect<number, unknown, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
-    const lease = yield* reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]);
-    const port = lease.ports.apiPort;
-    yield* lease.releaseAll;
+    const [port] = yield* freePorts(1);
     if (port === undefined) return yield* Effect.fail(new Error("missing free port"));
     return port;
   });
@@ -275,14 +304,25 @@ describe("managed stack journeys", () => {
           const firstAlias = join(root, "first-project-link");
           symlinkSync(firstProject, firstAlias, "dir");
           const manager = yield* ManagedStackManager;
-          const startAndClose = (project: string) =>
+          const [firstApi, firstDb, secondApi, secondDb] = yield* freePorts(4);
+          if (
+            firstApi === undefined ||
+            firstDb === undefined ||
+            secondApi === undefined ||
+            secondDb === undefined
+          ) {
+            throw new Error("expected isolated project ports");
+          }
+          const firstPorts = exactCoreDocument(firstApi, firstDb);
+          const secondPorts = exactCoreDocument(secondApi, secondDb);
+          const startAndClose = (project: string, portDocument: ManagedPortIntentDocument) =>
             Effect.scoped(
-              startWithOwner(manager, project, automaticDocument()).pipe(
+              startWithOwner(manager, project, portDocument).pipe(
                 Effect.map((result) => result.stack),
               ),
             );
           const [first, second] = yield* Effect.all(
-            [firstProject, secondProject].map((project) => startAndClose(project)),
+            [startAndClose(firstProject, firstPorts), startAndClose(secondProject, secondPorts)],
             { concurrency: "unbounded" },
           );
           if (first === undefined || second === undefined) {
@@ -311,8 +351,8 @@ describe("managed stack journeys", () => {
           expect(firstListing[0]?.name).toBe("default");
           expect(secondListing[0]?.name).toBe("default");
 
-          const restartedFirst = yield* startAndClose(firstProject);
-          const restartedSecond = yield* startAndClose(secondProject);
+          const restartedFirst = yield* startAndClose(firstProject, firstPorts);
+          const restartedSecond = yield* startAndClose(secondProject, secondPorts);
           expect(restartedFirst.id).toBe(first.id);
           expect(restartedSecond.id).toBe(second.id);
           expect(
@@ -337,6 +377,11 @@ describe("managed stack journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
+        const [apiPort, dbPort] = yield* freePorts(2);
+        if (apiPort === undefined || dbPort === undefined) {
+          throw new Error("expected interrupted-delete ports");
+        }
+        const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
@@ -344,7 +389,7 @@ describe("managed stack journeys", () => {
         const started = yield* manager.startStack({
           workspacePath: workspace,
           stackName: "default",
-          portDocument: automaticDocument(),
+          portDocument,
           ownership: owner,
           lifecycle: "running",
         });
@@ -821,10 +866,20 @@ describe("managed stack journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
+        const [apiPort, dbPort] = yield* freePorts(2);
+        if (apiPort === undefined || dbPort === undefined) {
+          throw new Error("expected isolated automatic ports");
+        }
         const environment = yield* ensureEnvironment(firstWorkspace);
         const stackId = deriveStackId(environment.identity, "default");
         const ownership = yield* acquireControl({ stackId });
         if (ownership._tag !== "Owned") throw new Error("expected ownership");
+        const exact = yield* manager.startStack({
+          workspacePath: firstWorkspace,
+          portDocument: exactCoreDocument(apiPort, dbPort),
+          ownership,
+        });
+        yield* releaseLease(exact);
         const first = yield* manager.startStack({
           workspacePath: firstWorkspace,
           portDocument: automaticRuntimeDocument(),
@@ -912,21 +967,23 @@ describe("managed stack journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const original = yield* freePort();
-        const changed = yield* freePort();
+        const [original, dbPort, changed] = yield* freePorts(3);
+        if (original === undefined || dbPort === undefined || changed === undefined) {
+          throw new Error("expected drift ports");
+        }
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const initialOwnership = yield* acquireControl({ stackId });
         if (initialOwnership._tag !== "Owned") throw new Error("expected ownership");
         const running = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: exactDocument("apiPort", original),
+          portDocument: exactCoreDocument(original, dbPort),
           ownership: initialOwnership,
           lifecycle: "running",
         });
         const status = yield* manager.readStack({
           workspacePath: workspace,
-          portDocument: exactDocument("apiPort", changed),
+          portDocument: exactCoreDocument(changed, dbPort),
         });
         expect(status?.drift).toHaveLength(1);
         const missingAssignment = yield* manager.readStack({
@@ -943,7 +1000,7 @@ describe("managed stack journeys", () => {
         if (ownership._tag !== "Owned") throw new Error("expected ownership");
         const stopped = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: exactDocument("apiPort", changed),
+          portDocument: exactCoreDocument(changed, dbPort),
           ownership,
           lifecycle: "stopped",
         });
@@ -1158,13 +1215,18 @@ describe("managed stack journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
+        const [apiPort, dbPort] = yield* freePorts(2);
+        if (apiPort === undefined || dbPort === undefined) {
+          throw new Error("expected interrupted-delete ports");
+        }
+        const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const previousOwner = yield* acquireControl({ stackId });
         if (previousOwner._tag !== "Owned") throw new Error("expected ownership");
         const previous = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: automaticDocument(),
+          portDocument,
           ownership: previousOwner,
         });
         yield* releaseLease(previous);
@@ -1178,7 +1240,7 @@ describe("managed stack journeys", () => {
         if (nextOwner._tag !== "Owned") throw new Error("expected recovered ownership");
         const restarted = yield* manager.startStack({
           workspacePath: workspace,
-          portDocument: automaticDocument(),
+          portDocument,
           ownership: nextOwner,
         });
         expect(restarted.stack.lifecycle).toBe("stopped");

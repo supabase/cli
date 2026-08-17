@@ -40,11 +40,28 @@ interface ChildHandle {
   readonly attachedBeforeReady: Promise<void>;
 }
 
-const workspace = (): {
+const freePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        server.close();
+        reject(new Error("failed to reserve a test port"));
+        return;
+      }
+      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)));
+    });
+  });
+
+const workspace = async (): Promise<{
   readonly root: string;
   readonly stateRoot: string;
   readonly stackId: string;
-} => {
+  readonly apiPort: number;
+  readonly dbPort: number;
+}> => {
   const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
   const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
   mkdirSync(join(root, ".supabase"), { recursive: true });
@@ -67,11 +84,18 @@ const workspace = (): {
       2,
     )}\n`,
   );
-  return { root, stateRoot, stackId: deriveStackId(identity, "default") };
+  const [apiPort, dbPort] = await Promise.all([freePort(), freePort()]);
+  return { root, stateRoot, stackId: deriveStackId(identity, "default"), apiPort, dbPort };
 };
 
 const messageFor = (
-  roots: { readonly root: string; readonly stateRoot: string; readonly stackId: string },
+  roots: {
+    readonly root: string;
+    readonly stateRoot: string;
+    readonly stackId: string;
+    readonly apiPort: number;
+    readonly dbPort: number;
+  },
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
   type: "start",
@@ -95,7 +119,10 @@ const messageFor = (
     vector: false,
     pooler: false,
   },
-  portIntents: { activeFields: ["apiPort", "dbPort"], document: {} },
+  portIntents: {
+    activeFields: ["apiPort", "dbPort"],
+    document: { api: { port: roots.apiPort }, db: { port: roots.dbPort } },
+  },
   ...overrides,
 });
 
@@ -417,7 +444,7 @@ const waitForStackDocument = async (
 
 describe("detached supervisor child journeys", () => {
   test("rejects an invalid stack name before forking a supervisor", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     try {
       const exit = await Effect.runPromiseExit(
         managedDaemonLayer(messageFor(roots, { stackName: "bad\nname" }), childEntryPoint).pipe(
@@ -437,7 +464,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("keeps managed documents, runtime metadata, and persistent data roots separate", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const stackId = "e".repeat(64);
     const paths = managedStackPaths(roots.stateRoot, stackId);
     try {
@@ -472,7 +499,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("starts one child, publishes owner, and binds every allocated port", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const child = spawnChild(messageFor(roots));
     try {
       const started = await child.started;
@@ -499,7 +526,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("publishes stopping before a slow owner shutdown can finish", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const child = spawnChild(messageFor(roots), { testMode: "hold-stop" });
     try {
       const started = await child.started;
@@ -522,7 +549,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("Bun routes a ready-owner stop through the daemon shutdown transaction", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const child = spawnChild(messageFor(roots), { testMode: "hold-stop", platform: "bun" });
     try {
       const started = await child.started;
@@ -554,7 +581,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("starts after an owner finishes stopping", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const releaseFile = join(roots.root, "release-stop");
     const input = messageFor(roots);
     const owner = spawnChild(input, {
@@ -591,7 +618,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("accepts stop while workspace discovery is still blocked", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const ensureReady = join(roots.root, "ensure-ready");
     const ensureRelease = join(roots.root, "ensure-release");
     const child = spawnChild(messageFor(roots), {
@@ -621,7 +648,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("does not mark an existing stopped document failed when discovery fails after control bind", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const initial = spawnChild(messageFor(roots));
     try {
       const started = await initial.started;
@@ -645,7 +672,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("stops a blocked starting owner through its control endpoint", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const child = spawnChild(messageFor(roots), { testMode: "hold-start" });
     void child.started.catch(() => undefined);
     try {
@@ -669,7 +696,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("does not restart a stopped owner after attached takeover", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const owner = spawnChild(input, { testMode: "hold-start" });
     void owner.started.catch(() => undefined);
@@ -686,21 +713,9 @@ describe("detached supervisor child journeys", () => {
       await waitForExit(owner.child);
       expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
 
-      const result = await Promise.race([
-        contender.started.then(
-          () => ({ _tag: "started" as const }),
-          (error: unknown) => ({ _tag: "error" as const, error }),
-        ),
-        new Promise<{ readonly _tag: "timeout" }>((resolve) =>
-          setTimeout(() => resolve({ _tag: "timeout" }), 2_000),
-        ),
-      ]);
-      expect(result._tag).toBe("error");
-      if (result._tag === "error") {
-        expect(result.error).toMatchObject({
-          message: expect.stringContaining("stopped before takeover"),
-        });
-      }
+      await expect(contender.started).rejects.toMatchObject({
+        message: expect.stringContaining("stopped before takeover"),
+      });
       expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
@@ -710,7 +725,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("attaches a second child as RemoteStack while the owner remains live", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const owner = spawnChild(input);
     const contender = spawnChild(input);
@@ -735,7 +750,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("reacquires and restarts after an attached owner dies during readiness", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const owner = spawnChild(input, { testMode: "hold-start" });
     void owner.started.catch(() => undefined);
@@ -772,7 +787,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("reacquires after an attached owner reports stopping before disconnect", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const initial = spawnChild(input);
     let contender: ChildHandle | undefined;
@@ -808,7 +823,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("bounds attached-owner recovery to one startup deadline", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
     const owner = spawnChild(input, { testMode: "hold-start", environment });
@@ -850,7 +865,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("reallocates after a child is killed during startup", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const killed = spawnChild(input, { testMode: "hold-start" });
     void killed.started.catch(() => undefined);
@@ -880,7 +895,7 @@ describe("detached supervisor child journeys", () => {
   });
 
   test("reattaches from a later process and stops the original child", async () => {
-    const roots = workspace();
+    const roots = await workspace();
     const input = messageFor(roots);
     const owner = spawnChild(input);
     let later: ChildHandle | undefined;
