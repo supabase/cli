@@ -36,6 +36,7 @@ import {
   LegacyLoginVerificationError,
 } from "../../src/legacy/commands/login/login.errors.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
+import { LEGACY_PGDATA_PATH } from "../../src/legacy/shared/db-bootstrap/pgdata-snapshot.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
@@ -996,7 +997,8 @@ export function mockLegacyShadowContainerCliSpawner(
 
 // ---------------------------------------------------------------------------
 // A minimal, stateful Docker model — the shadow BASELINE CACHE's round trip
-// (`docker stop` -> `docker cp <id>:PGDATA -` -> `docker start`, and the warm
+// (`docker stop` -> `docker cp - <id>:PGDATA` (the baseline stamp) ->
+// `docker cp <id>:PGDATA -` -> `docker start`, and the warm
 // `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
 // `mockLegacyShadowContainerCliSpawner` above deliberately does not model.
 // ---------------------------------------------------------------------------
@@ -1046,10 +1048,19 @@ const legacyFakeTarEntry = (name: string, content: string, typeFlag: "0" | "5"):
 const LEGACY_FAKE_TAR_END = "\0".repeat(1024);
 
 /**
- * The bytes the fake `docker cp <id>:PGDATA -` emits — stands in for a real ~90MB PGDATA tar,
- * with the same top-level `data/` member and `data/PG_VERSION` marker a real export carries.
+ * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has NOT stamped —
+ * a real cluster (`data/` + `data/PG_VERSION`) and nothing more. Stands in both for a hand-placed
+ * bare PGDATA archive and for a snapshot taken before the platform baseline ran: it restores,
+ * starts, and answers, so only the missing marker tells it apart from a usable baseline.
  */
-export const LEGACY_FAKE_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${LEGACY_FAKE_TAR_END}`;
+export const LEGACY_FAKE_UNSTAMPED_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${LEGACY_FAKE_TAR_END}`;
+
+/**
+ * The bytes the fake `docker cp <id>:PGDATA -` emits once the export path has stamped the
+ * container — stands in for a real ~90MB PGDATA tar, with the same top-level `data/` member,
+ * `data/PG_VERSION` cluster file, and `data/SUPABASE_BASELINE` marker a real export carries.
+ */
+export const LEGACY_FAKE_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${legacyFakeTarEntry("data/SUPABASE_BASELINE", "1\n", "0")}${LEGACY_FAKE_TAR_END}`;
 
 /**
  * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
@@ -1066,6 +1077,12 @@ interface LegacyFakeContainer {
   everStarted?: boolean;
   /** What a previous `docker cp - <id>:<path>` unpacked into this container, if anything. */
   restored: string | undefined;
+  /**
+   * What a `docker cp - <id>:<PGDATA>` delivered — the export path's baseline stamp. Its presence
+   * is what makes the fake's copy-OUT emit a marked archive, so a production regression that stops
+   * stamping publishes {@link LEGACY_FAKE_UNSTAMPED_PGDATA_TAR} and every warm-path test notices.
+   */
+  stamp: string | undefined;
 }
 
 /**
@@ -1087,6 +1104,8 @@ export function mockLegacyDockerDaemonCliSpawner(
     readonly failRestart?: boolean;
     readonly failCopyOut?: boolean;
     readonly failCopyIn?: boolean;
+    /** Fails the export path's baseline stamp (`docker cp - <id>:<PGDATA>`) only. */
+    readonly failStamp?: boolean;
   } = {},
 ) {
   const containers = new Map<string, LegacyFakeContainer>();
@@ -1141,6 +1160,7 @@ export function mockLegacyDockerDaemonCliSpawner(
           autoRemove: args.includes("--rm"),
           running: false,
           restored: undefined,
+          stamp: undefined,
         });
         stdout = id;
       } else if (args[0] === "start") {
@@ -1168,28 +1188,39 @@ export function mockLegacyDockerDaemonCliSpawner(
       } else if (args[0] === "rm") {
         containers.delete(args[args.length - 1] ?? "");
       } else if (args[0] === "cp" && args[1] === "-") {
-        // Secret copy is `docker cp - <id>:/`; restore is `docker cp - <id>:<pgdata parent>`.
-        // Both use stdin, so failCopyIn must apply only to the restore — otherwise a warm
-        // fallback test kills the pgsodium root-key copy and never reaches the archive.
+        // Three different stdin copies share this form, so each failure switch has to pick out
+        // exactly one: the pgsodium root key goes to `<id>:/`, the export path's baseline stamp to
+        // `<id>:<PGDATA>`, and the warm restore to `<id>:<pgdata parent>`. Otherwise a warm
+        // fallback test would kill the root-key copy and never reach the archive.
         const [id = "", containerPath = ""] = (args[2] ?? "").split(":");
         const container = containers.get(id);
         const received = yield* readStdin(command);
         const isSecret = containerPath === "" || containerPath === "/";
-        if (container === undefined || (!isSecret && opts.failCopyIn === true)) {
+        const isStamp = containerPath === LEGACY_PGDATA_PATH;
+        const failed =
+          (isStamp && opts.failStamp === true) ||
+          (!isSecret && !isStamp && opts.failCopyIn === true);
+        if (container === undefined || failed) {
           exitCode = 1;
           stderr = "no such container";
+        } else if (isStamp) {
+          container.stamp = received;
         } else if (!isSecret) {
           container.restored = `${containerPath}::${received}`;
         }
       } else if (args[0] === "cp" && args[2] === "-") {
-        // Export: `docker cp <id>:<containerPath> -`, tar on stdout.
+        // Export: `docker cp <id>:<containerPath> -`, tar on stdout. What comes out depends on
+        // whether the container was stamped first — that is the whole point of the marker.
         const [id = ""] = (args[1] ?? "").split(":");
         const container = containers.get(id);
         if (opts.failCopyOut === true || container === undefined) {
           exitCode = 1;
           stderr = "no such container";
         } else {
-          stdout = LEGACY_FAKE_PGDATA_TAR;
+          stdout =
+            container.stamp === undefined
+              ? LEGACY_FAKE_UNSTAMPED_PGDATA_TAR
+              : LEGACY_FAKE_PGDATA_TAR;
         }
       } else if (args[0] === "container" && args[1] === "inspect") {
         const container = containers.get(args[2] ?? "");
@@ -1223,9 +1254,10 @@ export function mockLegacyDockerDaemonCliSpawner(
 
   /**
    * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
-   * rather than raw argv. `cp` is split three ways because the shadow issues three different
-   * copies: the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the
-   * baseline export (`cp-out`), and the baseline restore (`cp-in`).
+   * rather than raw argv. `cp` is split four ways because the shadow issues four different copies:
+   * the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the baseline
+   * marker stamped into PGDATA just before an export (`cp-stamp`), the baseline export (`cp-out`),
+   * and the baseline restore (`cp-in`).
    */
   const stepOf = (args: ReadonlyArray<string>): string => {
     if (args[0] === "network") return "network";
@@ -1234,7 +1266,8 @@ export function mockLegacyDockerDaemonCliSpawner(
       if (args[1] === "-") {
         const dest = args[2] ?? "";
         const containerPath = dest.slice(dest.indexOf(":") + 1);
-        return containerPath === "" || containerPath === "/" ? "cp-secret" : "cp-in";
+        if (containerPath === "" || containerPath === "/") return "cp-secret";
+        return containerPath === LEGACY_PGDATA_PATH ? "cp-stamp" : "cp-in";
       }
       if (args[2] === "-") return "cp-out";
       return "cp-secret";

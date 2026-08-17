@@ -21,6 +21,7 @@ import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 import {
   LEGACY_FAKE_EMPTY_TAR,
   LEGACY_FAKE_PGDATA_TAR,
+  LEGACY_FAKE_UNSTAMPED_PGDATA_TAR,
   legacyWithEnv,
   mockLegacyDockerDaemonCliSpawner,
   useLegacyTempWorkdir,
@@ -29,7 +30,12 @@ import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
-import { LEGACY_PGDATA_PARENT_PATH, LEGACY_PGDATA_PATH } from "./pgdata-snapshot.ts";
+import {
+  LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
+  LEGACY_PGDATA_BASELINE_MARKER_NAME,
+  LEGACY_PGDATA_PARENT_PATH,
+  LEGACY_PGDATA_PATH,
+} from "./pgdata-snapshot.ts";
 import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_CACHE_ENV,
@@ -362,16 +368,29 @@ describe("legacyAcquireShadowDatabase", () => {
         yield* handle.snapshotBaseline;
 
         // Ordering IS the contract here: stop before the copy (a live PGDATA is not coherent to
-        // copy), start plus a readiness probe after it (the caller is about to reconnect).
+        // copy), the baseline marker stamped in between (it must be the LAST thing written to
+        // PGDATA, so nothing after the platform baseline can be missing from what it vouches
+        // for), start plus a readiness probe after it (the caller is about to reconnect).
         expect(docker.steps()).toEqual([
           "create",
           "cp-secret",
           "start",
           "stop",
+          "cp-stamp",
           "cp-out",
           "start",
           "inspect",
         ]);
+        expect(docker.stepCalls("cp-stamp")[0]).toEqual([
+          "cp",
+          "-",
+          `${handle.containerId}:${LEGACY_PGDATA_PATH}`,
+        ]);
+        // The stamp really carries the marker file, delivered as a tar so `docker cp` unpacks it
+        // relative to PGDATA rather than rewriting the directory's ownership.
+        expect(docker.containers.get(handle.containerId)?.stamp).toContain(
+          LEGACY_PGDATA_BASELINE_MARKER_NAME,
+        );
         expect(docker.stepCalls("cp-out")[0]).toEqual([
           "cp",
           `${handle.containerId}:${LEGACY_PGDATA_PATH}`,
@@ -384,9 +403,11 @@ describe("legacyAcquireShadowDatabase", () => {
         const tars = yield* soleTarName(fs, path);
         expect(tars).toHaveLength(1);
         expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]{16}\.tar$/u);
-        expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
-          LEGACY_FAKE_PGDATA_TAR,
-        );
+        const published = yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""));
+        expect(published).toBe(LEGACY_FAKE_PGDATA_TAR);
+        // The stamp made it all the way into the artifact — this is the entry the next run's
+        // pre-restore scan requires, so a cold export that skipped it would never warm anything.
+        expect(published).toContain(LEGACY_PGDATA_BASELINE_MARKER_ENTRY);
         const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
         expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
 
@@ -785,6 +806,70 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         expect(yield* fs.readFileString(tarPath)).toBe(LEGACY_FAKE_PGDATA_TAR);
         yield* legacyRemoveShadowDatabase(docker.spawner, fallback.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("a published tar carrying a bare cluster is discarded instead of restored", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        yield* coldRun(docker, input);
+        const [tarName = ""] = yield* soleTarName(fs, path);
+        const tarPath = path.join(shadowCacheDir(path), tarName);
+
+        // A REAL, perfectly restorable PGDATA — but one that never ran the platform baseline. This
+        // is the failure `data/PG_VERSION` alone cannot see: `docker cp -` extracts a genuine
+        // cluster, the entrypoint SKIPS `initdb`, readiness passes, and the caller would be told
+        // the baseline is present while diffing against a bare database. Only the missing marker
+        // separates it from a usable snapshot.
+        yield* fs.writeFileString(tarPath, LEGACY_FAKE_UNSTAMPED_PGDATA_TAR);
+        const stepsBefore = docker.steps().length;
+
+        const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+
+        expect(out.stderrText).toContain("cached shadow baseline unusable");
+        expect(out.stderrText).toContain(LEGACY_PGDATA_BASELINE_MARKER_ENTRY);
+        expect(fallback.baselinePresent).toBe(false);
+        // Caught before any container was created, so nothing was ever restored.
+        expect(docker.steps().slice(stepsBefore)).not.toContain("cp-in");
+        // The contents ARE the problem, so the tar goes — and the cold fallback republishes a
+        // marked one within the same run.
+        expect(yield* soleTarName(fs, path)).toEqual([]);
+        yield* fallback.snapshotBaseline;
+        expect(yield* fs.readFileString(tarPath)).toBe(LEGACY_FAKE_PGDATA_TAR);
+        yield* legacyRemoveShadowDatabase(docker.spawner, fallback.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("a failed baseline stamp leaves the run uncached rather than publishing a tar", () => {
+    const docker = mockLegacyDockerDaemonCliSpawner({ failStamp: true });
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+        // Same fail-open contract as every other export failure: the run itself never fails...
+        yield* handle.snapshotBaseline;
+
+        expect(out.stderrText).toContain("Warning: shadow baseline not cached");
+        expect(out.stderrText).toContain(LEGACY_PGDATA_BASELINE_MARKER_ENTRY);
+        // ...the shadow is back up for the caller to reconnect to...
+        expect(docker.containers.get(handle.containerId)?.running).toBe(true);
+        // ...and nothing is published, because an UNMARKED tar would only be thrown away on the
+        // next run anyway. The export never even runs.
+        expect(docker.stepCalls("cp-out")).toHaveLength(0);
+        expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });

@@ -57,6 +57,66 @@ export const LEGACY_PGDATA_PATH = "/var/lib/postgresql/data";
  */
 export const LEGACY_PGDATA_PARENT_PATH = "/var/lib/postgresql";
 
+// ---------------------------------------------------------------------------
+// What a valid snapshot must contain
+// ---------------------------------------------------------------------------
+
+/**
+ * PGDATA's own directory name — `docker cp <id>:<dir> -` names its members after the source
+ * BASENAME, so `data/` is the export tar's top-level entry (see {@link LEGACY_PGDATA_PARENT_PATH}).
+ */
+const LEGACY_PGDATA_DIR_NAME = LEGACY_PGDATA_PATH.slice(LEGACY_PGDATA_PARENT_PATH.length + 1);
+
+/**
+ * The entry whose presence proves an archive really carries an exported cluster: every Postgres
+ * data directory has a `PG_VERSION` file at its root, and `initdb` writes it first. An archive that
+ * unpacks cleanly but lacks it is the corruption a restore cannot otherwise notice.
+ *
+ * On its own it proves only "*a* PostgreSQL cluster", which is strictly weaker than what a cache
+ * key promises — hence {@link LEGACY_PGDATA_BASELINE_MARKER_ENTRY}.
+ */
+export const LEGACY_PGDATA_CLUSTER_ENTRY = `${LEGACY_PGDATA_DIR_NAME}/PG_VERSION`;
+
+/**
+ * A file this module writes into PGDATA's ROOT ({@link legacyStampPgDataBaselineMarker}) as the
+ * last step before the export copies the directory out. Postgres ignores unknown regular files at
+ * the data directory's root (`pg_upgrade` and friends routinely leave some there), and a restored
+ * container simply carries it along, so the cost of the stamp is one 512-byte tar member.
+ *
+ * SCREAMING_SNAKE on purpose, and not by taste: `docker cp` tars a directory through Go's
+ * `filepath.Walk`, which visits each level in sorted order, so an uppercase root file lands
+ * immediately next to `PG_VERSION` — near the front of a ~90MB archive rather than behind every
+ * `base/` page. That is a PERFORMANCE hint for {@link legacyPgDataArchiveMissingEntries} only:
+ * the scan is correct at any position, and settles late (not wrongly) if a Docker release ever
+ * reorders its walk.
+ */
+export const LEGACY_PGDATA_BASELINE_MARKER_NAME = "SUPABASE_BASELINE";
+
+/**
+ * The marker's tar entry — what {@link legacyPgDataArchiveMissingEntries} looks for, and the reason
+ * a cached snapshot means "the Supabase platform baseline this key promises" rather than merely "a
+ * PostgreSQL cluster".
+ *
+ * Its whole value is WHEN it is written: {@link legacyStampPgDataBaselineMarker} is called from the
+ * export step alone, after the caller's own baseline has completed and immediately before the
+ * copy-out. So an archive produced before the baseline ran — a wiring regression that moves the
+ * snapshot earlier, or a hand-placed bare PGDATA tar dropped into the cache directory — cannot
+ * carry it, and is rejected before anything is restored.
+ */
+export const LEGACY_PGDATA_BASELINE_MARKER_ENTRY = `${LEGACY_PGDATA_DIR_NAME}/${LEGACY_PGDATA_BASELINE_MARKER_NAME}`;
+
+/**
+ * Only PRESENCE is the contract — nothing reads these bytes back, so the content can grow into
+ * provenance metadata later without breaking any reader.
+ */
+const LEGACY_PGDATA_BASELINE_MARKER_CONTENT = "1\n";
+
+/** Every entry {@link legacyPgDataArchiveMissingEntries} requires of a restorable snapshot. */
+export const LEGACY_PGDATA_REQUIRED_ENTRIES: ReadonlyArray<string> = [
+  LEGACY_PGDATA_CLUSTER_ENTRY,
+  LEGACY_PGDATA_BASELINE_MARKER_ENTRY,
+];
+
 /**
  * Internal-only "the snapshot could not be produced" signal — deliberately NOT a
  * `Data.TaggedError`: every caller of {@link legacyExportPgDataTar} decides for itself how to
@@ -70,6 +130,74 @@ export interface LegacyPgDataSnapshotUnavailable {
 const legacyPgDataSnapshotUnavailable = (reason: string): LegacyPgDataSnapshotUnavailable => ({
   reason,
 });
+
+/**
+ * The one-member tar {@link legacyStampPgDataBaselineMarker} pushes into the container:
+ * `SUPABASE_BASELINE` relative to the `docker cp` destination, which is PGDATA itself.
+ *
+ * Exported for the unit test that round-trips it through this module's own scanner — the stamp and
+ * the check have to agree on the entry name, and nothing else proves that they do.
+ */
+export const legacyPgDataBaselineMarkerTar = (): Effect.Effect<
+  Uint8Array,
+  LegacyPgDataSnapshotUnavailable
+> =>
+  Effect.tryPromise({
+    try: () =>
+      new Bun.Archive({
+        [LEGACY_PGDATA_BASELINE_MARKER_NAME]: LEGACY_PGDATA_BASELINE_MARKER_CONTENT,
+      }).bytes(),
+    catch: (cause) =>
+      legacyPgDataSnapshotUnavailable(
+        `failed to build the baseline marker archive: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ),
+  });
+
+/**
+ * Writes {@link LEGACY_PGDATA_BASELINE_MARKER_ENTRY} into the container's PGDATA, so the export
+ * that follows carries it and {@link legacyPgDataArchiveMissingEntries} can tell a snapshot of a
+ * COMPLETED baseline apart from any other cluster.
+ *
+ * Delivered as a stdin tar through `docker cp -`, the same form the restore side uses
+ * (`legacyExtractPreStartArchiveIntoContainer`, `container-lifecycle.ts`) and for the same reason:
+ * it needs no daemon-visible host path, so it works against local, remote-context, and confined
+ * Docker clients alike. `docker cp` into a STOPPED container is fully supported — which is exactly
+ * the state this module's coherence contract already requires of the export.
+ *
+ * The caller owns the ORDERING that gives the marker its meaning: this must be the last mutation
+ * before {@link legacyExportPgDataTar}, and must run only once whatever the snapshot is supposed to
+ * capture is genuinely in place.
+ */
+export const legacyStampPgDataBaselineMarker = (
+  spawner: Spawner,
+  containerId: string,
+): Effect.Effect<void, LegacyPgDataSnapshotUnavailable> =>
+  Effect.gen(function* () {
+    const tar = yield* legacyPgDataBaselineMarkerTar();
+    const failure = (detail: string) =>
+      legacyPgDataSnapshotUnavailable(
+        `failed to stamp ${LEGACY_PGDATA_BASELINE_MARKER_ENTRY}: ${detail}`,
+      );
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["cp", "-", `${containerId}:${LEGACY_PGDATA_PATH}`],
+          { stdin: Stream.make(tar), stdout: "ignore", stderr: "pipe" },
+        ).pipe(Effect.mapError((cause) => failure(legacyDescribeContainerCliFailure(cause))));
+        const [exitCode, stderr] = yield* Effect.all(
+          [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+          { concurrency: "unbounded" },
+        ).pipe(Effect.mapError((cause) => failure(legacyDescribeContainerCliFailure(cause))));
+        if (exitCode !== 0) {
+          const message = stderr.trim();
+          return yield* Effect.fail(
+            failure(`docker cp exited ${exitCode}${message.length > 0 ? `: ${message}` : ""}`),
+          );
+        }
+      }),
+    );
+  });
 
 /**
  * Streams `docker cp <containerId>:${LEGACY_PGDATA_PATH} -`'s tar straight to a temp file next to
@@ -154,20 +282,6 @@ export const legacyExportPgDataTar = (
 // Archive validation
 // ---------------------------------------------------------------------------
 
-/**
- * PGDATA's own directory name — `docker cp <id>:<dir> -` names its members after the source
- * BASENAME, so `data/` is the export tar's top-level entry (see {@link LEGACY_PGDATA_PARENT_PATH}).
- */
-const LEGACY_PGDATA_DIR_NAME = LEGACY_PGDATA_PATH.slice(LEGACY_PGDATA_PARENT_PATH.length + 1);
-
-/**
- * The one entry whose presence proves an archive really carries an exported cluster: every
- * Postgres data directory has a `PG_VERSION` file at its root, and `initdb` writes it first. An
- * archive that unpacks cleanly but lacks it is the corruption a restore cannot otherwise notice —
- * see {@link legacyPgDataArchiveHasCluster}.
- */
-export const LEGACY_PGDATA_MARKER_ENTRY = `${LEGACY_PGDATA_DIR_NAME}/PG_VERSION`;
-
 /** POSIX tar's fixed block size: headers, file content, and the end marker are all multiples of it. */
 const LEGACY_TAR_BLOCK_SIZE = 512;
 
@@ -176,7 +290,7 @@ const LEGACY_TAR_NO_BYTES = new Uint8Array(0);
 const legacyTarDecoder = new TextDecoder();
 
 /**
- * {@link legacyScanTarChunkForEntry}'s carry-over state — everything needed to resume a header
+ * {@link legacyScanTarChunkForEntries}'s carry-over state — everything needed to resume a header
  * walk at an arbitrary chunk boundary, and nothing else. `carry` holds the bytes of a header block
  * a chunk ended in the middle of (always `< 512`); `skip` counts the file-content bytes still to be
  * STEPPED OVER without buffering, which is what keeps a ~90MB archive off the heap.
@@ -186,24 +300,32 @@ export interface LegacyTarScanState {
   readonly skip: number;
   /** Consecutive all-zero blocks seen; two in a row is tar's end-of-archive marker. */
   readonly zeroBlocks: number;
-  readonly found: boolean;
+  /**
+   * The required entries not seen yet. Empty means every one of them was found; whatever is left
+   * once the scan settles is what the archive is missing, which is what the caller reports.
+   */
+  readonly missing: ReadonlySet<string>;
   readonly ended: boolean;
   /** A block that is neither zero nor a checksum-valid header: not a tar (or a truncated one). */
   readonly malformed: boolean;
 }
 
-export const legacyInitialTarScanState: LegacyTarScanState = {
+/** A fresh walk looking for `required` — every entry of which must appear for the scan to pass. */
+export const legacyInitialTarScanState = (required: Iterable<string>): LegacyTarScanState => ({
   carry: LEGACY_TAR_NO_BYTES,
   skip: 0,
   zeroBlocks: 0,
-  found: false,
+  missing: new Set(required),
   ended: false,
   malformed: false,
-};
+});
+
+/** Whether every required entry has been seen. */
+export const legacyTarScanFound = (state: LegacyTarScanState): boolean => state.missing.size === 0;
 
 /** Whether the scan has reached a verdict — nothing later in the archive can change it. */
 export const legacyTarScanSettled = (state: LegacyTarScanState): boolean =>
-  state.found || state.ended || state.malformed;
+  legacyTarScanFound(state) || state.ended || state.malformed;
 
 /** A NUL-terminated text field of a tar header block. */
 const legacyTarTextField = (block: Uint8Array, offset: number, length: number): string => {
@@ -265,27 +387,31 @@ const legacyTarEntryName = (block: Uint8Array): string => {
 const legacyTarBlockIsZero = (block: Uint8Array): boolean => block.every((byte) => byte === 0);
 
 /**
- * Folds one stream chunk into a tar HEADER walk looking for `entryName`. Pure and
- * chunk-boundary-agnostic: file content is stepped over by byte count rather than buffered, so the
- * whole scan costs one partial header block of memory no matter how large the archive is. Stops
- * (and stays stopped) at the first of: the entry found, the end-of-archive marker, or a block that
- * is not a valid header.
+ * Folds one stream chunk into a tar HEADER walk looking for every entry still in `state.missing`.
+ * Pure and chunk-boundary-agnostic: file content is stepped over by byte count rather than
+ * buffered, so the whole scan costs one partial header block of memory no matter how large the
+ * archive is. Stops (and stays stopped) at the first of: the last required entry found, the
+ * end-of-archive marker, or a block that is not a valid header.
  */
-export const legacyScanTarChunkForEntry = (
+export const legacyScanTarChunkForEntries = (
   state: LegacyTarScanState,
   chunk: Uint8Array,
-  entryName: string,
 ): LegacyTarScanState => {
   if (legacyTarScanSettled(state)) return state;
-  const settle = (
-    verdict: Pick<LegacyTarScanState, "found" | "ended" | "malformed">,
-  ): LegacyTarScanState => ({
-    ...legacyInitialTarScanState,
-    ...verdict,
-  });
   let carry = state.carry;
   let skip = state.skip;
   let zeroBlocks = state.zeroBlocks;
+  let missing = state.missing;
+  // A verdict keeps `missing` (it is the report) and drops the walk's resumption state.
+  const settle = (
+    verdict: Pick<LegacyTarScanState, "ended" | "malformed">,
+  ): LegacyTarScanState => ({
+    carry: LEGACY_TAR_NO_BYTES,
+    skip: 0,
+    zeroBlocks: 0,
+    missing,
+    ...verdict,
+  });
   // Content bytes carried over from the previous chunk come first — they are not headers.
   let offset = Math.min(skip, chunk.length);
   skip -= offset;
@@ -314,19 +440,23 @@ export const legacyScanTarChunkForEntry = (
 
     if (legacyTarBlockIsZero(block)) {
       zeroBlocks += 1;
-      if (zeroBlocks >= 2) return settle({ found: false, ended: true, malformed: false });
+      if (zeroBlocks >= 2) return settle({ ended: true, malformed: false });
       continue;
     }
     zeroBlocks = 0;
     if (!legacyTarChecksumValid(block)) {
-      return settle({ found: false, ended: false, malformed: true });
+      return settle({ ended: false, malformed: true });
     }
-    if (legacyTarEntryName(block) === entryName) {
-      return settle({ found: true, ended: false, malformed: false });
+    const name = legacyTarEntryName(block);
+    if (missing.has(name)) {
+      const remaining = new Set(missing);
+      remaining.delete(name);
+      missing = remaining;
+      if (missing.size === 0) return settle({ ended: false, malformed: false });
     }
     const size = legacyTarNumericField(block, 124, 12);
     if (size === undefined || size < 0) {
-      return settle({ found: false, ended: false, malformed: true });
+      return settle({ ended: false, malformed: true });
     }
     // Content is padded up to the next block boundary; directories and links carry size 0.
     const content = Math.ceil(size / LEGACY_TAR_BLOCK_SIZE) * LEGACY_TAR_BLOCK_SIZE;
@@ -334,38 +464,49 @@ export const legacyScanTarChunkForEntry = (
     offset += stepped;
     skip = content - stepped;
   }
-  return { carry, skip, zeroBlocks, found: false, ended: false, malformed: false };
+  return { carry, skip, zeroBlocks, missing, ended: false, malformed: false };
 };
 
 /**
- * Whether `tarPath` really is a {@link legacyExportPgDataTar} archive — i.e. whether its member
- * list contains {@link LEGACY_PGDATA_MARKER_ENTRY}.
+ * Which of {@link LEGACY_PGDATA_REQUIRED_ENTRIES} `tarPath`'s member list does NOT contain — empty
+ * for a snapshot that is safe to restore.
  *
- * This exists because an archive that is syntactically fine but carries no cluster (an EMPTY tar
- * qualifies) restores SILENTLY: `docker cp -` extracts nothing, the Postgres entrypoint finds an
- * empty PGDATA and runs a fresh `initdb`, readiness passes, and the caller is handed a bare
- * cluster it believes carries the platform baseline. Validating the header stream up front is the
- * only place that difference is observable, so callers must check BEFORE restoring.
+ * Both entries are load-bearing, and for different failures. Without `PG_VERSION`, an archive that
+ * is syntactically fine but carries no cluster (an EMPTY tar qualifies) restores SILENTLY:
+ * `docker cp -` extracts nothing, the Postgres entrypoint finds an empty PGDATA and runs a fresh
+ * `initdb`, readiness passes, and the caller is handed a bare cluster it believes carries the
+ * platform baseline. Without the baseline marker, that same silent-success shape survives one level
+ * up: a REAL but bare PGDATA tar (dropped into the cache directory by hand, or produced by a future
+ * regression that exports before the baseline runs) restores, starts, and answers — and only the
+ * resulting diff would ever show it. Validating the header stream up front is the only place either
+ * difference is observable, so callers must check BEFORE restoring.
  *
- * Reads the file locally — no Docker, no extraction — and stops at the marker, so a warm hit
- * normally touches only the archive's first blocks. Only a genuine read failure fails; a valid tar
- * without the marker simply resolves `false`.
+ * Reads the file locally — no Docker, no extraction — and stops as soon as both entries have been
+ * seen; see {@link LEGACY_PGDATA_BASELINE_MARKER_NAME} for why that is normally within the
+ * archive's first blocks. Even a full walk only parses HEADERS (content is stepped over by byte
+ * count), so the cost is one sequential read with O(1) memory. Only a genuine read failure fails; a
+ * valid tar missing an entry simply reports it.
  */
-export const legacyPgDataArchiveHasCluster = (
+export const legacyPgDataArchiveMissingEntries = (
   fs: FileSystem.FileSystem,
   tarPath: string,
-): Effect.Effect<boolean, LegacyPgDataSnapshotUnavailable> =>
+): Effect.Effect<ReadonlyArray<string>, LegacyPgDataSnapshotUnavailable> =>
   fs.stream(tarPath).pipe(
     Stream.mapAccum(
-      () => legacyInitialTarScanState,
+      () => legacyInitialTarScanState(LEGACY_PGDATA_REQUIRED_ENTRIES),
       (state: LegacyTarScanState, chunk: Uint8Array) => {
-        const next = legacyScanTarChunkForEntry(state, chunk, LEGACY_PGDATA_MARKER_ENTRY);
+        const next = legacyScanTarChunkForEntries(state, chunk);
         return [next, [next]] as const;
       },
     ),
     Stream.takeUntil(legacyTarScanSettled),
     Stream.runLast,
-    Effect.map((last) => Option.isSome(last) && last.value.found),
+    // An empty file yields no chunks at all, so `None` means nothing was found: everything missing.
+    Effect.map((last) =>
+      Option.isSome(last)
+        ? LEGACY_PGDATA_REQUIRED_ENTRIES.filter((entry) => last.value.missing.has(entry))
+        : LEGACY_PGDATA_REQUIRED_ENTRIES,
+    ),
     Effect.mapError((cause) =>
       legacyPgDataSnapshotUnavailable(`failed to read ${tarPath}: ${cause.message}`),
     ),

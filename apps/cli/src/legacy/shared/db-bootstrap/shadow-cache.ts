@@ -59,10 +59,10 @@ import {
 } from "../legacy-vault.ts";
 import { legacyWaitForShadowReady } from "./health-check.ts";
 import {
-  LEGACY_PGDATA_MARKER_ENTRY,
   legacyExportPgDataTar,
-  legacyPgDataArchiveHasCluster,
+  legacyPgDataArchiveMissingEntries,
   legacyPgDataRestoreArchive,
+  legacyStampPgDataBaselineMarker,
 } from "./pgdata-snapshot.ts";
 import type { LegacyPgDataSnapshotUnavailable } from "./pgdata-snapshot.ts";
 import { legacyResolvePinnedImage } from "./pinned-image.ts";
@@ -92,8 +92,9 @@ interface LegacyShadowCacheUnavailable {
   readonly reason: string;
   /**
    * `true` only when the failure implicates the TAR'S CONTENTS — today, exactly two producers,
-   * both in {@link legacyWarmShadow}: an archive whose header stream carries no PGDATA cluster
-   * (checked before any container is created), and a restored cluster that started but never
+   * both in {@link legacyWarmShadow}: an archive whose header stream is missing a required entry —
+   * the PGDATA cluster file or the baseline marker — (checked before any container is created),
+   * and a restored cluster that started but never
    * accepted connections (the readiness wait). Everything else (a `docker create`/`cp`/`start`
    * failure — daemon outage,
    * port collision, or even a corrupt archive's failed extraction) leaves the tar in place: an
@@ -766,6 +767,18 @@ const legacyExportShadowBaseline = <E>(
       const exported = yield* Effect.result(
         Effect.gen(function* () {
           yield* legacyShadowContainerVerb(spawner, "stop", containerId);
+          // The stamp is what makes the published tar mean "the baseline this key promises" rather
+          // than "some PostgreSQL cluster", and its ONLY guarantee is this position in the
+          // sequence: this whole step runs from `snapshotBaseline`, which `legacySetupShadowDatabase`
+          // invokes strictly after `legacySetupDatabase` returns (`shadow-database.ts`), and the
+          // stamp is the last mutation before the copy-out. A future regression that snapshots
+          // EARLIER therefore cannot produce a marked tar — it just stays uncached, instead of
+          // silently publishing a bare cluster under a baseline key.
+          yield* legacyStampPgDataBaselineMarker(spawner, containerId).pipe(
+            Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
+              legacyShadowCacheUnavailable(cause.reason),
+            ),
+          );
           yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
         }),
       );
@@ -875,8 +888,8 @@ const legacyColdCachedShadow = <E>(
   );
 
 /**
- * The warm path proper: verify the snapshot tar really contains a cluster, create the shadow with
- * it unpacked into it before it starts ({@link LegacyCreateShadowDatabaseInput.restoreArchive}),
+ * The warm path proper: verify the snapshot tar really carries a baselined cluster, create the
+ * shadow with it unpacked into it before it starts ({@link LegacyCreateShadowDatabaseInput.restoreArchive}),
  * then wait for the restored Postgres. Every failure resolves to
  * {@link LegacyShadowCacheUnavailable}, which the caller turns into the escape hatch.
  *
@@ -904,20 +917,21 @@ const legacyWarmShadow = <E>(
   Output | LegacyDbConnection
 > =>
   Effect.gen(function* () {
-    // An archive that unpacks cleanly but carries no cluster is the ONE corruption the restore
-    // itself cannot report: `docker cp -` extracts nothing, the entrypoint runs a fresh `initdb`
-    // into the empty PGDATA, readiness passes, and this function would hand back
-    // `baselinePresent: true` for a BARE cluster — the caller then skips `legacySetupDatabase` and
-    // diffs against it, silently producing wrong SQL. So the tar's own headers are scanned for the
-    // cluster marker BEFORE anything is created (locally, no Docker — see
-    // {@link legacyPgDataArchiveHasCluster}). A read failure is infra and leaves the tar in place;
-    // a missing marker implicates its CONTENTS (review: Codex on #6184).
-    const hasCluster = yield* legacyPgDataArchiveHasCluster(input.fs, tarPath).pipe(
+    // An archive that unpacks cleanly but carries the wrong thing is the ONE corruption the restore
+    // itself cannot report: `docker cp -` extracts whatever it is given, the entrypoint skips
+    // `initdb` (or runs one over an empty PGDATA), readiness passes, and this function would hand
+    // back `baselinePresent: true` for a cluster that never saw `legacySetupDatabase` — the caller
+    // then skips it too and diffs against a BARE database, silently producing wrong SQL. So the
+    // tar's own headers are scanned BEFORE anything is created (locally, no Docker) for both the
+    // cluster file AND the baseline marker this module stamps immediately before every export —
+    // see {@link legacyPgDataArchiveMissingEntries}. A read failure is infra and leaves the tar in
+    // place; a missing entry implicates its CONTENTS (review: Codex on #6184).
+    const missing = yield* legacyPgDataArchiveMissingEntries(input.fs, tarPath).pipe(
       Effect.mapError((cause) => legacyShadowCacheUnavailable(cause.reason)),
     );
-    if (!hasCluster) {
+    if (missing.length > 0) {
       return yield* Effect.fail(
-        legacyShadowCacheUnavailable(`snapshot has no ${LEGACY_PGDATA_MARKER_ENTRY} entry`, {
+        legacyShadowCacheUnavailable(`snapshot has no ${missing.join(" or ")} entry`, {
           tarSuspect: true,
         }),
       );
