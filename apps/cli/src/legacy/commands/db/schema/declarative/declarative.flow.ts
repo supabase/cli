@@ -331,7 +331,7 @@ const adoptionCommand = (
   const dir = shellQuoteArgument(declarativeDir, platform);
   const staged = shellQuoteArgument(stagedDir, platform);
   return platform === "windows"
-    ? `  Remove-Item -Recurse -Force ${dir}; Move-Item ${staged} ${dir}`
+    ? `  Remove-Item -Recurse -Force -ErrorAction Stop ${dir}; Move-Item ${staged} ${dir}`
     : `  rm -rf ${dir} && mv ${staged} ${dir}`;
 };
 

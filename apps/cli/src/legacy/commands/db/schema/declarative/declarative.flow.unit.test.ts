@@ -212,7 +212,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
       "  supabase db schema declarative generate --local --overwrite --output-dir 'supabase/custom schema-next' --experimental",
     );
     expect(gate.suggestion).toContain(
-      "  Remove-Item -Recurse -Force 'supabase/custom schema'; Move-Item 'supabase/custom schema-next' 'supabase/custom schema'",
+      "  Remove-Item -Recurse -Force -ErrorAction Stop 'supabase/custom schema'; Move-Item 'supabase/custom schema-next' 'supabase/custom schema'",
     );
     // No POSIX-isms anywhere in the windows recipe: it must run as printed.
     expect(gate.suggestion).not.toContain("rm -rf");
@@ -227,7 +227,7 @@ describe("legacyFormatDeclarativeUpgradeGate", () => {
       platform: "windows",
     });
     expect(lines.join("\n")).toContain(
-      "Remove-Item -Recurse -Force 'supabase/it''s here'; Move-Item 'supabase/it''s here-next' 'supabase/it''s here'",
+      "Remove-Item -Recurse -Force -ErrorAction Stop 'supabase/it''s here'; Move-Item 'supabase/it''s here-next' 'supabase/it''s here'",
     );
   });
 });
