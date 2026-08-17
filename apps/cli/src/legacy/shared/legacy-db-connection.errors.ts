@@ -32,6 +32,11 @@ export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError
 export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly message: string;
   /**
+   * Number of statements completed before an `execBatch` failure. This may equal
+   * the batch length for a deferred Sync failure. Absent for `exec`/`query`.
+   */
+  readonly statementIndex?: number;
+  /**
    * Postgres SQLSTATE (e.g. `42P01` undefined_table), extracted from the driver
    * error's `cause` chain when present. Lets callers match Go's error-code checks
    * (`pgerrcode.*`) instead of fuzzy message matching — e.g. suppressing only a

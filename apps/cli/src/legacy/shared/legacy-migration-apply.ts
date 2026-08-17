@@ -8,7 +8,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -95,8 +95,8 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
- * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the `BEGIN`/`COMMIT`
- * that wraps a migration, so `execMigrationBatch` runs them standalone.
+ * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the implicit transaction
+ * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
@@ -122,11 +122,6 @@ export const legacyHasTransactionControl = (sql: string): boolean => {
   }
   return TRANSACTION_CONTROL_PATTERN.test(upper);
 };
-
-/** A buffered statement awaiting the next batch flush; `version` is the history insert. */
-type LegacyBatchItem =
-  | { readonly kind: "exec"; readonly sql: string }
-  | { readonly kind: "version" };
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
@@ -504,13 +499,14 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
 
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
- * Statements run
- * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
+ * Statements run inside an implicitly transactional extended-protocol batch,
+ * except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
  * cannot run in a transaction block: the open batch is flushed (committed), the
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
  * insert goes in the final batch, so the migration is recorded only after every
- * statement succeeds. A file with no such statements is a single `BEGIN`/`COMMIT`.
+ * statement succeeds. A file with no such statements uses one batch and one Sync
+ * (a session without `execBatch` falls back to an explicit `BEGIN`/`COMMIT`).
  * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
  * every statement sequentially without a CLI-owned transaction. This keeps their
  * session preamble, nontransactional action, and cleanup on the same connection.
@@ -637,59 +633,72 @@ const execMigrationBatch = <E>(
       // `executed` is the global statement index of the next statement to run, so the
       // error context stays accurate across flushed batches and standalone statements
       // (Go threads the same counter through `ExecBatch`).
-      let pending: ReadonlyArray<LegacyBatchItem> = [];
+      let pending: Array<string> = [];
       let executed = 0;
 
-      const flushBatch = Effect.gen(function* () {
-        if (pending.length === 0) return;
-        const items = pending;
-        pending = [];
-        const base = executed;
-        const body = Effect.gen(function* () {
-          for (const [offset, item] of items.entries()) {
-            const index = base + offset;
-            if (item.kind === "version") {
-              // Go defaults to the version-insert statement when all listed statements succeed.
-              yield* session
-                .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-                .pipe(
-                  Effect.mapError((cause) =>
-                    legacyFormatExecBatchError(cause, index, INSERT_MIGRATION_VERSION),
-                  ),
-                );
-            } else {
-              yield* session
-                .exec(item.sql)
-                .pipe(
-                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, item.sql)),
-                );
-            }
+      const flushBatch = (recordVersion: boolean) =>
+        Effect.gen(function* () {
+          if (pending.length === 0 && !recordVersion) return;
+          const batchStatements = pending;
+          const operations: Array<LegacyDbBatchStatement> = batchStatements.map((sql) => ({ sql }));
+          if (recordVersion) {
+            operations.push({
+              sql: INSERT_MIGRATION_VERSION,
+              params: [version, name, statements],
+            });
           }
-          yield* session.exec("COMMIT");
+          const base = executed;
+          let completed = 0;
+          const execute =
+            session.execBatch === undefined
+              ? Effect.gen(function* () {
+                  yield* session.exec("BEGIN");
+                  const body = Effect.gen(function* () {
+                    for (const operation of operations) {
+                      if (operation.params === undefined) {
+                        yield* session.exec(operation.sql);
+                      } else {
+                        yield* session.query(operation.sql, operation.params);
+                      }
+                      completed += 1;
+                    }
+                    yield* session.exec("COMMIT");
+                  });
+                  yield* body.pipe(
+                    Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
+                  );
+                })
+              : session.execBatch(operations);
+
+          yield* execute.pipe(
+            Effect.mapError((cause) => {
+              const globalIndex = base + (cause.statementIndex ?? completed);
+              return legacyFormatExecBatchError(
+                cause,
+                globalIndex,
+                statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
+              );
+            }),
+          );
+          pending = [];
+          executed += batchStatements.length;
         });
-        yield* session.exec("BEGIN");
-        yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-        executed += items.length;
-      });
 
       for (const statement of statements) {
         if (legacyIsPipelineIncompatible(statement)) {
           // Flush the open batch, then run the incompatible statement on its own (no
           // surrounding transaction) so PostgreSQL accepts it.
-          yield* flushBatch;
+          yield* flushBatch(false);
           const index = executed;
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
           executed += 1;
         } else {
-          pending = [...pending, { kind: "exec", sql: statement }];
+          pending.push(statement);
         }
       }
-      if (version.length > 0) {
-        pending = [...pending, { kind: "version" }];
-      }
-      yield* flushBatch;
+      yield* flushBatch(version.length > 0);
     }).pipe(
       Effect.mapError((error) =>
         mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
