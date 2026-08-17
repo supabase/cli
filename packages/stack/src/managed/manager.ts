@@ -109,6 +109,11 @@ export interface ManagedStackLifecycleUpdate {
   readonly runtime?: ManagedStackDocument["runtime"] | null;
 }
 
+export interface ManagedStackLaunchUpdate {
+  readonly stackId: string;
+  readonly launch: NonNullable<ManagedStackDocument["launch"]>;
+}
+
 export interface ManagedPortLease {
   readonly ports: PortSet;
   readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
@@ -216,6 +221,11 @@ export interface ManagedStackManagerShape {
   readonly recordLifecycle: (
     ownership: ControlOwnership,
     update: ManagedStackLifecycleUpdate,
+  ) => Effect.Effect<ManagedStack, ManagedStackManagerError>;
+  /** Persist launch selections under the stack's control ownership. */
+  readonly updateLaunch: (
+    ownership: ControlOwnership,
+    update: ManagedStackLaunchUpdate,
   ) => Effect.Effect<ManagedStack, ManagedStackManagerError>;
   readonly repairWorkspace: (
     request: RepairRequest,
@@ -333,7 +343,7 @@ const requireOwnedForStack = (
     const endpoint = yield* controlEndpoint(stackId).pipe(
       Effect.mapError(() => new ManagedStackControlRequiredError({ stackId })),
     );
-    if (ownership.ownershipId !== stackId || ownership.endpoint.path !== endpoint.path) {
+    if (ownership.ownershipId !== stackId || ownership.endpoint.url !== endpoint.url) {
       return yield* Effect.fail(new ManagedStackControlRequiredError({ stackId }));
     }
   });
@@ -637,7 +647,9 @@ const makeManager = (
             ports: allocation.assignments,
             lifecycle: request.lifecycle ?? "stopped",
             ...(request.runtime && { runtime: request.runtime }),
-            ...(request.launch && { launch: request.launch }),
+            ...((request.launch ?? current?.launch) && {
+              launch: request.launch ?? current?.launch,
+            }),
             createdAt: current?.createdAt ?? timestamp,
             updatedAt: timestamp,
           };
@@ -693,6 +705,21 @@ const makeManager = (
         if (update.runtime !== undefined && update.runtime !== null) {
           next = { ...next, runtime: update.runtime };
         }
+        yield* store.write(next);
+        return next;
+      });
+
+    const updateLaunch = (
+      ownership: ControlOwnership,
+      update: ManagedStackLaunchUpdate,
+    ): Effect.Effect<ManagedStack, ManagedStackManagerError> =>
+      Effect.gen(function* () {
+        yield* requireOwnedForStack(ownership, update.stackId);
+        const current = yield* store.read(update.stackId);
+        if (current === undefined) {
+          return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+        }
+        const next: ManagedStackDocument = { ...current, launch: update.launch, updatedAt: now() };
         yield* store.write(next);
         return next;
       });
@@ -806,6 +833,7 @@ const makeManager = (
       listStacks,
       allocateManagedPorts,
       recordLifecycle,
+      updateLaunch,
       repairWorkspace,
       deleteStack,
     } satisfies ManagedStackManagerShape;
@@ -835,6 +863,10 @@ export interface ManagedStackManagerHandle extends AsyncDisposable {
   readonly recordLifecycle: (
     ownership: ControlOwnership,
     update: ManagedStackLifecycleUpdate,
+  ) => Promise<ManagedStack>;
+  readonly updateLaunch: (
+    ownership: ControlOwnership,
+    update: ManagedStackLaunchUpdate,
   ) => Promise<ManagedStack>;
   readonly repairWorkspace: (request: RepairRequest) => Promise<WorkspaceDiscovery>;
   readonly deleteStack: (stackId: string) => Promise<ManagedDeleteResult>;
@@ -890,6 +922,8 @@ export const createManagedStackManager = async (
     listStacks: () => runtime.runPromise(manager.listStacks()),
     recordLifecycle: (ownership, update) =>
       runtime.runPromise(manager.recordLifecycle(ownership, update)),
+    updateLaunch: (ownership, update) =>
+      runtime.runPromise(manager.updateLaunch(ownership, update)),
     repairWorkspace: (request) => runtime.runPromise(manager.repairWorkspace(request)),
     deleteStack: (stackId) =>
       runtime.runPromise(

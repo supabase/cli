@@ -11,6 +11,7 @@ import type { ControlOwnerStatus, DaemonErrorResponse } from "./DaemonProtocol.t
 import { FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
+import { managedStackLaunchSchema, type ManagedStackLaunch } from "./managed/document.ts";
 
 // ---------------------------------------------------------------------------
 // Service
@@ -32,7 +33,10 @@ export class DaemonServer extends Context.Service<
       state: "running",
       ready: true,
     }),
-    options: { readonly includeOwnerRoute?: boolean } = {},
+    options: {
+      readonly includeOwnerRoute?: boolean;
+      readonly launchUpdate?: (launch: ManagedStackLaunch) => Effect.Effect<void, unknown>;
+    } = {},
   ): Layer.Layer<DaemonServer, never, Stack | HttpServer.HttpServer> =>
     Layer.effect(
       this,
@@ -132,10 +136,26 @@ export class DaemonServer extends Context.Service<
                   ownerStatus.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status))),
                 ),
               ];
+        const launchUpdate = options.launchUpdate;
         const routes = [
           ...ownerRoutes,
           // Health check
           HttpRouter.route("GET", "/health", HttpServerResponse.text("OK", { status: 200 })),
+
+          ...(launchUpdate === undefined
+            ? []
+            : [
+                HttpRouter.route(
+                  "POST",
+                  "/managed/launch",
+                  Effect.gen(function* () {
+                    const launch =
+                      yield* HttpServerRequest.schemaBodyJson(managedStackLaunchSchema);
+                    yield* launchUpdate(launch);
+                    return HttpServerResponse.jsonUnsafe({ ok: true });
+                  }),
+                ),
+              ]),
 
           // Versioned lifecycle ownership/readiness status. The remaining
           // routes are the existing Stack management transport.

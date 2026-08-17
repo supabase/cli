@@ -1,5 +1,4 @@
 import { mkdtempSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { StackBuildError, toStackError } from "./errors.ts";
@@ -10,30 +9,15 @@ import {
   defaultSecretKey,
   generateJwt,
 } from "./JwtGenerator.ts";
-import {
-  DEFAULT_MANAGED_STACK_NAME,
-  defaultCacheRoot,
-  defaultManagedProjectsRoot,
-  defaultManagedRuntimeRoot,
-  defaultManagedStackRoot,
-  shortTempPrefixRoot,
-} from "./paths.ts";
+import { defaultCacheRoot, shortTempPrefixRoot } from "./paths.ts";
 import {
   allocatePortSet,
   type PortReservationRequest,
   type PortAllocationError,
   type PortSelectionOptions,
 } from "./PortAllocator.ts";
-import {
-  DEFAULT_PORTS,
-  PORT_CATALOG,
-  PORT_FIELDS,
-  type PortField,
-  type PortSet,
-  type ResolvedPorts,
-} from "./PortCatalog.ts";
+import { PORT_CATALOG, type PortField, type PortSet, type ResolvedPorts } from "./PortCatalog.ts";
 import { portFieldsForConfigInput, serviceEnabledForConfig } from "./ServicePorts.ts";
-import { StackMetadataSchema } from "./StackMetadata.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
 import type {
   AnalyticsConfig,
@@ -47,7 +31,6 @@ import type {
   RealtimeConfig,
   ResolvedAnalyticsConfig,
   ResolvedAuthConfig,
-  ResolvedDaemonConfig,
   ResolvedEdgeRuntimeConfig,
   ResolvedImgproxyConfig,
   ResolvedMailpitConfig,
@@ -65,13 +48,6 @@ import type {
   VectorConfig,
 } from "./StackConfig.ts";
 import { DEFAULT_VERSIONS } from "./ServiceCatalog.ts";
-
-const StackMetadataFileSchema = Schema.fromJsonString(StackMetadataSchema);
-const decodeStackMetadataFile = Schema.decodeUnknownSync(StackMetadataFileSchema);
-
-export function defaultManagedStackName(_cwd: string): string {
-  return DEFAULT_MANAGED_STACK_NAME;
-}
 
 export interface ResolveConfigOptions {
   readonly stackRoot?: string;
@@ -139,114 +115,6 @@ const requiredPort = (ports: PortSet, field: PortField): number => {
   }
   return port;
 };
-
-async function readStackMetadataFile(filePath: string) {
-  try {
-    const content = await readFile(filePath, "utf8");
-    return decodeStackMetadataFile(content);
-  } catch {
-    return undefined;
-  }
-}
-
-async function readOwnedPorts(stackRoot: string): Promise<ResolvedPorts | undefined> {
-  const metadata = await readStackMetadataFile(join(stackRoot, "stack.json"));
-  return metadata?.ports;
-}
-
-async function readReservedPorts(
-  projectsRoot: string,
-  currentStackRoot: string,
-): Promise<ReadonlySet<number>> {
-  const reserved = new Set<number>();
-
-  let projectEntries: Array<{ isDirectory(): boolean; name: string }>;
-  try {
-    projectEntries = await readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return reserved;
-  }
-
-  await Promise.all(
-    projectEntries.map(async (projectEntry) => {
-      if (!projectEntry.isDirectory()) {
-        return;
-      }
-
-      const stacksRoot = join(projectsRoot, projectEntry.name, "stacks");
-      let stackEntries: Array<{ isDirectory(): boolean; name: string }>;
-      try {
-        stackEntries = await readdir(stacksRoot, { withFileTypes: true });
-      } catch {
-        return;
-      }
-
-      await Promise.all(
-        stackEntries.map(async (stackEntry) => {
-          if (!stackEntry.isDirectory()) {
-            return;
-          }
-
-          const stackRoot = join(stacksRoot, stackEntry.name);
-          if (stackRoot === currentStackRoot) {
-            return;
-          }
-
-          const ports = (await readStackMetadataFile(join(stackRoot, "stack.json")))?.ports;
-          if (ports === undefined) {
-            return;
-          }
-
-          for (const field of PORT_FIELDS) {
-            const port = ports[field];
-            if (port !== undefined) reserved.add(port);
-          }
-        }),
-      );
-    }),
-  );
-
-  return reserved;
-}
-
-async function readReservedPortsInStacksRoot(
-  stacksRoot: string,
-  currentStackRoot: string,
-): Promise<ReadonlySet<number>> {
-  const reserved = new Set<number>();
-
-  let stackEntries: Array<{ isDirectory(): boolean; name: string }>;
-  try {
-    stackEntries = await readdir(stacksRoot, { withFileTypes: true });
-  } catch {
-    return reserved;
-  }
-
-  await Promise.all(
-    stackEntries.map(async (stackEntry) => {
-      if (!stackEntry.isDirectory()) {
-        return;
-      }
-
-      const stackRoot = join(stacksRoot, stackEntry.name);
-      if (stackRoot === currentStackRoot) {
-        return;
-      }
-
-      const ports = (await readStackMetadataFile(join(stackRoot, "stack.json")))?.ports;
-      if (ports === undefined) {
-        return;
-      }
-
-      for (const field of PORT_FIELDS) {
-        const port = ports[field];
-        if (port !== undefined) reserved.add(port);
-      }
-    }),
-  );
-
-  return reserved;
-}
 
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
@@ -640,7 +508,6 @@ export type DaemonConfigInput = Omit<StackConfig, "functions"> & {
   readonly cwd: string;
   readonly name?: string;
   readonly projectDir?: string;
-  readonly projectStateRoot?: string;
 };
 
 export function sanitizeDaemonConfigInput(
@@ -648,57 +515,4 @@ export function sanitizeDaemonConfigInput(
 ): DaemonConfigInput {
   const { functions: _functions, ...config } = input;
   return config;
-}
-
-export async function resolveDaemonConfig(
-  input: DaemonConfigInput,
-  opts: Pick<ResolveConfigOptions, "portAllocator"> = {},
-): Promise<ResolvedDaemonConfig> {
-  const { cwd, name, projectDir, projectStateRoot, ...stackConfig } =
-    sanitizeDaemonConfigInput(input);
-  if (stackConfig.stackRoot !== undefined || stackConfig.runtimeRoot !== undefined) {
-    throw new Error("Managed daemon stacks derive stackRoot and runtimeRoot automatically");
-  }
-  const effectiveProjectDir = projectDir ?? cwd;
-  const resolvedName = name ?? defaultManagedStackName(effectiveProjectDir);
-  const cacheRoot = stackConfig.cacheRoot ?? defaultCacheRoot();
-  const stackRoot =
-    projectStateRoot !== undefined
-      ? join(projectStateRoot, "stacks", resolvedName)
-      : defaultManagedStackRoot(cacheRoot, effectiveProjectDir, resolvedName);
-  const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
-  const savedPorts = await readOwnedPorts(stackRoot);
-  const reservedPortSets = await Promise.all([
-    readReservedPorts(defaultManagedProjectsRoot(cacheRoot), stackRoot),
-    projectStateRoot === undefined
-      ? Promise.resolve<ReadonlySet<number>>(new Set())
-      : readReservedPortsInStacksRoot(join(projectStateRoot, "stacks"), stackRoot),
-  ]);
-  const reservedPorts = new Set<number>();
-  for (const ports of reservedPortSets) {
-    for (const port of ports) {
-      reservedPorts.add(port);
-    }
-  }
-  const resolved = await resolveConfig(
-    {
-      ...stackConfig,
-      cacheRoot,
-      stackRoot,
-      runtimeRoot,
-      projectDir: effectiveProjectDir,
-    },
-    {
-      stackRoot,
-      runtimeRoot,
-      preferredPorts: savedPorts ?? DEFAULT_PORTS,
-      reservedPorts,
-      portAllocator: opts.portAllocator,
-    },
-  );
-  return {
-    ...resolved,
-    name: resolvedName,
-    projectDir: effectiveProjectDir,
-  };
 }

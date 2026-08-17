@@ -17,7 +17,6 @@ import type { PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
 import { localStackLayer } from "./LocalStack.ts";
-import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
@@ -142,7 +141,6 @@ function setupLayer(
   const layer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
-    Layer.provide(StackMetadataPersistence.noop),
     Layer.provide(spawner.layer),
     Layer.provide(BunServices.layer),
   );
@@ -212,7 +210,6 @@ describe("Stack", () => {
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
       Layer.provide(builderLayer),
       Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(mockChildProcessSpawner().layer),
       Layer.provide(BunServices.layer),
     );
@@ -435,7 +432,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
     );
     const providedLayer = layer.pipe(
       Layer.provide(spawner.layer),
@@ -476,7 +472,6 @@ describe("Stack", () => {
     const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );
@@ -548,7 +543,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
     );
     const providedLayer = layer.pipe(
       Layer.provide(spawner.layer),
@@ -592,7 +586,6 @@ describe("Stack", () => {
     const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );
@@ -654,7 +647,6 @@ describe("Stack", () => {
     ).pipe(
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
-      Layer.provide(StackMetadataPersistence.noop),
       Layer.provide(spawner.layer),
       Layer.provide(BunServices.layer),
     );

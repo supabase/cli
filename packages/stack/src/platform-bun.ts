@@ -12,26 +12,6 @@ import {
   type ControlOwnerStatus,
   type ControlEndpoint,
 } from "./managed/control.ts";
-import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
-
-interface BunUnixRequestInit extends RequestInit {
-  readonly unix: string;
-}
-
-export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
-  request: (socketPath, path, init) =>
-    Effect.tryPromise({
-      try: () => {
-        if (typeof socketPath === "string") {
-          const requestInit: BunUnixRequestInit = { ...init, unix: socketPath };
-          return fetch(`http://localhost${path}`, requestInit);
-        }
-        return fetch(`http://${socketPath.hostname}:${socketPath.port}${path}`, init);
-      },
-      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
-    }),
-});
-
 const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined;
   if ("code" in cause && typeof cause.code === "string") return cause.code;

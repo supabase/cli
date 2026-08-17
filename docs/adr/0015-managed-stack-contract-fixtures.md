@@ -1,7 +1,13 @@
 # 0015. Managed Stack Contract Fixtures
 
-**Status**: proposed
+**Status**: superseded by [ADR-0017](0017-simplified-managed-stack-architecture.md)
 **Date**: 2026-08-10
+
+> This proposal described a repository/adapter and exported fixture contract
+> that was never a shipped boundary. The simplified managed implementation
+> uses one private document and direct manager, supervisor, control, and CLI
+> journeys. ADR-0017 is the current decision record; this document remains as
+> historical context only.
 
 ## Problem Statement
 

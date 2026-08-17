@@ -2,9 +2,7 @@ import { Effect, Option } from "effect";
 import {
   connectLayer,
   fillServiceVersionManifest,
-  resolveManagedStack,
   resolveStackSummary,
-  StateManager,
   Stack,
 } from "@supabase/stack/effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -56,7 +54,6 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const stateManager = yield* StateManager;
 
   yield* output.intro("Show local Supabase stack status");
 
@@ -64,7 +61,6 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
     name: _flags.stack,
   }).pipe(
     Effect.map(Option.some),
@@ -74,7 +70,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   if (layer._tag === "None") {
     const summary = yield* resolveStackSummary({
       cacheRoot: cliConfig.supabaseHome,
-      projectStateRoot: projectHome.projectHomeDir,
+      projectDir: projectHome.projectRoot,
+      cwd: runtimeInfo.cwd,
       name: _flags.stack,
     }).pipe(
       Effect.map(Option.some),
@@ -93,7 +90,10 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     }
 
     const message = "Local Supabase stack is stopped.";
-    const serviceVersionContext = yield* resolveServiceVersionContext([], summary.value.versions);
+    const serviceVersionContext = yield* resolveServiceVersionContext(
+      [],
+      fillServiceVersionManifest(summary.value.versions),
+    );
     const data = {
       stack: summary.value.name,
       running: false,
@@ -125,25 +125,18 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     return;
   }
 
-  const managedStack = yield* resolveManagedStack({
-    cwd: runtimeInfo.cwd,
+  const summary = yield* resolveStackSummary({
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
+    cwd: runtimeInfo.cwd,
     name: _flags.stack,
   });
 
   const stack = yield* Effect.provide(Stack, layer.value);
   const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
-  const existingMetadata = yield* stateManager.readMetadata(managedStack.state.name).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
-  );
   const serviceVersionContext = yield* resolveServiceVersionContext(
     [],
-    existingMetadata._tag === "Some"
-      ? existingMetadata.value.services
-      : fillServiceVersionManifest(managedStack.state.services),
+    fillServiceVersionManifest(summary.versions),
   );
   const sortedServices = [...services].sort((a, b) => a.name.localeCompare(b.name));
   const allReady = services.every((service) =>
@@ -153,14 +146,14 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     ? "Local Supabase stack is running."
     : "Local Supabase stack is running, but some services are not ready.";
   const data = {
-    stack: managedStack.state.name,
+    stack: summary.name,
     running: true,
     api_url: info.url,
     db_url: info.dbUrl,
     publishable_key: info.publishableKey,
     secret_key: info.secretKey,
     service_endpoints: info.serviceEndpoints,
-    versions: managedStack.state.services,
+    versions: summary.versions,
     up_to_date: serviceVersionContext.availableUpdates.length === 0,
     available_updates: serviceVersionContext.availableUpdates.map((updateEntry) => ({
       service: updateEntry.service,
@@ -189,12 +182,12 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     yield* output.warn(message);
   }
 
-  yield* output.info(`Stack: ${managedStack.state.name}`);
+  yield* output.info(`Stack: ${summary.name}`);
   yield* output.info(`API URL: ${info.url}`);
   yield* output.info(`DB URL: ${info.dbUrl}`);
   yield* output.info(`Publishable key: ${info.publishableKey}`);
   yield* output.info(`Secret key: ${info.secretKey}`);
-  for (const [name, version] of Object.entries(managedStack.state.services).sort(([a], [b]) =>
+  for (const [name, version] of Object.entries(summary.versions).sort(([a], [b]) =>
     a.localeCompare(b),
   )) {
     yield* output.info(`${name} version: ${version}`);

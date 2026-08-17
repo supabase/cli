@@ -15,18 +15,25 @@ type StackProject = {
 };
 
 interface StackRuntimeSnapshot {
-  readonly stacksRootExists: boolean;
-  readonly stateFiles: ReadonlyArray<string>;
-  readonly socketPaths: ReadonlyArray<string>;
+  readonly managedStacksRootExists: boolean;
+  readonly documentFiles: ReadonlyArray<string>;
   readonly stackDirs: ReadonlyArray<string>;
   readonly trackedPids: ReadonlyArray<number>;
 }
 
 interface CleanupEnvironment {
   readonly stopStack: (projectDir: string, homeDir: string) => Promise<{ exitCode: number }>;
-  readonly captureSnapshot: (projectDir: string) => StackRuntimeSnapshot;
-  readonly waitForCleanup: (projectDir: string, snapshot: StackRuntimeSnapshot) => Promise<boolean>;
-  readonly forceCleanup: (projectDir: string, snapshot: StackRuntimeSnapshot) => Promise<void>;
+  readonly captureSnapshot: (projectDir: string, homeDir?: string) => StackRuntimeSnapshot;
+  readonly waitForCleanup: (
+    projectDir: string,
+    homeDir: string | undefined,
+    snapshot: StackRuntimeSnapshot,
+  ) => Promise<boolean>;
+  readonly forceCleanup: (
+    projectDir: string,
+    homeDir: string | undefined,
+    snapshot: StackRuntimeSnapshot,
+  ) => Promise<void>;
   readonly removeProjectWithDocker: (projectDir: string) => Promise<boolean>;
   readonly repairProjectPermissions: (projectDir: string) => void;
   readonly describeProjectPermissions: (projectDir: string) => string;
@@ -116,10 +123,12 @@ function descendantPids(
   return [...visited];
 }
 
-function readStatePid(stateFile: string): number | undefined {
+function readDocumentPid(documentFile: string): number | undefined {
   try {
-    const parsed = JSON.parse(readFileSync(stateFile, "utf8")) as { readonly pid?: number };
-    return parsed.pid;
+    const parsed = JSON.parse(readFileSync(documentFile, "utf8")) as {
+      readonly runtime?: { readonly pid?: number };
+    };
+    return parsed.runtime?.pid;
   } catch {
     return undefined;
   }
@@ -151,23 +160,11 @@ function describePath(pathname: string): string {
 }
 
 function describeProjectPermissions(projectDir: string): string {
-  const stacksRoot = path.join(projectDir, ".supabase", "stacks");
   const details = [
     "Permission diagnostics:",
     describePath(projectDir),
     describePath(path.join(projectDir, ".supabase")),
-    describePath(stacksRoot),
   ];
-
-  try {
-    const entries = readdirSync(stacksRoot).slice(0, 20);
-    details.push(
-      entries.length === 0
-        ? `${stacksRoot} entries=<empty>`
-        : `${stacksRoot} entries=${entries.join(",")}`,
-    );
-  } catch {}
-
   return details.join("\n");
 }
 
@@ -252,50 +249,55 @@ async function cleanupProject(
   }
 }
 
-function captureSnapshot(projectDir: string): StackRuntimeSnapshot {
+function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnapshot {
   const normalized = normalizeDir(projectDir);
-  const stacksRoot = path.join(normalized, ".supabase", "stacks");
-  if (!existsSync(stacksRoot)) {
+  const managedStacksRoot =
+    homeDir === undefined ? undefined : path.join(normalizeDir(homeDir), "managed", "stacks");
+  if (managedStacksRoot === undefined || !existsSync(managedStacksRoot)) {
     return {
-      stacksRootExists: false,
-      stateFiles: [],
-      socketPaths: [],
+      managedStacksRootExists: false,
+      documentFiles: [],
       stackDirs: [],
       trackedPids: [],
     };
   }
 
   const stackDirs: Array<string> = [];
-  const stateFiles: Array<string> = [];
-  const socketPaths: Array<string> = [];
+  const documentFiles: Array<string> = [];
 
-  for (const entry of readdirSync(stacksRoot, { withFileTypes: true })) {
+  for (const entry of readdirSync(managedStacksRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) {
       continue;
     }
-    const stackDir = path.join(stacksRoot, entry.name);
+    const stackDir = path.join(managedStacksRoot, entry.name);
+    const documentFile = path.join(stackDir, "stack.json");
+    if (!existsSync(documentFile)) {
+      continue;
+    }
+    try {
+      const document = JSON.parse(readFileSync(documentFile, "utf8")) as {
+        readonly workspace?: { readonly path?: string };
+      };
+      if (document.workspace?.path !== normalized) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
     stackDirs.push(stackDir);
-    const stateFile = path.join(stackDir, "state.json");
-    const socketPath = path.join(stackDir, "daemon.sock");
-    if (existsSync(stateFile)) {
-      stateFiles.push(stateFile);
-    }
-    if (existsSync(socketPath)) {
-      socketPaths.push(socketPath);
-    }
+    documentFiles.push(documentFile);
   }
 
-  const rootPids = stateFiles
-    .map(readStatePid)
+  const rootPids = documentFiles
+    .map(readDocumentPid)
     .filter((pid): pid is number => pid != null && pid > 0);
   const table = parsePsTable();
   const descendants = descendantPids(rootPids, table);
   const commandPids = table.filter((row) => row.command.includes(normalized)).map((row) => row.pid);
 
   return {
-    stacksRootExists: true,
-    stateFiles,
-    socketPaths,
+    managedStacksRootExists: stackDirs.length > 0,
+    documentFiles,
     stackDirs,
     trackedPids: [...new Set([...descendants, ...commandPids])].sort((left, right) => left - right),
   };
@@ -303,12 +305,13 @@ function captureSnapshot(projectDir: string): StackRuntimeSnapshot {
 
 async function waitForCleanup(
   projectDir: string,
+  homeDir: string | undefined,
   snapshot: StackRuntimeSnapshot,
 ): Promise<boolean> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const nextSnapshot = captureSnapshot(projectDir);
-    const filesGone = nextSnapshot.stateFiles.length === 0 && nextSnapshot.socketPaths.length === 0;
+    const nextSnapshot = captureSnapshot(projectDir, homeDir);
+    const filesGone = nextSnapshot.documentFiles.length === 0;
     const pidsGone = snapshot.trackedPids.every((pid) => !isProcessAlive(pid));
     if (filesGone && pidsGone) {
       return true;
@@ -319,7 +322,11 @@ async function waitForCleanup(
   return false;
 }
 
-async function forceCleanup(projectDir: string, snapshot: StackRuntimeSnapshot): Promise<void> {
+async function forceCleanup(
+  projectDir: string,
+  homeDir: string | undefined,
+  snapshot: StackRuntimeSnapshot,
+): Promise<void> {
   for (const pid of snapshot.trackedPids) {
     try {
       process.kill(pid, "SIGKILL");
@@ -332,10 +339,12 @@ async function forceCleanup(projectDir: string, snapshot: StackRuntimeSnapshot):
     } catch {}
   }
 
-  const stacksRoot = path.join(normalizeDir(projectDir), ".supabase", "stacks");
-  try {
-    rmSync(stacksRoot, { recursive: true, force: true });
-  } catch {}
+  if (homeDir !== undefined) {
+    const managedStacksRoot = path.join(normalizeDir(homeDir), "managed", "stacks");
+    try {
+      rmSync(managedStacksRoot, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 function createRealEnvironment(): CleanupEnvironment {
@@ -389,12 +398,12 @@ export function createStackE2eCleanupManager(
 
       for (const project of pendingProjects) {
         const home = project.homeDir ? pendingHomes.get(project.homeDir) : undefined;
-        const snapshot = environment.captureSnapshot(project.dir);
+        const snapshot = environment.captureSnapshot(project.dir, project.homeDir);
         const hasRuntimeArtifacts =
-          snapshot.stateFiles.length > 0 ||
-          snapshot.socketPaths.length > 0 ||
+          snapshot.documentFiles.length > 0 ||
           snapshot.trackedPids.some((pid) => isProcessAlive(pid));
-        const hasStackPersistence = snapshot.stacksRootExists || snapshot.stackDirs.length > 0;
+        const hasStackPersistence =
+          snapshot.managedStacksRootExists || snapshot.stackDirs.length > 0;
         let stopExitCode: number | undefined;
 
         if (hasStackPersistence && project.homeDir !== undefined) {
@@ -407,9 +416,9 @@ export function createStackE2eCleanupManager(
         }
 
         if (hasRuntimeArtifacts) {
-          const cleaned = await environment.waitForCleanup(project.dir, snapshot);
+          const cleaned = await environment.waitForCleanup(project.dir, project.homeDir, snapshot);
           if (!cleaned) {
-            await environment.forceCleanup(project.dir, snapshot);
+            await environment.forceCleanup(project.dir, project.homeDir, snapshot);
             failures.push(
               stopExitCode != null && stopExitCode !== 0
                 ? `Centralized e2e cleanup detected leaked stack resources for ${project.dir} after stop exited ${stopExitCode}.`

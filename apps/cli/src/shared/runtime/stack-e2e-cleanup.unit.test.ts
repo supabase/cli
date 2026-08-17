@@ -15,9 +15,8 @@ function cleanupEnvironment(
       return { exitCode: 0 };
     },
     captureSnapshot: () => ({
-      stacksRootExists: false,
-      stateFiles: [],
-      socketPaths: [],
+      managedStacksRootExists: false,
+      documentFiles: [],
       stackDirs: [],
       trackedPids: [],
     }),
@@ -43,9 +42,8 @@ describe("stack e2e cleanup manager", () => {
     const manager = createStackE2eCleanupManager(
       cleanupEnvironment(calls, {
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: ["/tmp/state.json"],
-          socketPaths: [],
+          managedStacksRootExists: true,
+          documentFiles: ["/tmp/stack.json"],
           stackDirs: ["/tmp/stack"],
           trackedPids: [],
         }),
@@ -96,9 +94,8 @@ describe("stack e2e cleanup manager", () => {
           return { exitCode: 0 };
         },
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: ["/tmp/state.json"],
-          socketPaths: ["/tmp/daemon.sock"],
+          managedStacksRootExists: true,
+          documentFiles: ["/tmp/stack.json"],
           stackDirs: ["/tmp/stack"],
           trackedPids: [123],
         }),
@@ -135,10 +132,9 @@ describe("stack e2e cleanup manager", () => {
     const manager = createStackE2eCleanupManager(
       cleanupEnvironment(calls, {
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: [],
-          socketPaths: [],
-          stackDirs: ["/tmp/project/.supabase/stacks/default"],
+          managedStacksRootExists: true,
+          documentFiles: [],
+          stackDirs: ["/tmp/home/managed/stacks/stack-id"],
           trackedPids: [],
         }),
       }),

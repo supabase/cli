@@ -121,10 +121,15 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
-  "managed_operation_in_progress",
-  "managed_operation_ownership",
-  "managed_owner_pid",
-  "managed_pending_update",
+  "managed_control_ownership",
+  "managed_control_bind",
+  "managed_control_transport",
+  "managed_control_protocol",
+  "managed_control_address_conflict",
+  "managed_document",
+  "managed_control_required",
+  "managed_attached",
+  "managed_workspace_repair",
   "managed_port",
   "managed_port_change",
   "managed_port_duplicate_key",
@@ -837,34 +842,6 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_identity",
   }),
-  DUPLICATE_MANAGED_IDENTITY: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_identity_conflict",
-  }),
-  MANAGED_INVALID_STACK_NAME: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_stack_name",
-  }),
-  MANAGED_CHECKOUT_CONFLICT: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_checkout_conflict",
-  }),
-  MANAGED_COPIED_BRANCH_CONFLICT: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_copied_branch_conflict",
-  }),
-  MANAGED_IDENTITY_TRANSITION_OWNERSHIP: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_identity_transition_ownership",
-  }),
-  MANAGED_INACCESSIBLE_PATH: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_inaccessible_path",
-  }),
-  INCOMPATIBLE_MANAGED_REGISTRY: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "incompatible_managed_registry",
-  }),
   MANAGED_STACK_NOT_FOUND: () => ({
     ...actionability.invalidInput,
     fingerprint_suffix: "not_found",
@@ -877,24 +854,6 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.invalidInput,
     fingerprint_suffix: unsupportedGitWorkspaceFingerprintSuffix(error),
   }),
-  // Another caller owns the stack right now; the remediation is to settle that
-  // operation before retrying.
-  MANAGED_OPERATION_IN_PROGRESS: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_operation_in_progress",
-  }),
-  MANAGED_OPERATION_OWNERSHIP_MISMATCH: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_operation_ownership",
-  }),
-  MANAGED_STACK_PUBLICATION_TIMEOUT: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_publication_timeout",
-  }),
-  MANAGED_OPERATION_REQUIRES_RECONCILIATION: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_recovery",
-  }),
   MANAGED_STACK_NOT_STOPPED: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_stack_not_stopped",
@@ -903,67 +862,19 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.stopStack,
     fingerprint_suffix: "managed_port_change",
   }),
-  // The operation owner pid comes from the CLI process itself, never from user
-  // input, so a rejected pid is a broken internal invariant.
-  MANAGED_INVALID_OWNER_PID: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_owner_pid",
-  }),
-  // Only internal misuse of the repository can call `updateStack` on a still
-  // unpublished (pending) row; nothing a user does reaches this.
-  MANAGED_PENDING_STACK_UPDATE: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "managed_pending_update",
-  }),
-  MANAGED_PORT_ALREADY_RESERVED: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
-  LEGACY_SOURCE_RUNNING: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "port_conflict",
-  }),
   MANAGED_EXACT_PORT_OCCUPIED: () => ({
     ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
-  MANAGED_STICKY_PORT_OCCUPIED: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
-  MANAGED_PORT_CLAIM_RACE: () => ({
-    ...actionability.startStack,
     fingerprint_suffix: "port_conflict",
   }),
   MANAGED_PORT_ALLOCATION_FAILED: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "port_allocation",
   }),
-  MANAGED_RUNTIME_START_FAILED: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_initialization",
-  }),
-  // The port number itself is unusable (fractional or outside 1-65535), which
-  // is the user's own configured value rather than a conflict with a peer.
-  MANAGED_INVALID_PORT: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_port",
-  }),
-  // Two of the user's own port assignments name the same key, which is the
-  // user's configured value rather than a conflict with another stack.
-  MANAGED_DUPLICATE_PORT_KEY: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "managed_port_duplicate_key",
-  }),
   // The registry derives every stack root itself, so a path that fails the
   // containment check means the CLI passed a rejected argument.
   UNSAFE_MANAGED_STACK_PATH: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "bad_argument",
-  }),
-  MANAGED_STACK_INITIALIZATION_FAILED: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "managed_initialization",
   }),
 };
 
@@ -1104,29 +1015,58 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_allocation",
   }),
-  StateNotFoundError: () => actionability.startStack,
-  StateClaimError: (error) =>
-    readString(error, "reason") === "already-claimed"
-      ? { ...actionability.stopStack, fingerprint_suffix: "conflict" }
-      : { ...actionability.permission, fingerprint_suffix: "filesystem" },
   StackNotRunningError: () => actionability.startStack,
   StackReadinessError: () => actionability.startStack,
-  StackMetadataNotFoundError: () => actionability.startStack,
-  InvalidStackStateError: () => actionability.invalidConfig,
-  InvalidStackMetadataError: () => actionability.invalidConfig,
-  UnsupportedStackMetadataVersionError: () => actionability.invalidConfig,
   NoRunningStackError: () => actionability.startStack,
-  StackAlreadyRunningError: () => actionability.stopStack,
+  InvalidControlOwnershipIdError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_ownership",
+  }),
+  ControlBindError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "managed_control_bind",
+  }),
+  ControlTransportError: () => ({
+    ...actionability.externalNetwork,
+    fingerprint_suffix: "managed_control_transport",
+  }),
+  ControlProtocolError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_protocol",
+  }),
+  ControlProtocolMismatchError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_protocol",
+  }),
+  ControlAddressConflictError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "managed_control_address_conflict",
+  }),
+  InvalidManagedStackDocumentError: () => ({
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_document",
+  }),
+  ManagedStackControlRequiredError: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_control_required",
+  }),
+  ManagedStackAttachedError: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_attached",
+  }),
+  ManagedWorkspaceRepairConflictError: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_workspace_repair",
+  }),
   DaemonStartError: () => actionability.unknown,
-  ManagedDaemonStartError: () => ({
+  SupervisorStartError: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "daemon_start",
   }),
-  DaemonStillRunningError: () => actionability.stopStack,
   // Transport failures retain the existing stack-recovery policy. An HTTP
   // status or protocol failure came from the CLI-owned daemon itself and is
   // therefore an internal invariant failure, not user configuration.
-  UnixHttpClientError: (error) => {
+  HttpTransportClientError: (error) => {
     const reason = readString(error, "reason");
     if (reason === "protocol") {
       return { ...actionability.impossibleState, fingerprint_suffix: "daemon_protocol" };

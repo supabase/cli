@@ -63,7 +63,10 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
     checkoutKind: "folder",
     path: "/tmp/project",
   },
-  ports: [{ key: "api.port", port: 54321, intent: "automatic" }],
+  ports: [
+    { key: "api.port", port: 54321, intent: "automatic" },
+    { key: "db.port", port: 54322, intent: "automatic" },
+  ],
   lifecycle: "stopped",
   createdAt: "2026-08-16T00:00:00.000Z",
   updatedAt: "2026-08-16T00:00:00.000Z",
@@ -85,6 +88,28 @@ describe("managed stack document store", () => {
       yield* store.write(document({ lifecycle: "starting" }));
       yield* store.write(document({ lifecycle: "running" }));
       expect(yield* store.read(STACK_ID)).toMatchObject({ lifecycle: "running" });
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("persists launch selections needed for detached CLI reattachment", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      yield* store.write(
+        document({
+          launch: {
+            mode: "docker",
+            versions: { postgres: "17.6.1" },
+            excludedServices: ["studio", "analytics"],
+            lastNotifiedUpdateFingerprint: "fingerprint",
+          },
+        }),
+      );
+      expect((yield* store.read(STACK_ID))?.launch).toEqual({
+        mode: "docker",
+        versions: { postgres: "17.6.1" },
+        excludedServices: ["studio", "analytics"],
+        lastNotifiedUpdateFingerprint: "fingerprint",
+      });
     }).pipe(Effect.provide(filesystemLayer)),
   );
 

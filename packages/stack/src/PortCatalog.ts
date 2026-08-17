@@ -130,9 +130,26 @@ const PORT_CATALOG_ENTRIES: {
 };
 
 export const PORT_CATALOG = PORT_CATALOG_ENTRIES;
-export const PORT_FIELDS: ReadonlyArray<PortField> = Object.values(PORT_CATALOG).map(
-  (entry) => entry.field,
-);
+export const PORT_FIELDS = [
+  "apiPort",
+  "dbPort",
+  "authPort",
+  "postgrestPort",
+  "postgrestAdminPort",
+  "edgeRuntimePort",
+  "edgeRuntimeInspectorPort",
+  "realtimePort",
+  "storagePort",
+  "imgproxyPort",
+  "mailpitPort",
+  "mailpitSmtpPort",
+  "mailpitPop3Port",
+  "pgmetaPort",
+  "studioPort",
+  "analyticsPort",
+  "poolerPort",
+  "poolerApiPort",
+] as const satisfies ReadonlyArray<PortField>;
 export const stickyPortFields: ReadonlyArray<PortField> = PORT_FIELDS.filter(
   (field) => PORT_CATALOG[field].persistence === "sticky",
 );

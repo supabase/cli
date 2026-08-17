@@ -138,53 +138,14 @@ export type {
 } from "./version-plan.ts";
 export { planStackVersions } from "./version-plan.ts";
 
-export {
-  DEFAULT_MANAGED_STACK_NAME,
-  defaultManagedProjectStacksRoot,
-  defaultManagedStackRoot,
-  defaultManagedProjectsRoot,
-  displayNameForProjectDir,
-  projectKeyForProjectDir,
-} from "./paths.ts";
+export { DEFAULT_MANAGED_STACK_NAME } from "./paths.ts";
 
-export type { StackState } from "./StateManager.ts";
-export {
-  InvalidStackMetadataError,
-  InvalidStackStateError,
-  NoRunningStackError,
-  StackAlreadyRunningError,
-  StackMetadataNotFoundError,
-  UnsupportedStackMetadataVersionError,
-  projectStateManagerPathsFromRoot,
-  StateManager,
-  StateNotFoundError,
-} from "./StateManager.ts";
+export { NoRunningStackError } from "./managed/model.ts";
 
-export type { PartialVersionManifest, StackMetadata } from "./StackMetadata.ts";
-export {
-  PartialVersionManifestSchema,
-  StackMetadataSchema,
-  STACK_METADATA_SCHEMA_VERSION,
-  runningServiceVersionsForConfig,
-  stackMetadata,
-} from "./StackMetadata.ts";
+export type { PartialVersionManifest } from "./versions.ts";
+export { PartialVersionManifestSchema } from "./versions.ts";
+export { resolveConfig } from "./StackConfigResolver.ts";
 
-export type { ResolvedDaemonConfig } from "./StackConfig.ts";
-export {
-  defaultManagedStackName,
-  resolveConfig,
-  resolveDaemonConfig,
-} from "./StackConfigResolver.ts";
-
-export { connectLayer, DaemonStartError } from "./layers.ts";
-export type { ManagedStack } from "./managed-stack.ts";
-export { resolveManagedStack } from "./managed-stack.ts";
-
+export { DaemonStartError } from "./layers.ts";
+export type { ManagedDaemonConfigInput } from "./layers.ts";
 export type { StackSummary } from "./discovery.ts";
-export {
-  DaemonStillRunningError,
-  deleteManagedStackPersistence,
-  listStacks,
-  resolveStackSummary,
-  stopDaemon,
-} from "./discovery.ts";

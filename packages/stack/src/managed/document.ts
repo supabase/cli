@@ -1,5 +1,6 @@
 import { Data, Effect, Schema } from "effect";
 import type { ManagedPortAssignment } from "./model.ts";
+import { PartialVersionManifestSchema, type PartialVersionManifest } from "../versions.ts";
 
 export type ManagedStackDocumentLifecycle =
   | "stopped"
@@ -33,11 +34,22 @@ export interface ManagedStackDocument {
   };
   readonly launch?: {
     readonly mode: "native" | "auto" | "docker";
-    readonly versions: Readonly<Record<string, string>>;
+    readonly versions: PartialVersionManifest;
+    readonly excludedServices?: ReadonlyArray<string>;
+    readonly lastNotifiedUpdateFingerprint?: string;
   };
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+export const managedStackLaunchSchema = Schema.Struct({
+  mode: Schema.Literals(["native", "auto", "docker"] as const),
+  versions: PartialVersionManifestSchema,
+  excludedServices: Schema.optionalKey(Schema.Array(Schema.String)),
+  lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
+});
+
+export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
 
 const managedPortAssignmentSchema = Schema.Struct({
   key: Schema.Literals([
@@ -80,12 +92,7 @@ const managedStackDocumentSchema = Schema.Struct({
       protocolVersion: Schema.Literal(1),
     }),
   ),
-  launch: Schema.optionalKey(
-    Schema.Struct({
-      mode: Schema.Literals(["native", "auto", "docker"]),
-      versions: Schema.Record(Schema.String, Schema.String),
-    }),
-  ),
+  launch: Schema.optionalKey(managedStackLaunchSchema),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -110,7 +117,16 @@ export const decodeManagedStackDocument = (
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
   Effect.try({
-    try: () => decodeDocument(content),
+    try: () => {
+      const document = decodeDocument(content);
+      if (
+        !document.ports.some((assignment) => assignment.key === "api.port") ||
+        !document.ports.some((assignment) => assignment.key === "db.port")
+      ) {
+        throw new Error("Managed document is missing core port assignments");
+      }
+      return document;
+    },
     catch: () => new InvalidManagedStackDocumentError({ path }),
   });
 

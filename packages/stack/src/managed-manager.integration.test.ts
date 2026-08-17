@@ -18,6 +18,7 @@ import { gitConfigStoreLayer } from "./managed/git.ts";
 import { acquireControl } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
+import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { reservePortSet } from "./PortAllocator.ts";
 import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
@@ -25,6 +26,7 @@ import { DaemonServer } from "./DaemonServer.ts";
 import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import type { ManagedStackManagerShape } from "./managed/manager.ts";
+import { stopManagedStack, updateManagedLaunch } from "./managed/lifecycle.ts";
 
 const roots: Array<string> = [];
 const COLLIDING_STACK_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -75,17 +77,20 @@ const controlStack = (): Stack["Service"] => ({
   logHistoryAll: () => Effect.succeed([]),
 });
 
-const automaticDocument = (field: "apiPort" | "studioPort" = "apiPort") =>
-  ({
-    activeFields: [field],
-    document: {},
-  }) as const;
+const automaticDocument = (
+  field: "apiPort" | "studioPort" = "apiPort",
+): ManagedPortIntentDocument => ({
+  activeFields: field === "apiPort" ? ["apiPort", "dbPort"] : ["apiPort", "dbPort", field],
+  document: {},
+});
 
-const exactDocument = (field: "apiPort" | "studioPort", port: number) =>
-  ({
-    activeFields: [field],
-    document: field === "apiPort" ? { api: { port } } : { studio: { port } },
-  }) as const;
+const exactDocument = (
+  field: "apiPort" | "studioPort",
+  port: number,
+): ManagedPortIntentDocument => ({
+  activeFields: field === "apiPort" ? ["apiPort", "dbPort"] : ["apiPort", "dbPort", field],
+  document: field === "apiPort" ? { api: { port } } : { studio: { port } },
+});
 
 const freePort = (): Effect.Effect<number, unknown, import("effect/Scope").Scope> =>
   Effect.gen(function* () {
@@ -122,6 +127,52 @@ const releaseLease = (result: ManagedStackStartResult): Effect.Effect<void> =>
   result.lease.releaseAll;
 
 describe("managed stack journeys", () => {
+  it.live("updates launch metadata and recovers a stale owner through the lifecycle facade", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected stack control ownership");
+        const started = yield* manager.resolveStack({
+          operation: "start",
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "running",
+        });
+        yield* releaseLease(started);
+        yield* owner.close;
+
+        const input = {
+          workspacePath: workspace,
+          stackName: "default",
+          launch: {
+            mode: "auto" as const,
+            versions: { postgres: "17.6.1" },
+            excludedServices: [],
+          },
+        };
+        const updated = yield* updateManagedLaunch(input);
+        expect(updated.launch).toEqual(input.launch);
+
+        yield* stopManagedStack(input);
+        const stopped = yield* manager.inspectStack(stackId);
+        expect(stopped?.lifecycle).toBe("stopped");
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
   it.live("restarts the same environment with the same automatic ports", () => {
     const { layer, workspace } = setup();
     return Effect.scoped(
@@ -134,14 +185,14 @@ describe("managed stack journeys", () => {
         const first = yield* manager.resolveStack({
           operation: "start",
           workspacePath: workspace,
-          portDocument: { activeFields: ["apiPort"], document: {} },
+          portDocument: { activeFields: ["apiPort", "dbPort"], document: {} },
           ownership,
         });
         yield* releaseLease(first);
         const second = yield* manager.resolveStack({
           operation: "start",
           workspacePath: workspace,
-          portDocument: { activeFields: ["apiPort"], document: {} },
+          portDocument: { activeFields: ["apiPort", "dbPort"], document: {} },
           ownership,
         });
         if (first === undefined || second === undefined) throw new Error("expected stack");
@@ -377,7 +428,9 @@ describe("managed stack journeys", () => {
           portDocument: { activeFields: [], disabledFields: ["studioPort"], document: {} },
           ownership,
         });
-        expect(disabled.stack.ports).toEqual([{ key: "studio.port", port, intent: "exact" }]);
+        expect(
+          disabled.stack.ports.filter((assignment) => assignment.key === "studio.port"),
+        ).toEqual([{ key: "studio.port", port, intent: "exact" }]);
         yield* releaseLease(disabled);
         const removed = yield* manager.resolveStack({
           operation: "start",
@@ -385,7 +438,9 @@ describe("managed stack journeys", () => {
           portDocument: { activeFields: [], document: {} },
           ownership,
         });
-        expect(removed.stack.ports).toEqual([{ key: "studio.port", port, intent: "automatic" }]);
+        expect(
+          removed.stack.ports.filter((assignment) => assignment.key === "studio.port"),
+        ).toEqual([{ key: "studio.port", port, intent: "automatic" }]);
         yield* releaseLease(removed);
       }),
     ).pipe(

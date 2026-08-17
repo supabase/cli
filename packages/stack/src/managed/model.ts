@@ -73,6 +73,10 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
   readonly code = "INVALID_MANAGED_IDENTITY" as const;
 }
 
+export class NoRunningStackError extends Data.TaggedError("NoRunningStackError")<{
+  readonly cwd: string;
+}> {}
+
 export type UnsupportedGitWorkspaceCause =
   | "inside-git-directory"
   | "malformed-metadata"

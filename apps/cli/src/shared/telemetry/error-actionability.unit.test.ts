@@ -477,7 +477,7 @@ describe("classifyCliErrorActionability", () => {
     expect(internal.error_fingerprint).toBe("tag:StackBuildError:internal_build");
   });
 
-  it("classifies stack readiness and state-claim failures without reading details", () => {
+  it("classifies stack readiness failures without reading details", () => {
     const readiness = classifyCliErrorActionability({
       _tag: "StackReadinessError",
       target: "auth",
@@ -487,24 +487,6 @@ describe("classifyCliErrorActionability", () => {
     expect(readiness.error_category).toBe("invalid_config");
     expect(readiness.suggestion_type).toBe("run_command");
     expect(readiness.suggested_command).toBe("supabase start");
-
-    const claimed = classifyCliErrorActionability({
-      _tag: "StateClaimError",
-      reason: "already-claimed",
-      path: "/private/state.json",
-    });
-    expect(claimed.suggested_command).toBe("supabase stop");
-    expect(claimed.suggestion_type).toBe("run_command");
-    expect(claimed.error_fingerprint).toBe("tag:StateClaimError:conflict");
-
-    const filesystem = classifyCliErrorActionability({
-      _tag: "StateClaimError",
-      reason: "io-error",
-      path: "/private/state.json",
-    });
-    expect(filesystem.error_category).toBe("permission");
-    expect(filesystem.has_suggestion).toBe(false);
-    expect(filesystem.error_fingerprint).toBe("tag:StateClaimError:filesystem");
   });
 
   it("splits docker pull failures from a stopped docker daemon", () => {
@@ -598,11 +580,11 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
   });
 
-  // Managed registry errors are tagged errors that also declare a stable
-  // `code`: the tag routes them to an adapter generated from the package's
-  // tag/code map, and the code keys the verdict that adapter resolves.
-  // `managed-model.unit.test.ts` in `@supabase/stack` pins the real classes to
-  // the (tag, code) pairs reproduced here.
+  // Managed errors are tagged errors that also declare a stable `code`: the
+  // tag routes them to an adapter generated from the package's tag/code map,
+  // and the code keys the verdict that adapter resolves. These are the
+  // actionable failures reachable from the lean environment/store/control/
+  // manager path.
   it.each([
     [
       "InvalidManagedIdentityError",
@@ -610,52 +592,24 @@ describe("classifyCliErrorActionability", () => {
       "managed_identity",
       "invalid_input",
     ],
-    ["InvalidManagedPortError", "MANAGED_INVALID_PORT", "managed_port", "invalid_config"],
     [
-      "UnsafeManagedStackPathError",
-      "UNSAFE_MANAGED_STACK_PATH",
-      "bad_argument",
-      "impossible_state",
+      "UnsupportedGitWorkspaceError",
+      "UNSUPPORTED_GIT_WORKSPACE",
+      "managed_git_workspace_malformed_metadata",
+      "invalid_input",
+    ],
+    [
+      "ManagedExactPortOccupiedError",
+      "MANAGED_EXACT_PORT_OCCUPIED",
+      "port_conflict",
+      "invalid_config",
     ],
     // The operation pid and the pending-update guard are both internal
-    // invariants: the CLI supplies the pid, and only repository misuse can
-    // update an unpublished row.
+    // invariants: allocation failures are actionable startup problems.
     [
-      "InvalidManagedOwnerPidError",
-      "MANAGED_INVALID_OWNER_PID",
-      "managed_owner_pid",
-      "impossible_state",
-    ],
-    [
-      "ManagedPendingStackUpdateError",
-      "MANAGED_PENDING_STACK_UPDATE",
-      "managed_pending_update",
-      "impossible_state",
-    ],
-    // Each of these five used to share a suffix with an unrelated failure, so
-    // distinct defects grouped together as repeats (CLI-2106).
-    [
-      "ManagedOperationInProgressError",
-      "MANAGED_OPERATION_IN_PROGRESS",
-      "managed_operation_in_progress",
-      "invalid_config",
-    ],
-    [
-      "ManagedOperationOwnershipError",
-      "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
-      "managed_operation_ownership",
-      "invalid_config",
-    ],
-    [
-      "ManagedStackPublicationTimeoutError",
-      "MANAGED_STACK_PUBLICATION_TIMEOUT",
-      "managed_publication_timeout",
-      "invalid_config",
-    ],
-    [
-      "ManagedStackNotStoppedError",
-      "MANAGED_STACK_NOT_STOPPED",
-      "managed_stack_not_stopped",
+      "ManagedPortAllocationError",
+      "MANAGED_PORT_ALLOCATION_FAILED",
+      "port_allocation",
       "invalid_config",
     ],
     [
@@ -663,6 +617,19 @@ describe("classifyCliErrorActionability", () => {
       "MANAGED_RUNNING_STACK_PORT_CHANGE",
       "managed_port_change",
       "invalid_config",
+    ],
+    ["ManagedStackNotFoundError", "MANAGED_STACK_NOT_FOUND", "not_found", "invalid_input"],
+    [
+      "ManagedStackNotStoppedError",
+      "MANAGED_STACK_NOT_STOPPED",
+      "managed_stack_not_stopped",
+      "invalid_config",
+    ],
+    [
+      "UnsafeManagedStackPathError",
+      "UNSAFE_MANAGED_STACK_PATH",
+      "bad_argument",
+      "impossible_state",
     ],
   ])("classifies %s through its generated tag adapter", (tag, code, suffix, category) => {
     const error = new Error("managed registry failure");
@@ -737,51 +704,18 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(unrecognized).error_kind).toBe("unknown");
   });
 
-  // ManagedStackInitializationError wraps the real provisioning failure in
-  // `cause`; reporting the generic initialization verdict would lose it.
-  it("classifies the provisioning cause of a managed initialization failure", () => {
-    const wrapped = new Error("managed stack initialization failed");
-    wrapped.name = "ManagedStackInitializationError";
-    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
-    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
-    Object.defineProperty(wrapped, "cause", {
-      value: { _tag: "DockerPullError", image: "postgres", daemonDown: true },
-    });
-    expect(classifyCliErrorActionability(wrapped)).toEqual(
-      classifyCliErrorActionability({
-        _tag: "DockerPullError",
-        image: "postgres",
-        daemonDown: true,
-      }),
-    );
-  });
-
-  it("falls back to the managed initialization verdict for an opaque cause", () => {
-    const wrapped = new Error("managed stack initialization failed");
-    wrapped.name = "ManagedStackInitializationError";
-    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
-    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
-    Object.defineProperty(wrapped, "cause", { value: { detail: "opaque" } });
-    const result = classifyCliErrorActionability(wrapped);
-    expect(result.error_kind).toBe("user_actionable");
-    expect(result.suggested_command).toBe("supabase start");
-    expect(result.error_fingerprint).toBe(
-      "tag:ManagedStackInitializationError:managed_initialization",
-    );
-  });
-
   it("classifies a managed cause nested inside a stack wrapper", () => {
-    const managed = new Error("port already reserved");
-    managed.name = "ManagedPortReservationError";
-    Object.defineProperty(managed, "_tag", { value: "ManagedPortReservationError" });
-    Object.defineProperty(managed, "code", { value: "MANAGED_PORT_ALREADY_RESERVED" });
+    const managed = new Error("port already occupied");
+    managed.name = "ManagedExactPortOccupiedError";
+    Object.defineProperty(managed, "_tag", { value: "ManagedExactPortOccupiedError" });
+    Object.defineProperty(managed, "code", { value: "MANAGED_EXACT_PORT_OCCUPIED" });
     const result = classifyCliErrorActionability({
       _tag: "StackBuildError",
       detail: "x",
       cause: managed,
     });
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("tag:ManagedPortReservationError:port_conflict");
+    expect(result.error_fingerprint).toBe("tag:ManagedExactPortOccupiedError:port_conflict");
   });
 
   it("classifies the preserved tagged cause of a StackError wrapper", () => {
@@ -873,24 +807,24 @@ describe("classifyCliErrorActionability", () => {
 
   it("splits daemon start failures from other daemon RPC failures", () => {
     const start = classifyCliErrorActionability({
-      _tag: "UnixHttpClientError",
-      socketPath: "/tmp/daemon.sock",
+      _tag: "HttpTransportClientError",
+      endpoint: { hostname: "127.0.0.1", port: 1234, url: "http://127.0.0.1:1234" },
       path: "/start",
       reason: "transport",
     });
     expect(start.error_category).toBe("invalid_config");
     expect(start.suggested_command).toBe("supabase start");
-    expect(start.error_fingerprint).toBe("tag:UnixHttpClientError:daemon_start");
+    expect(start.error_fingerprint).toBe("tag:HttpTransportClientError:daemon_start");
 
     const status = classifyCliErrorActionability({
-      _tag: "UnixHttpClientError",
-      socketPath: "/tmp/daemon.sock",
+      _tag: "HttpTransportClientError",
+      endpoint: { hostname: "127.0.0.1", port: 1234, url: "http://127.0.0.1:1234" },
       path: "/status",
       reason: "transport",
     });
     expect(status.error_category).toBe("invalid_config");
     expect(status.suggested_command).toBe("supabase stop");
-    expect(status.error_fingerprint).toBe("tag:UnixHttpClientError:daemon_transport");
+    expect(status.error_fingerprint).toBe("tag:HttpTransportClientError:daemon_transport");
   });
 
   it("keeps daemon status and protocol failures in the internal-bug bucket", () => {
@@ -899,13 +833,13 @@ describe("classifyCliErrorActionability", () => {
       ["protocol", "daemon_protocol"],
     ] as const) {
       const result = classifyCliErrorActionability({
-        _tag: "UnixHttpClientError",
+        _tag: "HttpTransportClientError",
         path: "/status",
         reason,
       });
       expect(result.error_kind).toBe("internal_bug");
       expect(result.error_category).toBe("impossible_state");
-      expect(result.error_fingerprint).toBe(`tag:UnixHttpClientError:${suffix}`);
+      expect(result.error_fingerprint).toBe(`tag:HttpTransportClientError:${suffix}`);
     }
   });
 
@@ -1121,20 +1055,20 @@ describe("classifyCliCauseActionability", () => {
 
   it("preserves a known tagged defect's structured classification", () => {
     const cause = Cause.die({
-      _tag: "UnixHttpClientError",
+      _tag: "HttpTransportClientError",
       path: "/status",
       reason: "protocol",
     });
     expect(classifyCliCauseActionability(cause)).toMatchObject({
       error_kind: "internal_bug",
       error_category: "impossible_state",
-      error_fingerprint: "tag:UnixHttpClientError:daemon_protocol",
+      error_fingerprint: "tag:HttpTransportClientError:daemon_protocol",
     });
   });
 
   it("does not let an earlier known defect hide a later panic", () => {
     const cause = Cause.combine(
-      Cause.die({ _tag: "UnixHttpClientError", path: "/start", reason: "transport" }),
+      Cause.die({ _tag: "HttpTransportClientError", path: "/start", reason: "transport" }),
       Cause.die(new TypeError("boom")),
     );
     expect(classifyCliCauseActionability(cause)).toMatchObject({

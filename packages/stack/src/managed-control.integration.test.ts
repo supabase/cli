@@ -5,14 +5,14 @@ import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { describe, expect } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { acquireControl, controlEndpoint, controlEndpointPath } from "./managed/control.ts";
-import { controlTransportLayer, unixHttpClientLayer } from "./platform-node.ts";
+import { acquireControl, controlEndpoint } from "./managed/control.ts";
+import { controlTransportLayer } from "./platform-node.ts";
+import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 
 const STACK_ID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const COLLIDING_STACK_ID = `${STACK_ID.slice(0, 10)}${"f".repeat(54)}`;
-const RUNTIME_ROOT = "/tmp/supabase-control-test";
 
 const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(controlTransportLayer));
@@ -93,8 +93,8 @@ const spawnBoundChild = (port: number) => {
 describe("managed control endpoint", () => {
   it.live("derives one deterministic loopback endpoint from the ownership id", () => {
     return Effect.sync(() => {
-      const path = controlEndpointPath(RUNTIME_ROOT, STACK_ID);
-      expect(path).toBe("http://127.0.0.1:59273");
+      const endpoint = Effect.runSync(controlEndpoint(STACK_ID));
+      expect(endpoint.url).toBe("http://127.0.0.1:59273");
     });
   });
 
@@ -102,7 +102,7 @@ describe("managed control endpoint", () => {
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
           const started = { value: false };
           const stackLayer = Layer.succeed(Stack, makeStack(started));
@@ -116,7 +116,7 @@ describe("managed control endpoint", () => {
           );
           yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
           const remoteRuntime = ManagedRuntime.make(
-            RemoteStack.layer(owner.endpoint).pipe(Layer.provide(unixHttpClientLayer)),
+            RemoteStack.layer(owner.endpoint).pipe(Layer.provide(httpTransportClientLayer)),
           );
           yield* Effect.promise(() =>
             remoteRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.start())),
@@ -138,7 +138,7 @@ describe("managed control endpoint", () => {
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
           const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
           expect(before.status).toBe(200);
@@ -170,7 +170,7 @@ describe("managed control endpoint", () => {
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
           const daemonRuntime = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
@@ -181,7 +181,7 @@ describe("managed control endpoint", () => {
             ),
           );
           yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-          const contender = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const contender = yield* acquireControl({ stackId: STACK_ID });
           expect(contender._tag).toBe("Attached");
           expect(yield* contender.ownerStatus).toMatchObject({
             protocolVersion: 1,
@@ -237,13 +237,13 @@ describe("managed control endpoint", () => {
       Effect.gen(function* () {
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+            const owner = yield* acquireControl({ stackId: STACK_ID });
             expect(owner._tag).toBe("Owned");
           }),
         );
         const next = yield* Effect.scoped(
           Effect.gen(function* () {
-            return yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+            return yield* acquireControl({ stackId: STACK_ID });
           }),
         );
         expect(next._tag).toBe("Owned");
@@ -261,7 +261,6 @@ describe("managed control endpoint", () => {
             (server) => Effect.promise(() => closeRaw(server)),
           );
           const result = yield* acquireControl({
-            runtimeRoot: RUNTIME_ROOT,
             stackId: STACK_ID,
           }).pipe(
             Effect.match({
@@ -292,7 +291,6 @@ describe("managed control endpoint", () => {
             (server) => Effect.promise(() => closeRaw(server)),
           );
           const result = yield* acquireControl({
-            runtimeRoot: RUNTIME_ROOT,
             stackId: STACK_ID,
           }).pipe(
             Effect.match({
@@ -313,17 +311,15 @@ describe("managed control endpoint", () => {
     live(
       Effect.scoped(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const owner = yield* acquireControl({ stackId: STACK_ID });
           if (owner._tag !== "Owned") throw new Error("expected control ownership");
-          const contender = yield* acquireControl({
-            runtimeRoot: RUNTIME_ROOT,
-            stackId: STACK_ID,
-          }).pipe(Effect.forkChild({ startImmediately: true }));
+          const contender = yield* acquireControl({ stackId: STACK_ID }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
           yield* Effect.sleep("1 millis");
           yield* owner.close;
           const next = yield* Fiber.join(contender);
           expect(next._tag).toBe("Owned");
-          if (next._tag === "Owned") expect(next.acquiredAfterClose).toBe(true);
         }),
       ),
     ),
@@ -338,7 +334,7 @@ describe("managed control endpoint", () => {
           yield* Effect.promise(() => child.ready);
           child.child.kill("SIGKILL");
           yield* Effect.promise(() => child.exited);
-          const owner = yield* acquireControl({ runtimeRoot: RUNTIME_ROOT, stackId: STACK_ID });
+          const owner = yield* acquireControl({ stackId: STACK_ID });
           expect(owner._tag).toBe("Owned");
         }),
       ),

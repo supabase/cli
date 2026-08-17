@@ -15,7 +15,7 @@ import { controlTransportLayer } from "./platform-bun.ts";
 
 export * from "./managed.ts";
 export { managedDaemonEntryPoint };
-export { ManagedDaemonStartError, type ManagedDaemonStartInput } from "./supervisor.ts";
+export type { ManagedDaemonStartInput } from "./supervisor.ts";
 
 export const managedStackManagerLayer = (options: { readonly stateRoot: string }) =>
   managedStackManagerLayerCore(options).pipe(

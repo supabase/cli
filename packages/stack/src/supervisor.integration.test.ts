@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
-import { unixHttpClientLayer } from "./platform-node.ts";
+import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
@@ -35,7 +35,6 @@ const messageFor = (
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
   type: "start",
-  mode: "managed",
   workspacePath: roots.root,
   stackName: "default",
   stateRoot: roots.stateRoot,
@@ -66,7 +65,7 @@ const spawnChild = (input: SupervisorStartMessage): ChildHandle => {
     execArgv: [],
     detached: false,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
-    env: { ...process.env, SUPABASE_STACK_RUN_SUPERVISOR: "1" },
+    env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1" },
   });
   let stderr = "";
   child.stderr?.on("data", (chunk: Uint8Array) => {
@@ -170,7 +169,7 @@ const remoteStop = (endpoint: ControlEndpoint): Promise<void> =>
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint).pipe(Layer.provide(unixHttpClientLayer)),
+          RemoteStack.layer(endpoint).pipe(Layer.provide(httpTransportClientLayer)),
         );
         yield* Context.get(context, Stack).stop();
       }),
@@ -182,12 +181,28 @@ const remoteInfo = (endpoint: ControlEndpoint): Promise<{ readonly url: string }
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint).pipe(Layer.provide(unixHttpClientLayer)),
+          RemoteStack.layer(endpoint).pipe(Layer.provide(httpTransportClientLayer)),
         );
         return yield* Context.get(context, Stack).getInfo();
       }),
     ),
   );
+
+const updateLaunch = async (
+  endpoint: ControlEndpoint,
+  launch: {
+    readonly mode: "native" | "auto" | "docker";
+    readonly versions: Record<string, string>;
+  },
+): Promise<void> => {
+  const response = await fetch(`${endpoint.url}/managed/launch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(launch),
+  });
+  expect(response.status).toBe(200);
+  await response.json();
+};
 
 const canConnect = (port: number): Promise<boolean> =>
   new Promise((resolve) => {
@@ -226,6 +241,7 @@ const readStackDocument = (roots: {
       readonly id: string;
       readonly lifecycle: string;
       readonly ports: ReadonlyArray<{ port: number }>;
+      readonly launch?: { readonly mode: string; readonly versions: Record<string, string> };
     }
   | undefined => {
   const stacksRoot = join(roots.stateRoot, "stacks");
@@ -312,9 +328,6 @@ describe("detached supervisor child journeys", () => {
       ) as { lifecycle: string; ports: ReadonlyArray<{ port: number }> };
       expect(document.lifecycle).toBe("running");
       expect(document.ports.length).toBeGreaterThan(0);
-      expect(
-        existsSync(join(roots.stateRoot, "stacks", String(owner.ownershipId), "state.json")),
-      ).toBe(false);
       expect(existsSync(join(roots.stateRoot, "stacks", "default", "stack.json"))).toBe(false);
       for (const assignment of document.ports) expect(await canConnect(assignment.port)).toBe(true);
       await remoteStop(started.endpoint);
@@ -404,35 +417,6 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("runs deletion through a child process and leaves no stack document", async () => {
-    const roots = workspace();
-    const owner = spawnChild(messageFor(roots));
-    try {
-      const started = await owner.started;
-      const initialOwner = await fetchOwner(started.endpoint);
-      await remoteStop(started.endpoint);
-      await waitForExit(owner.child);
-      const ownerStatus = await fetchOwner(started.endpoint).catch(() => undefined);
-      expect(ownerStatus).toBeUndefined();
-      const deletion = spawnChild(
-        messageFor(roots, { operation: "delete", testMode: "hold-delete" }),
-      );
-      void deletion.started.catch(() => undefined);
-      const deleting = await waitForStackDocument(roots, "deleting");
-      expect(deleting.id).toBe(String(initialOwner.ownershipId));
-      await kill(deletion.child);
-      const completed = spawnChild(messageFor(roots, { operation: "delete" }));
-      await completed.started;
-      await waitForExit(completed.child);
-      expect(
-        existsSync(managedStackDocumentPath(roots.stateRoot, String(initialOwner.ownershipId))),
-      ).toBe(false);
-    } finally {
-      if (owner.child.exitCode === null) await kill(owner.child);
-      cleanupRoots(roots);
-    }
-  });
-
   test("reattaches from a later process and stops the original child", async () => {
     const roots = workspace();
     const input = messageFor(roots);
@@ -444,6 +428,11 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
+      await updateLaunch(attached.endpoint, { mode: "auto", versions: { postgres: "17.6.1" } });
+      expect(readStackDocument(roots)?.launch).toEqual({
+        mode: "auto",
+        versions: { postgres: "17.6.1" },
+      });
       await remoteStop(attached.endpoint);
       await waitForExit(owner.child);
       await waitForExit(later.child);
@@ -455,42 +444,6 @@ describe("detached supervisor child journeys", () => {
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (later !== undefined && later.child.exitCode === null) await kill(later.child);
-      cleanupRoots(roots);
-    }
-  });
-
-  test("restarts ordinary detached children after graceful and stale stops", async () => {
-    const roots = workspace();
-    const ownershipId = "f".repeat(64);
-    const base = messageFor(roots);
-    const input: SupervisorStartMessage = {
-      ...base,
-      mode: "ephemeral",
-      ownershipId,
-      stackId: ownershipId,
-      config: { ...base.config, projectStateRoot: roots.stateRoot },
-    };
-    const first = spawnChild(input);
-    try {
-      const started = await first.started;
-      await remoteStop(started.endpoint);
-      await waitForExit(first.child);
-      expect(existsSync(join(roots.stateRoot, "stacks", "default", "state.json"))).toBe(false);
-
-      const killed = spawnChild(input);
-      await killed.started;
-      await kill(killed.child);
-      const recovered = spawnChild(input);
-      try {
-        const recoveredAck = await recovered.started;
-        expect(recoveredAck.attached).not.toBe(true);
-        await remoteStop(recoveredAck.endpoint);
-        await waitForExit(recovered.child);
-      } finally {
-        if (recovered.child.exitCode === null) await kill(recovered.child);
-      }
-    } finally {
-      if (first.child.exitCode === null) await kill(first.child);
       cleanupRoots(roots);
     }
   });

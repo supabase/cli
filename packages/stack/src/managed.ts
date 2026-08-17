@@ -30,7 +30,6 @@ export * from "./managed/environment.ts";
 export {
   acquireControl,
   controlEndpoint,
-  controlEndpointPath,
   ControlAddressConflictError,
   ControlBindError,
   ControlProtocolError,
@@ -75,4 +74,13 @@ export type {
   ResolveStackRequest,
   ResolveStackStartRequest,
   ResolveStackStatusRequest,
+  ManagedStackLaunchUpdate,
 } from "./managed/manager.ts";
+export {
+  connectManagedStack,
+  deleteManagedStack,
+  resolveManagedDocument,
+  stopManagedStack,
+  updateManagedLaunch,
+} from "./managed/lifecycle.ts";
+export type { ManagedLifecycleInput } from "./managed/lifecycle.ts";

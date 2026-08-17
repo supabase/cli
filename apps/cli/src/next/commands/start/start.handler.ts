@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { StateManager, stackMetadata } from "@supabase/stack/effect";
+import { updateManagedLaunch } from "@supabase/stack/effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import type { StartFlags } from "./start.command.ts";
@@ -13,9 +13,9 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
     Effect.gen(function* () {
       const output = yield* Output;
       const analytics = yield* Analytics;
-      const stateManager = yield* StateManager;
       const startVersionState = yield* StartVersionState;
-      const { metadata, serviceVersionContext } = startVersionState;
+      const { launch, previousUpdateFingerprint, serviceVersionContext, lifecycleInput } =
+        startVersionState;
 
       if (serviceVersionContext.activeOverrides.length > 0) {
         yield* output.warn(
@@ -31,7 +31,7 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
 
       if (
         serviceVersionContext.updateFingerprint !== undefined &&
-        metadata.lastNotifiedUpdateFingerprint !== serviceVersionContext.updateFingerprint
+        previousUpdateFingerprint !== serviceVersionContext.updateFingerprint
       ) {
         yield* output.warn(
           [
@@ -43,16 +43,15 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
             "Run `supabase stack update` to adopt these pinned versions.",
           ].join("\n"),
         );
-        yield* stateManager.writeMetadata(
-          flags.stack,
-          stackMetadata({
-            ports: metadata.ports,
-            services: metadata.services,
-            launch: metadata.launch ?? { mode: "auto", excludedServices: [] },
-            updatedAt: metadata.updatedAt,
+        yield* updateManagedLaunch({
+          ...lifecycleInput,
+          launch: {
+            mode: launch.mode,
+            versions: launch.versions,
+            excludedServices: launch.excludedServices,
             lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
-          }),
-        );
+          },
+        });
       }
 
       let result: void;

@@ -77,9 +77,6 @@ describe("projectHomeLayer", () => {
       expect(projectHome.projectLocalVersionsPath).toBe(
         join(packageRoot, ".supabase", "local-versions.json"),
       );
-      expect(projectHome.stackStatePath("default")).toBe(
-        join(packageRoot, ".supabase", "stacks", "default", "state.json"),
-      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

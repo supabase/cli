@@ -1,22 +1,10 @@
 import { fork, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import {
-  Context,
-  Data,
-  Effect,
-  Fiber,
-  Layer,
-  Option,
-  Schedule,
-  Scope,
-  Schema,
-  Stream,
-} from "effect";
+import { Context, Data, Effect, Fiber, Layer, Schedule, Scope, Schema, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { Stack } from "./Stack.ts";
-import { foregroundDaemonLayer, foregroundLayer } from "./layers.ts";
+import { foregroundLayer } from "./layers.ts";
 import {
   acquireControl,
   type ControlAttached,
@@ -25,6 +13,7 @@ import {
   type ControlTransport,
 } from "./managed/control.ts";
 import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
+import { managedStackLaunchSchema } from "./managed/document.ts";
 import { deriveStackId } from "./managed/environment.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPaths } from "./managed/paths.ts";
@@ -32,15 +21,9 @@ import { PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
 import { SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import type { PortAllocationError, PortLease } from "./PortAllocator.ts";
-import { reservePortSet } from "./PortAllocator.ts";
-import {
-  resolveConfig,
-  resolveDaemonConfig,
-  type DaemonConfigInput,
-} from "./StackConfigResolver.ts";
+import { resolveConfig, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import type { ResolvedDaemonConfig } from "./StackConfig.ts";
-import { StateManager, singleStackStateManagerPaths, type StackState } from "./StateManager.ts";
-import { UnixHttpClient } from "./UnixHttpClient.ts";
+import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
@@ -50,30 +33,23 @@ export type SupervisorTestMode =
   | "bind-all"
   | "fail-after-bind"
   | "hold-reservations"
-  | "hold-start"
-  | "hold-delete";
+  | "hold-start";
 
 /** The only message sent across the detached child IPC boundary. */
 export interface SupervisorStartMessage {
   readonly type: "start";
-  readonly operation?: "start" | "delete";
-  readonly mode: "managed" | "ephemeral";
-  readonly stackId?: string;
-  readonly ownershipId?: string;
   readonly workspacePath: string;
   readonly stackName: string;
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
-  readonly effectiveConfig?: Readonly<Record<string, unknown>>;
-  readonly portIntents?: unknown;
-  readonly socketPath?: string;
+  readonly portIntents: ManagedPortIntentDocument;
+  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
   readonly testMode?: SupervisorTestMode;
 }
 
 export interface SupervisorStartedMessage {
   readonly type: "started";
   readonly endpoint: ControlEndpoint;
-  readonly state?: StackState;
   readonly attached?: boolean;
 }
 
@@ -91,21 +67,19 @@ type SupervisorMessage =
   | SupervisorStartedMessage
   | SupervisorErrorMessage
   | SupervisorTestStageMessage;
-/** Compatibility input shape for the public managed launcher. */
+/** Input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
   readonly workspacePath: string;
   readonly stackName: string;
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
-  readonly effectiveConfig: Readonly<Record<string, unknown>>;
-  readonly valueOrigins?: ManagedPortIntentDocument["valueOrigins"];
-  readonly socketPath?: string;
-  readonly stackId?: string;
+  readonly portIntents: ManagedPortIntentDocument;
+  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
 }
 
 const supervisorPortIntentSchema = Schema.Struct({
-  activeFields: Schema.Array(Schema.String),
-  disabledFields: Schema.optionalKey(Schema.Array(Schema.String)),
+  activeFields: Schema.Array(Schema.Literals(PORT_FIELDS)),
+  disabledFields: Schema.optionalKey(Schema.Array(Schema.Literals(PORT_FIELDS))),
   document: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
   valueOrigins: Schema.optionalKey(
     Schema.Array(
@@ -119,25 +93,14 @@ const supervisorPortIntentSchema = Schema.Struct({
 
 const supervisorStartMessageSchema = Schema.Struct({
   type: Schema.Literal("start"),
-  operation: Schema.optionalKey(Schema.Literals(["start", "delete"])),
-  mode: Schema.Literals(["managed", "ephemeral"]),
-  stackId: Schema.optionalKey(Schema.String),
-  ownershipId: Schema.optionalKey(Schema.String),
   workspacePath: Schema.String,
   stackName: Schema.String,
   stateRoot: Schema.String,
   config: Schema.Record(Schema.String, Schema.Unknown),
-  effectiveConfig: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-  portIntents: Schema.optionalKey(supervisorPortIntentSchema),
-  socketPath: Schema.optionalKey(Schema.String),
+  portIntents: supervisorPortIntentSchema,
+  launch: Schema.optionalKey(managedStackLaunchSchema),
   testMode: Schema.optionalKey(
-    Schema.Literals([
-      "bind-all",
-      "fail-after-bind",
-      "hold-reservations",
-      "hold-start",
-      "hold-delete",
-    ]),
+    Schema.Literals(["bind-all", "fail-after-bind", "hold-reservations", "hold-start"]),
   ),
 });
 
@@ -146,12 +109,9 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const isControlEndpoint = (value: unknown): value is ControlEndpoint =>
   isRecord(value) &&
-  value._tag === "Loopback" &&
   typeof value.hostname === "string" &&
-  typeof value.host === "string" &&
   typeof value.port === "number" &&
-  typeof value.url === "string" &&
-  typeof value.path === "string";
+  typeof value.url === "string";
 
 const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage => {
   return Schema.decodeUnknownSync(supervisorStartMessageSchema)(value);
@@ -160,59 +120,10 @@ const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage =>
 const causeMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
 
-const isPortField = (value: string): value is PortField =>
-  PORT_FIELDS.some((field) => field === value);
-
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
 
-const toPortDocument = (
-  value: unknown,
-  fallback: Readonly<Record<string, unknown>>,
-): ManagedPortIntentDocument => {
-  if (!isRecord(value)) return { activeFields: [], document: fallback };
-  const activeFields = Array.isArray(value.activeFields)
-    ? value.activeFields.filter(
-        (field): field is PortField => typeof field === "string" && isPortField(field),
-      )
-    : [];
-  const disabledFields = Array.isArray(value.disabledFields)
-    ? value.disabledFields.filter(
-        (field): field is PortField => typeof field === "string" && isPortField(field),
-      )
-    : undefined;
-  const document = isRecord(value.document) ? value.document : fallback;
-  const valueOrigins: Array<{
-    readonly path: ReadonlyArray<string>;
-    readonly source: "environment" | "local" | "remote";
-  }> = [];
-  if (Array.isArray(value.valueOrigins)) {
-    for (const origin of value.valueOrigins) {
-      if (!isRecord(origin) || !Array.isArray(origin.path) || typeof origin.source !== "string")
-        continue;
-      const path = origin.path.filter((entry): entry is string => typeof entry === "string");
-      if (
-        origin.source !== "environment" &&
-        origin.source !== "local" &&
-        origin.source !== "remote"
-      )
-        continue;
-      valueOrigins.push({ path, source: origin.source });
-    }
-  }
-  return {
-    activeFields,
-    document,
-    ...(disabledFields === undefined ? {} : { disabledFields }),
-    ...(valueOrigins.length === 0 ? {} : { valueOrigins }),
-  };
-};
-
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
-  readonly message: string;
-}> {}
-
-export class ManagedDaemonStartError extends Data.TaggedError("ManagedDaemonStartError")<{
   readonly message: string;
 }> {}
 
@@ -293,7 +204,7 @@ export interface SupervisorPlatform {
     readonly lease: PortLease;
     readonly mode: SupervisorTestMode;
   }) => Effect.Effect<Layer.Layer<Stack>, unknown, Scope.Scope>;
-  readonly managerLayer?: (
+  readonly managerLayer: (
     stateRoot: string,
   ) => Layer.Layer<
     ManagedStackManager,
@@ -384,70 +295,37 @@ const startDaemon = (input: {
   readonly ownership: ControlOwnership;
   readonly platform: SupervisorPlatform;
   readonly scope: Scope.Scope;
-  readonly managed: boolean;
   readonly stackLayer?: Layer.Layer<Stack>;
+  readonly launchUpdate?: (
+    launch: NonNullable<import("./managed/document.ts").ManagedStackDocument["launch"]>,
+  ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
-  { readonly daemon: DaemonServer["Service"]; readonly state?: StackState },
+  { readonly daemon: DaemonServer["Service"] },
   unknown,
   import("effect").FileSystem.FileSystem | import("effect").Path.Path
 > =>
   Effect.gen(function* () {
     const appLayer =
-      input.stackLayer === undefined
-        ? input.managed
-          ? foregroundLayer(input.config, input.platform.platformFactory, input.lease)
-          : foregroundDaemonLayer(input.config, input.platform.platformFactory, input.lease)
-        : input.managed
-          ? input.stackLayer
-          : Layer.mergeAll(
-              input.stackLayer,
-              StateManager.make(
-                singleStackStateManagerPaths(
-                  input.config.stackRoot,
-                  input.config.runtimeRoot,
-                  input.config.name,
-                ),
-              ),
-            );
+      input.stackLayer ??
+      foregroundLayer(input.config, input.platform.platformFactory, input.lease);
     const appServices = yield* Layer.buildWithScope(appLayer, input.scope);
     const localStack = Context.get(appServices, Stack);
-    const stateManager = Context.getOption(appServices, StateManager);
     const daemonLayer = DaemonServer.layerWithShutdown(
       Effect.gen(function* () {
         yield* localStack.stop();
       }),
       input.ownership.ownerStatus,
-      { includeOwnerRoute: false },
+      {
+        includeOwnerRoute: false,
+        ...(input.launchUpdate === undefined ? {} : { launchUpdate: input.launchUpdate }),
+      },
     ).pipe(
       Layer.provide(Layer.succeed(Stack, localStack)),
       Layer.provide(Layer.succeed(HttpServer.HttpServer, input.ownership.server)),
     );
     const daemonServices = yield* Layer.buildWithScope(daemonLayer, input.scope);
     const daemon = Context.get(daemonServices, DaemonServer);
-    let state: StackState | undefined;
-    if (Option.isSome(stateManager)) {
-      const info = yield* localStack.getInfo();
-      state = {
-        pid: process.pid,
-        name: input.config.name,
-        projectDir: input.config.projectDir,
-        apiPort: input.config.apiPort,
-        dbPort: input.config.dbPort,
-        ports: input.config.ports,
-        socketPath: input.ownership.endpoint.path,
-        startedAt: new Date().toISOString(),
-        url: info.url,
-        dbUrl: info.dbUrl,
-        publishableKey: info.publishableKey,
-        secretKey: info.secretKey,
-        anonJwt: info.anonJwt,
-        serviceRoleJwt: info.serviceRoleJwt,
-        serviceEndpoints: info.serviceEndpoints,
-        services: {},
-      };
-      yield* stateManager.value.claim(state);
-    }
-    return { daemon, state };
+    return { daemon };
   });
 
 const installTestRuntime = (
@@ -479,11 +357,6 @@ const runManaged = (
   let owner: ControlOwnership | undefined;
   let managerService: ManagedStackManager["Service"] | undefined;
   return Effect.gen(function* () {
-    if (platform.managerLayer === undefined) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Managed supervisor layer is unavailable" }),
-      );
-    }
     const manager = yield* ManagedStackManager.pipe(
       Effect.provide(platform.managerLayer(input.stateRoot)),
     );
@@ -495,7 +368,7 @@ const runManaged = (
       );
     }
     const discovery = yield* manager.ensureWorkspace(input.workspacePath);
-    const stackId = input.stackId ?? deriveStackId(discovery.identity, input.stackName);
+    const stackId = deriveStackId(discovery.identity, input.stackName);
     const acquisition = yield* acquireControl({ stackId });
     if (acquisition._tag === "Attached") {
       yield* awaitOwnerReady(
@@ -524,19 +397,7 @@ const runManaged = (
         );
       });
     }
-    if (input.operation === "delete") {
-      if (existing !== undefined && existing.lifecycle !== "deleting") {
-        yield* manager.recordLifecycle(ownership, { stackId, lifecycle: "deleting" });
-      }
-      if (input.testMode === "hold-delete") {
-        yield* Effect.never;
-      }
-      yield* manager.deleteStack(stackId, ownership);
-      yield* sendMessage({ type: "started", endpoint: ownership.endpoint, attached: false });
-      process.disconnect?.();
-      return;
-    }
-    const portDocument = toPortDocument(input.portIntents, input.effectiveConfig ?? {});
+    const portDocument = input.portIntents;
     const started: ManagedStackStartResult = yield* manager.resolveStack({
       operation: "start",
       workspacePath: input.workspacePath,
@@ -544,6 +405,7 @@ const runManaged = (
       portDocument,
       ownership,
       lifecycle: "starting",
+      launch: input.launch,
     });
     const resolved = yield* Effect.tryPromise({
       try: () =>
@@ -585,15 +447,16 @@ const runManaged = (
       ownership,
       platform,
       scope,
-      managed: true,
       stackLayer: testStackLayer,
+      launchUpdate: (launch) =>
+        manager.updateLaunch(ownership, { stackId: started.stack.id, launch }).pipe(Effect.asVoid),
     });
     yield* manager.recordLifecycle(ownership, {
       stackId: started.stack.id,
       lifecycle: "running",
       runtime: {
         pid: process.pid,
-        controlEndpoint: ownership.endpoint.path,
+        controlEndpoint: ownership.endpoint.url,
         protocolVersion: 1,
       },
     });
@@ -623,101 +486,6 @@ const runManaged = (
   );
 };
 
-const runEphemeral = (
-  input: SupervisorStartMessage,
-  platform: SupervisorPlatform,
-  scope: Scope.Scope,
-): Effect.Effect<
-  void,
-  unknown,
-  | ControlTransport
-  | import("effect").FileSystem.FileSystem
-  | import("effect").Path.Path
-  | Scope.Scope
-> =>
-  Effect.gen(function* () {
-    const configInput = toDaemonConfig(input.config);
-    if (configInput === undefined) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor config is missing cwd" }),
-      );
-    }
-    const ownershipId = input.ownershipId ?? input.stackId ?? randomUUID().replaceAll("-", "");
-    const acquisition = yield* acquireControl({ stackId: ownershipId });
-    if (acquisition._tag === "Attached") {
-      yield* awaitOwnerReady(acquisition);
-      yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
-      process.disconnect?.();
-      return;
-    }
-    const ownership = acquisition;
-    let lease: PortLease | undefined;
-    const config = yield* Effect.tryPromise({
-      try: () =>
-        resolveDaemonConfig(configInput, {
-          portAllocator: (requests, options) =>
-            reservePortSet(requests, options).pipe(
-              Effect.tap((nextLease) => Effect.sync(() => void (lease = nextLease))),
-              Effect.map((nextLease) => nextLease.ports),
-            ),
-        }),
-      catch: (cause) => cause,
-    });
-    if (lease === undefined) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor allocation did not return a lease" }),
-      );
-    }
-    const allocatedLease = lease;
-    yield* Effect.addFinalizer(() => allocatedLease.releaseAll);
-    const stateServices = yield* Layer.buildWithScope(
-      StateManager.make(
-        singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
-      ),
-      scope,
-    );
-    const stateManager = Context.get(stateServices, StateManager);
-    const staleState = yield* stateManager.read(config.name).pipe(
-      Effect.catchTag("StateNotFoundError", () => Effect.succeed(undefined)),
-      Effect.catchTag("InvalidStackStateError", () =>
-        stateManager.remove(config.name).pipe(Effect.as(undefined)),
-      ),
-    );
-    if (staleState !== undefined) {
-      const alive = yield* stateManager.isAlive(staleState);
-      if (alive) {
-        return yield* Effect.fail(
-          new SupervisorStartError({ message: `Ordinary stack ${config.name} is already running` }),
-        );
-      }
-      yield* stateManager.remove(config.name);
-    }
-    const testStackLayer = yield* installTestRuntime(
-      platform,
-      input.testMode,
-      config,
-      allocatedLease,
-    );
-    if (input.testMode === "fail-after-bind" && testStackLayer !== undefined) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
-      );
-    }
-    const built = yield* startDaemon({
-      config,
-      lease: allocatedLease,
-      ownership,
-      platform,
-      scope,
-      managed: false,
-      stackLayer: testStackLayer,
-    });
-    yield* sendMessage({ type: "started", endpoint: ownership.endpoint });
-    process.disconnect?.();
-    yield* Effect.raceFirst(waitForSignal(), built.daemon.awaitShutdown);
-    if (built.state !== undefined) yield* stateManager.remove(config.name);
-  });
-
 /** Effect-native child program. Node/Bun entrypoints only call runPromise here. */
 export const runSupervisor = (
   platform: SupervisorPlatform,
@@ -730,18 +498,13 @@ export const runSupervisor = (
     Effect.gen(function* () {
       const scope = yield* Effect.scope;
       const input = yield* receiveStartMessage();
-      yield* Effect.matchCauseEffect(
-        input.mode === "managed"
-          ? runManaged(input, platform, scope)
-          : runEphemeral(input, platform, scope),
-        {
-          onFailure: (cause) =>
-            sendMessage({ type: "error", message: causeMessage(cause) }).pipe(
-              Effect.andThen(Effect.failCause(cause)),
-            ),
-          onSuccess: Effect.succeed,
-        },
-      );
+      yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
+        onFailure: (cause) =>
+          sendMessage({ type: "error", message: causeMessage(cause) }).pipe(
+            Effect.andThen(Effect.failCause(cause)),
+          ),
+        onSuccess: Effect.succeed,
+      });
     }),
   );
 
@@ -751,7 +514,7 @@ const forkSupervisor = (entryPoint: string): Effect.Effect<ChildProcess, Supervi
       fork(entryPoint, [], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
         detached: true,
-        env: { ...process.env, SUPABASE_STACK_RUN_SUPERVISOR: "1" },
+        env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1" },
       }),
     catch: (cause) =>
       new SupervisorStartError({ message: `Failed to fork supervisor: ${causeMessage(cause)}` }),
@@ -817,13 +580,17 @@ const waitForStarted = (
     return Effect.sync(cleanup);
   });
 
-/** Parent-side shared launcher used by managed and ordinary layers. */
+/** Parent-side launcher for the managed supervisor. */
 export const supervisorLayer = (
   input: SupervisorStartMessage,
   entryPoint: string,
-): Effect.Effect<Layer.Layer<import("./Stack.ts").Stack>, SupervisorStartError, UnixHttpClient> =>
+): Effect.Effect<
+  Layer.Layer<import("./Stack.ts").Stack>,
+  SupervisorStartError,
+  HttpTransportClient
+> =>
   Effect.gen(function* () {
-    const client = yield* UnixHttpClient;
+    const client = yield* HttpTransportClient;
     const child = yield* forkSupervisor(entryPoint);
     let detached = false;
     return yield* Effect.gen(function* () {
@@ -839,7 +606,7 @@ export const supervisorLayer = (
       child.unref();
       detached = true;
       return RemoteStack.layer(response.endpoint).pipe(
-        Layer.provide(Layer.succeed(UnixHttpClient, client)),
+        Layer.provide(Layer.succeed(HttpTransportClient, client)),
       );
     }).pipe(
       Effect.onExit(() =>
@@ -854,11 +621,10 @@ export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
   entryPoint: string,
   options: { readonly testMode?: SupervisorTestMode } = {},
-): Effect.Effect<Layer.Layer<Stack>, SupervisorStartError, UnixHttpClient> =>
+): Effect.Effect<Layer.Layer<Stack>, SupervisorStartError, HttpTransportClient> =>
   supervisorLayer(
     {
       type: "start",
-      mode: "managed",
       workspacePath: input.workspacePath,
       stackName: input.stackName,
       stateRoot: input.stateRoot,
@@ -866,14 +632,8 @@ export const managedDaemonLayer = (
         ...input.config,
         cwd: typeof input.config.cwd === "string" ? input.config.cwd : input.workspacePath,
       },
-      effectiveConfig: input.effectiveConfig,
-      portIntents: {
-        activeFields: [...PORT_FIELDS],
-        document: input.effectiveConfig,
-        ...(input.valueOrigins === undefined ? {} : { valueOrigins: input.valueOrigins }),
-      },
-      ...(input.stackId === undefined ? {} : { stackId: input.stackId }),
-      ...(input.socketPath === undefined ? {} : { socketPath: input.socketPath }),
+      portIntents: input.portIntents,
+      ...(input.launch === undefined ? {} : { launch: input.launch }),
       ...(options.testMode === undefined ? {} : { testMode: options.testMode }),
     },
     entryPoint,

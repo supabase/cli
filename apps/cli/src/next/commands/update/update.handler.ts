@@ -1,5 +1,10 @@
 import { Effect, Option } from "effect";
-import { StateManager, resolveDaemonConfig, stackMetadata } from "@supabase/stack/effect";
+import {
+  fillServiceVersionManifest,
+  listStacks,
+  resolveStackSummary,
+  updateManagedLaunch,
+} from "@supabase/stack/effect";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
@@ -10,7 +15,6 @@ import {
 } from "../../config/project-link-remote.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
-import { toStartStackConfig, withServiceVersions } from "../../config/stack-config.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { UpdateFlags } from "./update.command.ts";
@@ -41,7 +45,6 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const projectHome = yield* ProjectHome;
   const projectLinkState = yield* ProjectLinkState;
   const runtimeInfo = yield* RuntimeInfo;
-  const stateManager = yield* StateManager;
 
   yield* output.intro("Update local Supabase stack versions");
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
@@ -50,7 +53,13 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   if (Option.isSome(linkedState)) {
     const refreshed = yield* refreshLinkedProjectSnapshot(
       linkedState.value.project.ref,
-      yield* stateManager.scanMetadata(),
+      (yield* listStacks({
+        cacheRoot: cliConfig.supabaseHome,
+        projectDir: projectHome.projectRoot,
+      })).map((stack) => ({
+        stackName: stack.name,
+        services: fillServiceVersionManifest(stack.versions),
+      })),
     );
     const changedVersions = diffCachedLinkedVersions(
       linkedState.value.versions,
@@ -76,45 +85,45 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     }
   }
 
-  const existingMetadata = yield* stateManager.readMetadata(flags.stack).pipe(
+  const existingSummary = yield* resolveStackSummary({
+    cacheRoot: cliConfig.supabaseHome,
+    projectDir: projectHome.projectRoot,
+    cwd: runtimeInfo.cwd,
+    name: flags.stack,
+  }).pipe(
     Effect.map(Option.some),
-    Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
+    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
   );
   const serviceVersionContext = yield* resolveServiceVersionContext(
     [],
-    Option.match(existingMetadata, {
+    Option.match(existingSummary, {
       onNone: () => undefined,
-      onSome: (metadata) => metadata.services,
+      onSome: (summary) => fillServiceVersionManifest(summary.versions),
     }),
   );
 
-  const persistedLaunch = Option.match(existingMetadata, {
-    onNone: () => ({ mode: "auto" as const, excludedServices: [] as const }),
-    onSome: (m) => m.launch ?? { mode: "auto" as const, excludedServices: [] as const },
-  });
-
-  const resolvedConfig = yield* Effect.promise(() =>
-    resolveDaemonConfig({
+  if (Option.isSome(existingSummary)) {
+    const persistedLaunch = existingSummary.value.launch ?? {
+      mode: "auto" as const,
+      excludedServices: [] as const,
+    };
+    yield* updateManagedLaunch({
       cacheRoot: cliConfig.supabaseHome,
       cwd: runtimeInfo.cwd,
-      projectDir: projectHome.projectRoot,
-      projectStateRoot: projectHome.projectHomeDir,
-      name: flags.stack,
-      ...withServiceVersions(
-        toStartStackConfig(persistedLaunch.excludedServices, persistedLaunch.mode),
-        serviceVersionContext.candidateBaseline,
-      ),
-    }),
-  );
-
-  yield* stateManager.writeMetadata(
-    flags.stack,
-    stackMetadata({
-      ports: resolvedConfig.ports,
-      services: serviceVersionContext.candidateBaseline,
-      launch: persistedLaunch,
-    }),
-  );
+      workspacePath: projectHome.projectRoot,
+      stackName: flags.stack,
+      launch: {
+        mode: persistedLaunch.mode,
+        versions: serviceVersionContext.candidateBaseline,
+        excludedServices: persistedLaunch.excludedServices,
+        ...(existingSummary.value.lastNotifiedUpdateFingerprint === undefined
+          ? {}
+          : {
+              lastNotifiedUpdateFingerprint: existingSummary.value.lastNotifiedUpdateFingerprint,
+            }),
+      },
+    });
+  }
 
   if (serviceVersionContext.availableUpdates.length === 0) {
     yield* output.success("Pinned stack versions are already up to date.");
@@ -131,11 +140,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     }
   }
 
-  const runningState = yield* stateManager.read(flags.stack).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("StateNotFoundError", () => Effect.succeed(Option.none())),
-  );
-  if (Option.isSome(runningState) && (yield* stateManager.isAlive(runningState.value))) {
+  if (Option.isSome(existingSummary) && existingSummary.value.running) {
     yield* output.warn(
       "This stack is currently running. Stop and start it again to apply the updated pinned versions.",
     );

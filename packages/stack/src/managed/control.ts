@@ -15,13 +15,9 @@ const CONTROL_PROTOCOL_VERSION = 1 as const;
 const CONTROL_ID_PATTERN = /^[0-9a-f]{64}$/;
 
 export interface ControlEndpoint {
-  readonly _tag: "Loopback";
   readonly hostname: string;
-  readonly host: string;
   readonly port: number;
   readonly url: string;
-  /** The persisted transport spelling used by stack documents and clients. */
-  readonly path: string;
 }
 
 const controlOwnershipBrand: unique symbol = Symbol("stack/ControlOwnership");
@@ -68,7 +64,7 @@ export class ControlAddressConflictError extends Data.TaggedError("ControlAddres
   readonly cause: unknown;
 }> {
   override get message(): string {
-    return `Control endpoint ${this.endpoint.path} is occupied by a non-Supabase listener`;
+    return `Control endpoint ${this.endpoint.url} is occupied by a non-Supabase listener`;
   }
 }
 
@@ -99,7 +95,6 @@ export class ControlTransport extends Context.Service<ControlTransport, ControlT
 
 export interface ControlOwnershipInput {
   readonly stackId: string;
-  readonly runtimeRoot?: string;
   readonly initialStatus?: ControlOwnerStatus;
 }
 
@@ -113,7 +108,6 @@ export interface ControlOwnership {
   readonly setOwnerStatus: (status: ControlOwnerStatus) => Effect.Effect<void>;
   readonly setState: (state: ControlOwnerState, ready?: boolean) => Effect.Effect<void>;
   readonly close: Effect.Effect<void>;
-  readonly acquiredAfterClose: boolean;
 }
 
 type ControlOwned = ControlOwnership;
@@ -154,29 +148,7 @@ export const controlEndpoint = (
   const port = 49152 + (value % 16384);
   const host = "127.0.0.1";
   const url = `http://${host}:${port}`;
-  return Effect.succeed({
-    _tag: "Loopback",
-    hostname: host,
-    host,
-    port,
-    url,
-    path: url,
-  });
-};
-
-/**
- * Returns the persisted spelling of the deterministic loopback control
- * endpoint. `runtimeRoot` is accepted so callers can derive it alongside
- * their runtime paths; ownership itself never creates or claims a file there.
- */
-export const controlEndpointPath = (runtimeRoot: string, stackId: string): string => {
-  void runtimeRoot;
-  const bytes = ownershipBytes(stackId);
-  if (!CONTROL_ID_PATTERN.test(stackId) || bytes.length < 5) {
-    throw new InvalidControlOwnershipIdError({ ownershipId: stackId });
-  }
-  const value = (bytes[3]! << 8) | bytes[4]!;
-  return `http://127.0.0.1:${49152 + (value % 16384)}`;
+  return Effect.succeed({ hostname: host, port, url });
 };
 
 const decodeOwnerStatus = (
@@ -272,7 +244,6 @@ const makeOwned = (
   ownershipId: string,
   listener: ControlListener,
   statusRef: Ref.Ref<ControlOwnerStatus>,
-  acquiredAfterClose: boolean,
 ): Effect.Effect<ControlOwned> => {
   let closed = false;
   const close = Effect.suspend(() => {
@@ -296,7 +267,6 @@ const makeOwned = (
         ready,
       }),
     close,
-    acquiredAfterClose,
   });
 };
 
@@ -315,7 +285,6 @@ const acquireAtEndpoint = (
   import("effect/Scope").Scope
 > => {
   const statusRef = Ref.makeUnsafe(status);
-  let hadConflict = false;
   const attempt: Effect.Effect<
     ControlAcquisition,
     | ControlBindError
@@ -330,13 +299,12 @@ const acquireAtEndpoint = (
       .bind(endpoint, () => Ref.getUnsafe(statusRef))
       .pipe(Effect.result);
     if (Result.isSuccess(bound)) {
-      const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef, hadConflict);
+      const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef);
       yield* Effect.addFinalizer(() => owned.close);
       return owned;
     }
     const error = bound.failure;
     if (error.reason !== "in-use") return yield* Effect.fail(error);
-    hadConflict = true;
     return yield* attach(endpoint, ownershipId, transport).pipe(
       Effect.mapError((cause) =>
         cause._tag === "ControlTransportError" && cause.reason === "unreachable"
