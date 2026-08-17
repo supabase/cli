@@ -135,9 +135,6 @@ const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
 const awaitOwnerReady = (
   acquisition: ControlAttached,
   onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
-  onStatus: (
-    status: import("./managed/control.ts").ControlOwnerStatus,
-  ) => Effect.Effect<void, SupervisorStartError> = () => Effect.void,
 ): Effect.Effect<
   import("./managed/control.ts").ControlOwnerStatus,
   | SupervisorStartError
@@ -147,7 +144,6 @@ const awaitOwnerReady = (
   | import("./managed/control.ts").ControlAddressConflictError
 > =>
   acquisition.ownerStatus.pipe(
-    Effect.tap(onStatus),
     Effect.flatMap((status) => {
       if (status.state === "running" && status.ready) return Effect.succeed(status);
       return Effect.fail(
@@ -394,10 +390,6 @@ const runManaged = (
                 : awaitOwnerReady(
                     initialAcquisition,
                     platform.onAttachedBeforeReady?.() ?? Effect.void,
-                    (nextStatus) =>
-                      Effect.sync(() => {
-                        attachedOwnerWasStopping ||= nextStatus.state === "stopping";
-                      }),
                   ),
             ),
             Effect.as(initialAcquisition),

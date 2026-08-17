@@ -701,23 +701,33 @@ describe("detached supervisor child journeys", () => {
     const owner = spawnChild(input, { testMode: "hold-start" });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
+    let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    const observedStates: Array<"starting" | "stopping"> = [];
     try {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
-      contender = spawnChild(input, { testMode: "hold-start" });
-      void contender.started.catch(() => undefined);
-      await contender.attachedBeforeReady;
-
+      expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
       const stopResponse = await fetch(`${endpoint.url}/stop`, { method: "POST" });
       expect(stopResponse.status).toBe(202);
       await waitForExit(owner.child);
       expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
 
+      fakeOwner = await listenOwnerSequence(
+        endpoint,
+        document.id,
+        ["starting", "starting", "stopping"],
+        (state) => observedStates.push(state),
+      );
+      contender = spawnChild(input);
+      await contender.attachedBeforeReady;
+
       await expect(contender.started).rejects.toMatchObject({
         message: expect.stringContaining("stopped before takeover"),
       });
+      expect(observedStates).toEqual(["starting", "starting", "stopping"]);
       expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
     } finally {
+      fakeOwner?.close();
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
@@ -786,7 +796,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("reacquires after an attached owner reports stopping before disconnect", async () => {
+  test("restarts after attaching to an owner that is already stopping", async () => {
     const roots = await workspace();
     const input = messageFor(roots);
     const initial = spawnChild(input);
@@ -802,14 +812,14 @@ describe("detached supervisor child journeys", () => {
       fakeOwner = await listenOwnerSequence(
         endpoint,
         document.id,
-        ["starting", "stopping"],
+        ["stopping", "stopping"],
         (state) => observedStates.push(state),
       );
       contender = spawnChild(input);
       void contender.started.catch(() => undefined);
 
       const restarted = await contender.started;
-      expect(observedStates).toEqual(["starting", "stopping"]);
+      expect(observedStates).toEqual(["stopping", "stopping"]);
       expect(restarted.attached).not.toBe(true);
       expect(await fetchOwner(restarted.endpoint)).toMatchObject({ state: "running", ready: true });
       await remoteStop(restarted.endpoint);
