@@ -505,8 +505,7 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
  * cannot run in a transaction block: the open batch is flushed (committed), the
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
  * insert goes in the final batch, so the migration is recorded only after every
- * statement succeeds. A file with no such statements uses one batch and one Sync
- * (a session without `execBatch` falls back to an explicit `BEGIN`/`COMMIT`).
+ * statement succeeds. A file with no such statements uses one batch and one Sync.
  * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
  * every statement sequentially without a CLI-owned transaction. This keeps their
  * session preamble, nontransactional action, and cleanup on the same connection.
@@ -648,35 +647,15 @@ const execMigrationBatch = <E>(
             });
           }
           const base = executed;
-          let completed = 0;
-          const execute =
-            session.execBatch === undefined
-              ? Effect.gen(function* () {
-                  yield* session.exec("BEGIN");
-                  const body = Effect.gen(function* () {
-                    for (const operation of operations) {
-                      if (operation.params === undefined) {
-                        yield* session.exec(operation.sql);
-                      } else {
-                        yield* session.query(operation.sql, operation.params);
-                      }
-                      completed += 1;
-                    }
-                    yield* session.exec("COMMIT");
-                  });
-                  yield* body.pipe(
-                    Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
-                  );
-                })
-              : session.execBatch(operations);
-
-          yield* execute.pipe(
+          yield* session.execBatch(operations).pipe(
             Effect.mapError((cause) => {
               // Acquiring the batch's connection failed: there is no failing
               // statement to name, so the connect error (and its suggestion) is
               // surfaced verbatim instead of being rendered as `At statement: N`.
               if (cause instanceof LegacyDbConnectError) return cause;
-              const globalIndex = base + (cause.statementIndex ?? completed);
+              // `statementIndex` is set by every batch failure the driver raises; a
+              // session that omits it can only have failed before the first statement.
+              const globalIndex = base + (cause.statementIndex ?? 0);
               return legacyFormatExecBatchError(
                 cause,
                 globalIndex,

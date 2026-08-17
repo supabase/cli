@@ -13,6 +13,7 @@ function fakeSession() {
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: () => Effect.void,
+    execBatch: () => Effect.void,
     query: (sql, params) =>
       Effect.sync(() => {
         queries.push({ sql, params });

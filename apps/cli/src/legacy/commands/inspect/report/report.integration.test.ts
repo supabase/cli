@@ -91,6 +91,7 @@ function mockReportConnection(opts: {
       }
       return Effect.succeed({
         exec: () => Effect.void,
+        execBatch: () => Effect.void,
         extensionExists: () => Effect.succeed(false),
         query: () => Effect.succeed([]),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),

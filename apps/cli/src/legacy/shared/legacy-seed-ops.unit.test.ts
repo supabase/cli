@@ -18,6 +18,10 @@ function fakeSeedSession() {
       calls.push({ kind: "exec", sql });
       return Effect.void;
     },
+    execBatch: (statements) => {
+      for (const { sql } of statements) calls.push({ kind: "exec", sql });
+      return Effect.void;
+    },
     query: (sql) => {
       calls.push({ kind: "query", sql });
       return Effect.succeed([]);

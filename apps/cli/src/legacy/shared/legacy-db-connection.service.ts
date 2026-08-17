@@ -107,7 +107,7 @@ export interface LegacyDbSession {
    * failure, surfaced verbatim — not masked as an exec error), consistent with
    * {@link queryRaw}; only the batch's own execution raises `LegacyDbExecError`.
    */
-  readonly execBatch?: (
+  readonly execBatch: (
     statements: ReadonlyArray<LegacyDbBatchStatement>,
   ) => Effect.Effect<void, LegacyDbExecError | LegacyDbConnectError>;
   /**

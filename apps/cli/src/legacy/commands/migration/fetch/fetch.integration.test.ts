@@ -81,6 +81,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
+        execBatch: () => Effect.void,
         query: (sql: string) =>
           Effect.suspend(() =>
             sql === SELECT_SQL

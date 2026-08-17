@@ -548,17 +548,16 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1 }));
       const values = ["plain", 'quote"', "slash\\", "comma,", "{brace}", "line\nbreak", "NULL", ""];
-      yield* runWithBatchServer(server, (session) => {
-        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
-        return session.execBatch([
+      yield* runWithBatchServer(server, (session) =>
+        session.execBatch([
           { sql: "SELECT 1" },
           { sql: "-- comment only" },
           {
             sql: "INSERT INTO history(version, name, statements) VALUES($1, $2, $3)",
             params: ["v'1", "name\\two", values],
           },
-        ]);
-      });
+        ]),
+      );
       expect(server.state.statements).toEqual([
         "SELECT 1",
         "-- comment only",
@@ -595,24 +594,20 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
   it.live("maps a later parse failure to its statement and keeps its local position", () =>
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1, failAt: 2 }));
-      yield* runWithBatchServer(server, (session) => {
-        const execBatch = session.execBatch;
-        if (execBatch === undefined) return Effect.die("execBatch is unavailable");
-        return Effect.gen(function* () {
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
           const error = asBatchExecError(
-            yield* execBatch([
-              { sql: "SELECT 1" },
-              { sql: "-- comment only" },
-              { sql: "SELECT bad" },
-            ]).pipe(Effect.flip),
+            yield* session
+              .execBatch([{ sql: "SELECT 1" }, { sql: "-- comment only" }, { sql: "SELECT bad" }])
+              .pipe(Effect.flip),
           );
           expect(error.statementIndex).toBe(2);
           expect(error.code).toBe("42601");
           expect(error.detail).toBe("batch detail");
           expect(error.position).toBe(10);
           yield* session.exec("SELECT after_error");
-        });
-      });
+        }),
+      );
       expect(server.state.syncs).toBe(1);
     }),
   );
@@ -620,9 +615,8 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
   it.live("maps a position-less runtime failure from completed commands", () =>
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 1 }));
-      yield* runWithBatchServer(server, (session) => {
-        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
-        return session
+      yield* runWithBatchServer(server, (session) =>
+        session
           .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
           .pipe(
             Effect.flip,
@@ -635,17 +629,16 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
                 expect(error.position).toBeUndefined();
               }),
             ),
-          );
-      });
+          ),
+      );
     }),
   );
 
   it.live("reports a deferred Sync failure after every completed statement", () =>
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ failOnSync: true }));
-      yield* runWithBatchServer(server, (session) => {
-        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
-        return session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
+      yield* runWithBatchServer(server, (session) =>
+        session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
           Effect.flip,
           Effect.tap((cause) =>
             Effect.sync(() => {
@@ -654,8 +647,8 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
               expect(error.code).toBe("23514");
             }),
           ),
-        );
-      });
+        ),
+      );
     }),
   );
 
@@ -666,20 +659,17 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
     // the migration's first statement for the database being unreachable.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ stall: true }));
-      const error = yield* runWithBatchServer(server, (session) => {
-        const execBatch = session.execBatch;
-        if (execBatch === undefined) return Effect.die("execBatch is unavailable");
-        return Effect.gen(function* () {
+      const error = yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
           // Interrupting a batch discards its pooled connection, so the next batch has
           // to dial again — and by then the server has stopped listening.
-          yield* execBatch([{ sql: "SELECT 1" }]).pipe(
-            Effect.timeout(Duration.millis(100)),
-            Effect.ignore,
-          );
+          yield* session
+            .execBatch([{ sql: "SELECT 1" }])
+            .pipe(Effect.timeout(Duration.millis(100)), Effect.ignore);
           yield* Effect.sync(server.close);
-          return yield* execBatch([{ sql: "SELECT 1" }]).pipe(Effect.flip);
-        });
-      });
+          return yield* session.execBatch([{ sql: "SELECT 1" }]).pipe(Effect.flip);
+        }),
+      );
       expect(error._tag).toBe("LegacyDbConnectError");
       if (error._tag === "LegacyDbConnectError") {
         expect(error.message).toBe(

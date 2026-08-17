@@ -18,6 +18,7 @@ const mig = (version: string) => `supabase/migrations/${version}_test.sql`;
 /** Minimal session whose `query` fails with the given error. */
 const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
   exec: () => Effect.die("unused"),
+  execBatch: () => Effect.die("unused"),
   query: () => Effect.fail(error),
   extensionExists: () => Effect.die("unused"),
   copyToCsv: () => Effect.die("unused"),
