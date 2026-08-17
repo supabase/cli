@@ -51,6 +51,7 @@ import {
   ManagedStackRepository,
   type ManagedStackRepositoryShape,
 } from "./managed/repository.ts";
+import type { StartedManagedStackResolution } from "./managed/service.ts";
 import { sqliteManagedStackRepositoryLayer, type ManagedSqliteDatabase } from "./managed/sqlite.ts";
 import type { MakeManagedStackServiceOptions, ManagedStackServiceHandle } from "./managed-bun.ts";
 import {
@@ -445,11 +446,16 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makeInMemoryService(root);
 
-    const results = await Promise.all(
-      names.map((stackName) =>
-        service.resolveStack({ operation: "start", workspacePath: workspace, stackName }),
-      ),
-    );
+    // Sequential on purpose: concurrent first-time resolutions in a virgin workspace
+    // race their new-checkout identity transitions into the designed
+    // ManagedIdentityTransitionOwnershipError collision (the competing-transition
+    // tests assert that contract); this fixture's charter is name resolution.
+    const results: Array<StartedManagedStackResolution> = [];
+    for (const stackName of names) {
+      results.push(
+        await service.resolveStack({ operation: "start", workspacePath: workspace, stackName }),
+      );
+    }
 
     expect(results.map(({ stack }) => stack.name)).toEqual(names);
     expect(new Set(results.map(({ stack }) => stack.id)).size).toBe(names.length);
