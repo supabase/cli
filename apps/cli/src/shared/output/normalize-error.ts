@@ -45,33 +45,7 @@ const mappedError = (
         suggestion:
           "Run `supabase start` in this project, or change into a directory with a running stack.",
       };
-    case "StateNotFoundError": {
-      const name = readString(error, "name");
-      return {
-        code: tag,
-        message: "The requested local Supabase stack was not found.",
-        ...(name ? { detail: `Missing stack state: ${name}.` } : {}),
-        suggestion: "Run `supabase start` to create a new local stack.",
-      };
-    }
-    case "DaemonStillRunningError": {
-      const name = readString(error, "name");
-      return {
-        code: tag,
-        message: "The local Supabase stack did not stop cleanly.",
-        ...(name ? { detail: `Stack "${name}" is still running.` } : {}),
-        suggestion: "Wait a moment and try `supabase stop` again.",
-      };
-    }
-    case "StackAlreadyRunningError":
-      return {
-        code: tag,
-        message:
-          readString(error, "name") && typeof error.pid === "number"
-            ? `A Supabase stack "${readString(error, "name")}" is already running (PID ${error.pid}).`
-            : "A local Supabase stack is already running.",
-        suggestion: "Use `supabase stop` before starting another stack for this project.",
-      };
+
     case "DaemonStartError":
       return {
         code: tag,

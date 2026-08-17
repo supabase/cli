@@ -1,4 +1,4 @@
-import type { AvailableServiceVersionUpdate, StackMetadata } from "@supabase/stack/effect";
+import type { AvailableServiceVersionUpdate, VersionManifest } from "@supabase/stack/effect";
 import {
   diffPinnedAndAvailableVersions,
   fillServiceVersionManifest,
@@ -34,7 +34,7 @@ interface RefreshedLinkedProjectSnapshot {
 
 export const refreshLinkedProjectSnapshot = Effect.fnUntraced(function* (
   projectRef: string,
-  stackMetadata: ReadonlyMap<string, StackMetadata>,
+  stackMetadata: ReadonlyArray<{ readonly stackName: string; readonly services: VersionManifest }>,
 ) {
   const remote = yield* ProjectLinkRemote;
   const projectLinkState = yield* ProjectLinkState;
@@ -61,10 +61,10 @@ export const refreshLinkedProjectSnapshot = Effect.fnUntraced(function* (
     normalizeServiceVersions(linkedProject.versions),
   );
 
-  const stacksNeedingUpdate = Array.from(stackMetadata.entries())
-    .map(([stackName, metadata]) => ({
+  const stacksNeedingUpdate = stackMetadata
+    .map(({ stackName, services }) => ({
       stackName,
-      diff: diffPinnedAndAvailableVersions(metadata.services, availableBaseline),
+      diff: diffPinnedAndAvailableVersions(services, availableBaseline),
     }))
     .filter(({ diff }) => diff.length > 0);
 

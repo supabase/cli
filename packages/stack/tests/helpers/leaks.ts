@@ -2,12 +2,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { StackState } from "../../src/StateManager.ts";
+type LeakState = Readonly<{
+  readonly pid?: number;
+  readonly runtime?: { readonly pid?: number };
+}> &
+  Readonly<Record<string, unknown>>;
 
 export interface LeakSnapshot {
   readonly stateDirs: ReadonlyArray<string>;
-  readonly socketPaths: ReadonlyArray<string>;
-  readonly states: ReadonlyArray<StackState>;
+  readonly states: ReadonlyArray<LeakState>;
   readonly tempDataDirs: ReadonlyArray<string>;
   readonly trackedProcessPids: ReadonlyArray<number>;
   readonly containers: ReadonlyArray<string>;
@@ -15,8 +18,7 @@ export interface LeakSnapshot {
 
 export interface LeakArtifacts {
   readonly stateDirs: ReadonlyArray<string>;
-  readonly socketPaths: ReadonlyArray<string>;
-  readonly states: ReadonlyArray<StackState>;
+  readonly states: ReadonlyArray<LeakState>;
   readonly tempDataDirs: ReadonlyArray<string>;
   readonly trackedProcessPids: ReadonlyArray<number>;
   readonly containers: ReadonlyArray<string>;
@@ -35,17 +37,15 @@ const diffList = <A>(before: ReadonlyArray<A>, after: ReadonlyArray<A>): Array<A
 
 function readStackStateDir(homeDir: string): {
   readonly stateDirs: Array<string>;
-  readonly socketPaths: Array<string>;
-  readonly states: Array<StackState>;
+  readonly states: Array<LeakState>;
 } {
-  const stacksRoot = path.join(homeDir, ".supabase", "stacks");
+  const stacksRoot = path.join(homeDir, ".supabase", "managed", "stacks");
   if (!existsSync(stacksRoot)) {
-    return { stateDirs: [], socketPaths: [], states: [] };
+    return { stateDirs: [], states: [] };
   }
 
   const stateDirs: Array<string> = [];
-  const socketPaths: Array<string> = [];
-  const states: Array<StackState> = [];
+  const states: Array<LeakState> = [];
 
   for (const entry of readdirSync(stacksRoot, { withFileTypes: true })) {
     if (!entry.isDirectory()) {
@@ -53,27 +53,22 @@ function readStackStateDir(homeDir: string): {
     }
 
     const dir = path.join(stacksRoot, entry.name);
-    const statePath = path.join(dir, "state.json");
-    const socketPath = path.join(dir, "daemon.sock");
+    const statePath = path.join(dir, "stack.json");
 
     stateDirs.push(dir);
-
-    if (existsSync(socketPath)) {
-      socketPaths.push(socketPath);
-    }
 
     if (!existsSync(statePath)) {
       continue;
     }
 
     try {
-      states.push(JSON.parse(readFileSync(statePath, "utf8")) as StackState);
+      states.push(JSON.parse(readFileSync(statePath, "utf8")) as LeakState);
     } catch {
       // Ignore partially written state files during leak scans.
     }
   }
 
-  return { stateDirs, socketPaths, states };
+  return { stateDirs, states };
 }
 
 function listTempDataDirs(): Array<string> {
@@ -135,11 +130,10 @@ export function takeLeakSnapshot(opts: {
   readonly apiPort?: number;
   readonly processNeedles?: ReadonlyArray<string>;
 }): LeakSnapshot {
-  const { stateDirs, socketPaths, states } = readStackStateDir(opts.homeDir);
+  const { stateDirs, states } = readStackStateDir(opts.homeDir);
 
   return {
     stateDirs,
-    socketPaths,
     states,
     tempDataDirs: listTempDataDirs(),
     trackedProcessPids: listTrackedProcessPids(opts.processNeedles ?? []),
@@ -152,7 +146,6 @@ export function diffLeakArtifacts(before: LeakSnapshot, after: LeakSnapshot): Le
 
   return {
     stateDirs: diffList(before.stateDirs, after.stateDirs),
-    socketPaths: diffList(before.socketPaths, after.socketPaths),
     states: after.states.filter((state) => !beforeStateJson.has(JSON.stringify(state))),
     tempDataDirs: diffList(before.tempDataDirs, after.tempDataDirs),
     trackedProcessPids: diffList(before.trackedProcessPids, after.trackedProcessPids),
@@ -162,9 +155,12 @@ export function diffLeakArtifacts(before: LeakSnapshot, after: LeakSnapshot): Le
 
 export function cleanupLeakArtifacts(artifacts: LeakArtifacts): void {
   for (const state of artifacts.states) {
-    try {
-      process.kill(state.pid, "SIGKILL");
-    } catch {}
+    const pid = state.pid ?? state.runtime?.pid;
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
   }
 
   for (const pid of artifacts.trackedProcessPids) {
@@ -185,12 +181,6 @@ export function cleanupLeakArtifacts(artifacts: LeakArtifacts): void {
   for (const target of [...artifacts.stateDirs, ...artifacts.tempDataDirs]) {
     try {
       rmSync(target, { recursive: true, force: true });
-    } catch {}
-  }
-
-  for (const socketPath of artifacts.socketPaths) {
-    try {
-      rmSync(socketPath, { force: true });
     } catch {}
   }
 }
