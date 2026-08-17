@@ -10,7 +10,7 @@ import {
   legacyParseMigrationVersion,
 } from "./legacy-migration-timestamp.format.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
-import { legacySplitAndTrim } from "./legacy-sql-split.ts";
+import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 
 /**
  * Consolidated `supabase_migrations.schema_migrations` history module — the
@@ -477,11 +477,12 @@ export const legacyReadMigrationFile = (
         }),
     ),
     Effect.map((content) => {
+      const parsed = legacyParseMigrationContent(content);
       const match = MIGRATE_FILE_PATTERN.exec(path.basename(migrationPath));
       return {
         version: match?.[1] ?? "",
         name: match?.[2] ?? "",
-        statements: legacySplitAndTrim(content),
+        statements: parsed.statements,
       };
     }),
   );

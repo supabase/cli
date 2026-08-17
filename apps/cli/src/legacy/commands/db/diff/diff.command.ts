@@ -35,6 +35,11 @@ const config = {
     Flag.withDescription("Use pg-delta to generate schema diff."),
     Flag.optional,
   ),
+  strictCoverage: Flag.boolean("strict-coverage").pipe(
+    Flag.withDescription(
+      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+    ),
+  ),
   from: Flag.string("from").pipe(
     Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),
     Flag.optional,
@@ -45,7 +50,9 @@ const config = {
   ),
   output: Flag.string("output").pipe(
     Flag.withAlias("o"),
-    Flag.withDescription("Write explicit diff output to a file path."),
+    Flag.withDescription(
+      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
+    ),
     Flag.optional,
   ),
   dbUrl: Flag.string("db-url").pipe(
@@ -72,7 +79,9 @@ const config = {
   ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
-    Flag.withDescription("Saves schema diff to a new migration file."),
+    Flag.withDescription(
+      "In normal mode, names and saves the complete schema diff as a new migration; it does not filter objects. Ignored with --from/--to.",
+    ),
     Flag.optional,
   ),
   schema: Flag.string("schema").pipe(
@@ -91,7 +100,9 @@ const config = {
 export type LegacyDbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbDiffCommand = Command.make("diff", config).pipe(
-  Command.withDescription("Diffs the local database for schema changes."),
+  Command.withDescription(
+    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; in normal mode, -f names and saves the complete diff as a migration and does not filter objects. Explicit --from/--to output is flattened review SQL, not a portable apply script.",
+  ),
   Command.withShortDescription("Diffs the local database for schema changes"),
   Command.withHandler((flags) =>
     legacyDbDiff(flags).pipe(
@@ -101,6 +112,7 @@ export const legacyDbDiffCommand = Command.make("diff", config).pipe(
           "use-pgadmin": flags.usePgAdmin,
           "use-pg-schema": flags.usePgSchema,
           "use-pg-delta": flags.usePgDelta,
+          "strict-coverage": flags.strictCoverage,
           from: flags.from,
           to: flags.to,
           output: flags.output,

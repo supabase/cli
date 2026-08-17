@@ -1,7 +1,7 @@
 # `supabase db pull`
 
 Native Effect port. Pulls the remote schema into either a new timestamped
-migration (diffing a throwaway shadow against the remote, native pg-delta or
+migration (diffing a throwaway shadow against the remote, bundled pg-delta or
 migra) or declarative files (`--declarative`, native pg-delta export). The
 initial-migra pull (no local migrations) seeds the migration file with a native
 `pg_dump` of the remote schema (a Docker `pg_dump` container, with IPv4
@@ -24,32 +24,46 @@ Go checks `usePgDelta` before `EXPERIMENTAL`, so that combination never
 delegates and just runs the declarative export normally (see the
 Notes/Delegation section below).
 
+Pg-delta runs in-process by default. Set `SUPABASE_USE_PG_DELTA_NEXT=false` for
+the legacy edge-runtime implementation and runtime package/catalog cache; there
+is no automatic fallback. Coverage gaps warn; `--strict-coverage` makes them
+fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
+`supabase/.temp/pgdelta/v2/debug/<id>/`. Bundled output may use different SQL
+and transaction-aware file splits but must apply and converge. Its formatter
+defaults to lowercase SQL at width 180; config overrides it, and JSON `null`
+disables formatting without disabling safe compaction.
+
 ## Files Read
 
-| Path                                                                                                                                 | Format     | When                                                                                                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`)                                                                                              |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                                            | dotenv     | shadow provisioning (`--declarative` and migration-style pull; not the delegated `--experimental` structured-dump path)                          |
-| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                                               | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                                                       |
-| `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | history reconciliation + shadow provisioning                                                                                                     |
-| `<workdir>/supabase/roles.sql`                                                                                                       | SQL        | migration-style pull only (`--declarative`'s bare shadow skips `SetupDatabase`); missing file tolerated                                          |
-| `~/.supabase/access-token`                                                                                                           | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`                                                                                                    |
-| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | linked ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                           |
-| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | migration-style pull against the local target only: 3-source declarative-schema fallback ladder, first non-empty source wins (same as `db diff`) |
+| Path                                                                                      | Format     | When                                                                                                                    |
+| ----------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                          | TOML       | always (db port/password, `[experimental.pgdelta]`)                                                                     |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv     | shadow provisioning (`--declarative` and migration-style pull; not the delegated `--experimental` structured-dump path) |
+| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                    | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                              |
+| `<workdir>/supabase/migrations/*.sql`                                                     | SQL        | history reconciliation + shadow provisioning                                                                            |
+| `<workdir>/supabase/roles.sql`                                                            | SQL        | migration-style pull only (`--declarative`'s bare shadow skips `SetupDatabase`); missing file tolerated                 |
+| `~/.supabase/access-token`                                                                | plain text | linked target with no `SUPABASE_ACCESS_TOKEN`                                                                           |
+| `<workdir>/supabase/.temp/project-ref`                                                    | plain text | linked ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                  |
+| `<workdir>/supabase/.temp/{pgdelta-version,edge-runtime-version}`                         | plain text | legacy pg-delta opt-out only                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                                                 | JSON       | legacy opt-out's catalog snapshots                                                                                      |
 
 ## Files Written
 
 | Path                                                             | Format | When                                                                                                                                                   |
 | ---------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`      | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed)                                                                             |
-| `<workdir>/supabase/database/**`                                 | SQL    | `--declarative`                                                                                                                                        |
+| `<workdir>/supabase/schemas/**`                                  | SQL    | `--declarative`                                                                                                                                        |
+| `<workdir>/supabase/schemas/.pgdelta-export.json`                | JSON   | bundled `--declarative` export metadata                                                                                                                |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                | JSON   | legacy pg-delta opt-out catalog snapshots                                                                                                              |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`         | PEM    | legacy opt-out, for a Supabase TLS target                                                                                                              |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`          | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                    |
 | `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**` | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to) |
 | `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                |
 | `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                            |
 
 ## Docker
 
-- Edge-runtime container (pg-delta export / pg-delta or migra diff).
+- Edge-runtime container (migra, or pg-delta under the legacy opt-out).
 - Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource` in
   `legacy/commands/db/shared/legacy-shadow-source.ts` / `legacyPrepareRawShadow` in
   `legacy/shared/db-bootstrap/shadow-database.ts`, which also owns the lower-level primitives
@@ -70,17 +84,18 @@ Notes/Delegation section below).
 
 ## Environment Variables
 
-| Variable                                                                              | Purpose                                                                                                                                                                                              | Required? |
-| ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`                                                               | auth for the linked target                                                                                                                                                                           | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (overridden by `-p`)                                                                                                                                                              | no        |
-| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                               | no        |
-| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                     | no        |
-| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset`; ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
-| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                  | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                                                                                                                           | no        |
-| `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                                                                                                                     | no        |
-| `PGDELTA_NPM_REGISTRY`                                                                | scoped npm registry for edge-runtime                                                                                                                                                                 | no        |
+| Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for the linked target                                                                                                                                                                                          | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (overridden by `-p`)                                                                                                                                                                             | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                              | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                                                                                                                                          | no        |
+| `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                                                                                                                                    | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                     | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | legacy opt-out's npm registry                                                                                                                                                                                       | no        |
 
 ## Exit Codes
 
@@ -91,7 +106,12 @@ Notes/Delegation section below).
 | `1`  | `--project-ref` set with a resolved target other than linked; `--project-ref` combined with the `--experimental` structured-dump pull (see Notes)                                                   |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
-> exit** for `db pull`.
+> exit** for `db pull`. The message and exit code match Go, but the stderr footer
+> does not: instead of Go's generic
+> `Try rerunning the command with --debug to troubleshoot the error.`, `db pull`
+> prints
+> `The remote database is already in sync with your local migrations — nothing to pull.`
+> (deliberate divergence — see `docs/go-cli-divergences.md`).
 
 ## Output
 
@@ -104,6 +124,9 @@ written to <dir>`. Plus the `--use-pg-delta` deprecation line, the
 `--experimental` structured-dump deprecation line, and the history-update
 prompt. On success the PostRun line `Finished supabase db pull.` is printed to
 stdout.
+
+A configured `[db.migrations].schema_paths` also warns on the migration path
+that it no longer replaces the migrations baseline.
 
 ### `--output-format json` / `stream-json`
 
@@ -127,7 +150,11 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   (see below) — `rebuildDelegateArgs` never forwards `--project-ref` to the
   delegated Go child, which would otherwise silently re-resolve the workdir's
   own linked ref instead.
-- `--use-pg-delta` is hidden and emits a deprecation warning to stderr.
+- `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
+- Migration-style pulls always compare migrations with the live target;
+  declarative files and `schema_paths` do not replace that baseline.
+- Bundled nontransactional files begin with
+  `-- pg-delta: transaction=false`, which later migration commands honor.
 - The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
   the remote schema into the migration file, then appends the migra diff. An empty
   diff after a non-empty dump is swallowed; an empty dump + empty diff is "No schema

@@ -42,6 +42,9 @@ import { legacyDbStart } from "./start.handler.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
 const DEFAULT_FLAGS: LegacyDbStartFlags = { fromBackup: Option.none() };
+const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
+const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
+const GLOBALS_FINGERPRINT = "CREATE ROLE anon";
 
 function flags(fromBackup?: string): LegacyDbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
@@ -265,6 +268,7 @@ interface SetupOpts {
   readonly running?: boolean;
   readonly runningFails?: boolean;
   readonly configContents?: string;
+  readonly projectEnvContents?: string;
   readonly skipConfig?: boolean;
   readonly workdir?: string;
   readonly cwd?: string;
@@ -288,6 +292,9 @@ function setup(opts: SetupOpts = {}) {
   const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
+    if (opts.projectEnvContents !== undefined) {
+      writeFileSync(join(workdir, "supabase", ".env"), opts.projectEnvContents);
+    }
   }
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
@@ -526,10 +533,11 @@ describe("legacy db start", () => {
   );
 
   it.live(
-    "caches the migrations catalog after a fresh-volume setup when pg-delta is enabled",
+    "caches the migrations catalog after a fresh-volume setup with the legacy pg-delta engine",
     () => {
       const { layer, out, edgeRunCalls } = setup({
         configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_USE_PG_DELTA_NEXT=false\n",
         route: freshVolumeRoute(defaultRoute()),
         catalogStdout: '{"snapshot":"ok"}',
       });
@@ -550,10 +558,11 @@ describe("legacy db start", () => {
   );
 
   it.live(
-    "warns without failing db start when the migrations-catalog export fails on a fresh volume",
+    "warns without failing db start when the legacy migrations-catalog export fails on a fresh volume",
     () => {
       const { layer, out } = setup({
         configContents: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        projectEnvContents: "SUPABASE_USE_PG_DELTA_NEXT=false\n",
         route: freshVolumeRoute(defaultRoute()),
         catalogExportFailWith: "edge-runtime script produced no output",
       });
@@ -584,16 +593,43 @@ describe("legacy db start", () => {
   it.live(
     "restarts against an existing volume: skips the SetupLocalDatabase-equivalent pipeline but still writes _current_branch",
     () => {
-      const { layer, out, child } = setup();
+      const { layer, out, child, dbSession } = setup();
       return Effect.gen(function* () {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Starting database from backup...\n");
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+        // No schema/globals/vault/roles SQL — the setup pipeline really is skipped. The
+        // only SQL on this path is the Database Webhooks convergence, which reads the
+        // migration history and (webhooks disabled, no migration owning pg_net) drops it.
+        expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(
+          false,
+        );
+        expect(dbSession.calls.some((call) => call.sql.includes(GLOBALS_FINGERPRINT))).toBe(false);
+        expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
+          true,
+        );
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
       });
     },
   );
+
+  it.live("installs pg_net on an existing volume from effective Webhooks config", () => {
+    const { layer, out, child, dbSession } = setup({
+      configContents: 'project_id = "test"\n[experimental.webhooks]\nenabled = false\n',
+      projectEnvContents: "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Initialising schema...");
+      expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+      expect(
+        dbSession.calls.filter(
+          (call) => call.kind === "exec" && call.sql.includes(PG_NET_CREATE_FINGERPRINT),
+        ),
+      ).toHaveLength(1);
+    });
+  });
 
   it.live(
     "--from-backup on a fresh volume: uses the restore entrypoint, binds the backup file, and skips the SetupLocalDatabase-equivalent pipeline entirely",

@@ -87,7 +87,7 @@ CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 
 
 --
--- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner: 
+-- Name: EXTENSION pg_net; Type: COMMENT; Schema: -; Owner:
 --
 
 COMMENT ON EXTENSION pg_net IS 'Async HTTP';

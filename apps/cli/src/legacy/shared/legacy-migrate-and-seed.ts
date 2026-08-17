@@ -2,12 +2,17 @@ import { Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   LegacyMigrationApplyError,
   legacyApplyMigrationFile,
   legacyApplySchemaFiles,
 } from "./legacy-migration-apply.ts";
 import { legacyLoadPartialMigrations } from "./legacy-migration-history.ts";
+import {
+  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+  legacyIsPgNetUnavailableError,
+} from "./legacy-pg-net-guidance.ts";
 import { legacyApplySeedFiles, type LegacySeedConfig } from "./legacy-seed.ts";
 
 /** Config consumed by `legacyMigrateAndSeed`. */
@@ -27,7 +32,28 @@ export interface LegacyMigrateAndSeedConfig {
   readonly pgDeltaEnabled: boolean;
   /** `db.migrations.schema_paths` — `Config.Db.Migrations.SchemaPaths`. Only read by the declarative branch above. */
   readonly schemaPaths: ReadonlyArray<string>;
+  /**
+   * Effective local `[experimental.webhooks].enabled` value. `undefined` means
+   * this is not a local start/reset replay and disables local-only remediation.
+   */
+  readonly localDatabaseWebhooksEnabled?: boolean;
 }
+
+const migrationApplyError = (
+  message: string,
+  dbError: LegacyDbExecError | undefined,
+  localDatabaseWebhooksEnabled: boolean | undefined,
+): LegacyMigrationApplyError => {
+  const pgNetUnavailable =
+    localDatabaseWebhooksEnabled === false &&
+    dbError !== undefined &&
+    legacyIsPgNetUnavailableError(dbError);
+  return new LegacyMigrationApplyError({
+    message,
+    suggestion: pgNetUnavailable ? LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION : undefined,
+    reason: pgNetUnavailable ? "local_pg_net_unavailable" : undefined,
+  });
+};
 
 /**
  * Reapplies local migrations up to `version`, then runs seed files. Port of Go's
@@ -66,12 +92,8 @@ export const legacyMigrateAndSeed = (
       );
       for (const migrationPath of pending) {
         yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-        yield* legacyApplyMigrationFile(
-          session,
-          fs,
-          path,
-          migrationPath,
-          (message) => new LegacyMigrationApplyError({ message }),
+        yield* legacyApplyMigrationFile(session, fs, path, migrationPath, (message, dbError) =>
+          migrationApplyError(message, dbError, config.localDatabaseWebhooksEnabled),
         );
       }
     }

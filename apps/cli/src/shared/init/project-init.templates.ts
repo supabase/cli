@@ -409,7 +409,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 [experimental.pgdelta]
 enabled = true
 # Directory under \`supabase/\` where declarative files are written.
-# declarative_schema_path = "./database"
+# declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":80,\\"commaStyle\\":\\"trailing\\"}"
 `;
