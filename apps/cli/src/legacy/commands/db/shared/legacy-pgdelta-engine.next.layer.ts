@@ -3,6 +3,7 @@ import type { Pool } from "pg";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
+  legacyLayeredParseEnv,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
 } from "../../../shared/legacy-db-config.parse.ts";
@@ -101,10 +102,13 @@ function normalizeNextDiff(
   };
 }
 
-export function legacyParsePgDeltaNextEndpoint(endpoint: LegacyPgDeltaDatabaseEndpoint) {
+export function legacyParsePgDeltaNextEndpoint(
+  endpoint: LegacyPgDeltaDatabaseEndpoint,
+  projectEnv: Readonly<Record<string, string>>,
+) {
   return Effect.gen(function* () {
     if (endpoint.connection !== undefined) return endpoint.connection;
-    const parsed = parseLegacyConnectionString(endpoint.ref);
+    const parsed = parseLegacyConnectionString(endpoint.ref, legacyLayeredParseEnv(projectEnv));
     if (parsed !== undefined) return parsed;
     return yield* Effect.fail(
       new LegacyPgDeltaEngineError({
@@ -164,8 +168,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
         ),
       );
 
-    const acquireDatabase = (endpoint: LegacyPgDeltaDatabaseEndpoint) =>
-      legacyParsePgDeltaNextEndpoint(endpoint).pipe(
+    const acquireDatabase = (
+      endpoint: LegacyPgDeltaDatabaseEndpoint,
+      projectEnv: Readonly<Record<string, string>>,
+    ) =>
+      legacyParsePgDeltaNextEndpoint(endpoint, projectEnv).pipe(
         Effect.flatMap((connection) => legacyAcquirePgPool(connection, endpoint.connectOptions)),
       );
 
@@ -252,7 +259,9 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
             }
             const endpointPool = (endpoint: LegacyPgDeltaEndpoint) =>
               Effect.gen(function* () {
-                if (endpoint.kind === "database") return yield* acquireDatabase(endpoint);
+                if (endpoint.kind === "database") {
+                  return yield* acquireDatabase(endpoint, input.context.projectEnv);
+                }
                 if (shadow === undefined) {
                   return yield* Effect.die("missing pg-delta migrations shadow");
                 }
@@ -280,15 +289,15 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const migrationsPool = yield* acquireDatabase(input.source);
-            const desiredPool = yield* acquireDatabase(input.target);
+            const migrationsPool = yield* acquireDatabase(input.source, input.context.projectEnv);
+            const desiredPool = yield* acquireDatabase(input.target, input.context.projectEnv);
             return yield* diffPools(input, migrationsPool, desiredPool);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
       exportDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const pool = yield* acquireDatabase(input.target);
+            const pool = yield* acquireDatabase(input.target, input.context.projectEnv);
             const result = yield* adapter.exportDeclarativeSchema({
               pool,
               schema: input.schema,
