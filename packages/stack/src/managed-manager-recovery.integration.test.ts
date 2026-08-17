@@ -34,7 +34,7 @@ import {
 } from "../tests/helpers/managed-manager.ts";
 
 const roots: Array<string> = [];
-const COLLIDING_STACK_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const COLLIDING_STACK_A = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 const COLLIDING_STACK_B = `${COLLIDING_STACK_A.slice(0, 10)}${"f".repeat(54)}`;
 afterEach(() => cleanupRoots(roots));
 const setup = () => setupManagedManager(roots);

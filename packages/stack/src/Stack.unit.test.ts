@@ -787,13 +787,9 @@ describe("Stack", () => {
             .pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(authSpawnStarted);
 
-          const activationCompleted = yield* Effect.race(
-            activator.activate("postgres").pipe(Effect.as(true)),
-            Effect.sleep("200 millis").pipe(Effect.as(false)),
-          );
+          yield* activator.activate("postgres");
 
           yield* Fiber.interrupt(manualStart);
-          expect(activationCompleted).toBe(true);
           yield* stack.stop();
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
@@ -837,14 +833,10 @@ describe("Stack", () => {
         const starting = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(postgresReleaseStarted);
 
-        const mailpitBeganConcurrently = yield* Effect.race(
-          Deferred.await(mailpitReleaseStarted).pipe(Effect.as(true)),
-          Effect.sleep("200 millis").pipe(Effect.as(false)),
-        );
+        yield* Deferred.await(mailpitReleaseStarted);
         yield* Deferred.succeed(allowPostgresRelease, undefined);
         yield* Fiber.interrupt(starting);
 
-        expect(mailpitBeganConcurrently).toBe(true);
         yield* stack.stop();
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
@@ -881,7 +873,6 @@ describe("Stack", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Fiber.join(disposeFiber);
         yield* Deferred.succeed(allowSpawn, undefined);
-        yield* Effect.sleep("20 millis");
         yield* Fiber.interrupt(activationFiber);
 
         expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
@@ -1096,9 +1087,14 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       yield* stack.start();
+      const authChanges = yield* stack.stateChanges("auth");
+      const stopped = yield* authChanges.pipe(
+        Stream.filter((state) => state.status === "Stopped"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
       yield* stack.stopService("auth");
-      yield* Effect.sleep("20 millis");
-      expect((yield* stack.getState("auth")).status).toBe("Stopped");
+      expect((yield* Fiber.join(stopped))._tag).toBe("Some");
 
       yield* stack.stop();
       yield* stack.start();
@@ -1110,12 +1106,16 @@ describe("Stack", () => {
 
   it.live("releases only the ports in a lazy service dependency closure", () => {
     const released = new Set<PortField>();
+    const authReleaseStarted = Deferred.makeUnsafe<void>();
     const lease: PortLease = {
       ports: defaultPorts,
       reserve: () => Effect.void,
       release: (fields) =>
-        Effect.sync(() => {
-          for (const field of fields) released.add(field);
+        Effect.gen(function* () {
+          for (const field of fields) {
+            released.add(field);
+            if (field === "authPort") yield* Deferred.succeed(authReleaseStarted, undefined);
+          }
         }),
       releaseAll: Effect.void,
     };
@@ -1132,7 +1132,7 @@ describe("Stack", () => {
       const startFiber = yield* stack
         .startService("auth")
         .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Effect.sleep("50 millis");
+      yield* Deferred.await(authReleaseStarted);
       expect(released.has("authPort")).toBe(true);
       expect(released.has("postgrestPort")).toBe(false);
 

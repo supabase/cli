@@ -83,11 +83,17 @@ const spawnBoundChild = (port: number) => {
       'const http=require("node:http"); const server=http.createServer((_req,res)=>res.end("child")); server.listen(Number(process.argv[1]), "127.0.0.1", () => process.send?.("ready"));',
       String(port),
     ],
-    { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+    { stdio: ["ignore", "ignore", "pipe", "ipc"] },
   );
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Uint8Array) => {
+    stderr += new TextDecoder().decode(chunk);
+  });
   const ready = new Promise<void>((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code) => reject(new Error(`child exited before ready: ${code}`)));
+    child.once("exit", (code) =>
+      reject(new Error(`child exited before ready: ${code}\n${stderr || "(no stderr)"}`)),
+    );
     child.on("message", (message) => {
       if (message === "ready") resolve();
     });
