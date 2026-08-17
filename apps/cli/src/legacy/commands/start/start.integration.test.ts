@@ -2399,13 +2399,14 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live(
-      "caches the migrations catalog after a fresh-volume setup when pg-delta is enabled",
+      "caches the migrations catalog after a fresh-volume setup for the legacy engine",
       () => {
         const { layer, out, workdir, edgeRunCalls } = setup({
           configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
           route: freshVolumeRoute(defaultRoute()),
           catalogStdout: '{"snapshot":"ok"}',
         });
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).not.toContain("failed to cache migrations catalog");
@@ -2424,11 +2425,12 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "warns without failing supabase start when the migrations-catalog export fails on a fresh volume",
       () => {
-        const { layer, out } = setup({
+        const { layer, out, workdir } = setup({
           configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
           route: freshVolumeRoute(defaultRoute()),
           catalogExportFailWith: "edge-runtime script produced no output",
         });
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
         return Effect.gen(function* () {
           const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);

@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { describe } from "vitest";
 
 import { runSupabase } from "./cli.ts";
@@ -38,6 +39,26 @@ export {
  * cli-e2e-ci runner.
  */
 export const describeLive = describe.skipIf(!isLiveConfigured());
+
+function hasDockerDaemon(): boolean {
+  try {
+    execSync("docker info", { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `describe` for local-stack live tests that additionally require a reachable
+ * Docker daemon. Composes the configured-live gate (`isLiveConfigured`) with a
+ * `docker info` probe so these suites stay inert (skipped, not failed) outside
+ * the cli-e2e-ci runner — a machine that merely exposes Docker must never
+ * launch a real stack just by collecting the live Vitest project. The
+ * synchronous read-only probe runs once when this helper module is collected,
+ * and only when the live environment is configured.
+ */
+export const describeDockerLive = describe.skipIf(!isLiveConfigured() || !hasDockerDaemon());
 
 /**
  * `describe` for project-scoped live suites: runs only when the live env is

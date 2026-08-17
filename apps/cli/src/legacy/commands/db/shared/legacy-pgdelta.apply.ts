@@ -1,6 +1,6 @@
 /**
  * Port of Go's `pgdelta.ApplyDeclarative` (`apps/cli-go/internal/pgdelta/apply.go:303-354`) —
- * CLI-1956's declarative-apply runner: applies `supabase/database` (or the configured
+ * CLI-1956's declarative-apply runner: applies `supabase/schemas` (or the configured
  * declarative dir) to the shadow's `contrib_regression` override database via pg-delta's
  * declarative apply engine, run inside the edge-runtime container.
  *
@@ -884,7 +884,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     readonly declarativeDirAbs: string;
     /**
      * Go's `utils.GetDeclarativeDir()` (`apply.go:304`) — the config value verbatim
-     * (already `supabase/`-prefixed when relative) or the relative `supabase/database`
+     * (already `supabase/`-prefixed when relative) or the relative `supabase/schemas`
      * default. Used ONLY in the not-found error message below: Go interpolates this
      * relative value, never the `filepath.Abs`-resolved `absDir` it separately computes
      * for the bind.

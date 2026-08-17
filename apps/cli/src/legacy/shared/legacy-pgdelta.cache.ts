@@ -73,7 +73,7 @@ const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
 // `internal/utils/misc.go` — `ProjectHostPattern`, matches a direct `db.<ref>.supabase.{co,red}` host.
 const PROJECT_HOST_PATTERN = /^(db\.)([a-z]{20})\.supabase\.(co|red)$/;
 
-/** Inputs to `setupInputsToken` — everything `start.SetupDatabase` consumes. */
+/** Inputs that shape the legacy `WithLegacyPgNetBaseline` shadow setup. */
 export interface LegacySetupInputs {
   /** The resolved Postgres image (`Config.Db.Image`); only its tag is used. */
   readonly image: string;

@@ -55,6 +55,14 @@ export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
  */
 export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyncError")<{
   readonly message: string;
+  /**
+   * Explains the non-zero exit instead of letting `Output.fail` append the
+   * generic "Try rerunning the command with --debug" footer — an in-sync
+   * database is a finding, not a failure to troubleshoot. The message and exit
+   * code stay Go-identical; only the footer diverges (see
+   * `docs/go-cli-divergences.md`).
+   */
+  readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;

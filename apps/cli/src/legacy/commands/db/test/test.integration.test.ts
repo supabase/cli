@@ -78,6 +78,8 @@ import {
   LegacyDockerRun,
   type LegacyDockerRunOpts,
 } from "../../../shared/legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyRunTestDbCommand } from "../../../shared/legacy-test-db.command-handler.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyDbCommand } from "../db.command.ts";
@@ -274,6 +276,14 @@ describe("legacy db test (alias) integration", () => {
         Layer.succeed(LegacyGoProxy, {
           exec: () => Effect.die("LegacyGoProxy not needed for `db test` dispatch"),
           execCapture: () => Effect.die("LegacyGoProxy not needed for `db test` dispatch"),
+        }),
+        Layer.succeed(LegacyEdgeRuntimeScript, {
+          run: () => Effect.die("LegacyEdgeRuntimeScript not needed for `db test` dispatch"),
+        }),
+        Layer.succeed(LegacyPgDeltaSslProbe, {
+          requireSsl: () => Effect.die("LegacyPgDeltaSslProbe not needed for `db test` dispatch"),
+          requireSslForHost: () =>
+            Effect.die("LegacyPgDeltaSslProbe not needed for `db test` dispatch"),
         }),
       );
       const root = Command.make("supabase").pipe(

@@ -33,6 +33,7 @@ import {
 } from "./legacy-management-api-runtime.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
+  legacyLayeredParseEnv,
   legacyPoolerConfigFromConnectionString,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
@@ -506,9 +507,10 @@ export const legacyDbConfigLayer = Layer.effect(
           // project env under the shell env (`legacyLoadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
           const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-          const parseEnv = (name: string): string | undefined =>
-            process.env[name] ?? projectEnv[name];
-          const conn = parseLegacyConnectionString(flags.dbUrl.value, parseEnv);
+          const conn = parseLegacyConnectionString(
+            flags.dbUrl.value,
+            legacyLayeredParseEnv(projectEnv),
+          );
           if (conn === undefined) {
             return yield* Effect.fail(
               new Errors.LegacyDbConfigParseUrlError({

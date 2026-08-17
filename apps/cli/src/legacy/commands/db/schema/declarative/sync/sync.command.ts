@@ -53,20 +53,28 @@ const config = {
 // so the handler input merges it in alongside the leaf's own flags.
 export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
   readonly noCache: boolean;
+  readonly strictCoverage: boolean;
 };
 
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
-  Command.withDescription("Generate a new migration from declarative schema."),
+  Command.withDescription(
+    "Compares the supabase/migrations baseline with the complete declarative schema tree and writes the difference as migration files. When a legacy export omits known implicit extensions, interactive sync can add declarations and re-plan before writing. Use --no-apply for non-interactive generation without changing the local database; --apply or global --yes applies locally and updates local migration history.",
+  ),
   Command.withShortDescription("Generate a new migration from declarative schema"),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       // `--no-cache` is shared on the parent group; read the resolved value there.
       const shared = yield* legacyDbSchemaDeclarativeSharedBase;
-      const merged: LegacyDbSchemaDeclarativeSyncFlags = { ...flags, noCache: shared.noCache };
+      const merged: LegacyDbSchemaDeclarativeSyncFlags = {
+        ...flags,
+        noCache: shared.noCache,
+        strictCoverage: shared.strictCoverage,
+      };
       return yield* legacyDbSchemaDeclarativeSync(merged).pipe(
         withLegacyCommandInstrumentation({
           flags: {
             "no-cache": merged.noCache,
+            "strict-coverage": merged.strictCoverage,
             schema: merged.schema,
             file: merged.file,
             name: merged.name,
