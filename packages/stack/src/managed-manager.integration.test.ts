@@ -7,8 +7,10 @@ import {
   existsSync,
   mkdtempSync,
   mkdirSync,
+  realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,7 +37,7 @@ import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import type { ManagedStackManagerShape } from "./managed/manager.ts";
 import { deleteManagedStack, stopManagedStack, updateManagedLaunch } from "./managed/lifecycle.ts";
-import { resolveStackSummary } from "./discovery.ts";
+import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
 
 const roots: Array<string> = [];
 const COLLIDING_STACK_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -195,6 +197,83 @@ describe("managed stack journeys", () => {
       );
     }).pipe(Effect.provide(controlTransportLayer));
   });
+
+  it.live(
+    "isolates concurrent default stacks in sibling nested projects and keeps their sticky ports",
+    () => {
+      const { layer, stateRoot } = setup();
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const root = mkdtempSync(join(tmpdir(), "managed-nested-projects-test-"));
+          roots.push(root);
+          const repository = makeRepository(root);
+          const firstProject = join(repository, "apps", "first");
+          const secondProject = join(repository, "apps", "second");
+          mkdirSync(firstProject, { recursive: true });
+          mkdirSync(secondProject, { recursive: true });
+          mkdirSync(join(firstProject, "supabase"));
+          mkdirSync(join(secondProject, "supabase"));
+          writeFileSync(join(firstProject, "supabase", "config.toml"), 'project_id = "remote"\n');
+          writeFileSync(join(secondProject, "supabase", "config.toml"), 'project_id = "remote"\n');
+          const firstAlias = join(root, "first-project-link");
+          symlinkSync(firstProject, firstAlias, "dir");
+          const manager = yield* ManagedStackManager;
+          const startAndClose = (project: string) =>
+            Effect.scoped(
+              startWithOwner(manager, project, automaticDocument()).pipe(
+                Effect.map((result) => result.stack),
+              ),
+            );
+          const [first, second] = yield* Effect.all(
+            [firstProject, secondProject].map((project) => startAndClose(project)),
+            { concurrency: "unbounded" },
+          );
+          if (first === undefined || second === undefined) {
+            throw new Error("expected both nested project stacks");
+          }
+          const firstPort = first.ports.find((assignment) => assignment.key === "api.port")?.port;
+          const secondPort = second.ports.find((assignment) => assignment.key === "api.port")?.port;
+          expect(first.id).not.toBe(second.id);
+          expect(firstPort).toBeDefined();
+          expect(secondPort).toBeDefined();
+          expect(firstPort).not.toBe(secondPort);
+          expect(first.identity.localProjectKey).toBe("apps/first");
+          expect(second.identity.localProjectKey).toBe("apps/second");
+          expect(first.workspace.path).toBe(realpathSync(firstProject));
+          expect(second.workspace.path).toBe(realpathSync(secondProject));
+          const firstListing = yield* listStackSummaries({
+            cacheRoot: stateRoot,
+            projectDir: firstAlias,
+          });
+          const secondListing = yield* listStackSummaries({
+            cacheRoot: stateRoot,
+            projectDir: secondProject,
+          });
+          expect(firstListing).toHaveLength(1);
+          expect(secondListing).toHaveLength(1);
+          expect(firstListing[0]?.name).toBe("default");
+          expect(secondListing[0]?.name).toBe("default");
+
+          const restartedFirst = yield* startAndClose(firstProject);
+          const restartedSecond = yield* startAndClose(secondProject);
+          expect(restartedFirst.id).toBe(first.id);
+          expect(restartedSecond.id).toBe(second.id);
+          expect(
+            restartedFirst.ports.find((assignment) => assignment.key === "api.port")?.port,
+          ).toBe(firstPort);
+          expect(
+            restartedSecond.ports.find((assignment) => assignment.key === "api.port")?.port,
+          ).toBe(secondPort);
+        }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provide(NodeFileSystem.layer),
+        Effect.provide(NodePath.layer),
+        Effect.provide(gitConfigStoreLayer),
+        Effect.provide(controlTransportLayer),
+      );
+    },
+  );
 
   it.live("updates launch metadata and recovers a stale owner through the lifecycle facade", () => {
     const { layer, workspace } = setup();
@@ -727,23 +806,29 @@ describe("managed stack journeys", () => {
         const root = mkdtempSync(join(tmpdir(), "managed-repair-test-"));
         roots.push(root);
         const repository = makeRepository(root);
+        const firstProject = join(repository, "apps", "first");
+        const secondProject = join(repository, "apps", "second");
+        mkdirSync(firstProject, { recursive: true });
+        mkdirSync(secondProject, { recursive: true });
         const manager = yield* ManagedStackManager;
         const original = yield* Effect.scoped(
-          startWithOwner(manager, repository, automaticDocument()),
+          startWithOwner(manager, firstProject, automaticDocument()),
         );
         const secondary = yield* Effect.scoped(
-          startWithOwner(manager, repository, automaticDocument(), "stopped", "secondary"),
+          startWithOwner(manager, secondProject, automaticDocument(), "stopped", "secondary"),
         );
         const originalId = original.stack.id;
         const originalPort = original.stack.ports[0]?.port;
         const secondaryId = secondary.stack.id;
         const moved = join(root, "moved");
         renameSync(repository, moved);
-        const discovery = yield* manager.discoverWorkspace(moved);
+        const movedFirstProject = realpathSync(join(moved, "apps", "first"));
+        const movedSecondProject = realpathSync(join(moved, "apps", "second"));
+        const discovery = yield* manager.discoverWorkspace(movedFirstProject);
         if (discovery.state !== "needsRepair") throw new Error("expected repair");
-        const deleteBeforeRepair = yield* deleteManagedStack({ workspacePath: moved }).pipe(
-          Effect.exit,
-        );
+        const deleteBeforeRepair = yield* deleteManagedStack({
+          workspacePath: movedFirstProject,
+        }).pipe(Effect.exit);
         expect(Exit.isFailure(deleteBeforeRepair)).toBe(true);
         const blockedId = [originalId, secondaryId].sort().at(-1);
         if (blockedId === undefined) throw new Error("expected affected stack");
@@ -755,17 +840,21 @@ describe("managed stack journeys", () => {
         const firstUpdatedId = [originalId, secondaryId].sort().at(0);
         if (firstUpdatedId === undefined) throw new Error("expected affected stack");
         const partial = yield* manager.inspectStack(firstUpdatedId);
-        expect(partial?.workspace.path).toBe(discovery.path);
-        const stillNeedsRepair = yield* manager.discoverWorkspace(moved);
+        const partialExpectedPath =
+          partial?.identity.localProjectKey === "apps/first"
+            ? movedFirstProject
+            : movedSecondProject;
+        expect(partial?.workspace.path).toBe(partialExpectedPath);
+        const stillNeedsRepair = yield* manager.discoverWorkspace(movedFirstProject);
         expect(stillNeedsRepair.state).toBe("needsRepair");
         const repaired = yield* manager.repairWorkspace(discovery.repair);
         expect(repaired.state).toBe("healthy");
         const stack = yield* manager.inspectStack(originalId);
         expect(stack?.id).toBe(originalId);
         expect(stack?.ports[0]?.port).toBe(originalPort);
-        expect(stack?.workspace.path).toBe(repaired.path);
+        expect(stack?.workspace.path).toBe(movedFirstProject);
         const repairedSecondary = yield* manager.inspectStack(secondaryId);
-        expect(repairedSecondary?.workspace.path).toBe(repaired.path);
+        expect(repairedSecondary?.workspace.path).toBe(movedSecondProject);
       }),
     ).pipe(
       Effect.provide(layer),

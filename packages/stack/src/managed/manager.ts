@@ -12,6 +12,7 @@ import {
   Schedule,
   Scope,
 } from "effect";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { PortField, PortSet } from "../PortCatalog.ts";
 import {
   reservePortSet,
@@ -253,7 +254,7 @@ const lengthPrefixed = (value: string): Uint8Array => {
 export const deriveRepairOwnershipId = (identity: EnvironmentIdentity): string => {
   const input = new Uint8Array([
     ...lengthPrefixed("supabase-stack-repair"),
-    ...lengthPrefixed(identity.projectId),
+    ...lengthPrefixed(identity.workspaceId),
     ...lengthPrefixed(identity.checkoutId),
   ]);
   return createHash("sha256").update(input).digest("hex");
@@ -581,17 +582,25 @@ const makeManager = (
         }
         const stackName = request.stackName ?? "default";
         const stackId = deriveStackId(discovery.identity, stackName);
+        const repairId = deriveRepairOwnershipId(discovery.identity);
         const repairAcquisition = yield* provideDependencies(
-          acquireControl({ stackId: deriveRepairOwnershipId(discovery.identity) }),
-        );
-        if (!isOwned(repairAcquisition)) {
-          return yield* Effect.fail(
-            new ManagedWorkspaceRepairConflictError({
-              stackId: deriveRepairOwnershipId(discovery.identity),
-              reason: "Workspace repair is already owned",
+          acquireControl({ stackId: repairId }).pipe(
+            Effect.flatMap((acquisition) =>
+              isOwned(acquisition)
+                ? Effect.succeed(acquisition)
+                : Effect.fail(
+                    new ManagedWorkspaceRepairConflictError({
+                      stackId: repairId,
+                      reason: "Workspace repair is already owned",
+                    }),
+                  ),
+            ),
+            Effect.retry({
+              schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 250 })),
+              while: (error) => error instanceof ManagedWorkspaceRepairConflictError,
             }),
-          );
-        }
+          ),
+        );
         return yield* Effect.gen(function* () {
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
           if (refreshed.state === "needsRepair") {
@@ -734,7 +743,7 @@ const makeManager = (
             .map((listing) => listing.document)
             .filter(
               (document) =>
-                document.identity.projectId === request.identity.projectId &&
+                document.identity.workspaceId === request.identity.workspaceId &&
                 document.identity.checkoutId === request.identity.checkoutId,
             )
             .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
@@ -771,10 +780,24 @@ const makeManager = (
             );
           }
           const updatedAt = now();
+          const checkoutRoot = revalidated.path;
           for (const document of affected) {
+            const projectPath =
+              document.identity.localProjectKey === "."
+                ? checkoutRoot
+                : resolve(checkoutRoot, ...document.identity.localProjectKey.split("/"));
+            const escaped = relative(checkoutRoot, projectPath);
+            if (isAbsolute(escaped) || escaped === ".." || escaped.startsWith("../")) {
+              return yield* Effect.fail(
+                new ManagedWorkspaceRepairConflictError({
+                  stackId: document.id,
+                  reason: `Managed stack ${document.id} has an invalid local project key`,
+                }),
+              );
+            }
             yield* store.write({
               ...document,
-              workspace: { ...document.workspace, path: revalidated.path },
+              workspace: { ...document.workspace, path: projectPath },
               updatedAt,
             });
           }

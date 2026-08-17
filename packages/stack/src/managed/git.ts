@@ -37,8 +37,8 @@ const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
  */
 const GIT_DIRECTORY_ENTRIES = [HEAD_FILE, "objects", "refs"] as const;
 
-/** The project identity, shared by every checkout of the same repository. */
-export const GIT_PROJECT_ID_KEY = "supabase.projectId";
+/** The local workspace identity, shared by every checkout of the same repository. */
+export const GIT_WORKSPACE_ID_KEY = "supabase.workspaceId";
 
 /**
  * The branch context identity, keyed by branch so that git owns its lifecycle:
@@ -863,10 +863,10 @@ const ensureCheckoutIdentity = async (
 };
 
 export interface EnsureGitCheckoutIdentityResult {
-  readonly projectId: string;
+  readonly workspaceId: string;
   readonly checkoutId: string;
-  /** The common git directory, whose config holds the project identity. */
-  readonly projectIdentityLocation: string;
+  /** The common git directory, whose config holds the workspace identity. */
+  readonly workspaceIdentityLocation: string;
   /** This checkout's git directory, which holds its checkout identity. */
   readonly checkoutIdentityLocation: string;
   /**
@@ -878,22 +878,22 @@ export interface EnsureGitCheckoutIdentityResult {
 }
 
 export interface GitCheckoutIdentityState {
-  readonly projectId: string | undefined;
+  readonly workspaceId: string | undefined;
   readonly checkoutId: string | undefined;
   /** Last canonical workspace path recorded for explicit move detection. */
   readonly workspacePath: string | undefined;
-  readonly projectIdentityLocation: string;
+  readonly workspaceIdentityLocation: string;
   readonly checkoutIdentityLocation: string;
 }
 
 /**
- * The project and checkout identities of a git checkout, minting whichever is
+ * The workspace and checkout identities of a git checkout, minting whichever is
  * missing.
  *
  * The two are stored apart because git's own rules are what keep them correct.
- * The project identity is repository-local config, so every linked worktree —
+ * The workspace identity is repository-local config, so every linked worktree —
  * including a bare repository's — reads the same one, and `git clone` copies none
- * of it, which is what makes a fresh clone a new project. The checkout identity
+ * of it, which is what makes a fresh clone a new local workspace. The checkout identity
  * is a file in the checkout's own git directory, which is per-worktree by
  * construction.
  */
@@ -907,10 +907,10 @@ export const ensureGitCheckoutIdentity = (
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
-      const projectId = yield* ensureConfigId(
+      const workspaceId = yield* ensureConfigId(
         gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
+        GIT_WORKSPACE_ID_KEY,
+        "workspaceId",
         idFactory,
       );
       const checkoutClaim = yield* Effect.tryPromise({
@@ -923,9 +923,9 @@ export const ensureGitCheckoutIdentity = (
         createManagedUuid(idFactory, "location temporary id"),
       );
       return {
-        projectId,
+        workspaceId,
         checkoutId: checkoutClaim.checkoutId,
-        projectIdentityLocation: inspection.commonDirectory,
+        workspaceIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
         checkoutIdentityCreated: checkoutClaim.created,
       };
@@ -942,20 +942,20 @@ export const readGitCheckoutIdentity = (
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
-      const projectId = yield* readConfigId(
+      const workspaceId = yield* readConfigId(
         gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
+        GIT_WORKSPACE_ID_KEY,
+        "workspaceId",
       );
       const identity = yield* Effect.tryPromise({
         try: () => readCheckoutIdentity(inspection.gitDirectory),
         catch: asRaised,
       });
       return {
-        projectId,
+        workspaceId,
         checkoutId: identity?.checkoutId,
         workspacePath: undefined,
-        projectIdentityLocation: inspection.commonDirectory,
+        workspaceIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
       };
     }),
@@ -972,10 +972,10 @@ export const readGitCheckoutIdentityWithFileSystem = (
   failsWithIdentity(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const projectId = yield* readConfigId(
+      const workspaceId = yield* readConfigId(
         gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
+        GIT_WORKSPACE_ID_KEY,
+        "workspaceId",
       );
       const content = yield* fs
         .readFileString(gitCheckoutIdentityPath(inspection.gitDirectory))
@@ -1001,10 +1001,10 @@ export const readGitCheckoutIdentityWithFileSystem = (
             });
       const workspacePath = yield* readGitCheckoutLocation(inspection.gitDirectory);
       return {
-        projectId,
+        workspaceId,
         checkoutId: identity?.checkoutId,
         workspacePath,
-        projectIdentityLocation: inspection.commonDirectory,
+        workspaceIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
       };
     }),

@@ -55,16 +55,20 @@ native-versus-Docker adapters, topology, lifecycle, projection, and transport.
 An environment is exactly:
 
 ```text
-projectId + checkoutId + contextId + stackName
+workspaceId + checkoutId + contextId + localProjectKey + stackName
 ```
 
-- `projectId` is stored in common local Git config for Git workspaces.
+- `workspaceId` is stored in common local Git config for Git workspaces. It is
+  local repository/folder lineage and unrelated to a remote Supabase project.
 - `checkoutId` is stored beneath the checkout-specific Git directory.
 - Branch `contextId` is stored in branch-local Git config; branch rename therefore carries it.
 - Detached contexts are checkout-scoped and stored beside the checkout marker.
-- Ordinary folders keep their project, checkout, and context IDs in
+- Ordinary folders keep their workspace, checkout, and context IDs in
   `.supabase/identity.json` using the existing atomic claim primitive.
-- `stackId` is the lowercase SHA-256 hex digest of the four length-delimited identity values. It is
+- `localProjectKey` is the canonical Supabase project root relative to the
+  canonical enclosing checkout root, normalized to `/` and `.` at checkout
+  root; ordinary folders use `.`. It does not use `config.toml` or remote link state.
+- `stackId` is the lowercase SHA-256 hex digest of the five length-delimited identity values. It is
   deterministic and requires no registration row or random-ID publication protocol.
 
 The common path has three states:
@@ -97,14 +101,16 @@ interface StackDocument {
   readonly formatVersion: 1;
   readonly id: string;
   readonly identity: {
-    readonly projectId: string;
+    readonly workspaceId: string;
     readonly checkoutId: string;
     readonly contextId: string;
+    readonly localProjectKey: string;
     readonly name: string;
   };
   readonly workspace: {
     readonly kind: "git" | "folder";
     readonly checkoutKind: "primary" | "worktree" | "bare" | "folder";
+    /** Canonical Supabase project root, not the enclosing Git checkout root. */
     readonly path: string;
     readonly branch?: string;
   };

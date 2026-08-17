@@ -95,7 +95,7 @@ describe("managed Git workspace identity", () => {
         { concurrency: "unbounded" },
       );
 
-      expect(new Set(identities.map((identity) => identity.projectId)).size).toBe(1);
+      expect(new Set(identities.map((identity) => identity.workspaceId)).size).toBe(1);
       expect(new Set(identities.map((identity) => identity.checkoutId)).size).toBe(3);
       expect(first.checkoutKind).toBe("linked-worktree");
       expect(second.checkoutKind).toBe("linked-worktree");

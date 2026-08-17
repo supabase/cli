@@ -9,7 +9,7 @@ export type ManagedPortIntent = "automatic" | "exact";
 
 export interface OrdinaryWorkspaceIdentity {
   readonly version: typeof ORDINARY_WORKSPACE_IDENTITY_VERSION;
-  readonly projectId: string;
+  readonly workspaceId: string;
   readonly checkoutId: string;
   readonly contextId: string;
 }

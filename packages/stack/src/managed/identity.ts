@@ -60,7 +60,7 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   }
   return {
     version,
-    projectId: identityField(value, "projectId"),
+    workspaceId: identityField(value, "workspaceId"),
     checkoutId: identityField(value, "checkoutId"),
     contextId: identityField(value, "contextId"),
   };
@@ -167,7 +167,7 @@ const ensureIdentity = async (
 
   const identity: OrdinaryWorkspaceIdentity = {
     version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-    projectId: createManagedUuid(idFactory, "projectId"),
+    workspaceId: createManagedUuid(idFactory, "workspaceId"),
     checkoutId: createManagedUuid(idFactory, "checkoutId"),
     contextId: createManagedUuid(idFactory, "contextId"),
   };

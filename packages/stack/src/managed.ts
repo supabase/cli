@@ -1,5 +1,5 @@
 export {
-  GIT_PROJECT_ID_KEY,
+  GIT_WORKSPACE_ID_KEY,
   GitConfigStore,
   ensureBranchContextId,
   ensureGitCheckoutIdentity,

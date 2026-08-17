@@ -83,11 +83,15 @@ export const listStacks = (opts: {
   Effect.gen(function* () {
     const manager = yield* ManagedStackManager;
     const listings = yield* manager.listStacks();
+    const projectPath =
+      opts.projectDir === undefined
+        ? undefined
+        : (yield* manager.discoverWorkspace(opts.projectDir)).path;
     const summaries = yield* Effect.forEach(listings, (listing) =>
       Effect.gen(function* () {
         if (
           listing.status !== "healthy" ||
-          (opts.projectDir !== undefined && listing.document.workspace.path !== opts.projectDir)
+          (projectPath !== undefined && listing.document.workspace.path !== projectPath)
         ) {
           return undefined;
         }

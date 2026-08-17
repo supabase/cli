@@ -59,7 +59,7 @@ polling is involved.
 
 The private document records:
 
-- project, checkout, branch-context, workspace, and stack-name identity;
+- workspace, checkout, branch-context, local-project, and stack-name identity;
 - exact or automatic sticky-port assignments;
 - launch mode, pinned versions, excluded services, and notification
   fingerprint;
@@ -68,6 +68,14 @@ The private document records:
 
 The format is unreleased internal state. It has no compatibility adapter or
 SQLite/repository contract. A fresh build owns the current document format.
+
+`workspaceId` identifies local repository or ordinary-folder lineage. It is
+unrelated to a remote Supabase project or its `project_id`. In a Git checkout,
+`localProjectKey` is the canonical project-root path relative to the checkout
+root, normalized with `/` and `.` at the root. Sibling nested projects can
+therefore run independent default stacks. Documents store the canonical
+project root. Renaming a local project directory intentionally creates a new
+identity; no migration is attempted.
 
 ## Detached control
 

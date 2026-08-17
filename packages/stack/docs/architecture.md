@@ -37,11 +37,20 @@ Every managed stack has one document under the configured managed state root:
 <supabase-home>/managed/stacks/<stack-id>/stack.json
 ```
 
-The document records the deterministic stack identity (project, checkout,
-branch context, and name), workspace path, sticky-port assignments and intent,
-launch selections, lifecycle, and runtime control endpoint. A stopped document
+The document records the deterministic stack identity (workspace lineage,
+checkout, branch context, canonical local-project key, and name), canonical
+project-root path, sticky-port assignments and intent, launch selections,
+lifecycle, and runtime control endpoint. `workspaceId` is local repository or
+folder lineage, not a remote Supabase project identity. A stopped document
 remains available for inspection and restart; deletion removes that document
 and its managed data root.
+
+For Git checkouts, `localProjectKey` is the canonical Supabase project root
+relative to the canonical enclosing checkout root, normalized with `/` and `.`
+for the root. It is independent of `supabase/config.toml` and remote link
+state. Sibling nested projects therefore receive distinct stack IDs and
+automatic ports even with the default name. A local project directory rename
+intentionally creates a new identity; no migration is attempted.
 
 Identity comes from Git checkout metadata where available and from an explicit
 ordinary-folder marker otherwise. The marker and document are private,
@@ -97,7 +106,7 @@ serialization so they cannot leak into runtime service configuration.
 
 Sticky port fields have explicit `exact` or `automatic` intent. Startup derives
 active and disabled fields from the enabled-service configuration and preserves
-the raw project document. A sibling worktree has its own stack
+the raw project document. A sibling worktree or nested project has its own stack
 document: an explicit request asks for that exact port and conflicts with a live
 owner, while omitted fields receive independent automatic allocations. Launch metadata stores
 mode, pinned service versions, excluded services, and the update-notification
@@ -120,8 +129,9 @@ converted at the boundary and are not a public error registry.
 
 ## Testing boundary
 
-Integration tests exercise the consumed surfaces: manager identity and sibling
-worktree allocation, supervisor detached start/reattach/launch-update/stop,
+Integration tests exercise the consumed surfaces: manager identity, sibling
+worktree and nested-project allocation, supervisor detached
+start/reattach/launch-update/stop,
 and lifecycle stale-owner recovery. Unit tests remain for pure port/document
 algorithms and platform seams. The test entrypoint exposes only the
 `DaemonServer` and transport seams needed to build those journeys; it does not

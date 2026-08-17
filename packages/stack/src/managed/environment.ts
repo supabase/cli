@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAbsolute, relative, sep } from "node:path";
 import { Effect, FileSystem } from "effect";
 import {
   canonicalizeManagedWorkspacePathWithFileSystem,
@@ -21,9 +22,10 @@ import {
 import { InvalidManagedIdentityError, UnsupportedGitWorkspaceError } from "./model.ts";
 
 export interface EnvironmentIdentity {
-  readonly projectId: string;
+  readonly workspaceId: string;
   readonly checkoutId: string;
   readonly contextId: string;
+  readonly localProjectKey: string;
 }
 
 export type RepairReason = "moved" | "duplicate";
@@ -31,6 +33,7 @@ export type RepairReason = "moved" | "duplicate";
 export interface WorkspaceDescriptor {
   readonly kind: "git" | "folder";
   readonly checkoutKind: "primary" | "worktree" | "bare" | "folder";
+  /** Canonical Supabase project root used to initiate discovery. */
   readonly path: string;
   readonly branch?: string;
 }
@@ -54,11 +57,11 @@ interface WorkspaceDiscoveryBase {
   readonly workspace: WorkspaceDescriptor;
   /** The complete identity, including deterministic values for missing claims. */
   readonly identity: EnvironmentIdentity;
-  readonly missing: ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location">;
+  readonly missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">;
 }
 
 type PartialEnvironmentIdentity = {
-  projectId?: string;
+  workspaceId?: string;
   checkoutId?: string;
   contextId?: string;
 };
@@ -106,14 +109,15 @@ const lengthPrefixed = (value: string): Buffer => {
   return Buffer.concat([prefix, bytes]);
 };
 
-/** Derive the stack identity from four UTF-8 length-prefixed values. */
+/** Derive the stack identity from five UTF-8 length-prefixed values. */
 export const deriveStackId = (identity: EnvironmentIdentity, name: string): string =>
   createHash("sha256")
     .update(
       Buffer.concat([
-        lengthPrefixed(identity.projectId),
+        lengthPrefixed(identity.workspaceId),
         lengthPrefixed(identity.checkoutId),
         lengthPrefixed(identity.contextId),
+        lengthPrefixed(identity.localProjectKey),
         lengthPrefixed(name),
       ]),
     )
@@ -131,7 +135,7 @@ const descriptor = (inspection: WorkspaceInspection): WorkspaceDescriptor => {
         : inspection.checkoutKind === "bare-worktree"
           ? "bare"
           : "worktree",
-    path: inspection.workspaceRoot,
+    path: inspection.canonicalPath,
     ...(inspection.head.kind === "detached" ? {} : { branch: inspection.head.branch }),
   };
 };
@@ -139,17 +143,20 @@ const descriptor = (inspection: WorkspaceInspection): WorkspaceDescriptor => {
 const partialIdentity = (
   inspection: WorkspaceInspection,
   values: PartialEnvironmentIdentity,
+  localProjectKey: string,
 ): EnvironmentIdentity => {
   if (inspection.kind === "ordinary-folder") {
     const seed = `folder:${inspection.canonicalPath}`;
     return {
-      projectId: values.projectId ?? deterministicUuid(`${seed}:projectId`),
+      workspaceId: values.workspaceId ?? deterministicUuid(`${seed}:workspaceId`),
       checkoutId: values.checkoutId ?? deterministicUuid(`${seed}:checkoutId`),
       contextId: values.contextId ?? deterministicUuid(`${seed}:contextId`),
+      localProjectKey,
     };
   }
   return {
-    projectId: values.projectId ?? deterministicUuid(`git:project:${inspection.commonDirectory}`),
+    workspaceId:
+      values.workspaceId ?? deterministicUuid(`git:workspace:${inspection.commonDirectory}`),
     checkoutId: values.checkoutId ?? deterministicUuid(`git:checkout:${inspection.gitDirectory}`),
     contextId:
       values.contextId ??
@@ -158,16 +165,33 @@ const partialIdentity = (
           ? `git:detached:${inspection.gitDirectory}`
           : `git:branch:${inspection.commonDirectory}:${inspection.head.branch}`,
       ),
+    localProjectKey,
   };
+};
+
+const localProjectKeyFor = (
+  inspection: WorkspaceInspection,
+  canonicalPath: string,
+): Effect.Effect<string, InvalidManagedIdentityError> => {
+  if (inspection.kind === "ordinary-folder") return Effect.succeed(".");
+  const key = relative(inspection.workspaceRoot, canonicalPath).split(sep).join("/");
+  if (isAbsolute(key) || key === ".." || key.startsWith("../")) {
+    return Effect.fail(
+      new InvalidManagedIdentityError({
+        message: `Supabase project path escapes its Git checkout: ${canonicalPath}`,
+      }),
+    );
+  }
+  return Effect.succeed(key.length === 0 ? "." : key);
 };
 
 const missingFor = (
   inspection: WorkspaceInspection,
   values: PartialEnvironmentIdentity,
   location: string | undefined,
-): ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location"> => {
-  const missing: Array<"projectId" | "checkoutId" | "contextId" | "location"> = [];
-  if (values.projectId === undefined) missing.push("projectId");
+): ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location"> => {
+  const missing: Array<"workspaceId" | "checkoutId" | "contextId" | "location"> = [];
+  if (values.workspaceId === undefined) missing.push("workspaceId");
   if (values.checkoutId === undefined) missing.push("checkoutId");
   if (values.contextId === undefined) missing.push("contextId");
   if (inspection.kind === "git-checkout" && location === undefined) missing.push("location");
@@ -178,7 +202,7 @@ const makeRepairDiscovery = (
   path: string,
   workspace: WorkspaceDescriptor,
   identity: EnvironmentIdentity,
-  missing: ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location">,
+  missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">,
   reason: RepairReason,
   repair: RepairRequest,
 ): RepairWorkspaceDiscovery => ({
@@ -195,7 +219,7 @@ const makeRegistrationDiscovery = (
   path: string,
   workspace: WorkspaceDescriptor,
   identity: EnvironmentIdentity,
-  missing: ReadonlyArray<"projectId" | "checkoutId" | "contextId" | "location">,
+  missing: ReadonlyArray<"workspaceId" | "checkoutId" | "contextId" | "location">,
 ): HealthyWorkspaceDiscovery | UnregisteredWorkspaceDiscovery =>
   missing.length === 0
     ? { state: "healthy", path, workspace, identity, missing }
@@ -207,18 +231,19 @@ const discoverInternal = (
   Effect.gen(function* () {
     const canonicalPath = yield* canonicalizeManagedWorkspacePathWithFileSystem(workspacePath);
     const inspection = yield* inspectWorkspace(canonicalPath);
+    const localProjectKey = yield* localProjectKeyFor(inspection, canonicalPath);
     const values: PartialEnvironmentIdentity = {};
     let location: string | undefined;
     if (inspection.kind === "ordinary-folder") {
       const marker = yield* readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPath);
       if (marker !== undefined) {
-        values.projectId = marker.projectId;
+        values.workspaceId = marker.workspaceId;
         values.checkoutId = marker.checkoutId;
         values.contextId = marker.contextId;
       }
     } else {
       const stored = yield* readGitCheckoutIdentityWithFileSystem(inspection);
-      values.projectId = stored.projectId;
+      values.workspaceId = stored.workspaceId;
       values.checkoutId = stored.checkoutId;
       if (inspection.head.kind === "detached") {
         values.contextId = yield* readDetachedContextIdentity(inspection.gitDirectory);
@@ -227,7 +252,7 @@ const discoverInternal = (
       }
       location = yield* readGitCheckoutLocation(inspection.gitDirectory);
     }
-    const identity = partialIdentity(inspection, values);
+    const identity = partialIdentity(inspection, values, localProjectKey);
     const missing = missingFor(inspection, values, location);
     const workspace = descriptor(inspection);
     if (
@@ -320,7 +345,7 @@ export const validateEnvironmentRepair = (
       current.reason !== request.reason ||
       current.repair.path !== request.path ||
       current.repair.expectedPath !== request.expectedPath ||
-      current.identity.projectId !== request.identity.projectId ||
+      current.identity.workspaceId !== request.identity.workspaceId ||
       current.identity.checkoutId !== request.identity.checkoutId ||
       current.identity.contextId !== request.identity.contextId ||
       !updatesMatch

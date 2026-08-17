@@ -53,9 +53,10 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
   formatVersion: 1,
   id: STACK_ID,
   identity: {
-    projectId: "project-id",
+    workspaceId: "workspace-id",
     checkoutId: "checkout-id",
     contextId: "context-id",
+    localProjectKey: ".",
     name: "default",
   },
   workspace: {

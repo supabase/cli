@@ -14,9 +14,10 @@ export interface ManagedStackDocument {
   readonly formatVersion: 1;
   readonly id: string;
   readonly identity: {
-    readonly projectId: string;
+    readonly workspaceId: string;
     readonly checkoutId: string;
     readonly contextId: string;
+    readonly localProjectKey: string;
     readonly name: string;
   };
   readonly workspace: {
@@ -72,9 +73,10 @@ const managedStackDocumentSchema = Schema.Struct({
   formatVersion: Schema.Literal(1),
   id: Schema.String,
   identity: Schema.Struct({
-    projectId: Schema.String,
+    workspaceId: Schema.String,
     checkoutId: Schema.String,
     contextId: Schema.String,
+    localProjectKey: Schema.String,
     name: Schema.String,
   }),
   workspace: Schema.Struct({
