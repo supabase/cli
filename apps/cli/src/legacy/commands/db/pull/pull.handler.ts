@@ -795,8 +795,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // pooler-retry attempt still acquires and releases its own shadow — on the warm path
             // each attempt restores its own fresh container from the same cached snapshot,
             // sequentially.
-            // `webhooks: "enabled"` matches `legacyMigrateShadowDatabase`'s forced `pg_net`
-            // baseline — the cache key must not collide with next's config-following migrate.
+            // The key's webhooks policy mirrors the migrate `legacyPrepareShadowSource` will
+            // actually select for this mode: legacy's `legacyMigrateShadowDatabase` forces
+            // `pg_net` on, next's `legacyMigrateNextShadowDatabase` follows project config —
+            // a key that said "enabled" for a config-following baseline would let the two
+            // engines restore each other's tars (review: Codex on #6184).
             return yield* legacyWithShadowDatabase(
               spawner,
               shadowInput,
@@ -849,7 +852,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   });
                   return { sql, files: undefined, debug: undefined };
                 }),
-              { webhooks: "enabled" },
+              { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

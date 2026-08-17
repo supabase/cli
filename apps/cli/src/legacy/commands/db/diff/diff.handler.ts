@@ -698,8 +698,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
       // create/remove pair; otherwise a key-matching PGDATA snapshot is restored into the fresh
       // container in a few seconds instead of cold-provisioning the baseline in ~15s).
-      // `webhooks: "enabled"` matches `legacyMigrateShadowDatabase`'s forced `pg_net`
-      // baseline — the cache key must not collide with next's config-following migrate.
+      // The key's webhooks policy mirrors the migrate `legacyPrepareShadowSource` will actually
+      // select for this mode: legacy's `legacyMigrateShadowDatabase` forces `pg_net` on, next's
+      // `legacyMigrateNextShadowDatabase` follows project config — a key that said "enabled" for
+      // a config-following baseline would let the two engines restore each other's tars
+      // (review: Codex on #6184).
       diffResult = yield* legacyWithShadowDatabase(
         spawner,
         shadowInput,
@@ -750,7 +753,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             // single migration file.
             return { sql, files: undefined };
           }),
-        { webhooks: "enabled" },
+        { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
       );
     }
     const out = diffResult.sql;
