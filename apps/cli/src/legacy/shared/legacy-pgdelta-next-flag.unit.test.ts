@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyResolvePgDeltaImplementation } from "./legacy-pgdelta-next-flag.ts";
+import {
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "./legacy-pgdelta-next-flag.ts";
+
+describe("legacyPgDeltaImplementationFlag", () => {
+  it("prefers shell presence and otherwise uses the project value", () => {
+    expect(legacyPgDeltaImplementationFlag("true", "false")).toBe("true");
+    expect(legacyPgDeltaImplementationFlag("", "false")).toBe("");
+    expect(legacyPgDeltaImplementationFlag(undefined, "false")).toBe("false");
+  });
+});
 
 describe("legacyResolvePgDeltaImplementation", () => {
   it("defaults to the next implementation when unset", () => {

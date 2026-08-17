@@ -12,20 +12,17 @@ import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts
 import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
-import { legacyResolvePgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "../../../shared/legacy-pgdelta-next-flag.ts";
 import { legacyPgDeltaLegacyEngineLayer } from "./legacy-pgdelta-engine.legacy.layer.ts";
 import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
 import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
 import { legacyPgDeltaNextAdapterLayer } from "./legacy-pgdelta-next-adapter.layer.ts";
 import { legacyPgDeltaNextShadowLayer } from "./legacy-pgdelta-next-shadow.layer.ts";
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
-
-const FLAG = "SUPABASE_USE_PG_DELTA_NEXT";
-
-export const legacyPgDeltaImplementationFlag = (
-  shellValue: string | undefined,
-  projectValue: string | undefined,
-) => shellValue ?? projectValue;
 
 const resolveAndLog = Effect.fnUntraced(function* (raw: string | undefined) {
   const debug = yield* LegacyDebugLogger;
@@ -63,9 +60,10 @@ export const legacyPgDeltaEngineLayer = Layer.unwrap(
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-    // godotenv.Load never replaces a shell value, including an empty or invalid
-    // one, so presence in process.env must suppress the project-file fallback.
-    const raw = legacyPgDeltaImplementationFlag(process.env[FLAG], projectEnv[FLAG]);
+    const raw = legacyPgDeltaImplementationFlag(
+      process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+      projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+    );
     return legacyPgDeltaEngineSelectorLayer(raw, {
       next: legacyPgDeltaNextEngineLayer,
       legacy: legacyPgDeltaLegacyEngineLayer,
