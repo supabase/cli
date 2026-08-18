@@ -19,19 +19,24 @@ interface DockerVectorOptions extends ContainerRuntimeOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
-const VECTOR_CONFIG = (host: string, port: number, apiKey: string) => `api:
+const vectorConfig = (
+  host: string,
+  port: number,
+  apiKey: string,
+  sourceType: "docker_logs" | "internal_logs",
+) => `api:
   enabled: true
   address: 0.0.0.0:9001
 
 sources:
-  docker:
-    type: docker_logs
+  runtime:
+    type: ${sourceType}
 
 sinks:
   logflare:
     type: http
     inputs:
-      - docker
+      - runtime
     encoding:
       codec: json
     method: post
@@ -44,10 +49,16 @@ sinks:
 
 export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
   const containerName = dockerContainerName("vector", opts.identity.key);
-  const dockerSocket = process.env.DOCKER_HOST?.startsWith("unix://")
-    ? process.env.DOCKER_HOST.slice("unix://".length)
-    : "/var/run/docker.sock";
-  const volumes = existsSync(dockerSocket) ? [`${dockerSocket}:/var/run/docker.sock:ro`] : [];
+  const dockerSocket =
+    opts.runtime === "docker"
+      ? process.env.DOCKER_HOST?.startsWith("unix://")
+        ? process.env.DOCKER_HOST.slice("unix://".length)
+        : "/var/run/docker.sock"
+      : undefined;
+  const volumes =
+    dockerSocket !== undefined && existsSync(dockerSocket)
+      ? [`${dockerSocket}:/var/run/docker.sock:ro`]
+      : [];
 
   return dockerRunService({
     runtime: opts.runtime,
@@ -56,14 +67,17 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, []),
     volumes,
-    env: {
-      DOCKER_HOST: "unix:///var/run/docker.sock",
-    },
+    env: opts.runtime === "docker" ? { DOCKER_HOST: "unix:///var/run/docker.sock" } : {},
     entrypoint: "sh",
     cmd: [
       "-c",
       `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
-${VECTOR_CONFIG(opts.serviceHost, opts.analyticsPort, opts.analyticsApiKey)}EOF
+${vectorConfig(
+  opts.serviceHost,
+  opts.analyticsPort,
+  opts.analyticsApiKey,
+  opts.runtime === "docker" ? "docker_logs" : "internal_logs",
+)}EOF
 `,
     ],
     dependencies: opts.dependencies,

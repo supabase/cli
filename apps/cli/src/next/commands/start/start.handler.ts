@@ -50,7 +50,6 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
         yield* updateManagedLaunch({
           ...lifecycleInput,
           launch: {
-            mode: launch.mode,
             versions: launch.versions,
             excludedServices: launch.excludedServices,
             lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,

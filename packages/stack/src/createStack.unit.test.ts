@@ -84,7 +84,10 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 
   it("enables edge runtime when omitted in Docker mode", async () => {
-    const config = await resolveConfig({ mode: "docker" });
+    const config = await resolveConfig(
+      { mode: "docker" },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
 
     expect(config.mode).toBe("docker");
     expect(config.edgeRuntime).toEqual(
@@ -93,6 +96,13 @@ describe("resolveConfig edge runtime defaults", () => {
         version: DEFAULT_VERSIONS["edge-runtime"],
       }),
     );
+  });
+
+  it("requires Effect consumers to provide the selected Docker runtime", async () => {
+    await expect(resolveConfig({ mode: "docker" })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
   });
 
   it("applies the detected Docker mode before resolving services and ports", async () => {
@@ -125,13 +135,16 @@ describe("resolveConfig edge runtime defaults", () => {
 
 describe("resolveConfig explicit keyless ports", () => {
   it("preserves an explicit pooler api port", async () => {
-    const config = await resolveConfig({
-      mode: "docker",
-      edgeRuntime: false,
-      postgrest: false,
-      auth: false,
-      pooler: { port: 42423, apiPort: 42424 },
-    });
+    const config = await resolveConfig(
+      {
+        mode: "docker",
+        edgeRuntime: false,
+        postgrest: false,
+        auth: false,
+        pooler: { port: 42423, apiPort: 42424 },
+      },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
 
     expect(config.ports.poolerPort).toBe(42423);
     expect(config.ports.poolerApiPort).toBe(42424);
@@ -170,20 +183,23 @@ describe("resolveConfig explicit keyless ports", () => {
 
 describe("candidateCleanupTargets", () => {
   it("derives fallback Docker identities from enabled catalog services", async () => {
-    const config = await resolveConfig({
-      mode: "docker",
-      auth: false,
-      edgeRuntime: false,
-      realtime: false,
-      storage: false,
-      imgproxy: false,
-      mailpit: false,
-      pgmeta: false,
-      studio: false,
-      analytics: false,
-      vector: false,
-      pooler: false,
-    });
+    const config = await resolveConfig(
+      {
+        mode: "docker",
+        auth: false,
+        edgeRuntime: false,
+        realtime: false,
+        storage: false,
+        imgproxy: false,
+        mailpit: false,
+        pgmeta: false,
+        studio: false,
+        analytics: false,
+        vector: false,
+        pooler: false,
+      },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
 
     expect(candidateCleanupTargets(config)).toEqual({
       dockerContainerNames: [
@@ -195,7 +211,10 @@ describe("candidateCleanupTargets", () => {
 
   it("keys fallback Docker identities by the stack's own identity when it has one", async () => {
     const instanceId = "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f";
-    const config = await resolveConfig({ mode: "docker", instanceId });
+    const config = await resolveConfig(
+      { mode: "docker", instanceId },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
 
     expect(config.instanceId).toBe(instanceId);
     const { dockerContainerNames } = candidateCleanupTargets(config);

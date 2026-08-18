@@ -17,10 +17,10 @@ const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
       typeof config === "object" &&
       config !== null &&
       "command" in config &&
-      config.command === "bash" &&
       "args" in config &&
       Array.isArray(config.args) &&
-      config.args[0] === "-c"
+      ((config.command === "bash" && config.args[0] === "-c") ||
+        ((config.command === "docker" || config.command === "podman") && config.args[0] === "exec"))
     );
   } catch {
     return false;

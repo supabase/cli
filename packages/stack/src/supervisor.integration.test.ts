@@ -5,6 +5,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import {
   existsSync,
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -256,7 +257,6 @@ const remoteInfo = (endpoint: ControlEndpoint): Promise<{ readonly url: string }
 const updateLaunch = async (
   endpoint: ControlEndpoint,
   launch: {
-    readonly mode: "native" | "docker";
     readonly versions: Record<string, string>;
   },
 ): Promise<void> => {
@@ -390,8 +390,12 @@ const readStackDocument = (roots: {
   | {
       readonly id: string;
       readonly lifecycle: string;
-      readonly ports: ReadonlyArray<{ port: number }>;
-      readonly launch?: { readonly mode: string; readonly versions: Record<string, string> };
+      readonly ports: ReadonlyArray<{ key: string; port: number }>;
+      readonly launch?: {
+        readonly mode: string;
+        readonly containerRuntime?: string;
+        readonly versions: Record<string, string>;
+      };
     }
   | undefined => {
   const stacksRoot = join(roots.stateRoot, "stacks");
@@ -402,7 +406,7 @@ const readStackDocument = (roots: {
     return JSON.parse(readFileSync(path, "utf8")) as {
       readonly id: string;
       readonly lifecycle: string;
-      readonly ports: ReadonlyArray<{ port: number }>;
+      readonly ports: ReadonlyArray<{ key: string; port: number }>;
     };
   }
   return undefined;
@@ -526,6 +530,76 @@ describe("detached supervisor child journeys", () => {
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);
+    }
+  });
+
+  test("starts an omitted-mode stack from one detected runtime selection", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-runtime-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: { ...config, edgeRuntime: {} },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      const started = await child.started;
+      const document = readStackDocument(roots);
+      expect(document?.launch).toMatchObject({
+        mode: "docker",
+        containerRuntime: "docker",
+      });
+      expect(document?.ports.map(({ key }) => key)).toContain("edge_runtime.inspector_port");
+      await remoteStop(started.endpoint);
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reuses the persisted runtime instead of selecting a different one on restart", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-sticky-runtime-"));
+    const docker = join(binDir, "docker");
+    const podman = join(binDir, "podman");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    writeFileSync(podman, "#!/bin/sh\nexit 1\n");
+    chmodSync(docker, 0o755);
+    chmodSync(podman, 0o755);
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const input = messageFor(roots, { config });
+    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
+    const initial = spawnChild(input, { environment });
+    let restarted: ChildHandle | undefined;
+    try {
+      const started = await initial.started;
+      await remoteStop(started.endpoint);
+      await waitForExit(initial.child);
+
+      writeFileSync(docker, "#!/bin/sh\nexit 1\n");
+      writeFileSync(podman, "#!/bin/sh\nexit 0\n");
+      restarted = spawnChild(input, { environment });
+
+      await expect(restarted.started).rejects.toThrow(
+        "Docker mode requires a usable docker runtime",
+      );
+      expect(readStackDocument(roots)?.launch).toMatchObject({
+        mode: "docker",
+        containerRuntime: "docker",
+      });
+    } finally {
+      if (initial.child.exitCode === null) await kill(initial.child);
+      if (restarted?.child.exitCode === null) await kill(restarted.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
     }
   });
 
@@ -905,9 +979,9 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
-      await updateLaunch(attached.endpoint, { mode: "docker", versions: { postgres: "17.6.1" } });
+      await updateLaunch(attached.endpoint, { versions: { postgres: "17.6.1" } });
       expect(readStackDocument(roots)?.launch).toEqual({
-        mode: "docker",
+        mode: "native",
         versions: { postgres: "17.6.1" },
       });
       await remoteStop(attached.endpoint);

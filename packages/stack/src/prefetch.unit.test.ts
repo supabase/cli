@@ -64,7 +64,7 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 }
 
 describe("prefetch", () => {
-  test("prefetches all services by default", async () => {
+  test("prefetches every native-capable service by default in native mode", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner(
       Array.from({ length: SERVICE_NAMES.length }, () => ({
@@ -77,11 +77,9 @@ describe("prefetch", () => {
       Layer.provide(spawner.layer),
     );
 
-    const result = await Effect.runPromise(
-      prefetch({ mode: "docker" }).pipe(Effect.provide(layer)),
-    );
+    const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
 
-    expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(Object.keys(result).sort()).toEqual(["auth", "postgres", "postgrest"]);
   });
 
   test("preparation fails with DockerPullError when the canonical image fails", async () => {
@@ -101,7 +99,10 @@ describe("prefetch", () => {
     );
 
     const error = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["auth"] }).pipe(Effect.provide(layer), Effect.flip),
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["auth"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
     );
 
     expect(error).toBeInstanceOf(DockerPullError);
@@ -117,7 +118,9 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["postgrest"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+      ),
     );
 
     expect(Object.keys(result).sort()).toEqual(["postgres", "postgrest"]);
@@ -132,7 +135,9 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["storage"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["storage"] }).pipe(
+        Effect.provide(layer),
+      ),
     );
 
     expect(Object.keys(result).sort()).toEqual(["imgproxy", "postgres", "storage"]);
@@ -174,6 +179,7 @@ describe("prefetch", () => {
         const preparation = yield* StackPreparation;
         return yield* preparation.prepare({
           mode: "docker",
+          containerRuntime: "docker",
           services: ["studio"],
           enabledServices: ["postgres", "pgmeta", "studio"],
         });
@@ -194,7 +200,9 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["postgrest"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+      ),
     );
 
     expect(result.postgrest).toEqual({
@@ -249,7 +257,9 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["pgmeta"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["pgmeta"] }).pipe(
+        Effect.provide(layer),
+      ),
     );
 
     expect(result.pgmeta).toEqual({
@@ -269,7 +279,7 @@ describe("prefetch", () => {
       Effect.gen(function* () {
         const preparation = yield* StackPreparation;
         const streamEvents = yield* preparation
-          .prepareEvents({ mode: "docker", services: ["auth"] })
+          .prepareEvents({ mode: "docker", containerRuntime: "docker", services: ["auth"] })
           .pipe(Stream.runCollect);
         const downloadEvents = streamEvents.flatMap((event) =>
           event instanceof ServiceDownloadStarted || event instanceof ServiceDownloadFinished
@@ -301,6 +311,7 @@ describe("prefetch", () => {
         const preparation = yield* StackPreparation;
         const artifacts = yield* preparation.prepare({
           mode: "docker",
+          containerRuntime: "docker",
           services: ["edge-runtime"],
         });
         return artifacts.resolutions;

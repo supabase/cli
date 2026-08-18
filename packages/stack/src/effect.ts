@@ -23,9 +23,12 @@ export {
 export type { NativeTarget, PlatformInfo } from "./Platform.ts";
 export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
 
+export type { ContainerRuntime, StackRuntimeSelection } from "./ContainerRuntime.ts";
+export { selectStackRuntime, validateStackRuntime } from "./ContainerRuntime.ts";
+
 export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
 
-export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
+export type { PrefetchEffectOptions, PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
 
 export {

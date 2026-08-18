@@ -6,14 +6,14 @@ import { dockerForceRemove } from "../cleanup.ts";
 import { dockerContainerName } from "../StackIdentity.ts";
 import { SERVICE_NAMES } from "../ServiceCatalog.ts";
 import { HttpTransportClient, HttpTransportClientError } from "../HttpTransportClient.ts";
-import type { ManagedStackDocument } from "./document.ts";
+import type { ManagedStackDocument, ManagedStackLaunchUpdate } from "./document.ts";
 import {
   ManagedStackAttachedError,
   ManagedStackControlRequiredError,
   ManagedStackManager,
   workspaceRepairConflict,
   type ManagedStackManagerError,
-  type ManagedStackLaunchUpdate,
+  type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
 import { ControlTransportError, controlEndpoint, type ControlEndpoint } from "./control.ts";
 import {
@@ -289,7 +289,7 @@ export const deleteManagedStack = (
 
 /** Persist launch selections in the managed document, owner-gated. */
 export const updateManagedLaunch = (
-  input: ManagedLifecycleInput & { readonly launch: NonNullable<ManagedStackDocument["launch"]> },
+  input: ManagedLifecycleInput & { readonly launch: ManagedStackLaunchUpdate },
 ): Effect.Effect<
   ManagedStackDocument,
   NoRunningStackError | ManagedStackManagerError | HttpTransportClientError,
@@ -317,7 +317,10 @@ export const updateManagedLaunch = (
         if (next === undefined) return yield* Effect.fail(noRunningStack(input));
         return next;
       }
-      const update: ManagedStackLaunchUpdate = { stackId: document.id, launch: input.launch };
+      const update: ManagedStackLaunchUpdateRequest = {
+        stackId: document.id,
+        launch: input.launch,
+      };
       return yield* Effect.ensuring(manager.updateLaunch(acquisition, update), acquisition.close);
     }),
   );

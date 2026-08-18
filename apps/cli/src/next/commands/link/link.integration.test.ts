@@ -346,7 +346,7 @@ describe("link handler", () => {
             },
           ],
           behavior: {
-            mode: "docker",
+            mode: "auto",
             placeholder: "Search projects...",
             maxItems: 10,
           },
@@ -515,7 +515,7 @@ describe("link handler", () => {
             },
           ],
           behavior: {
-            mode: "docker",
+            mode: "auto",
             placeholder: "Search projects...",
             maxItems: 10,
           },

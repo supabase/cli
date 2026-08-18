@@ -7,11 +7,13 @@ import {
   Duration,
   Effect,
   Equal,
+  Exit,
   FileSystem,
   Layer,
   Path,
   Ref,
   Schema,
+  Scope,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -46,8 +48,13 @@ import {
   ServiceDownloadStarted,
   StackPreparation,
 } from "./StackPreparation.ts";
-import type { PreparedStackArtifacts } from "./StackPreparation.ts";
-import { enabledServicesForConfig, StackBuilder, versionsForConfig } from "./StackBuilder.ts";
+import type { PreparedStackArtifacts, StackPreparationInput } from "./StackPreparation.ts";
+import {
+  enabledServicesForConfig,
+  StackBuilder,
+  validateResolvedConfig,
+  versionsForConfig,
+} from "./StackBuilder.ts";
 import { resolveReadinessPolicy } from "./StackConfig.ts";
 import type { ReadinessPolicy, ReadyOptions, ResolvedStackConfig } from "./StackConfig.ts";
 import { projectStackStates, type StackServiceProjectionCatalog } from "./StackStateProjection.ts";
@@ -181,6 +188,7 @@ export const localStackLayer = (
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const scope = yield* Effect.scope;
+      const preparationScope = yield* Scope.fork(scope, "parallel");
 
       const info = stackInfoFor(config);
       const enabledServices = enabledServicesForConfig(config);
@@ -251,22 +259,38 @@ export const localStackLayer = (
       let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
       let exactCleanupTargets: CleanupTargets | undefined;
 
+      const preparationInput = (
+        services: ReadonlyArray<ServiceName>,
+      ): Effect.Effect<StackPreparationInput, StackBuildError> => {
+        const shared = {
+          services,
+          enabledServices,
+          versions: versionsForConfig(config),
+        };
+        if (config.mode === "native") return Effect.succeed({ ...shared, mode: "native" });
+        return config.containerRuntime === null
+          ? Effect.fail(
+              new StackBuildError({
+                detail: "Docker mode requires a selected Docker or Podman runtime",
+                reason: "invalid_config",
+              }),
+            )
+          : Effect.succeed({
+              ...shared,
+              mode: "docker",
+              containerRuntime: config.containerRuntime,
+            });
+      };
+
       const ensurePlanned = Effect.suspend(() => {
         if (plannedArtifacts !== undefined) return Effect.succeed(plannedArtifacts);
         if (planDeferred !== undefined) return Deferred.await(planDeferred);
         const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
         planDeferred = deferred;
-        const effect = preparation
-          .plan({
-            mode: config.mode,
-            ...(config.containerRuntime === null
-              ? {}
-              : { containerRuntime: config.containerRuntime }),
-            services: enabledServicesForConfig(config),
-            enabledServices,
-            versions: versionsForConfig(config),
-          })
-          .pipe(
+        const effect = Effect.gen(function* () {
+          yield* validateResolvedConfig(config);
+          const input = yield* preparationInput(enabledServicesForConfig(config));
+          return yield* preparation.plan(input).pipe(
             Effect.mapError(
               (cause) =>
                 new StackBuildError({
@@ -275,15 +299,17 @@ export const localStackLayer = (
                   reason: "asset_preparation",
                 }),
             ),
-            Effect.tap((value) =>
-              Effect.sync(() => {
-                plannedArtifacts = value;
-              }),
-            ),
-            Effect.ensuring(Effect.sync(() => (planDeferred = undefined))),
           );
+        }).pipe(
+          Effect.tap((value) =>
+            Effect.sync(() => {
+              plannedArtifacts = value;
+            }),
+          ),
+          Effect.ensuring(Effect.sync(() => (planDeferred = undefined))),
+        );
         return Effect.gen(function* () {
-          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), scope);
+          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
           return yield* Deferred.await(deferred);
         });
       });
@@ -314,30 +340,27 @@ export const localStackLayer = (
           );
           const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
           preparationInFlight.set(key, deferred);
-          const effect = Stream.runFoldEffect(
-            preparation.prepareEvents({
-              mode: config.mode,
-              ...(config.containerRuntime === null
-                ? {}
-                : { containerRuntime: config.containerRuntime }),
-              services: pending,
-              enabledServices,
-              versions: versionsForConfig(config),
-            }),
-            () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
-            (current, event) =>
-              Effect.gen(function* () {
-                if (event instanceof ServiceDownloadStarted) {
-                  const state = SubscriptionRef.getUnsafe(stateRef).find(
-                    (entry) => entry.name === event.service,
-                  );
-                  if (state !== undefined && state.status !== "Downloading") {
-                    yield* updateState(new StackServiceState({ ...state, status: "Downloading" }));
-                  }
-                }
-                return event instanceof PreparationCompleted ? event.artifacts : current;
-              }),
-          ).pipe(
+          const effect = preparationInput(pending).pipe(
+            Effect.flatMap((input) =>
+              Stream.runFoldEffect(
+                preparation.prepareEvents(input),
+                () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
+                (current, event) =>
+                  Effect.gen(function* () {
+                    if (event instanceof ServiceDownloadStarted) {
+                      const state = SubscriptionRef.getUnsafe(stateRef).find(
+                        (entry) => entry.name === event.service,
+                      );
+                      if (state !== undefined && state.status !== "Downloading") {
+                        yield* updateState(
+                          new StackServiceState({ ...state, status: "Downloading" }),
+                        );
+                      }
+                    }
+                    return event instanceof PreparationCompleted ? event.artifacts : current;
+                  }),
+              ),
+            ),
             Effect.mapError(
               (cause) =>
                 new StackBuildError({
@@ -370,7 +393,7 @@ export const localStackLayer = (
             Effect.ensuring(Effect.sync(() => preparationInFlight.delete(key))),
           );
           return Effect.gen(function* () {
-            yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), scope);
+            yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
             return yield* Deferred.await(deferred);
           });
         });
@@ -427,7 +450,7 @@ export const localStackLayer = (
         );
 
         return Effect.gen(function* () {
-          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), scope);
+          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
           return yield* Deferred.await(deferred);
         });
       });
@@ -639,6 +662,7 @@ export const localStackLayer = (
             }
             disposed = true;
             yield* Ref.set(phaseRef, "stopping");
+            yield* Scope.close(preparationScope, Exit.void);
             yield* cleanupLocalStackResources({
               stop: () =>
                 runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
@@ -774,6 +798,7 @@ export const localStackLayer = (
               yield* Effect.all(readiness, { concurrency: "unbounded", discard: true }).pipe(
                 (effect) => withReadinessPolicy(effect, "stack"),
               );
+              yield* syncRuntimeProjectedStates(runtime);
             } else {
               yield* prepareServices(enabledServices);
               yield* runtime.orchestrator.start(serviceStartOptions);
@@ -806,10 +831,12 @@ export const localStackLayer = (
         startService: (name) =>
           Effect.gen(function* () {
             yield* requireMutable(`start service ${name}`);
+            yield* requireRunningPhase;
             const service = yield* requireKnownServiceName(name);
             yield* prepareServices([service]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable(`start service ${name}`);
+              yield* requireRunningPhase;
               return yield* beginStartTargets(
                 service,
                 new Set(lifecycleTargetsForService(enabledServices, service)),
@@ -832,10 +859,12 @@ export const localStackLayer = (
         restartService: (name) =>
           Effect.gen(function* () {
             yield* requireMutable(`restart service ${name}`);
+            yield* requireRunningPhase;
             const service = yield* requireKnownServiceName(name);
             yield* prepareServices([service]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable(`restart service ${name}`);
+              yield* requireRunningPhase;
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(service, serviceStartOptions);
               return { runtime, targets: [service] };
@@ -845,15 +874,17 @@ export const localStackLayer = (
         reloadFunctions: (opts) =>
           Effect.gen(function* () {
             yield* requireMutable("reload functions");
+            yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
+            const currentBundle = yield* Ref.get(functionsBundleRef);
+            const nextBundle =
+              opts?.functions === undefined
+                ? currentBundle
+                : yield* decodeFunctionsBundle(opts.functions);
             yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
-              const currentBundle = yield* Ref.get(functionsBundleRef);
-              const nextBundle =
-                opts?.functions === undefined
-                  ? currentBundle
-                  : yield* decodeFunctionsBundle(opts.functions);
+              yield* requireRunningPhase;
               yield* configureFunctions(config, nextBundle);
               yield* Ref.set(functionsBundleRef, nextBundle);
               const runtime = yield* ensureRuntime;
@@ -871,16 +902,18 @@ export const localStackLayer = (
         reloadEdgeRuntime: (opts) =>
           Effect.gen(function* () {
             yield* requireMutable("reload Edge Runtime");
+            yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
+            const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+            const currentBundle = yield* Ref.get(functionsBundleRef);
+            const nextBundle =
+              opts.functions === undefined
+                ? currentBundle
+                : yield* decodeFunctionsBundle(opts.functions);
             yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload Edge Runtime");
-              const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
-              const currentBundle = yield* Ref.get(functionsBundleRef);
-              const nextBundle =
-                opts.functions === undefined
-                  ? currentBundle
-                  : yield* decodeFunctionsBundle(opts.functions);
+              yield* requireRunningPhase;
               const prepared = yield* ensurePlanned;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder.build(nextConfig, prepared);

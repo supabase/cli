@@ -139,6 +139,7 @@ describe("managed stack document store", () => {
         document({
           launch: {
             mode: "docker",
+            containerRuntime: "docker",
             versions: { postgres: "17.6.1" },
             excludedServices: ["studio", "analytics"],
             lastNotifiedUpdateFingerprint: "fingerprint",
@@ -147,6 +148,7 @@ describe("managed stack document store", () => {
       );
       expect((yield* store.read(STACK_ID))?.launch).toEqual({
         mode: "docker",
+        containerRuntime: "docker",
         versions: { postgres: "17.6.1" },
         excludedServices: ["studio", "analytics"],
         lastNotifiedUpdateFingerprint: "fingerprint",

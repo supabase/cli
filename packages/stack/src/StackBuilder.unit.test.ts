@@ -9,7 +9,6 @@ import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { STACK_ID_LABEL } from "./StackIdentity.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
-import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortCatalog.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
@@ -199,28 +198,21 @@ const prepareAndBuild = (
   config: ResolvedStackConfig,
 ): Effect.Effect<BuildResult, unknown> =>
   Effect.gen(function* () {
-    const input: StackPreparationInput = {
-      mode: config.mode,
+    const shared = {
       services: enabledServicesForConfig(config),
       versions: versionsForConfig(config),
     };
+    const input: StackPreparationInput =
+      config.mode === "native"
+        ? { ...shared, mode: "native" }
+        : config.containerRuntime === null
+          ? yield* Effect.die("Docker test config is missing its container runtime")
+          : { ...shared, mode: "docker", containerRuntime: config.containerRuntime };
     const prepared = yield* preparation.prepare(input);
     return yield* builder.build(config, prepared);
   });
 
 describe("StackBuilder", () => {
-  it("makes native postgres reachable by docker services on every platform", () => {
-    expect(nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, true)).toBe(
-      true,
-    );
-    expect(
-      nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, false),
-    ).toBe(false);
-    expect(
-      nativePostgresNeedsDockerAccess({ type: "docker", image: "supabase/postgres" }, true),
-    ).toBe(false);
-  });
-
   it.effect("builds graph with all native binaries", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
@@ -305,11 +297,11 @@ describe("StackBuilder", () => {
       const config = { ...dockerConfig, containerRuntime: "podman" } satisfies ResolvedStackConfig;
       const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, config);
 
-      expect(graph.startOrder.length).toBe(3);
+      expect(graph.startOrder.length).toBe(4);
 
       const names = graph.startOrder.map((s) => s.name);
       expect(names).toContain("postgres");
-      expect(names).not.toContain("postgres-init");
+      expect(names).toContain("postgres-init");
       expect(names).toContain("postgrest");
       expect(names).toContain("auth");
 
@@ -357,7 +349,7 @@ describe("StackBuilder", () => {
         expect(name).not.toContain(String(managedConfig.apiPort));
       }
 
-      for (const def of graph.startOrder) {
+      for (const def of graph.startOrder.filter((service) => service.args?.[0] === "run")) {
         expect(def.args).toContain(`supabase-${def.name}-id-${firstManagedId}`);
         // The label carries the whole identity, so the containers stay findable
         // by it even if the names are ever built differently.
@@ -415,14 +407,14 @@ describe("StackBuilder", () => {
         `supabase-postgrest-${dockerConfig.apiPort}`,
         `supabase-auth-${dockerConfig.apiPort}`,
       ]);
-      for (const def of graph.startOrder) {
+      for (const def of graph.startOrder.filter((service) => service.args?.[0] === "run")) {
         expect(def.args).toContain(`supabase-${def.name}-${dockerConfig.apiPort}`);
         expect(def.args?.join(" ")).not.toContain(STACK_ID_LABEL);
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("docker mode wires auth directly to postgres readiness", () => {
+  it.effect("docker consumers wait for database initialization", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
@@ -432,24 +424,10 @@ describe("StackBuilder", () => {
       const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
       expect(authDef?.dependencyTimeoutSeconds).toBe(
-        dependencyTimeoutSecondsForServices(["postgres"]),
+        dependencyTimeoutSecondsForServices(["postgres"]) + POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("docker mode has no postgres-init service for Docker postgres", () => {
-    const resolver = mockBinaryResolver();
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
-
-      const names = graph.startOrder.map((s) => s.name);
-      expect(names).not.toContain("postgres-init");
     }).pipe(Effect.provide(layer));
   });
 
@@ -463,11 +441,12 @@ describe("StackBuilder", () => {
       const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
 
-      // postgrest depends on postgres(healthy) — no postgres-init in Docker mode
       const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(postgrestDef?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -487,7 +466,9 @@ describe("StackBuilder", () => {
       const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
       expect(edgeRuntimeDef).toBeDefined();
       expect(edgeRuntimeDef?.command).toBe("docker");
-      expect(edgeRuntimeDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(edgeRuntimeDef?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
       expect(cleanupTargets.dockerContainerNames).toContain(
         `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
       );

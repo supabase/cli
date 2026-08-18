@@ -30,11 +30,7 @@ export async function warmStackE2eDependencies(
   const dockerAvailable = (options.hasDockerDaemon ?? hasDockerDaemon)();
 
   try {
-    const warmups = [prefetchDeps()];
-    if (dockerAvailable) {
-      warmups.push(prefetchDeps({ mode: "docker" }));
-    }
-    await Promise.all(warmups);
+    await prefetchDeps(dockerAvailable ? { mode: "docker" } : undefined);
   } catch (error) {
     logger.warn(
       `[stack-e2e] Warmup failed: ${error instanceof Error ? error.message : String(error)}`,

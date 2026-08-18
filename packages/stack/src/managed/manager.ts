@@ -60,7 +60,7 @@ import {
 } from "./port-plan.ts";
 import { resolvePortIntents } from "./port-intent.ts";
 import { makeStackStore, type ManagedStackListing } from "./store.ts";
-import type { ManagedStackDocument } from "./document.ts";
+import type { ManagedStackDocument, ManagedStackLaunchUpdate } from "./document.ts";
 import { dockerForceRemove } from "../cleanup.ts";
 import { SERVICE_NAMES } from "../ServiceCatalog.ts";
 import { dockerContainerName } from "../StackIdentity.ts";
@@ -114,9 +114,9 @@ export interface ManagedStackLifecycleUpdate {
   readonly runtime?: ManagedStackDocument["runtime"] | null;
 }
 
-export interface ManagedStackLaunchUpdate {
+export interface ManagedStackLaunchUpdateRequest {
   readonly stackId: string;
-  readonly launch: NonNullable<ManagedStackDocument["launch"]>;
+  readonly launch: ManagedStackLaunchUpdate;
 }
 
 export interface ManagedPortLease {
@@ -148,6 +148,16 @@ export class ManagedStackAttachedError extends Data.TaggedError("ManagedStackAtt
   }
 }
 
+export class ManagedStackLaunchMissingError extends Data.TaggedError(
+  "ManagedStackLaunchMissingError",
+)<{
+  readonly stackId: string;
+}> {
+  override get message(): string {
+    return `Managed stack ${this.stackId} has no selected runtime`;
+  }
+}
+
 export class ManagedWorkspaceRepairConflictError extends Data.TaggedError(
   "ManagedWorkspaceRepairConflictError",
 )<{
@@ -174,6 +184,7 @@ export const workspaceRepairConflict = (
 export type ManagedStackManagerError =
   | ManagedStackControlRequiredError
   | ManagedStackAttachedError
+  | ManagedStackLaunchMissingError
   | ManagedWorkspaceRepairConflictError
   | ManagedStackNotFoundError
   | ManagedStackNotStoppedError
@@ -235,7 +246,7 @@ export interface ManagedStackManagerShape {
   /** Persist launch selections under the stack's control ownership. */
   readonly updateLaunch: (
     ownership: ControlOwnership,
-    update: ManagedStackLaunchUpdate,
+    update: ManagedStackLaunchUpdateRequest,
   ) => Effect.Effect<ManagedStack, ManagedStackManagerError>;
   readonly repairWorkspace: (
     request: RepairRequest,
@@ -764,7 +775,7 @@ const makeManager = (
 
     const updateLaunch = (
       ownership: ControlOwnership,
-      update: ManagedStackLaunchUpdate,
+      update: ManagedStackLaunchUpdateRequest,
     ): Effect.Effect<ManagedStack, ManagedStackManagerError> =>
       lifecycleLock.withPermit(
         Effect.gen(function* () {
@@ -773,9 +784,33 @@ const makeManager = (
           if (current === undefined) {
             return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
           }
+          if (current.launch === undefined) {
+            return yield* Effect.fail(
+              new ManagedStackLaunchMissingError({ stackId: update.stackId }),
+            );
+          }
+          const metadata = {
+            versions: update.launch.versions,
+            ...(update.launch.excludedServices === undefined
+              ? {}
+              : { excludedServices: update.launch.excludedServices }),
+            ...(update.launch.lastNotifiedUpdateFingerprint === undefined
+              ? {}
+              : {
+                  lastNotifiedUpdateFingerprint: update.launch.lastNotifiedUpdateFingerprint,
+                }),
+          };
+          const launch: NonNullable<ManagedStackDocument["launch"]> =
+            current.launch.mode === "native"
+              ? { ...metadata, mode: "native" }
+              : {
+                  ...metadata,
+                  mode: "docker",
+                  containerRuntime: current.launch.containerRuntime,
+                };
           const next: ManagedStackDocument = {
             ...current,
-            launch: update.launch,
+            launch,
             updatedAt: now(),
           };
           yield* store.write(next);

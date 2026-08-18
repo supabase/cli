@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
-import type { ServiceDependency } from "./service-utils.ts";
+import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
+import type { ContainerRuntimeOptions, ServiceDependency } from "./service-utils.ts";
 
 interface PostgresInitOptions {
   readonly postgresDir: string;
@@ -9,6 +10,15 @@ interface PostgresInitOptions {
    * Data API privileges on the `public` schema so newly-created entities require explicit GRANTs.
    */
   readonly autoExposeNewTables: boolean;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
+}
+
+interface DockerPostgresInitOptions extends ContainerRuntimeOptions {
+  readonly dbPort: number;
+  readonly jwtSecret: string;
+  readonly jwtExpiry: number;
+  readonly autoExposeNewTables: boolean;
+  readonly identity: StackIdentity;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -26,6 +36,53 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `.trim();
+
+const dockerPostgresSchemaSql = (opts: DockerPostgresInitOptions) =>
+  `
+\\set jwt_secret \`echo "$JWT_SECRET"\`
+\\set jwt_exp \`echo "$JWT_EXP"\`
+ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
+ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
+ALTER USER postgres WITH PASSWORD 'postgres';
+ALTER USER authenticator WITH PASSWORD 'postgres';
+ALTER USER supabase_auth_admin WITH PASSWORD 'postgres';
+ALTER USER supabase_storage_admin WITH PASSWORD 'postgres';
+ALTER USER supabase_replication_admin WITH PASSWORD 'postgres';
+ALTER USER supabase_read_only_user WITH PASSWORD 'postgres';
+CREATE SCHEMA IF NOT EXISTS _realtime;
+ALTER SCHEMA _realtime OWNER TO postgres;
+${opts.autoExposeNewTables ? "" : REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL}
+SELECT 'CREATE DATABASE _supabase WITH OWNER postgres'
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')\\gexec
+\\connect _supabase
+CREATE SCHEMA IF NOT EXISTS _analytics;
+ALTER SCHEMA _analytics OWNER TO postgres;
+CREATE SCHEMA IF NOT EXISTS _supavisor;
+ALTER SCHEMA _supavisor OWNER TO postgres;
+`.trim();
+
+export const makePostgresInitServiceDocker = (opts: DockerPostgresInitOptions): ServiceDef => ({
+  name: "postgres-init",
+  command: opts.runtime,
+  args: [
+    "exec",
+    "-e",
+    "PGPASSWORD=postgres",
+    "-e",
+    `JWT_SECRET=${opts.jwtSecret}`,
+    "-e",
+    `JWT_EXP=${opts.jwtExpiry}`,
+    dockerContainerName("postgres", opts.identity.key),
+    "sh",
+    "-c",
+    `/opt/postgres/bin/psql -h 127.0.0.1 -p ${opts.dbPort} -v ON_ERROR_STOP=1 --no-password --no-psqlrc -U supabase_admin -d postgres <<'EOSQL'
+${dockerPostgresSchemaSql(opts)}
+EOSQL`,
+  ],
+  dependencies: opts.dependencies,
+  supervision: {},
+  restart: "no",
+});
 
 export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
   const pgBinDir = `${opts.postgresDir}/bin`;

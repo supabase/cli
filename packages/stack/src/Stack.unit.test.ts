@@ -202,9 +202,22 @@ describe("Stack", () => {
       projectDir: runtimeRoot,
       runtimeRoot,
       functions: initialBundle,
+      postgrest: false,
+      auth: false,
+      servicePolicies: {
+        ...edgeRuntimeConfig.servicePolicies,
+        postgrest: "off",
+        auth: "off",
+        "edge-runtime": "lazy",
+      },
     } satisfies ResolvedStackConfig;
     const graph = Effect.runSync(
       buildGraph([
+        {
+          name: "postgres",
+          command: process.execPath,
+          restart: "unless-stopped",
+        },
         {
           name: "edge-runtime",
           command: process.execPath,
@@ -220,7 +233,10 @@ describe("Stack", () => {
           return {
             graph,
             cleanupTargets: { dockerContainerNames: [] },
-            serviceProjection: new Map([["edge-runtime", { visibility: "public" as const }]]),
+            serviceProjection: new Map([
+              ["postgres", { visibility: "public" as const }],
+              ["edge-runtime", { visibility: "public" as const }],
+            ]),
           };
         }),
     });
@@ -240,8 +256,10 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       yield* stack.start();
+      expect((yield* stack.getState("edge-runtime")).status).toBe("Dormant");
 
       yield* stack.reloadFunctions({ functions: replacementBundle });
+      expect((yield* stack.getState("edge-runtime")).status).toBe("Healthy");
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
       yield* stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } });
@@ -295,59 +313,6 @@ describe("Stack", () => {
       Effect.timeout("5 seconds"),
     );
   });
-
-  const coldEdgeRuntimeReload = (operation: "reloadFunctions" | "reloadEdgeRuntime") =>
-    Effect.gen(function* () {
-      const runtimeRoot = mkdtempSync(join(tmpdir(), `supabase-${operation}-`));
-      const edgeRuntimeSpawnStarted = yield* Deferred.make<void>();
-      const image = `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`;
-      const spawner = mockChildProcessSpawner({
-        beforeSpawn: ({ command, args }) =>
-          command === process.execPath &&
-          args.some((arg) => Buffer.from(arg, "base64url").toString().includes(image))
-            ? Deferred.succeed(edgeRuntimeSpawnStarted, undefined).pipe(Effect.asVoid)
-            : Effect.void,
-      });
-      const config = {
-        ...edgeRuntimeConfig,
-        runtimeRoot,
-        projectDir: runtimeRoot,
-        servicePolicies: {
-          ...edgeRuntimeConfig.servicePolicies,
-          "edge-runtime": "lazy",
-        },
-      } satisfies ResolvedStackConfig;
-      const { layer } = setupLayer(config, noopPortLease(config.ports), spawner);
-
-      yield* Effect.gen(function* () {
-        const stack = yield* Stack;
-        const reloading = yield* (
-          operation === "reloadFunctions"
-            ? stack.reloadFunctions()
-            : stack.reloadEdgeRuntime({ edgeRuntime: {} })
-        ).pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(edgeRuntimeSpawnStarted);
-
-        expect(spawner.spawned).toContainEqual({
-          command: "docker",
-          args: ["image", "inspect", image],
-        });
-
-        yield* Fiber.interrupt(reloading);
-        yield* stack.dispose();
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
-      );
-    });
-
-  it.live("prepares dormant Edge Runtime before reloading Functions", () =>
-    coldEdgeRuntimeReload("reloadFunctions").pipe(Effect.scoped, Effect.timeout("5 seconds")),
-  );
-
-  it.live("prepares dormant Edge Runtime before reloading its configuration", () =>
-    coldEdgeRuntimeReload("reloadEdgeRuntime").pipe(Effect.scoped, Effect.timeout("5 seconds")),
-  );
 
   it.effect("getInfo returns valid JWT tokens", () => {
     const { layer } = setupLayer();
@@ -522,6 +487,26 @@ describe("Stack", () => {
       expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
+  });
+
+  it.effect("rejects unsupported native services before resource planning", () => {
+    const config = {
+      ...edgeRuntimeConfig,
+      mode: "native",
+      containerRuntime: null,
+    } satisfies ResolvedStackConfig;
+    const { layer } = setupLayer(config, noopPortLease(config.ports));
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const error = yield* stack.start().pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "StackBuildError",
+        reason: "invalid_config",
+      });
+      if (error._tag === "StackBuildError") expect(error.detail).toContain("edge-runtime");
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("getState fails for internal helper services", () => {
@@ -700,7 +685,7 @@ describe("Stack", () => {
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {
-    const { layer, spawner } = setupLayer({
+    const { layer } = setupLayer({
       ...defaultConfig,
       servicePolicies: {
         ...defaultConfig.servicePolicies,
@@ -716,15 +701,9 @@ describe("Stack", () => {
       yield* stack.start();
       yield* stack.waitAllReady();
 
-      expect(
-        spawner.spawned.some((record) =>
-          record.args.some((arg) =>
-            Buffer.from(arg, "base64url").toString().includes('"command":"bash"'),
-          ),
-        ),
-      ).toBe(true);
-      expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
-      expect(spawner.spawned.some((record) => record.command.endsWith("/postgrest"))).toBe(false);
+      expect((yield* stack.getState("postgres")).status).toBe("Healthy");
+      expect((yield* stack.getState("auth")).status).toBe("Dormant");
+      expect((yield* stack.getState("postgrest")).status).toBe("Dormant");
 
       yield* stack.stop();
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
@@ -732,15 +711,6 @@ describe("Stack", () => {
 
   it.live("prepares a dormant service before restarting it", () =>
     Effect.gen(function* () {
-      const postgrestSpawnStarted = yield* Deferred.make<void>();
-      const spawner = mockChildProcessSpawner({
-        beforeSpawn: ({ args }) =>
-          args.some((arg) =>
-            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/postgrest/'),
-          )
-            ? Deferred.succeed(postgrestSpawnStarted, undefined).pipe(Effect.asVoid)
-            : Effect.void,
-      });
       const resolver = mockBinaryResolver({ downloadedServices: ["postgrest"] });
       const config = {
         ...defaultConfig,
@@ -750,7 +720,7 @@ describe("Stack", () => {
           auth: "lazy",
         },
       } satisfies ResolvedStackConfig;
-      const { layer } = setupLayer(config, noopPortLease(config.ports), spawner, resolver);
+      const { layer } = setupLayer(config, noopPortLease(config.ports), undefined, resolver);
 
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
@@ -761,15 +731,73 @@ describe("Stack", () => {
           Stream.runHead,
           Effect.forkChild({ startImmediately: true }),
         );
+        const running = yield* stateChanges.pipe(
+          Stream.filter((state) => state.status === "Running"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
         const restarting = yield* stack
           .restartService("postgrest")
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(postgrestSpawnStarted);
 
         expect((yield* Fiber.join(downloading))._tag).toBe("Some");
+        expect((yield* Fiber.join(running))._tag).toBe("Some");
 
         yield* Fiber.interrupt(restarting);
         yield* stack.stop();
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("does not restart a service after the stack stops during preparation", () =>
+    Effect.gen(function* () {
+      const allowPreparation = yield* Deferred.make<void>();
+      const resolver = mockBinaryResolver({
+        downloadedServices: ["postgrest"],
+        beforeResolve: ({ service }) =>
+          service === "postgrest" ? Deferred.await(allowPreparation) : Effect.void,
+      });
+      const config = {
+        ...defaultConfig,
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          postgrest: "lazy",
+          auth: "lazy",
+        },
+      } satisfies ResolvedStackConfig;
+      const { layer } = setupLayer(config, noopPortLease(config.ports), undefined, resolver);
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        yield* stack.start();
+        const downloading = yield* (yield* stack.stateChanges("postgrest")).pipe(
+          Stream.filter((state) => state.status === "Downloading"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const restarting = yield* stack
+          .restartService("postgrest")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(downloading);
+        const running = yield* (yield* stack.stateChanges("postgrest")).pipe(
+          Stream.filter((state) => state.status === "Running"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* stack.stop();
+        yield* Deferred.succeed(allowPreparation, undefined);
+        const outcome = yield* Effect.race(
+          Fiber.join(restarting).pipe(
+            Effect.exit,
+            Effect.map((exit) => ({ type: "restart" as const, exit })),
+          ),
+          Fiber.join(running).pipe(Effect.as({ type: "resurrected" as const })),
+        );
+
+        expect(outcome.type).toBe("restart");
+        if (outcome.type === "restart") expect(Exit.isFailure(outcome.exit)).toBe(true);
+        expect((yield* stack.getState("postgrest")).status).not.toBe("Running");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
@@ -1001,18 +1029,15 @@ describe("Stack", () => {
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
-  it.live("dispose is not blocked by in-flight lazy preparation", () =>
+  it.live("dispose cancels in-flight lazy preparation", () =>
     Effect.gen(function* () {
       const preparationStarted = yield* Deferred.make<void>();
-      const allowPreparation = yield* Deferred.make<void>();
       const disposed = yield* Deferred.make<void>();
       const resolver = mockBinaryResolver({
         downloadedServices: ["auth"],
         beforeResolve: ({ service }) =>
           service === "auth"
-            ? Deferred.succeed(preparationStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(allowPreparation)),
-              )
+            ? Deferred.succeed(preparationStarted, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.void,
       });
       const config = {
@@ -1038,8 +1063,8 @@ describe("Stack", () => {
         yield* Deferred.await(disposed);
         yield* Fiber.join(disposing);
 
-        yield* Deferred.succeed(allowPreparation, undefined);
-        yield* Fiber.interrupt(activation);
+        expect(Exit.isFailure(yield* Fiber.await(activation))).toBe(true);
+        expect((yield* stack.getState("auth")).status).not.toBe("Downloading");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );

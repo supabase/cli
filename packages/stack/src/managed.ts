@@ -53,6 +53,7 @@ export {
   deriveRepairOwnershipId,
   ManagedStackControlRequiredError,
   ManagedStackAttachedError,
+  ManagedStackLaunchMissingError,
   ManagedWorkspaceRepairConflictError,
 } from "./managed/manager.ts";
 export type {
@@ -67,8 +68,9 @@ export type {
   AllocateManagedPortsRequest,
   ReadStackRequest,
   StartStackRequest,
-  ManagedStackLaunchUpdate,
+  ManagedStackLaunchUpdateRequest,
 } from "./managed/manager.ts";
+export type { ManagedStackLaunchUpdate } from "./managed/document.ts";
 export {
   connectManagedStack,
   deleteManagedStack,

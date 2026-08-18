@@ -40,13 +40,17 @@ export type ServiceResolution =
   | { readonly type: "binary"; readonly path: string }
   | { readonly type: "docker"; readonly image: string };
 
-export interface StackPreparationInput {
+interface StackPreparationOptions {
   readonly versions?: Partial<VersionManifest>;
   readonly services?: ReadonlyArray<ServiceName>;
   readonly enabledServices?: ReadonlyArray<ServiceName>;
-  readonly mode: "native" | "docker";
-  readonly containerRuntime?: ContainerRuntime;
 }
+
+export type StackPreparationInput = StackPreparationOptions &
+  (
+    | { readonly mode: "native"; readonly containerRuntime?: never }
+    | { readonly mode: "docker"; readonly containerRuntime: ContainerRuntime }
+  );
 
 export type StackPreparationError =
   | BinaryNotFoundError
@@ -123,8 +127,13 @@ const preparationClosure = (
   return [...closure];
 };
 
-const selectedServices = (input?: StackPreparationInput): ReadonlyArray<ServiceName> =>
-  preparationClosure(input?.services ?? SERVICE_NAMES, input?.enabledServices);
+const selectedServices = (input: StackPreparationInput): ReadonlyArray<ServiceName> => {
+  const defaults =
+    input.mode === "docker"
+      ? SERVICE_NAMES
+      : SERVICE_NAMES.filter((service) => !isDockerOnlyService(service));
+  return preparationClosure(input.services ?? defaults, input.enabledServices);
+};
 
 const plannedResolution = (
   resolver: BinaryResolver["Service"],
@@ -148,15 +157,14 @@ const plannedResolution = (
 
 const planAssetsWithDependencies = (
   resolver: BinaryResolver["Service"],
-  input?: StackPreparationInput,
+  input: StackPreparationInput,
 ): Effect.Effect<PlannedStackArtifacts, BinaryNotFoundError> =>
   Effect.gen(function* () {
-    const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
-    const mode = input?.mode ?? "native";
+    const versions = { ...DEFAULT_VERSIONS, ...input.versions };
     const services = selectedServices(input);
     const results = yield* Effect.all(
       services.map((service) =>
-        plannedResolution(resolver, service, versions[service], mode).pipe(
+        plannedResolution(resolver, service, versions[service], input.mode).pipe(
           Effect.map((resolution) => [service, resolution] as const),
         ),
       ),
@@ -171,13 +179,13 @@ export class StackPreparation extends Context.Service<
   StackPreparation,
   {
     readonly plan: (
-      input?: StackPreparationInput,
+      input: StackPreparationInput,
     ) => Effect.Effect<PlannedStackArtifacts, BinaryNotFoundError>;
     readonly prepare: (
-      input?: StackPreparationInput,
+      input: StackPreparationInput,
     ) => Effect.Effect<PreparedStackArtifacts, StackPreparationError>;
     readonly prepareEvents: (
-      input?: StackPreparationInput,
+      input: StackPreparationInput,
     ) => Stream.Stream<StackPreparationEvent, StackPreparationError>;
   }
 >()("stack/StackPreparation") {
@@ -218,7 +226,11 @@ export class StackPreparation extends Context.Service<
                 ? (publishEvent?.(new ServiceDownloadFinished({ service })) ?? Effect.void)
                 : Effect.void,
             );
-          const key = `${service}\0${JSON.stringify(resolution)}`;
+          const key = JSON.stringify({
+            service,
+            resolution,
+            containerRuntime: input.mode === "docker" ? input.containerRuntime : null,
+          });
           const existing = inFlight.get(key);
           if (existing !== undefined) return Deferred.await(existing);
           const deferred = Deferred.makeUnsafe<ServiceResolution, StackPreparationError>();
@@ -226,15 +238,11 @@ export class StackPreparation extends Context.Service<
           const version = input.versions?.[service] ?? DEFAULT_VERSIONS[service];
           const effect: Effect.Effect<ServiceResolution, StackPreparationError> =
             resolution.type === "docker"
-              ? resolveDockerImageForService(
-                  spawner,
-                  input.containerRuntime ?? "docker",
-                  service,
-                  version,
-                  {
+              ? input.mode === "docker"
+                ? resolveDockerImageForService(spawner, input.containerRuntime, service, version, {
                     onDownloadStart: markDownloadStart(),
-                  },
-                ).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
+                  }).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
+                : Effect.die("Native preparation planned a Docker resolution")
               : resolver
                   .resolveWithMetadata(
                     { service, version },
@@ -259,7 +267,7 @@ export class StackPreparation extends Context.Service<
         });
 
       const prepareWithEvents = (
-        input: StackPreparationInput | undefined,
+        input: StackPreparationInput,
         publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
       ): Effect.Effect<PreparedStackArtifacts, StackPreparationError> =>
         Effect.gen(function* () {
@@ -268,12 +276,9 @@ export class StackPreparation extends Context.Service<
             selectedServices(input).map((service) => {
               const resolution = planned.resolutions[service];
               if (resolution === undefined) return Effect.die(`Missing plan for ${service}`);
-              return materialize(
-                service,
-                resolution,
-                { mode: input?.mode ?? "native", ...input },
-                publishEvent,
-              ).pipe(Effect.map((resolved) => [service, resolved] as const));
+              return materialize(service, resolution, input, publishEvent).pipe(
+                Effect.map((resolved) => [service, resolved] as const),
+              );
             }),
             { concurrency: "unbounded" },
           );
@@ -285,9 +290,9 @@ export class StackPreparation extends Context.Service<
         });
 
       return {
-        plan: (input?: StackPreparationInput) => planAssetsWithDependencies(resolver, input),
-        prepare: (input?: StackPreparationInput) => prepareWithEvents(input),
-        prepareEvents: (input?: StackPreparationInput) =>
+        plan: (input: StackPreparationInput) => planAssetsWithDependencies(resolver, input),
+        prepare: (input: StackPreparationInput) => prepareWithEvents(input),
+        prepareEvents: (input: StackPreparationInput) =>
           Stream.callback<StackPreparationEvent, StackPreparationError>((queue) =>
             prepareWithEvents(input, (event) => Queue.offer(queue, event)).pipe(
               Effect.matchCauseEffect({

@@ -26,6 +26,7 @@ import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 
 const launch = {
   mode: "docker" as const,
+  containerRuntime: "docker" as const,
   versions: { postgres: "17.6.1" },
   excludedServices: [],
 };

@@ -13,7 +13,11 @@ import {
 } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { selectStackRuntime } from "./ContainerRuntime.ts";
+import {
+  selectStackRuntime,
+  validateStackRuntime,
+  type StackRuntimeSelection,
+} from "./ContainerRuntime.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { Stack } from "./Stack.ts";
@@ -28,12 +32,17 @@ import {
   type ControlTransport,
 } from "./managed/control.ts";
 import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
-import { managedStackLaunchInputSchema, type ManagedStackLaunchInput } from "./managed/document.ts";
+import {
+  managedStackLaunchInputSchema,
+  type ManagedStackLaunch,
+  type ManagedStackLaunchInput,
+} from "./managed/document.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPaths } from "./managed/paths.ts";
-import { PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
+import { PORT_CATALOG, PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
+import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import type { PortAllocationError, PortLease } from "./PortAllocator.ts";
@@ -108,8 +117,18 @@ const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage =>
   return Schema.decodeUnknownSync(supervisorStartMessageSchema)(value);
 };
 
-const causeMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
+const causeMessage = (cause: unknown): string => {
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "detail" in cause &&
+    typeof cause.detail === "string"
+  ) {
+    return cause.detail;
+  }
+  return typeof cause === "string" ? cause : String(cause);
+};
 
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
@@ -268,7 +287,7 @@ const startDaemon = (input: {
   readonly platform: SupervisorPlatform;
   readonly scope: Scope.Scope;
   readonly launchUpdate?: (
-    launch: NonNullable<import("./managed/document.ts").ManagedStackDocument["launch"]>,
+    launch: import("./managed/document.ts").ManagedStackLaunchUpdate,
   ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
   { readonly daemon: DaemonServer["Service"] },
@@ -436,9 +455,44 @@ const runManaged = (
         );
       }
     }
-    const runtime = yield* selectStackRuntime(configInput.mode ?? input.launch?.mode);
+    const existing = yield* manager.inspectStack(stackId);
+    const requestedMode = configInput.mode ?? input.launch?.mode;
+    const persistedRuntime: StackRuntimeSelection | undefined =
+      existing?.launch?.mode === "native"
+        ? { mode: "native", containerRuntime: null }
+        : existing?.launch?.mode === "docker"
+          ? { mode: "docker", containerRuntime: existing.launch.containerRuntime }
+          : undefined;
+    if (
+      persistedRuntime !== undefined &&
+      requestedMode !== undefined &&
+      persistedRuntime.mode !== requestedMode
+    ) {
+      return yield* Effect.fail(
+        new SupervisorStartError({
+          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}`,
+        }),
+      );
+    }
+    const runtime =
+      persistedRuntime === undefined
+        ? yield* selectStackRuntime(requestedMode)
+        : yield* validateStackRuntime(persistedRuntime);
+    const activeFields = portFieldsForConfigInput({ ...configInput, mode: runtime.mode });
+    const activeFieldSet = new Set(activeFields);
+    const portIntents: ManagedPortIntentDocument = {
+      ...input.portIntents,
+      activeFields,
+      disabledFields: PORT_FIELDS.filter(
+        (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
+      ),
+    };
+    const launchInput = input.launch ?? { versions: {} };
+    const launch: ManagedStackLaunch =
+      runtime.containerRuntime === null
+        ? { ...launchInput, mode: "native" }
+        : { ...launchInput, mode: "docker", containerRuntime: runtime.containerRuntime };
     const startup = Effect.gen(function* () {
-      const existing = yield* manager.inspectStack(stackId);
       if (
         existing !== undefined &&
         (existing.lifecycle === "starting" ||
@@ -456,19 +510,10 @@ const runManaged = (
       const started: ManagedStackStartResult = yield* manager.startStack({
         workspacePath: input.workspacePath,
         stackName: input.stackName,
-        portDocument: input.portIntents,
+        portDocument: portIntents,
         ownership,
         lifecycle: "starting",
-        launch:
-          input.launch === undefined
-            ? undefined
-            : {
-                ...input.launch,
-                mode: runtime.mode,
-                ...(runtime.containerRuntime === null
-                  ? {}
-                  : { containerRuntime: runtime.containerRuntime }),
-              },
+        launch,
       });
       claimedStack = true;
       const resolved = yield* Effect.tryPromise({
@@ -584,7 +629,7 @@ export const runSupervisor = (
       const input = yield* receiveStartMessage();
       yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
         onFailure: (cause) =>
-          sendMessage({ type: "error", message: causeMessage(cause) }).pipe(
+          sendMessage({ type: "error", message: causeMessage(Cause.squash(cause)) }).pipe(
             Effect.andThen(Effect.failCause(cause)),
           ),
         onSuccess: Effect.succeed,

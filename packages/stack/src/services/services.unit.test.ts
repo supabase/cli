@@ -126,51 +126,6 @@ describe("makeStudioServiceDocker", () => {
   });
 });
 
-describe("makePostgresService (dockerAccessible)", () => {
-  it("creates per-run pg_hba.conf instead of mutating shared cache", () => {
-    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-postgres-service-"));
-    const def = makePostgresService({
-      binPath: POSTGRES_BIN_PATH,
-      dataDir: path.join(tempDir, "data"),
-      port: DB_PORT,
-      dockerAccessible: true,
-      cleanupDataDirOnExit: true,
-      dependencies: [],
-    });
-    const customHbaPath = `${path.join(tempDir, "data")}_pg_hba_docker.conf`;
-
-    try {
-      expect(def.name).toBe("postgres");
-      expect(def.command).toBe("bash");
-      expect(def.args).toEqual([
-        `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
-        "-p",
-        "54322",
-        "-c",
-        "wal_level=logical",
-        "-c",
-        "max_wal_senders=5",
-        "-c",
-        "max_replication_slots=5",
-        "-c",
-        "listen_addresses=*",
-        "-c",
-        `hba_file=${customHbaPath}`,
-      ]);
-      expect(readFileSync(customHbaPath, "utf8")).toContain("0.0.0.0/0");
-      expect(def.supervision).toEqual({
-        orphanCleanup: [
-          { _tag: "RemovePath", path: path.join(tempDir, "data") },
-          { _tag: "RemovePath", path: customHbaPath, recursive: false },
-        ],
-      });
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-      rmSync(customHbaPath, { force: true });
-    }
-  });
-});
-
 describe("makePostgresServiceDocker", () => {
   it("creates a docker-based postgres ServiceDef", () => {
     const def = makePostgresServiceDocker({
@@ -179,8 +134,6 @@ describe("makePostgresServiceDocker", () => {
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
       platformOs: "linux",
-      jwtSecret: "test-jwt-secret-with-at-least-32-characters",
-      jwtExpiry: 3600,
       identity: EPHEMERAL_IDENTITY,
       dependencies: [],
     });
@@ -194,8 +147,7 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain(`${DB_PORT}:${DB_PORT}`);
     expect(def.args).toContain(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres));
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
-    // Verify port is passed to postgres inside the container
-    expect(def.args?.[def.args.length - 1]).toContain(`-p ${DB_PORT}`);
+    expect(def.args?.slice(-2)).toEqual(["-p", String(DB_PORT)]);
     // Health check uses docker exec + pg_isready inside the container (host has no postgres tools)
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
@@ -204,6 +156,8 @@ describe("makePostgresServiceDocker", () => {
         "exec",
         `supabase-postgres-${API_PORT}`,
         "pg_isready",
+        "-h",
+        "127.0.0.1",
         "-p",
         "54322",
         "-U",
@@ -222,29 +176,6 @@ describe("makePostgresServiceDocker", () => {
         },
       ],
     });
-  });
-
-  it("bootstraps auxiliary databases and schemas used by docker-backed services", () => {
-    const def = makePostgresServiceDocker({
-      runtime: "docker",
-      image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
-      dataDir: "/tmp/supabase/data",
-      port: DB_PORT,
-      platformOs: "linux",
-      jwtSecret: "test-jwt-secret-with-at-least-32-characters",
-      jwtExpiry: 3600,
-      identity: EPHEMERAL_IDENTITY,
-      dependencies: [],
-    });
-
-    const script = def.args?.[def.args.length - 1] as string;
-    expect(script).toContain("CREATE DATABASE _supabase WITH OWNER postgres");
-    expect(script).toContain(
-      "WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')",
-    );
-    expect(script).toContain("\\connect _supabase");
-    expect(script).toContain("create schema if not exists _analytics;");
-    expect(script).toContain("create schema if not exists _supavisor;");
   });
 });
 

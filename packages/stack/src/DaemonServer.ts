@@ -11,7 +11,10 @@ import type { ControlOwnerStatus, DaemonErrorResponse } from "./DaemonProtocol.t
 import { FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
-import { managedStackLaunchSchema, type ManagedStackLaunch } from "./managed/document.ts";
+import {
+  managedStackLaunchUpdateSchema,
+  type ManagedStackLaunchUpdate,
+} from "./managed/document.ts";
 
 // ---------------------------------------------------------------------------
 // Service
@@ -35,7 +38,7 @@ export class DaemonServer extends Context.Service<
     }),
     options: {
       readonly includeOwnerRoute?: boolean;
-      readonly launchUpdate?: (launch: ManagedStackLaunch) => Effect.Effect<void, unknown>;
+      readonly launchUpdate?: (launch: ManagedStackLaunchUpdate) => Effect.Effect<void, unknown>;
       /** Supervisor-owned shutdown callbacks already stop the local stack. */
       readonly stopOnShutdown?: boolean;
     } = {},
@@ -178,8 +181,9 @@ export class DaemonServer extends Context.Service<
                   "POST",
                   "/managed/launch",
                   Effect.gen(function* () {
-                    const launch =
-                      yield* HttpServerRequest.schemaBodyJson(managedStackLaunchSchema);
+                    const launch = yield* HttpServerRequest.schemaBodyJson(
+                      managedStackLaunchUpdateSchema,
+                    );
                     yield* launchUpdate(launch);
                     return HttpServerResponse.jsonUnsafe({ ok: true });
                   }),

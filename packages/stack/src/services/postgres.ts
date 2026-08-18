@@ -1,4 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
@@ -20,15 +19,11 @@ interface PostgresServiceOptions {
 
 interface NativePostgresOptions extends PostgresServiceOptions {
   readonly binPath: string;
-  /** When true, patches postgres to listen on all interfaces so Docker containers can connect. */
-  readonly dockerAccessible?: boolean;
 }
 
 interface DockerPostgresOptions extends PostgresServiceOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly platformOs: string;
-  readonly jwtSecret: string;
-  readonly jwtExpiry: number;
   readonly identity: StackIdentity;
   readonly cleanupDataDirOnExit?: boolean;
 }
@@ -39,12 +34,6 @@ const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
   DYLD_LIBRARY_PATH: `${opts.binPath}/lib`,
   LD_LIBRARY_PATH: `${opts.binPath}/lib`,
   TZDIR: "/var/db/timezone/zoneinfo",
-});
-
-const postgresDockerEnv = (opts: DockerPostgresOptions): Record<string, string> => ({
-  POSTGRES_PASSWORD: "postgres",
-  JWT_SECRET: opts.jwtSecret,
-  JWT_EXP: String(opts.jwtExpiry),
 });
 
 const NATIVE_POSTGRES_RUNTIME_ARGS = [
@@ -58,32 +47,6 @@ const NATIVE_POSTGRES_RUNTIME_ARGS = [
 
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
-
-const DOCKER_POSTGRES_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
-\\set jwt_secret \`echo "$JWT_SECRET"\`
-\\set jwt_exp \`echo "$JWT_EXP"\`
-ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
-ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
-ALTER USER postgres WITH PASSWORD :'pgpass';
-ALTER USER authenticator WITH PASSWORD :'pgpass';
-ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_read_only_user WITH PASSWORD :'pgpass';
-create schema if not exists _realtime;
-alter schema _realtime owner to postgres;
-SELECT 'CREATE DATABASE _supabase WITH OWNER postgres'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')\\gexec
-\\connect _supabase
-create schema if not exists _analytics;
-alter schema _analytics owner to postgres;
-create schema if not exists _supavisor;
-alter schema _supavisor owner to postgres;`;
-
-const dockerPostgresEntrypoint = (port: number) =>
-  `cat <<'EOF' > /etc/postgresql.schema.sql && exec docker-entrypoint.sh postgres -D /etc/postgresql -p ${port}
-${DOCKER_POSTGRES_SCHEMA_SQL}
-EOF`;
 
 const postgresHealthCheck = (binPath: string, port: number) => ({
   probe: {
@@ -115,7 +78,7 @@ const postgresDockerHealthCheck = (
     runtime,
     containerName,
     "pg_isready",
-    ["-p", String(port), "-U", "postgres"],
+    ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres"],
     {
       ...stackHealthBudgets.postgresDocker,
     },
@@ -123,52 +86,6 @@ const postgresDockerHealthCheck = (
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
-
-  if (opts.dockerAccessible) {
-    // Docker containers connect via host.docker.internal, which resolves to a gateway IP
-    // rather than 127.0.0.1. We create a per-run pg_hba.conf that allows those
-    // connections, and use postgres -c flags to override listen_addresses and hba_file.
-    // This avoids mutating the shared binary cache.
-    const customHbaPath = `${opts.dataDir}_pg_hba_docker.conf`;
-    mkdirSync(opts.dataDir, { recursive: true });
-    writeFileSync(
-      customHbaPath,
-      [
-        "local   all             all                                     scram-sha-256",
-        "host    all             all             127.0.0.1/32            scram-sha-256",
-        "host    all             all             ::1/128                 scram-sha-256",
-        "host    all             all             0.0.0.0/0               scram-sha-256",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    return {
-      name: "postgres",
-      command: "bash",
-      args: [
-        initScript,
-        "-p",
-        String(opts.port),
-        ...NATIVE_POSTGRES_RUNTIME_ARGS,
-        "-c",
-        "listen_addresses=*",
-        "-c",
-        `hba_file=${customHbaPath}`,
-      ],
-      env: postgresEnv(opts),
-      dependencies: opts.dependencies,
-      healthCheck: postgresHealthCheck(opts.binPath, opts.port),
-      shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
-      supervision: {
-        orphanCleanup: [
-          ...orphanCleanup(opts),
-          ...removePathOnOrphanCleanup(customHbaPath, { recursive: false }),
-        ],
-      },
-      restart: "unless-stopped",
-    };
-  }
 
   return {
     name: "postgres",
@@ -184,7 +101,6 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 };
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
-  const env = postgresDockerEnv(opts);
   const containerName = dockerContainerName("postgres", opts.identity.key);
   return dockerRunService({
     runtime: opts.runtime,
@@ -193,9 +109,8 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],
-    env,
-    entrypoint: "sh",
-    cmd: ["-c", dockerPostgresEntrypoint(opts.port)],
+    env: { POSTGRES_PASSWORD: "postgres" },
+    cmd: ["-p", String(opts.port)],
     dependencies: opts.dependencies,
     healthCheck: postgresDockerHealthCheck(opts.runtime, containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },

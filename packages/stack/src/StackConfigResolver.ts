@@ -448,9 +448,24 @@ export async function resolveConfig(
   opts: ResolveConfigOptions = {},
 ): Promise<ResolvedStackConfig> {
   const inputConfig = input ?? {};
+  if (
+    inputConfig.mode !== undefined &&
+    opts.runtime !== undefined &&
+    inputConfig.mode !== opts.runtime.mode
+  ) {
+    throw new StackBuildError({
+      detail: `Selected ${opts.runtime.mode} runtime does not match requested ${inputConfig.mode} mode`,
+      reason: "invalid_config",
+    });
+  }
   const resolvedMode = opts.runtime?.mode ?? inputConfig.mode ?? "native";
-  const containerRuntime =
-    resolvedMode === "docker" ? (opts.runtime?.containerRuntime ?? "docker") : null;
+  if (resolvedMode === "docker" && opts.runtime?.containerRuntime == null) {
+    throw new StackBuildError({
+      detail: "Docker mode requires a selected Docker or Podman runtime",
+      reason: "invalid_config",
+    });
+  }
+  const containerRuntime = opts.runtime?.containerRuntime ?? null;
   const config: StackConfig = { ...inputConfig, mode: resolvedMode };
   // Deliberately first: unsupported policies must not create roots or reserve ports.
   const servicePolicies = resolveServicePolicies(config);

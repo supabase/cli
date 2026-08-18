@@ -50,6 +50,7 @@ describe("managed stack lifecycle journeys", () => {
           portDocument,
           ownership: owner,
           lifecycle: "running",
+          launch: { mode: "native", versions: {} },
         });
         yield* releaseLease(started);
         yield* owner.close;
@@ -58,13 +59,12 @@ describe("managed stack lifecycle journeys", () => {
           workspacePath: workspace,
           stackName: "default",
           launch: {
-            mode: "docker" as const,
             versions: { postgres: "17.6.1" },
             excludedServices: [],
           },
         };
         const updated = yield* updateManagedLaunch(input);
-        expect(updated.launch).toEqual(input.launch);
+        expect(updated.launch).toEqual({ mode: "native", ...input.launch });
 
         yield* stopManagedStack(input);
         const stopped = yield* manager.inspectStack(stackId);
@@ -192,9 +192,12 @@ describe("managed stack lifecycle journeys", () => {
           portDocument: automaticDocument(),
           ownership: owner,
           lifecycle: "running",
+          launch: { mode: "native", versions: {} },
         });
         yield* releaseLease(initial);
-        const launch = { mode: "docker" as const, versions: { postgres: "17.6.1" } };
+        const launch = {
+          versions: { postgres: "17.6.1" },
+        };
         gate.enabled = true;
         const launchFiber = yield* Effect.forkScoped(
           manager.updateLaunch(owner, { stackId, launch }),
@@ -220,7 +223,7 @@ describe("managed stack lifecycle journeys", () => {
         yield* Fiber.join(stopFiber);
         const final = yield* manager.inspectStack(stackId);
         expect(final?.lifecycle).toBe("stopped");
-        expect(final?.launch).toEqual(launch);
+        expect(final?.launch).toEqual({ mode: "native", ...launch });
       }),
     ).pipe(
       Effect.provide(managerLayer),
