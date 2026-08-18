@@ -2,7 +2,7 @@ import { Schema } from "effect";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 
 /**
- * Sparse config subtraction — see `docs/adr/0017-sparse-config-subtraction.md`.
+ * Sparse config subtraction — see `docs/adr/0018-sparse-config-subtraction.md`.
  *
  * A sparse config is a partial overlay containing only the values that differ
  * from some baseline. In the primary case — subtracting the default config
@@ -131,7 +131,7 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * a value differing from the baseline's is kept even when it equals the schema
  * default. A `[remotes.*]` block — config overrides for a specific persistent
  * Supabase branch, bound to it by `project_id` — has the merged base config as
- * its correct baseline, never the default config; see ADR 0017 for why
+ * its correct baseline, never the default config; see ADR 0018 for why
  * subtracting a remote block against global defaults would silently change
  * what the branch resolves to.
  */

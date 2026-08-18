@@ -81,7 +81,7 @@ describe("omitDefaultValues", () => {
     // `api.max_rows = 1000` IS the global default, but inside a remote block
     // it overrides whatever the base config resolves to — subtracting it
     // against global defaults would silently change the branch's effective
-    // value. See ADR 0017: a remote block's baseline is the merged base
+    // value. See ADR 0018: a remote block's baseline is the merged base
     // config, never the default config.
     const config = decodeProjectConfig({
       api: { max_rows: 500 },

@@ -1,13 +1,13 @@
-# 0017. Sparse Config Subtraction
+# 0018. Sparse Config Subtraction
 
 **Status**: proposed
 **Date**: 2026-08-18
 
 ## Problem Statement
 
-`config diff` (CLI-2156) and `config pull` (CLI-2064) compare a project's remote configuration against the local `config.toml`. The remote endpoint (`GET /v2/projects/{ref}/config`) returns the *effective* config — every setting reported, defaulted or not — and a locally decoded `ProjectConfig` likewise has every default filled in. Comparing these full objects directly would drown the user in hundreds of identical default values. CLI-2155 asks for a stored reference of config defaults and a mapping function that omits values matching them, so diffs stay readable and pulled files stay sparse.
+`config diff` (CLI-2156) and `config pull` (CLI-2064) compare a project's remote configuration against the local `config.toml` to surface *drift*: any difference between the project's effective remote configuration and the local file. The remote endpoint (`GET /v2/projects/{ref}/config`) returns the *effective* config — every setting reported, defaulted or not — and a locally decoded `ProjectConfig` likewise has every default filled in. Comparing these full objects directly would drown the user in hundreds of identical default values. CLI-2155 asks for a stored reference of config defaults and a mapping function that omits values matching them, so diffs stay readable and pulled files stay sparse.
 
-The trap is where that mapping recurses. A `[remotes.<label>]` block declares config overrides for a specific [persistent Supabase branch](https://supabase.com/docs/guides/local-development/cli/config#branching-config): the branch's project ref in `project_id` binds the block to the branch (the label is a user-chosen alias and is never matched on), any root config option can be overridden inside it, and unspecified options inherit from the base config. The block is therefore itself a sparse overlay over the merged base config. A value in a remote block that happens to equal a *global default* is not redundant: if the base config overrides the same property, removing the remote's value silently changes what that branch resolves to.
+The trap is where that mapping recurses. A `[remotes.<label>]` block declares config overrides for a specific [persistent Supabase branch](https://supabase.com/docs/guides/local-development/cli/config#branching-config): the branch's project ref in `project_id` binds the block to the branch (the label is a user-chosen alias and is never matched on), any root config option can be overridden inside it, and unspecified options inherit from the *base config* — the root-scope fields of the file, before any remote block is overlaid. The block is therefore itself a sparse overlay over the merged base config. A value in a remote block that happens to equal a *global default* is not redundant: if the base config overrides the same property, removing the remote's value silently changes what that branch resolves to.
 
 ## Decision
 
