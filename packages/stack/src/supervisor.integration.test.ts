@@ -6,6 +6,7 @@ import { createConnection, createServer } from "node:net";
 import {
   cpSync,
   existsSync,
+  type FSWatcher,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -36,6 +37,7 @@ const errorChildEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-error-child.ts", import.meta.url),
 );
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
+const FILE_WAIT_TIMEOUT_MS = 30_000;
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
@@ -81,19 +83,30 @@ const waitForFile = (path: string): Promise<void> =>
       resolve();
       return;
     }
-    const watcher = watch(dirname(path), (_eventType, filename) => {
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let watcher: FSWatcher | undefined;
+    const settle = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      watcher?.close();
+      continuation();
+    };
+    watcher = watch(dirname(path), (_eventType, filename) => {
       if (filename?.toString() === basename(path) && existsSync(path)) {
-        watcher.close();
-        resolve();
+        settle(resolve);
       }
     });
     watcher.once("error", (cause) => {
-      watcher.close();
-      reject(cause);
+      settle(() => reject(cause));
     });
+    timeout = setTimeout(
+      () => settle(() => reject(new Error(`timed out waiting for file ${path}`))),
+      FILE_WAIT_TIMEOUT_MS,
+    );
     if (existsSync(path)) {
-      watcher.close();
-      resolve();
+      settle(resolve);
     }
   });
 
@@ -432,21 +445,58 @@ const readStackDocument = (roots: {
   return undefined;
 };
 
-const waitForStackDocument = async (
-  roots: { readonly stateRoot: string },
-  lifecycle: string,
-): Promise<{
+type StackDocument = {
   readonly id: string;
   readonly lifecycle: string;
   readonly ports: ReadonlyArray<{ port: number }>;
-}> => {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const document = readStackDocument(roots);
-    if (document?.lifecycle === lifecycle) return document;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`timed out waiting for stack document lifecycle ${lifecycle}`);
+  readonly launch?: { readonly mode: string; readonly versions: Record<string, string> };
+};
+
+const waitForStackDocument = async (
+  roots: { readonly stateRoot: string; readonly stackId: string },
+  lifecycle: string,
+): Promise<StackDocument> => {
+  const documentPath = managedStackDocumentPath(roots.stateRoot, roots.stackId);
+  const stackDirectory = dirname(documentPath);
+  await waitForFile(dirname(stackDirectory));
+  await waitForFile(stackDirectory);
+  await waitForFile(documentPath);
+  const readDocument = (): StackDocument | undefined => {
+    try {
+      return JSON.parse(readFileSync(documentPath, "utf8")) as StackDocument;
+    } catch {
+      return undefined;
+    }
+  };
+  const existing = readDocument();
+  if (existing?.lifecycle === lifecycle) return existing;
+
+  return new Promise((resolve, reject) => {
+    let watcher: FSWatcher | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const settle = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      watcher?.close();
+      continuation();
+    };
+    const check = () => {
+      const document = readDocument();
+      if (document?.lifecycle === lifecycle) {
+        settle(() => resolve(document));
+      }
+    };
+    const fail = (cause: unknown) => settle(() => reject(cause));
+    watcher = watch(stackDirectory, () => check());
+    watcher.once("error", fail);
+    timeout = setTimeout(
+      () => fail(new Error(`timed out waiting for stack document lifecycle ${lifecycle}`)),
+      FILE_WAIT_TIMEOUT_MS,
+    );
+    check();
+  });
 };
 
 describe("detached supervisor child journeys", () => {
