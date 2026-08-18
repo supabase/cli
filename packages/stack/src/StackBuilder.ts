@@ -101,6 +101,17 @@ export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
+    if (
+      (config.mode === "native" && config.containerRuntime !== null) ||
+      (config.mode === "docker" && config.containerRuntime === null)
+    ) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `Resolved ${config.mode} mode has an inconsistent container runtime`,
+          reason: "invalid_config",
+        }),
+      );
+    }
     if (config.instanceId !== undefined && !INSTANCE_ID_PATTERN.test(config.instanceId)) {
       return yield* Effect.fail(
         new StackBuildError({
@@ -117,7 +128,7 @@ export const validateResolvedConfig = (
       if (enabledDockerOnly.length > 0) {
         return yield* Effect.fail(
           new StackBuildError({
-            detail: `mode "native" only supports postgres, auth, and postgrest. Disable ${enabledDockerOnly.join(", ")} or switch to "auto" or "docker".`,
+            detail: `mode "native" only supports postgres, auth, and postgrest. Disable ${enabledDockerOnly.join(", ")} or use "docker" mode.`,
             reason: "invalid_config",
           }),
         );
@@ -220,6 +231,17 @@ export class StackBuilder extends Context.Service<
       Effect.gen(function* () {
         yield* validateResolvedConfig(config);
 
+        const requireContainerRuntime = Effect.suspend(() =>
+          config.containerRuntime === null
+            ? Effect.fail(
+                new StackBuildError({
+                  detail: "A Docker service requires a selected container runtime",
+                  reason: "invalid_config",
+                }),
+              )
+            : Effect.succeed(config.containerRuntime),
+        );
+
         const platform = yield* detectPlatform;
         const serviceHost = dockerHostAddress(platform.os);
         const projectDir = config.projectDir;
@@ -285,6 +307,7 @@ export class StackBuilder extends Context.Service<
                   dependencies: [],
                 })
               : makePostgresServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: postgresResolution.image,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
@@ -326,6 +349,7 @@ export class StackBuilder extends Context.Service<
                   dependencies: postgresDeps,
                 })
               : makePostgrestServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: postgrestResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
@@ -362,6 +386,7 @@ export class StackBuilder extends Context.Service<
                   dependencies: postgresDeps,
                 })
               : makeAuthServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: authResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
@@ -396,6 +421,7 @@ export class StackBuilder extends Context.Service<
                   dependencies: postgresDeps,
                 })
               : makeEdgeRuntimeServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: edgeRuntimeResolution.image,
                   identity,
                   runtimeRoot: config.runtimeRoot,
@@ -416,6 +442,7 @@ export class StackBuilder extends Context.Service<
           const mailpitImage = yield* requirePreparedDockerImage(prepared, "mailpit");
           defs.push({
             ...makeMailpitServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: mailpitImage,
               identity,
               webPort: config.mailpit.port,
@@ -432,6 +459,7 @@ export class StackBuilder extends Context.Service<
           const realtimeImage = yield* requirePreparedDockerImage(prepared, "realtime");
           defs.push({
             ...makeRealtimeServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: realtimeImage,
               port: config.realtime.port,
               identity,
@@ -455,6 +483,7 @@ export class StackBuilder extends Context.Service<
           const storageImage = yield* requirePreparedDockerImage(prepared, "storage");
           defs.push({
             ...makeStorageServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: storageImage,
               port: config.storage.port,
               identity,
@@ -484,6 +513,7 @@ export class StackBuilder extends Context.Service<
           const imgproxyImage = yield* requirePreparedDockerImage(prepared, "imgproxy");
           defs.push({
             ...makeImgproxyServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: imgproxyImage,
               port: config.imgproxy.port,
               identity,
@@ -500,6 +530,7 @@ export class StackBuilder extends Context.Service<
           const pgmetaImage = yield* requirePreparedDockerImage(prepared, "pgmeta");
           defs.push({
             ...makePgmetaServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: pgmetaImage,
               identity,
               port: config.pgmeta.port,
@@ -517,6 +548,7 @@ export class StackBuilder extends Context.Service<
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
           defs.push({
             ...makeAnalyticsServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: analyticsImage,
               identity,
               hostPort: config.analytics.port,
@@ -537,6 +569,7 @@ export class StackBuilder extends Context.Service<
           const vectorImage = yield* requirePreparedDockerImage(prepared, "vector");
           defs.push({
             ...makeVectorServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: vectorImage,
               identity,
               serviceHost,
@@ -554,6 +587,7 @@ export class StackBuilder extends Context.Service<
           const poolerImage = yield* requirePreparedDockerImage(prepared, "pooler");
           defs.push({
             ...makePoolerServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: poolerImage,
               identity,
               hostAdminPort: config.pooler.apiPort,
@@ -580,6 +614,7 @@ export class StackBuilder extends Context.Service<
           const studioImage = yield* requirePreparedDockerImage(prepared, "studio");
           defs.push({
             ...makeStudioServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: studioImage,
               identity,
               port: config.studio.port,
@@ -611,7 +646,12 @@ export class StackBuilder extends Context.Service<
         }
 
         const dockerContainerNames = SERVICE_NAMES.filter((service) =>
-          defs.some((def) => def.name === service && def.command === "docker"),
+          defs.some(
+            (def) =>
+              def.name === service &&
+              config.containerRuntime !== null &&
+              def.command === config.containerRuntime,
+          ),
         ).map((service) => dockerContainerName(service, identity.key));
 
         const graph = yield* buildGraph(defs).pipe(

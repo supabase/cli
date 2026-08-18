@@ -77,7 +77,9 @@ describe("prefetch", () => {
       Layer.provide(spawner.layer),
     );
 
-    const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker" }).pipe(Effect.provide(layer)),
+    );
 
     expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
   });
@@ -136,7 +138,7 @@ describe("prefetch", () => {
     expect(Object.keys(result).sort()).toEqual(["imgproxy", "postgres", "storage"]);
   });
 
-  test("prefetching a companion does not pull its owner", async () => {
+  test("prefetching uses the selected container runtime without pulling an owner", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
     const layer = StackPreparation.layer.pipe(
@@ -145,10 +147,18 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["imgproxy"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", containerRuntime: "podman", services: ["imgproxy"] }).pipe(
+        Effect.provide(layer),
+      ),
     );
 
     expect(Object.keys(result)).toEqual(["imgproxy"]);
+    expect(spawner.spawned).toEqual([
+      {
+        command: "podman",
+        args: ["image", "inspect", `ghcr.io/supabase/cli/imgproxy:${DEFAULT_VERSIONS.imgproxy}`],
+      },
+    ]);
   });
 
   test("does not prepare dependencies that are disabled in the stack", async () => {
@@ -173,7 +183,7 @@ describe("prefetch", () => {
     expect(Object.keys(result.resolutions).sort()).toEqual(["pgmeta", "postgres", "studio"]);
   });
 
-  test("auto mode falls back to Docker when a service has no native target", async () => {
+  test("Docker mode uses Docker when a native artifact is unavailable", async () => {
     const resolver = mockBinaryResolver({
       binaries: { postgres: "/cache/postgres/native" },
     });
@@ -184,7 +194,7 @@ describe("prefetch", () => {
     );
 
     const result = await Effect.runPromise(
-      prefetch({ mode: "auto", services: ["postgrest"] }).pipe(Effect.provide(layer)),
+      prefetch({ mode: "docker", services: ["postgrest"] }).pipe(Effect.provide(layer)),
     );
 
     expect(result.postgrest).toEqual({
@@ -209,6 +219,25 @@ describe("prefetch", () => {
     );
 
     expect(error).toBeInstanceOf(BinaryNotFoundError);
+  });
+
+  test("native mode does not fall back when a native artifact is unavailable", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["postgrest"] });
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(BinaryNotFoundError);
+    expect(spawner.spawned).toEqual([]);
   });
 
   test("prefetches pgmeta using its published container tag", async () => {
@@ -259,7 +288,7 @@ describe("prefetch", () => {
     });
   });
 
-  test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
+  test("uses Docker for every service in Docker mode", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
     const layer = StackPreparation.layer.pipe(
@@ -270,7 +299,10 @@ describe("prefetch", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const preparation = yield* StackPreparation;
-        const artifacts = yield* preparation.prepare({ mode: "auto", services: ["edge-runtime"] });
+        const artifacts = yield* preparation.prepare({
+          mode: "docker",
+          services: ["edge-runtime"],
+        });
         return artifacts.resolutions;
       }).pipe(Effect.provide(layer)),
     );
@@ -279,8 +311,6 @@ describe("prefetch", () => {
       type: "docker",
       image: `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`,
     });
-    expect(resolver.resolved).toEqual([
-      { service: "postgres", version: DEFAULT_VERSIONS.postgres },
-    ]);
+    expect(resolver.resolved).toEqual([]);
   });
 });

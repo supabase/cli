@@ -897,9 +897,12 @@ const makeManager = (
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
           yield* acquisition.setState("deleting", false);
-          yield* dockerForceRemove(
-            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-          );
+          if (current.launch?.mode === "docker") {
+            yield* dockerForceRemove(
+              current.launch.containerRuntime ?? "docker",
+              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+            );
+          }
           const { runtime: _runtime, ...withoutRuntime } = current;
           const deleting = { ...withoutRuntime, lifecycle: "deleting" as const, updatedAt: now() };
           yield* store.write(deleting);

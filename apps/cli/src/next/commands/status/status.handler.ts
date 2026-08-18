@@ -43,7 +43,7 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
   return yield* resolveStackSummary({
     ...input,
     portDocument: managedPortIntents(
-      toStartStackConfig(excluded, current.launch?.mode ?? "auto"),
+      toStartStackConfig(excluded, current.launch?.mode),
       loaded ?? undefined,
     ),
   });

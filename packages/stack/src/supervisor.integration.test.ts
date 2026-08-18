@@ -256,7 +256,7 @@ const remoteInfo = (endpoint: ControlEndpoint): Promise<{ readonly url: string }
 const updateLaunch = async (
   endpoint: ControlEndpoint,
   launch: {
-    readonly mode: "native" | "auto" | "docker";
+    readonly mode: "native" | "docker";
     readonly versions: Record<string, string>;
   },
 ): Promise<void> => {
@@ -905,9 +905,9 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
-      await updateLaunch(attached.endpoint, { mode: "auto", versions: { postgres: "17.6.1" } });
+      await updateLaunch(attached.endpoint, { mode: "docker", versions: { postgres: "17.6.1" } });
       expect(readStackDocument(roots)?.launch).toEqual({
-        mode: "auto",
+        mode: "docker",
         versions: { postgres: "17.6.1" },
       });
       await remoteStop(attached.endpoint);

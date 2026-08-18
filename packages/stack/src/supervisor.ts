@@ -12,6 +12,8 @@ import {
   Schema,
 } from "effect";
 import { HttpServer } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { selectStackRuntime } from "./ContainerRuntime.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { Stack } from "./Stack.ts";
@@ -26,7 +28,7 @@ import {
   type ControlTransport,
 } from "./managed/control.ts";
 import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
-import { managedStackLaunchSchema } from "./managed/document.ts";
+import { managedStackLaunchInputSchema, type ManagedStackLaunchInput } from "./managed/document.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
@@ -51,7 +53,7 @@ export interface SupervisorStartMessage {
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
+  readonly launch?: ManagedStackLaunchInput;
 }
 
 export interface SupervisorStartedMessage {
@@ -73,7 +75,7 @@ export interface ManagedDaemonStartInput {
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
+  readonly launch?: ManagedStackLaunchInput;
 }
 
 const supervisorPortIntentSchema = Schema.Struct({
@@ -90,7 +92,7 @@ const supervisorStartMessageSchema = Schema.Struct({
   stateRoot: Schema.String,
   config: Schema.Record(Schema.String, Schema.Unknown),
   portIntents: supervisorPortIntentSchema,
-  launch: Schema.optionalKey(managedStackLaunchSchema),
+  launch: Schema.optionalKey(managedStackLaunchInputSchema),
 });
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -310,6 +312,7 @@ const runManaged = (
   | ControlTransport
   | import("effect").FileSystem.FileSystem
   | import("effect").Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
   | Scope.Scope
 > => {
   let owner: ControlOwnership | undefined;
@@ -433,6 +436,7 @@ const runManaged = (
         );
       }
     }
+    const runtime = yield* selectStackRuntime(configInput.mode ?? input.launch?.mode);
     const startup = Effect.gen(function* () {
       const existing = yield* manager.inspectStack(stackId);
       if (
@@ -442,9 +446,12 @@ const runManaged = (
           existing.lifecycle === "failed" ||
           existing.lifecycle === "deleting")
       ) {
-        yield* dockerForceRemove(
-          SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-        );
+        if (runtime.containerRuntime !== null) {
+          yield* dockerForceRemove(
+            runtime.containerRuntime,
+            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+          );
+        }
       }
       const started: ManagedStackStartResult = yield* manager.startStack({
         workspacePath: input.workspacePath,
@@ -452,7 +459,16 @@ const runManaged = (
         portDocument: input.portIntents,
         ownership,
         lifecycle: "starting",
-        launch: input.launch,
+        launch:
+          input.launch === undefined
+            ? undefined
+            : {
+                ...input.launch,
+                mode: runtime.mode,
+                ...(runtime.containerRuntime === null
+                  ? {}
+                  : { containerRuntime: runtime.containerRuntime }),
+              },
       });
       claimedStack = true;
       const resolved = yield* Effect.tryPromise({
@@ -465,7 +481,7 @@ const runManaged = (
               runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
               instanceId: started.stack.id,
             },
-            { portAllocator: () => Effect.succeed(started.lease.ports) },
+            { runtime, portAllocator: () => Effect.succeed(started.lease.ports) },
           ),
         catch: (cause) => cause,
       });
@@ -557,7 +573,10 @@ export const runSupervisor = (
 ): Effect.Effect<
   void,
   SupervisorStartError | unknown,
-  ControlTransport | import("effect").FileSystem.FileSystem | import("effect").Path.Path
+  | ControlTransport
+  | import("effect").FileSystem.FileSystem
+  | import("effect").Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.scoped(
     Effect.gen(function* () {

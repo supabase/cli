@@ -80,7 +80,7 @@ describe("start handler", () => {
               );
               return start({
                 stack: fixture.stackName,
-                mode: "auto",
+                mode: "docker",
                 exclude: [],
                 serviceVersion: [],
                 detach: false,

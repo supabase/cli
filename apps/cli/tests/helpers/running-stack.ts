@@ -24,7 +24,11 @@ import { CliConfig } from "../../src/next/config/cli-config.service.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 
-const launch = { mode: "auto" as const, versions: { postgres: "17.6.1" }, excludedServices: [] };
+const launch = {
+  mode: "docker" as const,
+  versions: { postgres: "17.6.1" },
+  excludedServices: [],
+};
 const portDocument: ManagedPortIntentDocument = {
   activeFields: ["apiPort", "dbPort"],
   document: {},

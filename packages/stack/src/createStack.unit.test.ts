@@ -83,10 +83,25 @@ describe("resolveConfig edge runtime defaults", () => {
     expect(config.edgeRuntime).toBe(false);
   });
 
-  it("enables edge runtime when omitted in auto mode", async () => {
-    const config = await resolveConfig();
+  it("enables edge runtime when omitted in Docker mode", async () => {
+    const config = await resolveConfig({ mode: "docker" });
 
-    expect(config.mode).toBe("auto");
+    expect(config.mode).toBe("docker");
+    expect(config.edgeRuntime).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        version: DEFAULT_VERSIONS["edge-runtime"],
+      }),
+    );
+  });
+
+  it("applies the detected Docker mode before resolving services and ports", async () => {
+    const config = await resolveConfig(undefined, {
+      runtime: { mode: "docker", containerRuntime: "podman" },
+    });
+
+    expect(config.mode).toBe("docker");
+    expect(config.containerRuntime).toBe("podman");
     expect(config.edgeRuntime).toEqual(
       expect.objectContaining({
         enabled: true,

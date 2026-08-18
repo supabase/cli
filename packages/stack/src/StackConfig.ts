@@ -3,7 +3,9 @@ import type { ResolvedFunctionsBundle } from "./functions.ts";
 import type { ResolvedPorts } from "./PortCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
-type StackMode = "native" | "auto" | "docker";
+import type { ContainerRuntime } from "./ContainerRuntime.ts";
+
+export type StackMode = "native" | "docker";
 export type ServicePolicy = "off" | "lazy" | "eager";
 export type ServicePolicyManifest = Readonly<Record<ServiceName, ServicePolicy>>;
 
@@ -306,6 +308,8 @@ export interface ResolvedStackConfig {
   readonly runtimeRoot: string;
   readonly projectDir: string;
   readonly mode: StackMode;
+  /** Concrete container executable selected once when the stack was created. */
+  readonly containerRuntime: ContainerRuntime | null;
   readonly servicePolicies: ServicePolicyManifest;
   readonly readiness: ReadinessPolicy;
   /** Whether readiness came from the package default or an explicit stack policy. */

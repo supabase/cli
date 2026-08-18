@@ -15,7 +15,9 @@ console.log((await stack.getInfo()).url);
 
 `createStack` resolves configuration, reserves ports, and builds a scoped
 handle. `stack.start()` starts services; disposing the handle stops them and
-releases its lease.
+releases its lease. When `mode` is omitted, creation uses Docker mode with a
+usable Docker or Podman service and otherwise selects native mode. An explicit
+mode never falls back to the other one.
 
 ## Managed stack
 
@@ -47,7 +49,7 @@ const runtime =
     projectDir: projectRoot,
     name: "default",
     portIntents,
-    launch: { mode: "auto", versions: {}, excludedServices: [] },
+    launch: { mode: "docker", versions: {}, excludedServices: [] },
   });
 ```
 

@@ -126,6 +126,8 @@ export const stopManagedStack = (
       const manager = yield* ManagedStackManager;
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
+      const containerRuntime =
+        document.launch?.mode === "docker" ? (document.launch.containerRuntime ?? "docker") : null;
       const acquisition = yield* manager.acquireControl(stackId);
       if (acquisition._tag === "Owned") {
         if (
@@ -133,9 +135,12 @@ export const stopManagedStack = (
           document.lifecycle === "starting" ||
           document.lifecycle === "failed"
         ) {
-          yield* dockerForceRemove(
-            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-          );
+          if (containerRuntime !== null) {
+            yield* dockerForceRemove(
+              containerRuntime,
+              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+            );
+          }
           yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
         }
         yield* acquisition.close;
@@ -148,9 +153,12 @@ export const stopManagedStack = (
       const cleanupOwned = (owned: import("./control.ts").ControlOwnership) =>
         Effect.ensuring(
           Effect.gen(function* () {
-            yield* dockerForceRemove(
-              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-            );
+            if (containerRuntime !== null) {
+              yield* dockerForceRemove(
+                containerRuntime,
+                SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+              );
+            }
             yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
           }),
           owned.close,

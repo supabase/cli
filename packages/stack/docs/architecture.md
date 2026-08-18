@@ -226,17 +226,17 @@ requests for the same resource share one installation or pull. Native assets
 come from the pinned slim-services release contract and are checksum- and
 manifest-verified before atomic publication. Docker assets use one canonical
 `ghcr.io/supabase/cli/<service>:<version>` reference; a locally cached image is
-reused and a missing image is pulled without registry fallback. `mode:
-"native"` rejects Docker-only services, `mode: "docker"` resolves every service
-to Docker, and `mode: "auto"` selects the catalog-supported runtime without
-falling back after a preparation failure.
+reused and a missing image is pulled without registry fallback. Stack creation
+selects exactly one execution mode: a usable Docker daemon is preferred, then a
+usable Podman service; if neither responds, the stack uses native mode. An
+explicit `mode: "native"` rejects Docker-only services, while explicit `mode:
+"docker"` requires a usable container runtime. Preparation never falls back to
+the other mode after that choice.
 
 The `StackBuilder` turns planned resolutions into one process-compose graph,
-so a stack can run native and Docker-backed services together without eagerly
-materializing every graph resource. Docker resources are namespaced with the
-managed stack id; when native Postgres is combined with Docker services, the
-graph supplies the platform-specific host address so the containers can reach
-it.
+without eagerly materializing every graph resource. Container resources are
+namespaced with the managed stack id and every pull, launch, health check, and
+cleanup uses the selected Docker or Podman executable.
 
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,

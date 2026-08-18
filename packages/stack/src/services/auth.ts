@@ -2,7 +2,11 @@ import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
-import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import {
+  dockerRunService,
+  type ContainerRuntimeOptions,
+  type ServiceDependency,
+} from "./service-utils.ts";
 
 interface AuthServiceOptions {
   readonly dbPort: number;
@@ -22,7 +26,7 @@ interface NativeAuthOptions extends AuthServiceOptions {
   readonly binPath: string;
 }
 
-interface DockerAuthOptions extends AuthServiceOptions {
+interface DockerAuthOptions extends AuthServiceOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly dbHost: string;
   readonly platformOs: string;
@@ -82,6 +86,7 @@ export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
   const env = authEnv(opts, opts.dbHost);
   return dockerRunService({
+    runtime: opts.runtime,
     name: "auth",
     identity: opts.identity,
     image: opts.image,

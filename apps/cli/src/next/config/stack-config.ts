@@ -17,16 +17,16 @@ export const excludedStackServices = [
 export type ExcludedStackService = (typeof excludedStackServices)[number];
 export const isExcludedStackService = (value: string): value is ExcludedStackService =>
   excludedStackServices.some((candidate) => candidate === value);
-export const startModes = ["native", "auto", "docker"] as const;
+export const startModes = ["native", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 
 export function toStartStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
-  mode: StartMode,
+  mode?: StartMode,
 ): StackConfig {
   const excluded = new Set(exclude);
   return {
-    mode,
+    ...(mode === undefined ? {} : { mode }),
     realtime: excluded.has("realtime") ? false : {},
     storage: excluded.has("storage") ? false : {},
     imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},

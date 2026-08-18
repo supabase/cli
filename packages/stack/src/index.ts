@@ -18,6 +18,7 @@ export type {
   ReadyOptions,
   ServicePolicy,
   ServicePolicyManifest,
+  StackMode,
   StackConfig,
   StorageConfig,
   StudioConfig,

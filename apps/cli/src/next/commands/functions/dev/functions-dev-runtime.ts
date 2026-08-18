@@ -55,7 +55,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
   const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
   const stackConfig = withServiceVersions(
-    toStartStackConfig([], "auto"),
+    toStartStackConfig([], undefined),
     serviceVersionContext.runtimeVersions,
   );
   const stackLayer = yield* daemonLayer({
@@ -65,7 +65,6 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     name: opts.stack,
     edgeRuntime: opts.edgeRuntime,
     launch: {
-      mode: "auto",
       versions: serviceVersionContext.pinnedBaseline,
       excludedServices: [],
     },

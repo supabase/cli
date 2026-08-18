@@ -3,7 +3,12 @@ import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
-import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
+import {
+  dockerRunService,
+  hostHttpHealthCheck,
+  type ContainerRuntimeOptions,
+  type ServiceDependency,
+} from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
 import { stackHealthBudgets } from "./health-budgets.ts";
 
@@ -21,7 +26,7 @@ interface NativeEdgeRuntimeOptions extends EdgeRuntimeOptions {
   readonly binPath: string;
 }
 
-interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
+interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly identity: StackIdentity;
   readonly platformOs: string;
@@ -86,6 +91,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
   const bootstrapDir = ensureBootstrapScript(opts.runtimeRoot);
 
   return dockerRunService({
+    runtime: opts.runtime,
     name: "edge-runtime",
     identity: opts.identity,
     image: opts.image,

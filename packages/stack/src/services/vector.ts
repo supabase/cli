@@ -4,11 +4,12 @@ import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
+  type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
-interface DockerVectorOptions {
+interface DockerVectorOptions extends ContainerRuntimeOptions {
   readonly image: string;
   readonly identity: StackIdentity;
   readonly serviceHost: string;
@@ -49,6 +50,7 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
   const volumes = existsSync(dockerSocket) ? [`${dockerSocket}:/var/run/docker.sock:ro`] : [];
 
   return dockerRunService({
+    runtime: opts.runtime,
     name: "vector",
     identity: opts.identity,
     image: opts.image,
@@ -66,6 +68,7 @@ ${VECTOR_CONFIG(opts.serviceHost, opts.analyticsPort, opts.analyticsApiKey)}EOF
     ],
     dependencies: opts.dependencies,
     healthCheck: dockerExecHealthCheck(
+      opts.runtime,
       containerName,
       "sh",
       ["-ec", "wget -q -O /dev/null http://127.0.0.1:9001/health"],

@@ -1,10 +1,15 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
-import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
+import {
+  dockerRunService,
+  hostHttpHealthCheck,
+  type ContainerRuntimeOptions,
+  type ServiceDependency,
+} from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
-interface DockerMailpitOptions {
+interface DockerMailpitOptions extends ContainerRuntimeOptions {
   readonly image: string;
   readonly identity: StackIdentity;
   readonly webPort: number;
@@ -21,6 +26,7 @@ const mailpitHealthCheck = (port: number): ServiceDef["healthCheck"] =>
 
 export const makeMailpitServiceDocker = (opts: DockerMailpitOptions): ServiceDef =>
   dockerRunService({
+    runtime: opts.runtime,
     name: "mailpit",
     identity: opts.identity,
     image: opts.image,

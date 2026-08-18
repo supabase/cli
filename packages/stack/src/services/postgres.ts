@@ -7,6 +7,7 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
+  type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
 
@@ -23,7 +24,7 @@ interface NativePostgresOptions extends PostgresServiceOptions {
   readonly dockerAccessible?: boolean;
 }
 
-interface DockerPostgresOptions extends PostgresServiceOptions {
+interface DockerPostgresOptions extends PostgresServiceOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly platformOs: string;
   readonly jwtSecret: string;
@@ -105,10 +106,20 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
  * queries with "unexpected EOF". We use `docker exec` to run pg_isready
  * inside the container, which verifies postgres is accepting commands.
  */
-const postgresDockerHealthCheck = (containerName: string, port: number) =>
-  dockerExecHealthCheck(containerName, "pg_isready", ["-p", String(port), "-U", "postgres"], {
-    ...stackHealthBudgets.postgresDocker,
-  });
+const postgresDockerHealthCheck = (
+  runtime: DockerPostgresOptions["runtime"],
+  containerName: string,
+  port: number,
+) =>
+  dockerExecHealthCheck(
+    runtime,
+    containerName,
+    "pg_isready",
+    ["-p", String(port), "-U", "postgres"],
+    {
+      ...stackHealthBudgets.postgresDocker,
+    },
+  );
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
@@ -176,6 +187,7 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
   const env = postgresDockerEnv(opts);
   const containerName = dockerContainerName("postgres", opts.identity.key);
   return dockerRunService({
+    runtime: opts.runtime,
     name: "postgres",
     identity: opts.identity,
     image: opts.image,
@@ -185,7 +197,7 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     entrypoint: "sh",
     cmd: ["-c", dockerPostgresEntrypoint(opts.port)],
     dependencies: opts.dependencies,
-    healthCheck: postgresDockerHealthCheck(containerName, opts.port),
+    healthCheck: postgresDockerHealthCheck(opts.runtime, containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     orphanCleanup: orphanCleanup(opts),
   });

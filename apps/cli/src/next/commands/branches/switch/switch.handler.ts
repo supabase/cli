@@ -147,7 +147,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     // `pull` does not exist yet.
     const launchConfig =
       stackCheck.value.launch === undefined
-        ? toStartStackConfig([], "auto")
+        ? toStartStackConfig([], undefined)
         : withServiceVersions(
             toStartStackConfig(
               stackCheck.value.launch.excludedServices?.filter(

@@ -3,6 +3,7 @@ import { Context, Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream }
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ApiProxy } from "./ApiProxy.ts";
+import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
@@ -73,11 +74,13 @@ export interface StackHandle extends AsyncDisposable {
 export async function createStack(
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
+  runtime: StackRuntimeSelection,
 ): Promise<StackHandle> {
   let portLease: PortLease | undefined;
   let resolved: ResolvedStackConfig;
   try {
     resolved = await resolveConfig(config, {
+      runtime,
       portAllocator: (requests, options) =>
         reservePortSet(requests, options).pipe(
           Effect.tap((lease) =>
@@ -162,7 +165,12 @@ export async function createStack(
   } catch (error: unknown) {
     await Effect.runPromise(portLease.releaseAll);
     await Effect.runPromise(
-      dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames),
+      resolved.containerRuntime === null
+        ? Effect.void
+        : dockerForceRemove(
+            resolved.containerRuntime,
+            candidateCleanupTargets(resolved).dockerContainerNames,
+          ),
     );
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);

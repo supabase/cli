@@ -104,7 +104,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
 
   if (Option.isSome(existingSummary)) {
     const persistedLaunch = existingSummary.value.launch ?? {
-      mode: "auto" as const,
+      mode: "docker" as const,
       excludedServices: [] as const,
     };
     yield* updateManagedLaunch({

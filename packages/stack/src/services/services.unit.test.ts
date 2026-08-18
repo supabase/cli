@@ -95,6 +95,7 @@ describe("analyticsDockerRuntimeNetwork", () => {
 describe("makeStudioServiceDocker", () => {
   it("injects legacy keys, opaque keys, and S3 protocol credentials", () => {
     const def = makeStudioServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("studio", DEFAULT_VERSIONS.studio),
       identity: EPHEMERAL_IDENTITY,
       port: 54323,
@@ -173,6 +174,7 @@ describe("makePostgresService (dockerAccessible)", () => {
 describe("makePostgresServiceDocker", () => {
   it("creates a docker-based postgres ServiceDef", () => {
     const def = makePostgresServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
@@ -224,6 +226,7 @@ describe("makePostgresServiceDocker", () => {
 
   it("bootstraps auxiliary databases and schemas used by docker-backed services", () => {
     const def = makePostgresServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
@@ -280,6 +283,7 @@ describe("makePostgrestService", () => {
   it("creates a docker definition with caller-supplied topology and derived identity", () => {
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
     const def = makePostgrestServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("postgrest", DEFAULT_VERSIONS.postgrest),
       identity: EPHEMERAL_IDENTITY,
       dbHost: "host.docker.internal",
@@ -343,6 +347,7 @@ describe("makeAuthServiceNative", () => {
 describe("makeAuthServiceDocker", () => {
   it("creates a docker-based auth ServiceDef", () => {
     const def = makeAuthServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("auth", DEFAULT_VERSIONS.auth),
       dbPort: DB_PORT,
       authPort: 9999,
@@ -383,6 +388,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
 
     try {
       const def = makeEdgeRuntimeServiceDocker({
+        runtime: "docker",
         image: dockerImageForService("edge-runtime", DEFAULT_VERSIONS["edge-runtime"]),
         identity: EPHEMERAL_IDENTITY,
         runtimeRoot: tempDir,
@@ -570,6 +576,7 @@ describe("docker-backed auxiliary services", () => {
   it("defines realtime command, topology, environment, and readiness locally", () => {
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
     const def = makeRealtimeServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
       identity: EPHEMERAL_IDENTITY,
       port: 54330,
@@ -597,6 +604,7 @@ describe("docker-backed auxiliary services", () => {
   it("defines storage mounts, cleanup, topology, and readiness locally", () => {
     const dependencies = [{ service: "postgres-init", condition: "completed" }] as const;
     const def = makeStorageServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("storage", DEFAULT_VERSIONS.storage),
       identity: EPHEMERAL_IDENTITY,
       port: 54331,
@@ -633,6 +641,7 @@ describe("docker-backed auxiliary services", () => {
   it("defines postgres metadata command, topology, environment, and readiness locally", () => {
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
     const def = makePgmetaServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("pgmeta", DEFAULT_VERSIONS.pgmeta),
       identity: EPHEMERAL_IDENTITY,
       port: 54336,
@@ -653,6 +662,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("uses a host HTTP readiness probe for mailpit", () => {
     const def = makeMailpitServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("mailpit", DEFAULT_VERSIONS.mailpit),
       identity: EPHEMERAL_IDENTITY,
       webPort: 54323,
@@ -673,6 +683,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("uses a host HTTP health probe for imgproxy", () => {
     const def = makeImgproxyServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("imgproxy", DEFAULT_VERSIONS.imgproxy),
       identity: EPHEMERAL_IDENTITY,
       port: 54326,
@@ -693,6 +704,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("uses docker exec for vector health because its admin port is not published", () => {
     const def = makeVectorServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("vector", DEFAULT_VERSIONS.vector),
       identity: EPHEMERAL_IDENTITY,
       serviceHost: "127.0.0.1",
@@ -717,6 +729,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("binds analytics on all interfaces so published ports and proxy health checks work", () => {
     const def = makeAnalyticsServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       identity: EPHEMERAL_IDENTITY,
       hostPort: 54328,
@@ -748,6 +761,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {
     const def = makeAnalyticsServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       identity: EPHEMERAL_IDENTITY,
       hostPort: 54328,
@@ -768,6 +782,7 @@ describe("docker-backed auxiliary services", () => {
 
   it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {
     const def = makePoolerServiceDocker({
+      runtime: "docker",
       image: dockerImageForService("pooler", DEFAULT_VERSIONS.pooler),
       identity: EPHEMERAL_IDENTITY,
       hostAdminPort: 54329,

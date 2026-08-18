@@ -84,7 +84,11 @@ const authFailureCases = [
 describe("stack Functions runtime config", () => {
   it("projects an explicit bundle without project discovery", async () => {
     const root = makeTempProject();
-    const stackConfig = await resolveConfig({ projectDir: root, functions: makeBundle(root) });
+    const stackConfig = await resolveConfig({
+      mode: "docker",
+      projectDir: root,
+      functions: makeBundle(root),
+    });
     const config = resolveFunctionsRuntimeConfig(
       stackConfig,
       { hostname: "127.0.0.1" },
@@ -212,7 +216,7 @@ describe("stack Functions runtime config", () => {
     return Effect.gen(function* () {
       const bundle = makeBundle(cwd);
       const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({ projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
+        resolveConfig({ mode: "docker", projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
       );
       yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
       const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);

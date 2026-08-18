@@ -1,5 +1,6 @@
 import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
 import type { ServiceName } from "../ServiceName.ts";
+import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
@@ -8,7 +9,11 @@ export interface ServiceDependency {
   readonly condition: "healthy" | "completed";
 }
 
-interface DockerRunServiceOptions {
+export interface ContainerRuntimeOptions {
+  readonly runtime: ContainerRuntime;
+}
+
+interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly name: ServiceName;
   readonly identity: StackIdentity;
   readonly image: string;
@@ -44,6 +49,7 @@ export const hostHttpHealthCheck = (
 });
 
 export const dockerExecHealthCheck = (
+  runtime: ContainerRuntime,
   containerName: string,
   command: string,
   args: ReadonlyArray<string>,
@@ -51,7 +57,7 @@ export const dockerExecHealthCheck = (
 ): ServiceDef["healthCheck"] => ({
   probe: {
     _tag: "Exec",
-    command: "docker",
+    command: runtime,
     args: ["exec", containerName, command, ...args],
   },
   ...opts,
@@ -80,14 +86,17 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
 
   return {
     name: opts.name,
-    command: "docker",
+    command: opts.runtime,
     args: dockerArgs,
     dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(containerName),
+    cleanup: dockerServiceCleanup(opts.runtime, containerName),
     supervision: {
-      orphanCleanup: [...dockerServiceOrphanCleanup(containerName), ...(opts.orphanCleanup ?? [])],
+      orphanCleanup: [
+        ...dockerServiceOrphanCleanup(opts.runtime, containerName),
+        ...(opts.orphanCleanup ?? []),
+      ],
     },
     restart: opts.restart ?? "unless-stopped",
   };

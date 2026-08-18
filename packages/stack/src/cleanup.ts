@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { Duration, Effect } from "effect";
+import type { ContainerRuntime } from "./ContainerRuntime.ts";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
@@ -20,12 +21,15 @@ export const candidateCleanupTargets = (config: ResolvedStackConfig): CleanupTar
  * Force-remove Docker containers by name. Best-effort safety net —
  * silently ignores containers that don't exist or are already removed.
  */
-export const dockerForceRemove = (containerNames: ReadonlyArray<string>): Effect.Effect<void> =>
+export const dockerForceRemove = (
+  runtime: ContainerRuntime,
+  containerNames: ReadonlyArray<string>,
+): Effect.Effect<void> =>
   Effect.forEach(
     containerNames,
     (name) =>
       Effect.callback<void>((resume) => {
-        const child = execFile("docker", ["rm", "-f", name], { timeout: 5_000 }, () =>
+        const child = execFile(runtime, ["rm", "-f", name], { timeout: 5_000 }, () =>
           resume(Effect.void),
         );
         return Effect.sync(() => child.kill());
@@ -94,6 +98,11 @@ export const cleanupLocalStackResources = (opts: {
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client
     // may not stop the container.
-    yield* dockerForceRemove(opts.cleanupTargets.dockerContainerNames);
+    if (opts.config.containerRuntime !== null) {
+      yield* dockerForceRemove(
+        opts.config.containerRuntime,
+        opts.cleanupTargets.dockerContainerNames,
+      );
+    }
     yield* cleanupAutoManagedPathsWithRetry(opts.config);
   });

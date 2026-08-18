@@ -8,7 +8,7 @@ const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERV
     return config[service === "postgres" ? "postgres" : service] !== false;
   }
   if (service === "edge-runtime") {
-    const mode = config.mode ?? "auto";
+    const mode = config.mode ?? "native";
     return (
       !(mode === "native" && config.edgeRuntime === undefined) &&
       config.edgeRuntime !== false &&

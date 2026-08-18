@@ -1,4 +1,4 @@
-import { Effect, Layer, Context } from "effect";
+import { Effect, Layer, Context, Option } from "effect";
 import { loadProjectConfig } from "@supabase/config";
 import {
   DEFAULT_MANAGED_STACK_NAME,
@@ -79,9 +79,10 @@ export const serviceVersionFlag = Flag.string("service-version").pipe(
 
 const modeFlag = Flag.choice("mode", startModes).pipe(
   Flag.withDescription(
-    'Stack startup mode. "auto" prefers native binaries and falls back to Docker, "native" requires native-compatible services, and "docker" forces Docker for all services.',
+    'Stack startup mode. "native" requires native-compatible services and "docker" requires a usable Docker or Podman runtime.',
   ),
-  Flag.withDefault("auto" as StartMode),
+  Flag.optional,
+  Flag.map(Option.getOrUndefined),
 );
 
 interface StartVersionStateShape {
@@ -124,7 +125,7 @@ export type StartFlags = CliCommand.Command.Config.Infer<typeof flags>;
 export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
-      "Starts the full local Supabase stack. Use --mode auto (default) to prefer native binaries and fall back to Docker, --mode native to require native-compatible services, or --mode docker to force Docker-backed startup.\n\n" +
+      "Starts the full local Supabase stack. By default, a usable Docker or Podman runtime selects Docker mode; otherwise the stack uses native mode. Use --mode to require one explicitly.\n\n" +
       "Named CLI stacks persist managed runtime state under the Supabase home directory. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),
@@ -219,7 +220,7 @@ export const startCommand = Command.make("start", flags).pipe(
               portDocument: portIntents,
             });
       const launch = {
-        mode: flags.mode,
+        ...(flags.mode === undefined ? {} : { mode: flags.mode }),
         versions: serviceVersionContext.pinnedBaseline,
         excludedServices: flags.exclude,
         ...(existingSummary?.lastNotifiedUpdateFingerprint === undefined
@@ -242,12 +243,15 @@ export const startCommand = Command.make("start", flags).pipe(
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       });
+      if (summary.launch === undefined) {
+        return yield* Effect.die("Managed stack started without persisted launch settings");
+      }
 
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
           launch: {
-            mode: flags.mode,
+            mode: summary.launch.mode,
             versions: serviceVersionContext.pinnedBaseline,
             excludedServices: flags.exclude,
           },

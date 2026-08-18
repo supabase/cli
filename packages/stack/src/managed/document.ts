@@ -1,6 +1,7 @@
 import { Data, Effect, Schema } from "effect";
 import type { ManagedPortAssignment } from "./model.ts";
 import { PartialVersionManifestSchema, type PartialVersionManifest } from "../versions.ts";
+import type { ContainerRuntime } from "../ContainerRuntime.ts";
 
 export type ManagedStackDocumentLifecycle =
   | "stopped"
@@ -34,7 +35,8 @@ export interface ManagedStackDocument {
     readonly protocolVersion: 1;
   };
   readonly launch?: {
-    readonly mode: "native" | "auto" | "docker";
+    readonly mode: "native" | "docker";
+    readonly containerRuntime?: ContainerRuntime;
     readonly versions: PartialVersionManifest;
     readonly excludedServices?: ReadonlyArray<string>;
     readonly lastNotifiedUpdateFingerprint?: string;
@@ -44,13 +46,24 @@ export interface ManagedStackDocument {
 }
 
 export const managedStackLaunchSchema = Schema.Struct({
-  mode: Schema.Literals(["native", "auto", "docker"] as const),
+  mode: Schema.Literals(["native", "docker"] as const),
+  containerRuntime: Schema.optionalKey(Schema.Literals(["docker", "podman"] as const)),
   versions: PartialVersionManifestSchema,
   excludedServices: Schema.optionalKey(Schema.Array(Schema.String)),
   lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
 });
 
 export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
+
+/** Launch request before the supervisor selects a concrete execution mode. */
+export const managedStackLaunchInputSchema = Schema.Struct({
+  mode: Schema.optionalKey(Schema.Literals(["native", "docker"] as const)),
+  versions: PartialVersionManifestSchema,
+  excludedServices: Schema.optionalKey(Schema.Array(Schema.String)),
+  lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
+});
+
+export type ManagedStackLaunchInput = Schema.Schema.Type<typeof managedStackLaunchInputSchema>;
 
 const managedPortAssignmentSchema = Schema.Struct({
   key: Schema.Literals([

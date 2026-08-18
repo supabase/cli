@@ -58,7 +58,7 @@ describe("managed stack lifecycle journeys", () => {
           workspacePath: workspace,
           stackName: "default",
           launch: {
-            mode: "auto" as const,
+            mode: "docker" as const,
             versions: { postgres: "17.6.1" },
             excludedServices: [],
           },
@@ -194,7 +194,7 @@ describe("managed stack lifecycle journeys", () => {
           lifecycle: "running",
         });
         yield* releaseLease(initial);
-        const launch = { mode: "auto" as const, versions: { postgres: "17.6.1" } };
+        const launch = { mode: "docker" as const, versions: { postgres: "17.6.1" } };
         gate.enabled = true;
         const launchFiber = yield* Effect.forkScoped(
           manager.updateLaunch(owner, { stackId, launch }),

@@ -47,7 +47,8 @@ const baseConfig: ResolvedStackConfig = {
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
-  mode: "auto",
+  mode: "native",
+  containerRuntime: null,
   servicePolicies: {
     postgres: "eager",
     postgrest: "eager",
@@ -111,6 +112,7 @@ const baseConfig: ResolvedStackConfig = {
 const dockerConfig: ResolvedStackConfig = {
   ...baseConfig,
   mode: "docker",
+  containerRuntime: "docker",
 };
 
 /**
@@ -133,7 +135,8 @@ const siblingManagedConfig: ResolvedStackConfig = {
 
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...baseConfig,
-  mode: "auto",
+  mode: "docker",
+  containerRuntime: "docker",
   servicePolicies: { ...baseConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
@@ -292,14 +295,15 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("docker mode produces Docker service defs for all services", () => {
+  it.effect("Docker mode consistently uses the selected container runtime", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
     return Effect.gen(function* () {
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
-      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, dockerConfig);
+      const config = { ...dockerConfig, containerRuntime: "podman" } satisfies ResolvedStackConfig;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, config);
 
       expect(graph.startOrder.length).toBe(3);
 
@@ -314,15 +318,18 @@ describe("StackBuilder", () => {
       for (const name of ["postgres", "postgrest", "auth"]) {
         const def = graph.startOrder.find((s) => s.name === name);
         expect(def).toBeDefined();
-        expect(def?.command).toBe("docker");
+        expect(def?.command).toBe("podman");
         expect(def?.supervision).toBeDefined();
+        expect(def?.supervision?.orphanCleanup).toContainEqual(
+          expect.objectContaining({ executable: "podman" }),
+        );
       }
 
       // Docker container names are collected for cleanup
       expect(cleanupTargets.dockerContainerNames).toEqual([
-        `supabase-postgres-${dockerConfig.apiPort}`,
-        `supabase-postgrest-${dockerConfig.apiPort}`,
-        `supabase-auth-${dockerConfig.apiPort}`,
+        `supabase-postgres-${config.apiPort}`,
+        `supabase-postgrest-${config.apiPort}`,
+        `supabase-auth-${config.apiPort}`,
       ]);
     }).pipe(Effect.provide(layer));
   });
@@ -464,7 +471,7 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses docker-backed edge-runtime even when a native binary is available", () => {
+  it.effect("uses Docker for edge-runtime and its dependencies in Docker mode", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
@@ -480,34 +487,7 @@ describe("StackBuilder", () => {
       const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
       expect(edgeRuntimeDef).toBeDefined();
       expect(edgeRuntimeDef?.command).toBe("docker");
-      expect(edgeRuntimeDef?.dependencies).toEqual([
-        { service: "postgres-init", condition: "completed" },
-      ]);
-      expect(cleanupTargets.dockerContainerNames).toContain(
-        `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker-backed edge-runtime when the binary is unavailable", () => {
-    const resolver = mockBinaryResolver({ failServices: ["edge-runtime"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph, cleanupTargets } = yield* prepareAndBuild(
-        builder,
-        preparation,
-        edgeRuntimeConfig,
-      );
-
-      const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
-      expect(edgeRuntimeDef).toBeDefined();
-      expect(edgeRuntimeDef?.command).toBe("docker");
-      expect(edgeRuntimeDef?.dependencies).toEqual([
-        { service: "postgres-init", condition: "completed" },
-      ]);
+      expect(edgeRuntimeDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
       expect(cleanupTargets.dockerContainerNames).toContain(
         `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
       );

@@ -53,6 +53,7 @@ const createStackWithFreshPorts = async (
           postgres: { ...config?.postgres, port: dbPort },
         },
         platform,
+        { mode: "native", containerRuntime: null },
       );
     } catch (error) {
       if (!isAddressInUse(error) || attempt === 2) throw error;

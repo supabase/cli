@@ -259,6 +259,9 @@ export const localStackLayer = (
         const effect = preparation
           .plan({
             mode: config.mode,
+            ...(config.containerRuntime === null
+              ? {}
+              : { containerRuntime: config.containerRuntime }),
             services: enabledServicesForConfig(config),
             enabledServices,
             versions: versionsForConfig(config),
@@ -314,6 +317,9 @@ export const localStackLayer = (
           const effect = Stream.runFoldEffect(
             preparation.prepareEvents({
               mode: config.mode,
+              ...(config.containerRuntime === null
+                ? {}
+                : { containerRuntime: config.containerRuntime }),
               services: pending,
               enabledServices,
               versions: versionsForConfig(config),

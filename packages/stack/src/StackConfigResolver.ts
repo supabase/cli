@@ -49,6 +49,7 @@ import type {
   StudioConfig,
   VectorConfig,
 } from "./StackConfig.ts";
+import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import {
   DEFAULT_SERVICE_POLICIES,
   DEFAULT_VERSIONS,
@@ -66,6 +67,7 @@ export interface ResolveConfigOptions {
     requests: ReadonlyArray<PortReservationRequest>,
     options: PortSelectionOptions,
   ) => Effect.Effect<PortSet, PortAllocationError>;
+  readonly runtime?: StackRuntimeSelection;
 }
 
 interface ResolvedRoots {
@@ -362,7 +364,7 @@ const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean =
       return config.auth !== false;
     case "edge-runtime":
       return (
-        ((config.mode ?? "auto") !== "native" || config.edgeRuntime !== undefined) &&
+        ((config.mode ?? "native") !== "native" || config.edgeRuntime !== undefined) &&
         config.edgeRuntime !== false &&
         (config.edgeRuntime?.enabled ?? true) !== false
       );
@@ -445,13 +447,16 @@ export async function resolveConfig(
   input?: StackConfig,
   opts: ResolveConfigOptions = {},
 ): Promise<ResolvedStackConfig> {
-  const config = input ?? {};
+  const inputConfig = input ?? {};
+  const resolvedMode = opts.runtime?.mode ?? inputConfig.mode ?? "native";
+  const containerRuntime =
+    resolvedMode === "docker" ? (opts.runtime?.containerRuntime ?? "docker") : null;
+  const config: StackConfig = { ...inputConfig, mode: resolvedMode };
   // Deliberately first: unsupported policies must not create roots or reserve ports.
   const servicePolicies = resolveServicePolicies(config);
   const projectDir = config.projectDir ?? process.cwd();
   const instanceId = resolveInstanceId(config.instanceId);
   const functions = await resolveFunctionsConfig(config, projectDir);
-  const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
   const postgrestInput =
@@ -562,6 +567,7 @@ export async function resolveConfig(
     runtimeRoot: roots.runtimeRoot,
     projectDir,
     mode: resolvedMode,
+    containerRuntime,
     servicePolicies,
     readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
     readinessSource: config.readiness === undefined ? "default" : "configured",

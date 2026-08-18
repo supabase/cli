@@ -12,6 +12,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
+import type { ContainerRuntime } from "./ContainerRuntime.ts";
 import type {
   BinaryHostCompatibilityError,
   BinaryManifestError,
@@ -43,7 +44,8 @@ export interface StackPreparationInput {
   readonly versions?: Partial<VersionManifest>;
   readonly services?: ReadonlyArray<ServiceName>;
   readonly enabledServices?: ReadonlyArray<ServiceName>;
-  readonly mode?: "native" | "auto" | "docker";
+  readonly mode: "native" | "docker";
+  readonly containerRuntime?: ContainerRuntime;
 }
 
 export type StackPreparationError =
@@ -96,13 +98,14 @@ class PullAttemptError extends Error {
 
 const resolveDockerImageForService = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  runtime: ContainerRuntime,
   service: ServiceName,
   version: string,
   callbacks?: {
     readonly onDownloadStart?: Effect.Effect<void>;
   },
 ): Effect.Effect<string, DockerPullError> =>
-  pullImage(spawner, dockerImageForService(service, version), callbacks);
+  pullImage(spawner, runtime, dockerImageForService(service, version), callbacks);
 
 const preparationClosure = (
   services: ReadonlyArray<ServiceName>,
@@ -127,9 +130,9 @@ const plannedResolution = (
   resolver: BinaryResolver["Service"],
   service: ServiceName,
   version: string,
-  mode: "native" | "auto" | "docker",
+  mode: "native" | "docker",
 ): Effect.Effect<ServiceResolution, BinaryNotFoundError> => {
-  if (mode === "docker" || (mode === "auto" && isDockerOnlyService(service))) {
+  if (mode === "docker") {
     return Effect.succeed({
       type: "docker",
       image: dockerImageForService(service, version),
@@ -138,18 +141,9 @@ const plannedResolution = (
   if (isDockerOnlyService(service)) {
     return Effect.fail(new BinaryNotFoundError({ service, platform: "native" }));
   }
-  const native = resolver
+  return resolver
     .plan({ service, version })
     .pipe(Effect.map((path): ServiceResolution => ({ type: "binary", path })));
-  if (mode === "native") return native;
-  return native.pipe(
-    Effect.catchTag("BinaryNotFoundError", () =>
-      Effect.succeed({
-        type: "docker" as const,
-        image: dockerImageForService(service, version),
-      }),
-    ),
-  );
 };
 
 const planAssetsWithDependencies = (
@@ -158,7 +152,7 @@ const planAssetsWithDependencies = (
 ): Effect.Effect<PlannedStackArtifacts, BinaryNotFoundError> =>
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
-    const mode = input?.mode ?? "auto";
+    const mode = input?.mode ?? "native";
     const services = selectedServices(input);
     const results = yield* Effect.all(
       services.map((service) =>
@@ -232,9 +226,15 @@ export class StackPreparation extends Context.Service<
           const version = input.versions?.[service] ?? DEFAULT_VERSIONS[service];
           const effect: Effect.Effect<ServiceResolution, StackPreparationError> =
             resolution.type === "docker"
-              ? resolveDockerImageForService(spawner, service, version, {
-                  onDownloadStart: markDownloadStart(),
-                }).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
+              ? resolveDockerImageForService(
+                  spawner,
+                  input.containerRuntime ?? "docker",
+                  service,
+                  version,
+                  {
+                    onDownloadStart: markDownloadStart(),
+                  },
+                ).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
               : resolver
                   .resolveWithMetadata(
                     { service, version },
@@ -268,9 +268,12 @@ export class StackPreparation extends Context.Service<
             selectedServices(input).map((service) => {
               const resolution = planned.resolutions[service];
               if (resolution === undefined) return Effect.die(`Missing plan for ${service}`);
-              return materialize(service, resolution, input ?? {}, publishEvent).pipe(
-                Effect.map((resolved) => [service, resolved] as const),
-              );
+              return materialize(
+                service,
+                resolution,
+                { mode: input?.mode ?? "native", ...input },
+                publishEvent,
+              ).pipe(Effect.map((resolved) => [service, resolved] as const));
             }),
             { concurrency: "unbounded" },
           );
@@ -301,19 +304,20 @@ export class StackPreparation extends Context.Service<
 
 const pullImage = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  runtime: ContainerRuntime,
   image: string,
   callbacks?: {
     readonly onDownloadStart?: Effect.Effect<void>;
   },
 ): Effect.Effect<string, DockerPullError> =>
   Effect.gen(function* () {
-    if (yield* hasLocalDockerImage(spawner, image)) {
+    if (yield* hasLocalDockerImage(spawner, runtime, image)) {
       return image;
     }
 
     yield* callbacks?.onDownloadStart ?? Effect.void;
 
-    const attempt = runPullCommand(spawner, image).pipe(
+    const attempt = runPullCommand(spawner, runtime, image).pipe(
       Effect.retry({
         while: (error) => shouldRetryPull(error.detail),
         schedule: Schedule.recurs(1),
@@ -338,10 +342,11 @@ const pullImage = (
 
 const runPullCommand = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  runtime: ContainerRuntime,
   image: string,
 ): Effect.Effect<{ readonly exitCode: number; readonly stderr: string }, PullAttemptError> =>
   Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make("docker", ["pull", image]));
+    const child = yield* spawner.spawn(ChildProcess.make(runtime, ["pull", image]));
     const [stderr, exitCode] = yield* Effect.all(
       [collectStreamAsString(child.stderr), child.exitCode.pipe(Effect.map(Number))],
       { concurrency: "unbounded" },
@@ -354,7 +359,7 @@ const runPullCommand = (
       const detail =
         result.stderr.length > 0
           ? result.stderr
-          : `docker pull exited with code ${result.exitCode}`;
+          : `${runtime} pull exited with code ${result.exitCode}`;
       return yield* Effect.fail(new PullAttemptError(detail, isDockerDaemonDownMessage(detail)));
     }
     return result;
@@ -367,9 +372,10 @@ const runPullCommand = (
 
 const hasLocalDockerImage = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  runtime: ContainerRuntime,
   image: string,
 ): Effect.Effect<boolean> =>
-  spawner.exitCode(ChildProcess.make("docker", ["image", "inspect", image])).pipe(
+  spawner.exitCode(ChildProcess.make(runtime, ["image", "inspect", image])).pipe(
     Effect.map((exitCode) => exitCode === 0),
     Effect.catchTag("PlatformError", () => Effect.succeed(false)),
   );
