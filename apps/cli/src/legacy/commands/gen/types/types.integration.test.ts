@@ -1229,7 +1229,7 @@ describe("legacy gen types", () => {
               "--lang",
               "json",
             ],
-            childStdout: ['{"version":1}'],
+            childStdout: ['{"tables":[],"columns":[]}'],
             onSpawn: docker.onSpawn,
           });
 
@@ -1243,7 +1243,7 @@ describe("legacy gen types", () => {
           );
 
           expect(docker.env.has("PG_META_GENERATE_TYPES=json")).toBe(true);
-          expect(out.stdoutText).toContain('{"version":1}');
+          expect(out.stdoutText).toContain('{"tables":[],"columns":[]}');
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -1257,7 +1257,7 @@ describe("legacy gen types", () => {
           // second is the host `dart run supabase_typegen` invocation emitting
           // the generated code.
           const child = mockSequentialChildProcessSpawner([
-            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 0, stdout: ['{"tables":[],"columns":[]}'] },
             { exitCode: 0, stdout: ["// generated dart"] },
           ]);
           const { layer, out } = setup({
@@ -1290,7 +1290,7 @@ describe("legacy gen types", () => {
           // The metadata is piped to the Dart typegen, never printed; only the
           // generated code reaches stdout.
           expect(out.stdoutText).toContain("// generated dart");
-          expect(out.stdoutText).not.toContain('"version"');
+          expect(out.stdoutText).not.toContain('"columns"');
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -1301,7 +1301,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
-            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 0, stdout: ['{"tables":[],"columns":[]}'] },
             { exitCode: 65, stderr: ["Could not find package `supabase_typegen`"] },
           ]);
           const { layer } = setup({
@@ -1337,7 +1337,7 @@ describe("legacy gen types", () => {
       try: () =>
         withSslProbeServer(async (port) => {
           const child = mockSequentialChildProcessSpawner([
-            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 0, stdout: ['{"tables":[],"columns":[]}'] },
             { exitCode: 0, stdout: ["// generated dart"] },
           ]);
           const { layer } = setup({

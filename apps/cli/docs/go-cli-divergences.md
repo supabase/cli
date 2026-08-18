@@ -29,13 +29,15 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   accepted but has no effect, since the legacy edge-runtime engine does not
   emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `gen types` has two TS-only `--lang` values (the Go reference accepted only
-  `typescript`/`go`/`swift`/`python`): `json` emits pg-meta's language-neutral
-  generator metadata document (for third-party type generators), and `dart`
-  pipes that document through the `supabase_typegen` Dart package on the host,
-  requiring the Dart SDK on PATH and `supabase_typegen` as a dev dependency of
-  the current project. `dart` generates one schema per run and therefore
-  accepts at most one `--schema`. Both require a pg-meta image that ships the
-  `json` generator (supabase/postgres-meta#1106).
+  `typescript`/`go`/`swift`/`python`): `json` emits the language-neutral
+  `GeneratorMetadata` introspection document (the `@supabase/postgrest-typegen`
+  contract, for third-party type generators), and `dart` pipes that document
+  through the `supabase_typegen` Dart package on the host, requiring the Dart
+  SDK on PATH and `supabase_typegen` as a dev dependency of the current
+  project. `dart` generates one schema per run and therefore accepts at most
+  one `--schema`. Both require a pg-meta image that ships a `json` output for
+  `PG_META_GENERATE_TYPES` (pending in postgres-meta after
+  supabase/postgres-meta#1084 lands the postgrest-typegen extraction).
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database
