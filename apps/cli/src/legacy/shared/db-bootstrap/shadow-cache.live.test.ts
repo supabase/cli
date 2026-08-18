@@ -53,8 +53,18 @@ const LIFECYCLE_OVERHEAD_MS = 90_000;
  * than by rewriting the generated `config.toml`, so the `init` template stays exactly as a user's
  * would be. The port is deliberately NOT part of the cache key (see `legacyShadowCacheKey`), so
  * retrying on a different one cannot change which tar the run looks for.
+ *
+ * The candidate sequence is derived from this process's own pid, so two independently concurrent
+ * runs of this suite start from different bases instead of racing for one shared pair, and a
+ * locally-occupied port only costs one retry step. The base stays inside the IANA dynamic range
+ * (49152-65535) with room for every candidate below its ceiling.
  */
-const SHADOW_PORT_CANDIDATES = [54987, 54988] as const;
+const SHADOW_PORT_CANDIDATE_COUNT = 8;
+const SHADOW_PORT_BASE = 49152 + ((process.pid * 37) % (16384 - SHADOW_PORT_CANDIDATE_COUNT));
+const SHADOW_PORT_CANDIDATES: ReadonlyArray<number> = Array.from(
+  { length: SHADOW_PORT_CANDIDATE_COUNT },
+  (_, index) => SHADOW_PORT_BASE + index,
+);
 
 const DIFF_ARGS = ["db", "diff", "--local", "--use-pg-delta"] as const;
 
