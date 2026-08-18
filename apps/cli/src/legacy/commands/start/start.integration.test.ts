@@ -22,6 +22,7 @@ import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
@@ -378,6 +379,7 @@ function fakeDbSession() {
         calls.push({ kind: "query", sql });
         return [];
       }),
+    execBatch: (statements) => legacySequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),

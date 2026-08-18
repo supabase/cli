@@ -48,6 +48,7 @@ import {
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
@@ -124,6 +125,7 @@ function mockDbConnection() {
       Effect.sync(() => {
         execCalls.push(sql);
       }),
+    execBatch: (statements) => legacySequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
     copyToCsv: () => Effect.succeed(new Uint8Array()),

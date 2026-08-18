@@ -16,6 +16,7 @@ import {
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
@@ -150,6 +151,7 @@ function fakeShadowDbConnection() {
               execCalls.push(sql);
             }),
           query: () => Effect.succeed([]),
+          execBatch: (statements) => legacySequentialExecBatch(session)(statements),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
