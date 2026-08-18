@@ -133,6 +133,19 @@ export class WorkersApiNetworkError extends Data.TaggedError("WorkersApiNetworkE
 }
 
 /**
+ * The named worker is not deployed. `status`/`delete` share this verbatim: the
+ * question "does this exist?" is asked of the API, never of a local directory.
+ */
+export class WorkerNotDeployedError extends Data.TaggedError("WorkerNotDeployedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
  * Workers are in private alpha: the routes answer 404 for a project that is not
  * enrolled, which is indistinguishable from an unknown worker at the transport
  * level — so this is only raised for the collection endpoints, where there is

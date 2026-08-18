@@ -182,7 +182,11 @@ export const listWorkers = Effect.fnUntraced(function* (api: ApiClient, projectR
  * project outside the alpha's allow-list answers, so callers report it as "not
  * deployed" and point at `push` rather than guessing which of the two it was.
  */
-const getWorker = Effect.fnUntraced(function* (api: ApiClient, projectRef: string, name: string) {
+export const getWorker = Effect.fnUntraced(function* (
+  api: ApiClient,
+  projectRef: string,
+  name: string,
+) {
   const operation = `read worker "${name}"`;
   const response = yield* api
     .executeRaw(operationDefinitions.v2GetAWorker, { ref: projectRef, name })
