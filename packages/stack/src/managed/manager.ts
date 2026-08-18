@@ -419,15 +419,7 @@ const makeManager = (
           const persistedInspection = yield* provideDependencies(
             inspectWorkspace(canonicalPersistedPath),
           );
-          if (
-            persistedInspection.kind === "git-checkout" &&
-            (document.lifecycle === "starting" || document.lifecycle === "running")
-          ) {
-            const owner = yield* provideDependencies(probeControl(document.id));
-            if (owner === undefined) continue;
-          } else if (persistedInspection.kind !== "ordinary-folder") {
-            continue;
-          }
+          if (persistedInspection.kind !== "ordinary-folder") continue;
           const marker = yield* provideDependencies(
             readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPersistedPath),
           );

@@ -395,6 +395,86 @@ describe("managed stack lifecycle journeys", () => {
     },
   );
 
+  it.live("rejects stop when workspace identity changes while control ownership settles", () => {
+    const { layer, workspace } = setup();
+    const copied = join(workspace, "..", "stop-race-copy");
+    let armed = false;
+    let markerSwapped!: Deferred.Deferred<void>;
+    const gatedTransport = Layer.effect(
+      ControlTransport,
+      Effect.gen(function* () {
+        const base = yield* ControlTransport;
+        return {
+          ...base,
+          read: (endpoint: Parameters<typeof base.read>[0]) =>
+            Effect.gen(function* () {
+              if (armed) {
+                armed = false;
+                writeFileSync(
+                  join(copied, ".supabase", "identity.json"),
+                  readFileSync(join(workspace, ".supabase", "identity.json")),
+                );
+                yield* Deferred.succeed(markerSwapped, void 0);
+              }
+              return yield* base.read(endpoint);
+            }),
+        } satisfies typeof base;
+      }),
+    ).pipe(Layer.provide(controlTransportLayer));
+    const managerLayer = layer.pipe(Layer.provide(gatedTransport));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        markerSwapped = yield* Deferred.make<void>();
+        const manager = yield* ManagedStackManager;
+        const originalEnvironment = yield* ensureEnvironment(workspace);
+        const originalStackId = deriveStackId(originalEnvironment.identity, "default");
+        const originalOwner = yield* acquireControl({ stackId: originalStackId });
+        if (originalOwner._tag !== "Owned") throw new Error("expected original ownership");
+        const original = yield* manager.startStack({
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: originalOwner,
+          lifecycle: "stopped",
+        });
+        yield* releaseLease(original);
+        yield* originalOwner.close;
+
+        mkdirSync(copied);
+        const copiedEnvironment = yield* ensureEnvironment(copied);
+        const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
+        const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
+        if (copiedOwner._tag !== "Owned") throw new Error("expected copied ownership");
+        const copiedStack = yield* manager.startStack({
+          workspacePath: copied,
+          portDocument: automaticDocument(),
+          ownership: copiedOwner,
+          lifecycle: "starting",
+        });
+        yield* releaseLease(copiedStack);
+
+        armed = true;
+        const stopping = yield* Effect.forkScoped(stopManagedStack({ workspacePath: copied }));
+        yield* Deferred.await(markerSwapped);
+        yield* copiedOwner.close;
+        const result = yield* Fiber.join(stopping).pipe(Effect.exit);
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(Cause.squash(result.cause)).toMatchObject({
+            _tag: "InvalidManagedIdentityError",
+          });
+        }
+        expect((yield* manager.inspectStack(copiedStackId))?.lifecycle).toBe("starting");
+      }),
+    ).pipe(
+      Effect.provide(managerLayer),
+      Effect.provide(gatedTransport),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
   it.live("deletes an owned stack when its document path is a directory", () => {
     const { layer, stateRoot, workspace } = setup();
     return Effect.scoped(

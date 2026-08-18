@@ -2,7 +2,8 @@ import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, type FSWatcher, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   runSupervisor,
   SupervisorStartError,
@@ -139,9 +140,32 @@ const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
   const readyFile = process.env["SUPABASE_STACK_TEST_ATTACHED_READY_FILE"];
   const releaseFile = process.env["SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE"];
   if (readyFile === undefined || releaseFile === undefined) return Effect.void;
-  return Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
-    Effect.andThen(waitForFile(releaseFile)),
-  );
+  return Effect.callback<void>((resume) => {
+    let settled = false;
+    let watcher: FSWatcher | undefined;
+    const cleanup = () => {
+      watcher?.close();
+      watcher = undefined;
+    };
+    const settle = (result: Effect.Effect<void>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(result);
+    };
+    const resolveIfReleased = () => {
+      if (existsSync(releaseFile)) settle(Effect.void);
+    };
+    try {
+      watcher = watch(dirname(releaseFile), () => resolveIfReleased());
+      watcher.once("error", (cause) => settle(Effect.die(cause)));
+      writeFileSync(readyFile, "ready");
+      resolveIfReleased();
+    } catch (cause) {
+      settle(Effect.die(cause));
+    }
+    return Effect.sync(cleanup);
+  });
 };
 
 const sendTestStage = (): Effect.Effect<void, SupervisorStartError> =>

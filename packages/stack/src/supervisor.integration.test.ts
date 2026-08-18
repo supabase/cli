@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
@@ -29,7 +29,6 @@ import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts"
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
-import { reservePortSet } from "./PortAllocator.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
 import { git } from "../tests/helpers/git-workspace.ts";
 
@@ -41,30 +40,6 @@ const errorChildEntryPoint = fileURLToPath(
 );
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 const FILE_WAIT_TIMEOUT_MS = 30_000;
-
-const reserveWorkspacePorts = async (
-  controlPort: number,
-): Promise<{ readonly apiPort: number; readonly dbPort: number }> => {
-  const lease = await Effect.runPromise(
-    reservePortSet(
-      [
-        { field: "apiPort", selection: { kind: "automatic" as const } },
-        { field: "dbPort", selection: { kind: "automatic" as const } },
-      ],
-      { reserved: new Set([controlPort]) },
-    ),
-  );
-  try {
-    const apiPort = lease.ports.apiPort;
-    const dbPort = lease.ports.dbPort;
-    if (apiPort === undefined || dbPort === undefined) {
-      throw new Error("expected isolated supervisor test ports");
-    }
-    return { apiPort, dbPort };
-  } finally {
-    await Effect.runPromise(lease.releaseAll);
-  }
-};
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
@@ -78,8 +53,6 @@ const workspace = async (): Promise<{
   readonly root: string;
   readonly stateRoot: string;
   readonly stackId: string;
-  readonly apiPort: number;
-  readonly dbPort: number;
 }> => {
   for (let attempt = 0; attempt < 32; attempt += 1) {
     const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
@@ -97,7 +70,6 @@ const workspace = async (): Promise<{
       rmSync(stateRoot, { recursive: true, force: true });
       continue;
     }
-    const { apiPort, dbPort } = await reserveWorkspacePorts(endpoint.port);
     mkdirSync(join(root, ".supabase"), { recursive: true });
     writeFileSync(
       join(root, ".supabase", "identity.json"),
@@ -112,7 +84,7 @@ const workspace = async (): Promise<{
         2,
       )}\n`,
     );
-    return { root, stateRoot, stackId, apiPort, dbPort };
+    return { root, stateRoot, stackId };
   }
   throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
 };
@@ -133,10 +105,8 @@ const waitForFile = (path: string): Promise<void> =>
       watcher?.close();
       continuation();
     };
-    watcher = watch(dirname(path), (_eventType, filename) => {
-      if (filename?.toString() === basename(path) && existsSync(path)) {
-        settle(resolve);
-      }
+    watcher = watch(dirname(path), () => {
+      if (existsSync(path)) settle(resolve);
     });
     watcher.once("error", (cause) => {
       settle(() => reject(cause));
@@ -155,8 +125,6 @@ const messageFor = (
     readonly root: string;
     readonly stateRoot: string;
     readonly stackId: string;
-    readonly apiPort: number;
-    readonly dbPort: number;
   },
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
@@ -183,7 +151,7 @@ const messageFor = (
   },
   portIntents: {
     activeFields: ["apiPort", "dbPort"],
-    document: { api: { port: roots.apiPort }, db: { port: roots.dbPort } },
+    document: {},
   },
   ...overrides,
 });
@@ -278,6 +246,7 @@ const spawnChild = (
     child.once("error", onError);
     child.once("exit", onExit);
   });
+  void started.catch(() => undefined);
   void attachedBeforeReady.catch(() => undefined);
   child.send(input);
   return { child, started, attachedBeforeReady };
@@ -416,6 +385,7 @@ const listenOwnerSequence = async (
   ownershipId: string,
   states: ReadonlyArray<"starting" | "stopping">,
   onRead: (state: "starting" | "stopping") => void = () => undefined,
+  closeAfterSequence = true,
 ): Promise<ReturnType<typeof createHttpServer>> => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     let reads = 0;
@@ -437,7 +407,7 @@ const listenOwnerSequence = async (
           ready: false,
         }),
         () => {
-          if (reads >= states.length) server.close();
+          if (closeAfterSequence && reads >= states.length) server.close();
         },
       );
     });
@@ -456,6 +426,31 @@ const listenOwnerSequence = async (
     }
   }
   throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+};
+
+const listenStoppingOwner = async (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+): Promise<{
+  readonly server: ReturnType<typeof createHttpServer>;
+  readonly release: () => void;
+}> => {
+  const server = await listenOwnerSequence(
+    endpoint,
+    ownershipId,
+    ["stopping"],
+    () => undefined,
+    false,
+  );
+  let released = false;
+  return {
+    server,
+    release: () => {
+      if (released) return;
+      released = true;
+      server.close();
+    },
+  };
 };
 
 const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
@@ -813,6 +808,7 @@ describe("detached supervisor child journeys", () => {
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    let releaseFakeOwner: (() => void) | undefined;
     try {
       const starting = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(starting.id));
@@ -825,11 +821,9 @@ describe("detached supervisor child journeys", () => {
       const originalGit = join(roots.root, ".git");
       git(roots.root, "init", "-q", "-b", "main");
       git(roots.root, "commit", "-q", "--allow-empty", "-m", "init");
-      fakeOwner = await listenOwnerSequence(
-        endpoint,
-        starting.id,
-        Array.from({ length: 100 }, () => "stopping" as const),
-      );
+      const stoppingOwner = await listenStoppingOwner(endpoint, starting.id);
+      fakeOwner = stoppingOwner.server;
+      releaseFakeOwner = stoppingOwner.release;
       contender = spawnChild(messageFor(roots, { workspacePath: copied }), {
         environment: { PATH: `${dockerBin}:${process.env.PATH ?? ""}` },
       });
@@ -839,7 +833,8 @@ describe("detached supervisor child journeys", () => {
       const documentPath = managedStackDocumentPath(roots.stateRoot, starting.id);
       const document = JSON.parse(readFileSync(documentPath, "utf8")) as Record<string, unknown>;
       writeFileSync(documentPath, JSON.stringify({ ...document, lifecycle: "running" }));
-      fakeOwner.close();
+      releaseFakeOwner?.();
+      releaseFakeOwner = undefined;
       fakeOwner = undefined;
 
       await expect(contender.started).rejects.toThrow(
