@@ -4,16 +4,18 @@ import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import {
+  cpSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
+  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
@@ -72,6 +74,28 @@ const workspace = async (): Promise<{
   );
   return { root, stateRoot, stackId: deriveStackId(identity, "default") };
 };
+
+const waitForFile = (path: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (existsSync(path)) {
+      resolve();
+      return;
+    }
+    const watcher = watch(dirname(path), (_eventType, filename) => {
+      if (filename?.toString() === basename(path) && existsSync(path)) {
+        watcher.close();
+        resolve();
+      }
+    });
+    watcher.once("error", (cause) => {
+      watcher.close();
+      reject(cause);
+    });
+    if (existsSync(path)) {
+      watcher.close();
+      resolve();
+    }
+  });
 
 const messageFor = (
   roots: {
@@ -633,10 +657,7 @@ describe("detached supervisor child journeys", () => {
     });
     void child.started.catch(() => undefined);
     try {
-      const deadline = Date.now() + 2_000;
-      while (!existsSync(ensureReady) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(ensureReady);
       expect(existsSync(ensureReady)).toBe(true);
       const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
       const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
@@ -647,6 +668,42 @@ describe("detached supervisor child journeys", () => {
       expect(readStackDocument(roots)).toBeUndefined();
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("rejects an attached contender whose copied workspace collides after owner validation", async () => {
+    const roots = await workspace();
+    const copied = `${roots.root}-copy`;
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const owner = spawnChild(messageFor(roots), {
+      environment: {
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      expect(existsSync(ensureReady)).toBe(true);
+
+      cpSync(roots.root, copied, { recursive: true });
+      contender = spawnChild(messageFor(roots, { workspacePath: copied }));
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      const started = await owner.started;
+      expect(started.attached).not.toBe(true);
+      await expect(contender.started).rejects.toThrow(
+        /ordinary workspace identity.*\.supabase\/identity\.json/,
+      );
+      await remoteStop(started.endpoint);
+      await waitForExit(owner.child);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      rmSync(copied, { recursive: true, force: true });
       cleanupRoots(roots);
     }
   });

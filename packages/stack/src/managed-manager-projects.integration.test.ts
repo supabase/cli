@@ -20,7 +20,7 @@ import { acquireControl, ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
-import { makeRepository } from "../tests/helpers/git-workspace.ts";
+import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
 import {
   automaticDocument,
   cleanupRoots,
@@ -89,6 +89,11 @@ describe("managed stack projects journeys", () => {
             expect(error.message).toContain(".supabase/identity.json");
           }
         }
+
+        git(workspace, "init", "-q", "-b", "main");
+        const copiedAfterOriginalGit = yield* manager.discoverWorkspace(copied);
+        expect(copiedAfterOriginalGit.state).toBe("ready");
+        rmSync(join(workspace, ".git"), { recursive: true, force: true });
 
         rmSync(copied, { recursive: true, force: true });
         renameSync(workspace, copied);

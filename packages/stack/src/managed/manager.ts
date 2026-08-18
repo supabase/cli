@@ -416,6 +416,10 @@ const makeManager = (
             canonicalizeManagedWorkspacePathWithFileSystem(persistedPath),
           );
           if (canonicalPersistedPath === discovery.workspace.path) continue;
+          const persistedInspection = yield* provideDependencies(
+            inspectWorkspace(canonicalPersistedPath),
+          );
+          if (persistedInspection.kind !== "ordinary-folder") continue;
           const marker = yield* provideDependencies(
             readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPersistedPath),
           );
