@@ -1,15 +1,18 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect";
-import { HttpServer } from "effect/unstable/http";
 import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  PlatformError,
+} from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
@@ -131,6 +134,33 @@ describe("managed stack recovery journeys", () => {
 
   it.live("repairs a moved workspace without changing stack id or ports", () => {
     const { layer, stateRoot } = setup();
+    // Permission bits cannot block writes when tests run as root, so gate the
+    // FileSystem seam instead to force the partial-repair failure.
+    const blockedWrites = { root: undefined as string | undefined };
+    const blockingFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          writeFileString: (
+            path: string,
+            data: string,
+            options?: Parameters<typeof base.writeFileString>[2],
+          ) =>
+            blockedWrites.root !== undefined && path.startsWith(blockedWrites.root)
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "writeFileString",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : base.writeFileString(path, data, options),
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
     return Effect.scoped(
       Effect.gen(function* () {
         const root = mkdtempSync(join(tmpdir(), "managed-repair-test-"));
@@ -177,9 +207,9 @@ describe("managed stack recovery journeys", () => {
         const blockedId = [originalId, secondaryId].sort().at(-1);
         if (blockedId === undefined) throw new Error("expected affected stack");
         const blockedRoot = managedStackPaths(stateRoot, blockedId).root;
-        chmodSync(blockedRoot, 0o500);
+        blockedWrites.root = blockedRoot;
         const failed = yield* manager.repairWorkspace(discovery.repair).pipe(Effect.exit);
-        chmodSync(blockedRoot, 0o700);
+        blockedWrites.root = undefined;
         expect(Exit.isFailure(failed)).toBe(true);
         const firstUpdatedId = [originalId, secondaryId].sort().at(0);
         if (firstUpdatedId === undefined) throw new Error("expected affected stack");
@@ -204,7 +234,7 @@ describe("managed stack recovery journeys", () => {
       }),
     ).pipe(
       Effect.provide(layer),
-      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(blockingFileSystemLayer),
       Effect.provide(NodePath.layer),
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(controlTransportLayer),
