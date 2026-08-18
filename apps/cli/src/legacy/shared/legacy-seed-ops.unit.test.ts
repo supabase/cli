@@ -11,9 +11,10 @@ import { legacyGetPendingSeeds, legacySeedData } from "./legacy-seed-ops.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
-function fakeSeedSession() {
+function fakeSeedSession(opts: { restoreRoleSql?: string } = {}) {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: LegacyDbSession = {
+    ...(opts.restoreRoleSql === undefined ? {} : { restoreRoleSql: opts.restoreRoleSql }),
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return Effect.void;
@@ -164,6 +165,29 @@ describe("legacySeedData (dirty parse)", () => {
           // Statements are NOT executed for a dirty seed, but the hash IS upserted.
           expect(calls.some((c) => c.sql.includes("insert into t"))).toBe(false);
           expect(calls.some((c) => c.kind === "query" && c.sql.includes("seed_files"))).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("re-asserts the stepped-down role before the seed_files upsert", () => {
+    // A seed's own `reset role` reverts a stepped-down session to the login role,
+    // which used to fail the CLI's hash upsert with 42501 (supabase/cli#6236).
+    const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+    writeFileSync(join(dir, "data.sql"), "set role r;\ninsert into t values (1);\nreset role;");
+    const { session, calls } = fakeSeedSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return runSeed(session, dir, [{ path: "data.sql", hash: "h", dirty: false }]).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const sqls = calls.map((c) => c.sql);
+          const restoreAt = sqls.indexOf("SET SESSION ROLE postgres");
+          const upsertAt = calls.findIndex(
+            (c) => c.kind === "query" && c.sql.includes("seed_files"),
+          );
+          expect(restoreAt).toBeGreaterThan(sqls.indexOf("reset role"));
+          expect(upsertAt).toBeGreaterThan(restoreAt);
+          expect(sqls.lastIndexOf("COMMIT")).toBeGreaterThan(upsertAt);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

@@ -143,3 +143,41 @@ describe("legacyApplySeedFiles scanner buffer size", () => {
     },
   );
 });
+
+describe("legacyApplySeedFiles stepped-down session", () => {
+  it.effect("re-asserts the role before the seed_files upsert and warns on drift", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+    writeFileSync(join(dir, "seed.sql"), "set role r;\nreset role;\ninsert into t values (1);");
+    const calls: Array<string> = [];
+    const session: LegacyDbSession = {
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      exec: (sql) =>
+        Effect.sync(() => {
+          calls.push(sql);
+        }),
+      query: (sql) =>
+        Effect.sync(() => {
+          calls.push(sql);
+          return [];
+        }),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+    };
+    const out = mockOutput();
+    return run(session, dir, ["seed.sql"], out).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const restoreAt = calls.indexOf("SET SESSION ROLE postgres");
+          const upsertAt = calls.findIndex((sql) =>
+            sql.includes("INSERT INTO supabase_migrations.seed_files"),
+          );
+          expect(restoreAt).toBeGreaterThan(calls.indexOf("reset role"));
+          expect(upsertAt).toBeGreaterThan(restoreAt);
+          expect(out.stderrText).toContain("WARN: statements after RESET ROLE in seed.sql");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});

@@ -118,6 +118,20 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   empty tests directory, or a bind the daemon resolved against a different filesystem than the
   CLI's (a sibling-container Docker socket) all reported a green build that ran zero tests. The
   TAP stream on stdout is unchanged; the diagnostic goes to stderr like every other failure.
+- SQL file runners on a stepped-down session re-assert `SET SESSION ROLE postgres` after each
+  file's statements — before the migration history insert and the `seed_files` upsert, and at
+  the end of globals/seed/schema files — so every CLI-owned ledger write and every subsequent
+  file runs as `postgres` (CLI-2205, #6236). A stepped-down session is any remote connection
+  authenticating as `cli_login_*` (the passwordless linked path) or `supabase_admin`, which
+  steps down with a session-level `SET SESSION ROLE postgres`; a file's own `RESET ROLE`
+  reverted it to the login role, so the appended history insert failed with 42501
+  (`permission denied for schema supabase_migrations`) and any later file ran as the login
+  role. The old Go CLI had the same defect. Statements between `RESET ROLE` and the end of
+  the same file still execute as the login role — a connection-time `role=postgres` default
+  cannot be guaranteed through the pooler — so `granted by current_user` semantics inside a
+  single file still differ from a real password session; the CLI now prints a TS-only
+  `WARN: statements after RESET ROLE in <file> run as the session's login role, not postgres.`
+  to stderr when a stepped-down session runs such a file.
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

@@ -40,6 +40,8 @@ function fakeSession(
     failOn?: string;
     failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
+    restoreRoleSql?: string;
+    noExecBatch?: boolean;
   } = {},
 ) {
   const calls: Array<{
@@ -49,35 +51,42 @@ function fakeSession(
     params?: ReadonlyArray<unknown>;
   }> = [];
   const session: LegacyDbSession = {
+    ...(opts.restoreRoleSql === undefined ? {} : { restoreRoleSql: opts.restoreRoleSql }),
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
         ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
         : Effect.void;
     },
-    execBatch: (statements) => {
-      calls.push({
-        kind: "batch",
-        sql: statements.map(({ sql }) => sql).join(";\n"),
-        statements,
-      });
-      const statementIndex = opts.failAfterBatch
-        ? statements.length
-        : statements.findIndex(({ sql }) =>
-            opts.failOn === undefined ? false : sql.includes(opts.failOn),
-          );
-      return statementIndex >= 0
-        ? Effect.fail(
-            new FakeExecError({
-              ...(opts.failWith ?? { message: "exec failed" }),
-              statementIndex,
-            }),
-          )
-        : Effect.void;
-    },
+    ...(opts.noExecBatch === true
+      ? {}
+      : {
+          execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+            calls.push({
+              kind: "batch",
+              sql: statements.map(({ sql }) => sql).join(";\n"),
+              statements,
+            });
+            const statementIndex = opts.failAfterBatch
+              ? statements.length
+              : statements.findIndex(({ sql }) =>
+                  opts.failOn === undefined ? false : sql.includes(opts.failOn),
+                );
+            return statementIndex >= 0
+              ? Effect.fail(
+                  new FakeExecError({
+                    ...(opts.failWith ?? { message: "exec failed" }),
+                    statementIndex,
+                  }),
+                )
+              : Effect.void;
+          },
+        }),
     query: (sql, params) => {
       calls.push({ kind: "query", sql, params });
-      return Effect.succeed([]);
+      return opts.failOn !== undefined && sql.includes(opts.failOn)
+        ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
+        : Effect.succeed([]);
     },
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -497,6 +506,260 @@ describe("legacyApplyMigrationFile", () => {
       ),
     );
   });
+
+  // Passwordless remote sessions step down from the temp login role via
+  // `SET SESSION ROLE postgres`; a migration's own `RESET ROLE` reverts to the
+  // login role, which used to fail the history insert with 42501 (supabase/cli#6236).
+  it.effect(
+    "re-asserts the stepped-down role between the statements and the history insert",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+      const file = join(dir, "20240101120000_reset_role.sql");
+      writeFileSync(file, "set role repro_writer;\ncreate table t (id int);\nreset role;");
+      const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+      return run(session, file).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            // The restore rides the final batch, between the file's statements and
+            // the history insert, so the insert runs as postgres after RESET ROLE —
+            // and the committed session ends role-clean for the next file.
+            const batch = calls.find((call) => call.kind === "batch");
+            expect(batch?.statements?.map(({ sql }) => sql)).toEqual([
+              "set role repro_writer",
+              "create table t (id int)",
+              "reset role",
+              "SET SESSION ROLE postgres",
+              expect.stringContaining("supabase_migrations.schema_migrations"),
+            ]);
+            // The ledger row records only the file's own statements.
+            expect(batch?.statements?.at(-1)?.params?.[2]).toEqual([
+              "set role repro_writer",
+              "create table t (id int)",
+              "reset role",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("never re-asserts a role on sessions that did not step down", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_reset_role.sql");
+    writeFileSync(file, "reset role;");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(executedSql(calls).some((sql) => sql.includes("SET SESSION ROLE"))).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("re-asserts the stepped-down role before recording an authored transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nreset role;\nCOMMIT;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const lastRestore = calls.findLastIndex(
+            (call) => call.kind === "exec" && call.sql === "SET SESSION ROLE postgres",
+          );
+          const authoredCommit = calls.findLastIndex(
+            (call) => call.kind === "exec" && call.sql === "COMMIT",
+          );
+          const history = calls.findIndex((call) => call.kind === "query");
+          expect(lastRestore).toBeGreaterThan(authoredCommit);
+          expect(history).toBeGreaterThan(lastRestore);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the history insert's statement index when the role restore precedes it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "INSERT INTO supabase_migrations",
+      failWith: {
+        message: "ERROR: permission denied for schema supabase_migrations (SQLSTATE 42501)",
+        code: "42501",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("permission denied for schema supabase_migrations");
+          // The CLI-internal restore op must not shift Go's `At statement: N`.
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps a mid-batch failure's statement index when a restore op is appended", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;\nSELECT bad_col;\nSELECT 3;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "bad_col",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SELECT bad_col");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the deferred-failure index when a restore op is appended", () => {
+    // Mirrors "defaults a deferred batch failure to the migration history
+    // statement": the restore op between the statements and the insert must not
+    // shift the deferred (post-Sync) index either.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_deferred.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failAfterBatch: true,
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports the restore op's own failure with the history step's index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "SET SESSION ROLE",
+      failWith: {
+        message: 'ERROR: permission denied to set role "postgres" (SQLSTATE 42501)',
+        code: "42501",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SET SESSION ROLE postgres");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the insert index when the final batch holds only the trailing ops", () => {
+    // A trailing CONCURRENTLY statement empties `pending`, so the final batch is
+    // just [restore, insert] — the index math must still report the file's count.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;\nCREATE INDEX CONCURRENTLY i ON a(id);");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "INSERT INTO supabase_migrations",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the insert index on the no-execBatch fallback with a restore op", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session, calls } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      noExecBatch: true,
+      failOn: "INSERT INTO supabase_migrations",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          // The fallback executes the restore between the statements and the insert.
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.indexOf("SET SESSION ROLE postgres")).toBeGreaterThan(
+            execs.indexOf("SELECT 1"),
+          );
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("warns when statements follow a RESET ROLE on a stepped-down session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_reset_role.sql");
+    writeFileSync(file, "set role r;\nreset role;\nselect 1;");
+    const { session } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    const out = mockOutput({ format: "text" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.stderrText).toContain(
+            "WARN: statements after RESET ROLE in 20240101120000_reset_role.sql run as the session's login role, not postgres.",
+          );
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(out.layer),
+    );
+  });
+
+  it.effect("does not warn when RESET ROLE is the file's last statement", () => {
+    // Nothing follows it, and the CLI-owned trailing statements are restored, so
+    // the file behaves identically to a password session — no drift to surface.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_reset_role.sql");
+    writeFileSync(file, "set role r;\nreset role;");
+    const { session } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    const out = mockOutput({ format: "text" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.stderrText).not.toContain("WARN:");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(out.layer),
+    );
+  });
 });
 
 describe("legacyHasTransactionControl", () => {
@@ -763,6 +1026,29 @@ describe("legacySeedGlobals", () => {
       expect(execs).toContain("CREATE ROLE my_role");
       expect(
         execs.some((sql) => sql.includes("INSERT INTO supabase_migrations.schema_migrations")),
+      ).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(BunServices.layer),
+    );
+  });
+
+  it.effect("leaves a stepped-down session role-clean after a globals file", () => {
+    // Globals run before the vault upsert and the history-table DDL on the same
+    // session, so a `reset role` here must not leak the login role into them.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-globals-"));
+    const file = join(dir, "roles.sql");
+    writeFileSync(file, "CREATE ROLE my_role;\nset role my_role;\nreset role;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      const batch = calls.find((call) => call.kind === "batch");
+      expect(batch?.statements?.at(-1)?.sql).toBe("SET SESSION ROLE postgres");
+      expect(
+        executedSql(calls).some((sql) => sql.includes("supabase_migrations.schema_migrations")),
       ).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(

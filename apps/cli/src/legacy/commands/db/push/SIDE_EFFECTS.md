@@ -34,6 +34,7 @@ before migrations unless `--skip-vault` is set.
 | `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                  |
 | `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                      |
 | `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                                                                                             |
+| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each migration/globals/seed file's statements, before the history insert and the `seed_files` upsert (CLI-2205, #6236)          |
 
 ## API Routes
 
