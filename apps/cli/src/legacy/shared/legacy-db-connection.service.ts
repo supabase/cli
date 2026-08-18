@@ -81,13 +81,45 @@ export interface LegacyPgConnInput {
   readonly suggestionContext?: LegacyConnectSuggestionContext;
 }
 
+/** A parameter value supported by the legacy extended-protocol batch path. */
+export type LegacyDbBatchValue = string | ReadonlyArray<string> | null;
+
+/** One statement in a legacy extended-protocol batch. */
+export interface LegacyDbBatchStatement {
+  readonly sql: string;
+  readonly params?: ReadonlyArray<LegacyDbBatchValue>;
+}
+
 /**
  * An open Postgres session. Scoped: the owning `connect` call closes the
  * underlying connection when its `Scope` closes.
  */
 export interface LegacyDbSession {
+  /**
+   * SQL that restores the role this session stepped down to after authenticating
+   * as a temp/privileged login role (`SET SESSION ROLE postgres`). Absent when no
+   * step-down ran. A migration's own `RESET ROLE` reverts the session to the
+   * login role — not `postgres` — so file runners re-assert this immediately after
+   * each top-level role-reverting statement, at the end of each file, and before
+   * CLI-owned ledger writes (supabase/cli#6236). Must stay a fixed, non-user-derived
+   * statement: consumers embed it verbatim in batches.
+   */
+  readonly restoreRoleSql?: string;
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
+  /**
+   * Run statements as one extended-protocol batch with a single final Sync.
+   * On failure, {@link LegacyDbExecError.statementIndex} is the number of
+   * statements that completed before the error.
+   *
+   * A batch runs on its own pooled connection, which the driver checks out per
+   * call. Failing to acquire it raises `LegacyDbConnectError` (a connection-setup
+   * failure, surfaced verbatim — not masked as an exec error), consistent with
+   * {@link queryRaw}; only the batch's own execution raises `LegacyDbExecError`.
+   */
+  readonly execBatch: (
+    statements: ReadonlyArray<LegacyDbBatchStatement>,
+  ) => Effect.Effect<void, LegacyDbExecError | LegacyDbConnectError>;
   /**
    * Run a parameterized SQL query and return the result rows as plain objects
    * keyed by the query's column names (snake_case is preserved — the driver

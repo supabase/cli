@@ -22,6 +22,14 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Flag divergences from the Go reference
 
+- `db diff`, `db pull`, and `db schema declarative generate`/`sync` have a TS-only
+  `--strict-coverage` flag (no Go equivalent). It applies only when the bundled
+  pg-delta next engine is active (the default): coverage gaps that the engine
+  reports — statements it skipped or objects it could not represent — normally
+  surface as warnings, and `--strict-coverage` promotes them to hard failures.
+  Under the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy opt-out the flag is
+  accepted but has no effect, since the legacy edge-runtime engine does not
+  emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database
@@ -57,6 +65,13 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `POST /v1/projects` accepts them (restored via `packages/api/scripts/openapi-overrides.json`,
   CLI-2180). Both flags are hidden and gated behind `--experimental` (or `SUPABASE_EXPERIMENTAL`)
   until PROD-548 exposes them officially; omitting them matches Go exactly.
+- `db schema declarative generate` has a TS-only `--output-dir <dir>` flag (no Go equivalent,
+  no short alias). It writes the generated declarative tree to the given directory for this
+  invocation only, without changing the configured `declarative_schema_path` — the staging step
+  of the legacy-tree upgrade recipe printed by the sync/generate compatibility gates. The name
+  deliberately avoids `--output`/`-o`, which the legacy root reserves for the global
+  machine-format flag; a leaf string flag would shadow it and turn `generate -o json` into a
+  write to a directory named `json`. Default behavior (omitted flag) matches Go.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
   `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
   project ref shape is always treated as a ref; any other non-empty value is resolved to its
@@ -73,6 +88,63 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
+- `db schema declarative generate`/`sync` default declarative directory is `supabase/schemas`;
+  the old Go CLI reference (pre-`7b469f5b3`) used `supabase/database`. The move aligns the
+  default with the product-wide declarative-schemas convention. To keep the upgrade visible,
+  both commands print a TS-only warning when `declarative_schema_path` is unset, the new
+  default directory is empty, and the former `supabase/database` default still contains `.sql`
+  files or an export manifest — telling the user to set
+  `declarative_schema_path = "./database"` or move the tree. The warning never changes
+  behavior or exit codes; a non-interactive sync still fails with Go's
+  "no declarative schema found" message. Inside that directory the bundled (default) pg-delta
+  engine writes one directory per schema at the root — `supabase/schemas/public/tables/x.sql` —
+  with cluster-level objects under a reserved `supabase/schemas/_cluster/`. The Go reference,
+  and the opt-out legacy engine (`SUPABASE_USE_PG_DELTA_NEXT=false`, which runs the pinned
+  `[experimental.pgdelta] npm_version` in Edge Runtime), instead nest everything one level
+  deeper as `schemas/<schema>/…` plus `cluster/…`, so a legacy-engine export lands at
+  `supabase/schemas/schemas/public/tables/x.sql`.
+- Local `pg_net` presence now converges with `[experimental.webhooks]` instead of being
+  installed unconditionally: `db-webhook.sql` no longer creates the extension at container
+  init, `supabase start`/`db start` install it (with grants reapplied via the
+  `issue_pg_net_access` event trigger) only when webhooks are enabled or migration history
+  contains a `create extension … pg_net`, and an existing-volume `start` with webhooks
+  disabled drops a `pg_net` that migration history does not own. Known accepted edge: `pg_net`
+  installed OUTSIDE migrations (for example via local Studio's SQL editor or extension toggle)
+  is invisible to the migration-ownership heuristic and is dropped on the next `start`; a
+  tracked dependency on `net.*` (PG14+ `BEGIN ATOMIC` functions) makes that non-`CASCADE` drop
+  — and therefore `start` — fail. Workaround in both cases: enable `[experimental.webhooks]`
+  or declare the extension in a migration. Documented rather than special-cased.
+- `test db` (and its `db test` alias) exits `1` when `pg_prove` ran no tests (CLI-2194, #6206).
+  `pg_prove` prints `Result: NOTESTS` and still exits `0` for an empty run, and Go returns that
+  code verbatim (`internal/db/test/test.go` → `DockerRunOnceWithConfig`), so a typo'd path, an
+  empty tests directory, or a bind the daemon resolved against a different filesystem than the
+  CLI's (a sibling-container Docker socket) all reported a green build that ran zero tests. The
+  TAP stream on stdout is unchanged; the diagnostic goes to stderr like every other failure.
+- SQL file runners on a stepped-down session re-assert `SET SESSION ROLE postgres`
+  immediately after each top-level role revert (`RESET ROLE`, the generic-`SET` spellings
+  such as `SET ROLE [TO|=] NONE|DEFAULT` and a case-sensitively quoted `'none'`,
+  `RESET SESSION AUTHORIZATION`, `SET SESSION AUTHORIZATION DEFAULT`, `DISCARD ALL`),
+  at the end of each file, and before the migration history insert and the `seed_files`
+  upsert — so the whole file (including a post-reset `granted by current_user` cleanup),
+  every CLI-owned ledger write, and every subsequent file run as `postgres`, matching a
+  password session for `current_user` and privilege checks (CLI-2205, #6236).
+  `session_user` remains the login role and `current_setting('role')` reads `postgres`
+  rather than `none`, so a file keying on `session_user` still diverges. A stepped-down
+  session is any remote connection authenticating as `cli_login_*` (the passwordless
+  linked path) or `supabase_admin`, which steps down with a session-level
+  `SET SESSION ROLE postgres`; a file's own `RESET ROLE` reverted it to the login role,
+  so the appended history insert failed with SQLSTATE 42501 and any later file ran as
+  the login role. The old Go CLI had the same defect; on a `supabase_admin` `--db-url`,
+  `RESET ROLE` consequently no longer re-escalates to superuser mid-file.
+  Statement-level re-assertion is used because a connection-time `role=postgres` default
+  cannot be guaranteed through the pooler. Injected restores never shift
+  `At statement: N` and are never recorded in the history row. Residual: a role revert
+  issued through dynamic SQL, or a spelling outside the list above (for example
+  `SET LOCAL ROLE NONE` — deliberately unmatched, a session-scoped restore would
+  override its transaction scope — or the `session_authorization` GUC spellings), is
+  invisible to the lexical check, so statements after it run as the login role until
+  the next restore point; the end-of-file restore still protects every CLI-owned write.
+  (`RESET ALL` needs no entry — `role` carries `GUC_NO_RESET_ALL`.)
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the
@@ -153,3 +225,10 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   redirect the service-role key to an attacker-controlled host. Intentional
   TS-only hardening, not a parity bug — see
   [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).
+- `db pull` in-sync (`"No schema changes found"`) keeps Go's message and its non-zero
+  exit code, but replaces the generic "Try rerunning the command with --debug to
+  troubleshoot the error." stderr footer with an explanatory suggestion line
+  ("The remote database is already in sync with your local migrations — nothing to
+  pull."). An in-sync database is a finding, not a failure to troubleshoot, so the
+  debug hint sent users chasing a non-existent bug. Message text and exit code — the
+  parts scripts depend on — are unchanged.

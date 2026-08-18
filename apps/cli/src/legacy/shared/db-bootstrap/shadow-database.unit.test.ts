@@ -23,6 +23,7 @@ import {
   legacyConnectShadowDatabase,
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
+  legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacySetupShadowConn,
   legacySetupShadowDatabase,
@@ -32,6 +33,7 @@ import {
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultConfig: ProjectConfig = decodeConfig({});
+const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 const tempRoot = useLegacyTempWorkdir("legacy-shadow-database-");
 
@@ -41,6 +43,10 @@ function fakeSession() {
     exec: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
+      }),
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql } of statements) calls.push({ kind: "exec", sql });
       }),
     query: (sql) =>
       Effect.sync(() => {
@@ -361,6 +367,7 @@ function baseSetupDatabaseInput(
     path,
     workdir,
     config: defaultConfig,
+    webhooksEnabled: false,
     majorVersion: 17,
     dbHost: "abcdef012345",
     projectId: "proj",
@@ -412,6 +419,7 @@ function baseShadowSetup<E = never>(
   return {
     majorVersion: 17,
     config: defaultConfig,
+    webhooksEnabled: false,
     dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
     jwks: Effect.succeed('{"keys":[]}') as Effect.Effect<string, E>,
@@ -431,6 +439,44 @@ function baseShadowSetup<E = never>(
     vault: [],
     ...overrides,
   };
+}
+
+function migrateNextShadow(webhooksEnabled: boolean) {
+  const { session, calls } = fakeSession();
+  const workdir = tempRoot.current;
+  const mock = mockSpawner();
+  const effect = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(workdir, "supabase", "migrations"), { recursive: true });
+    yield* legacyMigrateNextShadowDatabase(mock.spawner, {
+      fs,
+      path,
+      workdir,
+      projectId: "proj",
+      container: "shadow-container-id-0123456789abcdef",
+      networkId: "supabase_network_proj",
+      connConfig: {
+        host: "127.0.0.1",
+        port: 54320,
+        user: "postgres",
+        password: "postgres",
+        database: "postgres",
+      },
+      setup: baseShadowSetup({ webhooksEnabled }),
+    });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        mockOutput().layer,
+        mockDockerRun(),
+        mockRuntimeInfo(),
+        mockDbConnection(session),
+      ),
+    ),
+  );
+  return { calls, effect };
 }
 
 describe("legacyBuildShadowSetupDatabaseInput", () => {
@@ -556,6 +602,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           setup: baseShadowSetup(),
         });
         expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
+        expect(calls.some((c) => c.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(true);
         expect(calls.some((c) => c.sql.includes("create table t ()"))).toBe(true);
       }).pipe(
         Effect.provide(
@@ -571,40 +618,70 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
     },
   );
 
+  it.effect("next migrated shadows keep pg_net activation config-gated", () => {
+    const { calls, effect } = migrateNextShadow(false);
+    return effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(false);
+        }),
+      ),
+    );
+  });
+
   it.effect(
-    "does not resolve JWKS on PG14 even when realtime is enabled (Go's initSchema never reaches ResolveJWKS for MajorVersion <= 14)",
+    "next migrated shadows install pg_net when effective Webhooks config is enabled",
     () => {
-      const { session } = fakeSession();
+      const { calls, effect } = migrateNextShadow(true);
+      return effect.pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(true);
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "supports the extension-free declarative baseline on PG14 without resolving JWKS",
+    () => {
+      const { session, calls } = fakeSession();
       const workdir = tempRoot.current;
       const mock = mockSpawner();
       let jwksEvaluated = false;
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* legacySetupShadowDatabase(mock.spawner, {
-          fs,
-          path,
-          workdir,
-          projectId: "proj",
-          container: "shadow-container-id-0123456789abcdef",
-          networkId: "supabase_network_proj",
-          connConfig: {
-            host: "127.0.0.1",
-            port: 54320,
-            user: "postgres",
-            password: "postgres",
-            database: "postgres",
-          },
-          setup: baseShadowSetup({
-            majorVersion: 14,
-            realtimeEnabledForSetup: true,
-            jwks: Effect.sync(() => {
-              jwksEvaluated = true;
-              return '{"keys":[]}';
+        yield* legacySetupShadowDatabase(
+          mock.spawner,
+          {
+            fs,
+            path,
+            workdir,
+            projectId: "proj",
+            container: "shadow-container-id-0123456789abcdef",
+            networkId: "supabase_network_proj",
+            connConfig: {
+              host: "127.0.0.1",
+              port: 54320,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+            },
+            setup: baseShadowSetup({
+              majorVersion: 14,
+              realtimeEnabledForSetup: true,
+              jwks: Effect.sync(() => {
+                jwksEvaluated = true;
+                return '{"keys":[]}';
+              }),
             }),
-          }),
-        });
+          },
+          { webhooks: "disabled" },
+        );
         expect(jwksEvaluated).toBe(false);
+        expect(calls.some((call) => call.sql === "drop extension if exists pg_net")).toBe(true);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

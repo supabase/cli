@@ -120,12 +120,14 @@ best-effort API lookup.
 - Linked, header + up to 3 indented lines — `Org:` only when `linked-project.json` carries at
   least one of `organization_slug`/`organization_id`; `Project:` always; `Branch:` only in the
   branch-linked state (a genuinely different, confirmed-or-attempted parent):
+
   ```
   Linked Project:
     Org: <org_slug> (<org_id>)
     Project: <project_name> (<parent_or_project_ref>)
     Branch: <branch_name> (<branch_ref>)
   ```
+
   - `Org:` renders `<slug> (<id>)` when both are known and differ, the single value with no
     parentheses when both are known and equal (or only one is known), and is omitted when neither
     is known.

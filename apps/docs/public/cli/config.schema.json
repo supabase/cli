@@ -3650,7 +3650,7 @@
               "type": "string",
               "description": "Directory under supabase/ where declarative schema files are written.",
               "examples": [
-                "./database"
+                "./schemas"
               ]
             },
             "format_options": {

@@ -11,12 +11,15 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
+import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
   legacyApplySchemaFiles,
+  legacyHasTransactionControl,
   legacyIsPipelineIncompatible,
   legacyMarkError,
+  legacyRevertsToLoginRole,
   legacySeedGlobals,
 } from "./legacy-migration-apply.ts";
 
@@ -27,6 +30,7 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly code?: string;
   readonly detail?: string;
   readonly position?: number;
+  readonly statementIndex?: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
@@ -36,20 +40,50 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
 function fakeSession(
   opts: {
     failOn?: string;
+    failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
+    restoreRoleSql?: string;
   } = {},
 ) {
-  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
+  const calls: Array<{
+    kind: "exec" | "batch" | "query";
+    sql: string;
+    statements?: ReadonlyArray<LegacyDbBatchStatement>;
+    params?: ReadonlyArray<unknown>;
+  }> = [];
   const session: LegacyDbSession = {
+    ...(opts.restoreRoleSql === undefined ? {} : { restoreRoleSql: opts.restoreRoleSql }),
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
         ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
         : Effect.void;
     },
+    execBatch: (statements) => {
+      calls.push({
+        kind: "batch",
+        sql: statements.map(({ sql }) => sql).join(";\n"),
+        statements,
+      });
+      const statementIndex = opts.failAfterBatch
+        ? statements.length
+        : statements.findIndex(({ sql }) =>
+            opts.failOn === undefined ? false : sql.includes(opts.failOn),
+          );
+      return statementIndex >= 0
+        ? Effect.fail(
+            new FakeExecError({
+              ...(opts.failWith ?? { message: "exec failed" }),
+              statementIndex,
+            }),
+          )
+        : Effect.void;
+    },
     query: (sql, params) => {
       calls.push({ kind: "query", sql, params });
-      return Effect.succeed([]);
+      return opts.failOn !== undefined && sql.includes(opts.failOn)
+        ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
+        : Effect.succeed([]);
     },
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -58,7 +92,25 @@ function fakeSession(
   return { session, calls };
 }
 
-const run = (session: LegacyDbSession, migrationPath: string): Effect.Effect<void, TestError> =>
+const executedSql = (
+  calls: ReadonlyArray<{
+    readonly kind: "exec" | "batch" | "query";
+    readonly sql: string;
+    readonly statements?: ReadonlyArray<LegacyDbBatchStatement>;
+  }>,
+): ReadonlyArray<string> =>
+  calls.flatMap((call) =>
+    call.kind === "exec"
+      ? [call.sql]
+      : call.kind === "batch"
+        ? (call.statements ?? []).map(({ sql }) => sql)
+        : [],
+  );
+
+const run = (
+  session: LegacyDbSession,
+  migrationPath: string,
+): Effect.Effect<void, TestError | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -82,7 +134,7 @@ describe("legacyApplyMigrationFile", () => {
       return run(session, file).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+            const execs = executedSql(calls);
             expect(execs).toContain("CREATE SCHEMA IF NOT EXISTS supabase_migrations");
             expect(execs).toContain("RESET ALL");
             // The history-table setup scopes lock_timeout to its own transaction
@@ -97,14 +149,16 @@ describe("legacyApplyMigrationFile", () => {
             expect(firstBegin).toBe(1);
             expect(setLocal).toBeGreaterThan(firstBegin);
             expect(setLocal).toBeLessThan(setupCommit);
-            // The migration's own statements run in a later, separate transaction.
-            const lastBegin = execs.lastIndexOf("BEGIN");
-            const lastCommit = execs.lastIndexOf("COMMIT");
-            expect(lastBegin).toBeGreaterThan(setupCommit);
-            expect(execs.indexOf("ALTER TABLE a ADD COLUMN b int")).toBeGreaterThan(lastBegin);
-            expect(execs.indexOf("CREATE INDEX i ON a(b)")).toBeLessThan(lastCommit);
+            // The migration's statements and history insert share one implicitly
+            // transactional extended-protocol batch.
+            const migrationBatch = calls.find((call) => call.kind === "batch");
+            expect(migrationBatch?.statements?.map(({ sql }) => sql)).toEqual([
+              "ALTER TABLE a ADD COLUMN b int",
+              "CREATE INDEX i ON a(b)",
+              expect.stringContaining("supabase_migrations.schema_migrations"),
+            ]);
             // History insert carries version, name, and the statements array.
-            const insert = calls.find((c) => c.kind === "query");
+            const insert = migrationBatch?.statements?.at(-1);
             expect(insert?.sql).toContain("supabase_migrations.schema_migrations");
             expect(insert?.params).toEqual([
               "20240101120000",
@@ -118,6 +172,28 @@ describe("legacyApplyMigrationFile", () => {
     },
   );
 
+  it.effect("records a versioned empty migration in one batch", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_empty.sql");
+    writeFileSync(file, "");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          expect(batches[0]?.statements).toEqual([
+            {
+              sql: expect.stringContaining("supabase_migrations.schema_migrations"),
+              params: ["20240101120000", "empty", []],
+            },
+          ]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("rolls back and maps the error when a statement fails", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_boom.sql");
@@ -128,7 +204,7 @@ describe("legacyApplyMigrationFile", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(calls.some((c) => c.kind === "exec" && c.sql === "ROLLBACK")).toBe(true);
+          expect(calls.filter((call) => call.kind === "batch")).toHaveLength(1);
           // Go's ExecBatch appends the failing statement number + text for context.
           if (Exit.isFailure(exit)) {
             const msg = JSON.stringify(exit.cause);
@@ -138,6 +214,62 @@ describe("legacyApplyMigrationFile", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
+    );
+  });
+
+  it.effect("sends a large compatible migration in one batch", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_many.sql");
+    const statements = Array.from({ length: 10_000 }, (_, index) => `SELECT ${index + 1}`);
+    writeFileSync(file, `${statements.join(";\n")};`);
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          expect(batches[0]?.statements).toHaveLength(statements.length + 1);
+          expect(batches[0]?.statements?.slice(0, -1).map(({ sql }) => sql)).toEqual(statements);
+          expect(calls.some((call) => call.kind === "exec" && statements.includes(call.sql))).toBe(
+            false,
+          );
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("keeps the global error index after an incompatible-statement flush", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail_after_vacuum.sql");
+    writeFileSync(file, "SELECT 1;\nVACUUM;\nSELECT missing_column;\nSELECT 4;");
+    const { session } = fakeSession({ failOn: "missing_column" });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("SELECT missing_column");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("defaults a deferred batch failure to the migration history statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_deferred.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({ failAfterBatch: true });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -179,28 +311,93 @@ describe("legacyApplyMigrationFile", () => {
     return run(session, file).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          const execs = executedSql(calls);
           const concurrently = "CREATE INDEX CONCURRENTLY a_idx ON a(id)";
           expect(execs).toContain(concurrently);
-          // The CONCURRENTLY statement must not run inside an open transaction, or
-          // PostgreSQL rejects it (SQLSTATE 25001). The batch is flushed first, so the
-          // BEGIN/COMMIT counts before it must balance (no open transaction).
-          const before = execs.slice(0, execs.indexOf(concurrently));
-          expect(before.filter((s) => s === "BEGIN").length).toBe(
-            before.filter((s) => s === "COMMIT").length,
-          );
-          // The compatible statements still ran inside a transaction...
-          expect(before).toContain("BEGIN");
-          expect(before).toContain("COMMIT");
-          // ...and the trailing compatible statement reopens a transaction after it.
-          const after = execs.slice(execs.indexOf(concurrently) + 1);
-          expect(after).toContain("BEGIN");
-          expect(after.indexOf("ALTER TABLE a ENABLE ROW LEVEL SECURITY")).toBeGreaterThanOrEqual(
-            0,
-          );
+          // The CONCURRENTLY statement must not run inside an implicit batch
+          // transaction, so the compatible statements are flushed on each side.
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(2);
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
+            "create table a (id int)",
+          ]);
+          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
+            "ALTER TABLE a ENABLE ROW LEVEL SECURITY",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
           // The migration is still recorded once every statement succeeds.
-          const insert = calls.find((c) => c.kind === "query");
+          const insert = batches[1]?.statements?.at(-1);
           expect(insert?.params?.[0]).toBe("20240101120000");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors pg-delta's file-level no-transaction directive", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_drop_subscription.sql");
+    writeFileSync(
+      file,
+      "-- pg-delta: transaction=false\n" +
+        "SET check_function_bodies = off;\n" +
+        "DROP SUBSCRIPTION app_events;\n" +
+        "RESET ALL;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          const setupCommit = execs.indexOf("COMMIT");
+          const firstStatement = "-- pg-delta: transaction=false\nSET check_function_bodies = off";
+          const set = execs.indexOf(firstStatement);
+          const action = execs.indexOf("DROP SUBSCRIPTION app_events");
+          const cleanup = execs.lastIndexOf("RESET ALL");
+
+          // The history-table setup owns the only CLI transaction. Pg-delta's
+          // preamble, action, and cleanup then run sequentially on this session.
+          expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(1);
+          expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(1);
+          expect(set).toBeGreaterThan(setupCommit);
+          expect(action).toBeGreaterThan(set);
+          expect(cleanup).toBeGreaterThan(action);
+
+          const history = calls.filter((call) => call.kind === "query");
+          expect(history).toHaveLength(1);
+          expect(history[0]?.params).toEqual([
+            "20240101120000",
+            "drop_subscription",
+            [firstStatement, "DROP SUBSCRIPTION app_events", "RESET ALL"],
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("resets the session and omits history when a no-transaction migration fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_drop_subscription.sql");
+    writeFileSync(
+      file,
+      "-- pg-delta: transaction=false\n" +
+        "SET check_function_bodies = off;\n" +
+        "DROP SUBSCRIPTION app_events;\n" +
+        "RESET ALL;",
+    );
+    const { session, calls } = fakeSession({ failOn: "DROP SUBSCRIPTION" });
+    return run(session, file).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.at(-1)).toBe("RESET ALL");
+          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("At statement: 1");
+          }
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -224,11 +421,479 @@ describe("legacyApplyMigrationFile", () => {
             expect(msg).toContain("CREATE INDEX CONCURRENTLY a_idx ON a(id)");
           }
           // The migration version is not recorded when a statement fails.
-          expect(calls.some((c) => c.kind === "query")).toBe(false);
+          expect(
+            executedSql(calls).some((sql) =>
+              sql.includes("INSERT INTO supabase_migrations.schema_migrations"),
+            ),
+          ).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
     );
+  });
+
+  it.effect("preserves authored transaction boundaries and records history afterwards", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nSET LOCAL check_function_bodies = off;\nCOMMIT;");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          // One BEGIN/COMMIT belongs to history-table setup; the other pair is
+          // exactly the authored boundary, with no nested migration wrapper.
+          expect(execs.filter((sql) => sql === "BEGIN")).toHaveLength(2);
+          expect(execs.filter((sql) => sql === "COMMIT")).toHaveLength(2);
+          expect(execs).toContain("SET LOCAL check_function_bodies = off");
+          const history = calls.filter((call) => call.kind === "query");
+          expect(history).toHaveLength(1);
+          expect(history[0]?.params?.[0]).toBe("20240101120000");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps savepoint rollback inside the managed migration transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_savepoint.sql");
+    writeFileSync(
+      file,
+      "SAVEPOINT before_change;\n" +
+        "UPDATE accounts SET active = false;\n" +
+        "ROLLBACK TO SAVEPOINT before_change;\n" +
+        "SELECT 1;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          // `ROLLBACK TO SAVEPOINT` is not an authored boundary, so the file keeps the
+          // CLI-managed transaction — which is the single implicitly transactional
+          // batch (one Sync), carrying the history insert as its last statement.
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
+            "SAVEPOINT before_change",
+            "UPDATE accounts SET active = false",
+            "ROLLBACK TO SAVEPOINT before_change",
+            "SELECT 1",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          // No standalone history insert: it rides the same batch as the statements.
+          expect(calls.filter((call) => call.kind === "query")).toHaveLength(0);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not record history when an authored transaction fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nCREATE TABLE broken (;\nCOMMIT;");
+    const { session, calls } = fakeSession({ failOn: "CREATE TABLE broken" });
+    return run(session, file).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(calls.some((call) => call.kind === "query")).toBe(false);
+          expect(calls.some((call) => call.kind === "exec" && call.sql === "ROLLBACK")).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  // Passwordless remote sessions step down from the temp login role via
+  // `SET SESSION ROLE postgres`; a migration's own `RESET ROLE` reverts to the
+  // login role, which used to fail the history insert with 42501 (supabase/cli#6236).
+  it.effect(
+    "re-asserts the stepped-down role between the statements and the history insert",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+      const file = join(dir, "20240101120000_reset_role.sql");
+      writeFileSync(file, "set role repro_writer;\ncreate table t (id int);\nreset role;");
+      const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+      return run(session, file).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            // The restore is injected right after the trailing RESET ROLE (the
+            // end-of-file restore dedupes away), so the insert runs as postgres —
+            // and the committed session ends role-clean for the next file.
+            const batch = calls.find((call) => call.kind === "batch");
+            expect(batch?.statements?.map(({ sql }) => sql)).toEqual([
+              "set role repro_writer",
+              "create table t (id int)",
+              "reset role",
+              "SET SESSION ROLE postgres",
+              expect.stringContaining("supabase_migrations.schema_migrations"),
+            ]);
+            // The ledger row records only the file's own statements.
+            expect(batch?.statements?.at(-1)?.params?.[2]).toEqual([
+              "set role repro_writer",
+              "create table t (id int)",
+              "reset role",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("never re-asserts a role on sessions that did not step down", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_reset_role.sql");
+    writeFileSync(file, "reset role;");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(executedSql(calls).some((sql) => sql.includes("SET SESSION ROLE"))).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("re-asserts the stepped-down role before recording an authored transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored.sql");
+    writeFileSync(file, "BEGIN;\nreset role;\nCOMMIT;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const lastRestore = calls.findLastIndex(
+            (call) => call.kind === "exec" && call.sql === "SET SESSION ROLE postgres",
+          );
+          const authoredCommit = calls.findLastIndex(
+            (call) => call.kind === "exec" && call.sql === "COMMIT",
+          );
+          const history = calls.findIndex((call) => call.kind === "query");
+          expect(lastRestore).toBeGreaterThan(authoredCommit);
+          expect(history).toBeGreaterThan(lastRestore);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the history insert's statement index when the role restore precedes it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "INSERT INTO supabase_migrations",
+      failWith: {
+        message: "ERROR: permission denied for schema supabase_migrations (SQLSTATE 42501)",
+        code: "42501",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("permission denied for schema supabase_migrations");
+          // The CLI-internal restore op must not shift Go's `At statement: N`.
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps a mid-batch failure's statement index when a restore op is appended", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;\nSELECT bad_col;\nSELECT 3;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "bad_col",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SELECT bad_col");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the deferred-failure index when a restore op is appended", () => {
+    // Mirrors "defaults a deferred batch failure to the migration history
+    // statement": the restore op between the statements and the insert must not
+    // shift the deferred (post-Sync) index either.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_deferred.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failAfterBatch: true,
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports the restore op's own failure with the history step's index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "SET SESSION ROLE",
+      failWith: {
+        message: 'ERROR: permission denied to set role "postgres" (SQLSTATE 42501)',
+        code: "42501",
+      },
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SET SESSION ROLE postgres");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the insert index when the final batch holds only the trailing ops", () => {
+    // A trailing CONCURRENTLY statement empties `pending`, so the final batch is
+    // just [restore, insert] — the index math must still report the file's count.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "SELECT 1;\nCREATE INDEX CONCURRENTLY i ON a(id);");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "INSERT INTO supabase_migrations",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("restores postgres immediately after a mid-file RESET ROLE, silently", () => {
+    // Statements after the reset now run as postgres again (avallete's #6246
+    // review), so the old drift WARN is gone — there is no drift left to surface.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_reset_role.sql");
+    writeFileSync(file, "set role r;\nreset role;\nselect 1;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    const out = mockOutput({ format: "text" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batch = calls.find((call) => call.kind === "batch");
+          expect(batch?.statements?.map(({ sql }) => sql)).toEqual([
+            "set role r",
+            "reset role",
+            "SET SESSION ROLE postgres",
+            "select 1",
+            "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          expect(batch?.statements?.at(-1)?.params?.[2]).toEqual([
+            "set role r",
+            "reset role",
+            "select 1",
+          ]);
+          expect(out.stderrText).not.toContain("WARN:");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(out.layer),
+    );
+  });
+
+  it.effect("restores postgres after every static role-revert spelling", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_role_none.sql");
+    writeFileSync(
+      file,
+      "set role a;\nset role none;\nset role to none;\nreset session authorization;\nset role = default;",
+    );
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batch = calls.find((call) => call.kind === "batch");
+          expect(batch?.statements?.map(({ sql }) => sql)).toEqual([
+            "set role a",
+            "set role none",
+            "SET SESSION ROLE postgres",
+            "set role to none",
+            "SET SESSION ROLE postgres",
+            "reset session authorization",
+            "SET SESSION ROLE postgres",
+            "set role = default",
+            "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("emits exactly one restore when a no-transaction file ends in a revert", () => {
+    // Sequential path: the injected restore after the trailing `reset role`
+    // makes the end-of-file restore redundant, so it must dedupe away.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_seq_reset.sql");
+    writeFileSync(file, "-- pg-delta: transaction=false\nset role r;\nreset role;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.filter((sql) => sql === "SET SESSION ROLE postgres")).toHaveLength(1);
+          expect(execs[execs.indexOf("reset role") + 1]).toBe("SET SESSION ROLE postgres");
+          expect(calls.filter((call) => call.kind === "query")).toHaveLength(1);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the deferred-failure index when mid-file restores were injected", () => {
+    // The `injectedBefore[raw] ?? injected` fallback only matters when the
+    // deferred (post-Sync) index lands past the ops array AND injections exist.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_deferred.sql");
+    writeFileSync(file, "set role r;\nreset role;\nselect 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failAfterBatch: true,
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 4");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("injects into intermediate flushes so standalone statements run as postgres", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_concurrent.sql");
+    writeFileSync(file, "reset role;\nCREATE INDEX CONCURRENTLY i ON a(id);\nselect 2;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
+            "reset role",
+            "SET SESSION ROLE postgres",
+          ]);
+          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
+            "select 2",
+            "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports a mid-file restore's own failure at its host statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "set role r;\nreset role;\nselect 1;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "SET SESSION ROLE",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          // The injected op inherits `reset role`'s index and shows the SQL that
+          // actually failed, so debugging lands on the right line of the file.
+          expect(error.message).toContain("At statement: 1");
+          expect(error.message).toContain("SET SESSION ROLE postgres");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps statement numbering across an injected mid-file restore", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail.sql");
+    writeFileSync(file, "set role r;\nreset role;\nselect bad;");
+    const { session } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      failOn: "select bad",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("select bad");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyHasTransactionControl", () => {
+  it("recognizes authored boundaries after comments without matching routine bodies", () => {
+    expect(legacyHasTransactionControl("-- authored\nBEGIN")).toBe(true);
+    expect(legacyHasTransactionControl("START TRANSACTION ISOLATION LEVEL SERIALIZABLE")).toBe(
+      true,
+    );
+    expect(
+      legacyHasTransactionControl(
+        "CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql",
+      ),
+    ).toBe(false);
+  });
+
+  it("distinguishes transaction rollback from savepoint rollback", () => {
+    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION"]) {
+      expect(legacyHasTransactionControl(sql)).toBe(true);
+    }
+    for (const sql of [
+      "ROLLBACK TO before_change",
+      "ROLLBACK TO SAVEPOINT before_change",
+      "ROLLBACK WORK TO SAVEPOINT before_change",
+      "ROLLBACK TRANSACTION TO before_change",
+    ]) {
+      expect(legacyHasTransactionControl(sql)).toBe(false);
+    }
   });
 });
 
@@ -461,12 +1126,37 @@ describe("legacySeedGlobals", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
-      const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+      const execs = executedSql(calls);
       // Go's SeedGlobals calls ExecBatch directly — no RESET ALL (that's only the
       // migration-apply path) and no schema-migrations history insert.
       expect(execs).not.toContain("RESET ALL");
       expect(execs).toContain("CREATE ROLE my_role");
-      expect(calls.some((c) => c.kind === "query")).toBe(false);
+      expect(
+        execs.some((sql) => sql.includes("INSERT INTO supabase_migrations.schema_migrations")),
+      ).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(BunServices.layer),
+    );
+  });
+
+  it.effect("leaves a stepped-down session role-clean after a globals file", () => {
+    // Globals run before the vault upsert and the history-table DDL on the same
+    // session, so a `reset role` here must not leak the login role into them.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-globals-"));
+    const file = join(dir, "roles.sql");
+    writeFileSync(file, "CREATE ROLE my_role;\nset role my_role;\nreset role;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      const batch = calls.find((call) => call.kind === "batch");
+      expect(batch?.statements?.at(-1)?.sql).toBe("SET SESSION ROLE postgres");
+      expect(
+        executedSql(calls).some((sql) => sql.includes("supabase_migrations.schema_migrations")),
+      ).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(
       Effect.provide(mockOutput({ format: "text" }).layer),
@@ -644,7 +1334,7 @@ describe("legacyApplySchemaFiles", () => {
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
         );
-        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+        expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1030,7 +1720,7 @@ describe("legacyApplySchemaFiles", () => {
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
           { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
         );
-        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+        expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1043,4 +1733,37 @@ describe("legacyApplySchemaFiles", () => {
       );
     },
   );
+});
+
+describe("legacyRevertsToLoginRole", () => {
+  const cases: ReadonlyArray<readonly [string, boolean]> = [
+    ["reset role", true],
+    ["RESET SESSION AUTHORIZATION", true],
+    ["set role none", true],
+    ["set role to none", true],
+    ["set role = default", true],
+    ["set session role none", true],
+    ["set session authorization default", true],
+    ["discard all", true],
+    // `check_role` compares quoted values case-sensitively against "none".
+    ["set role 'none'", true],
+    ['set role "none"', true],
+    ["-- c\nreset role", true],
+    ["set role 'NONE'", false],
+    ['set role "NONE"', false],
+    ["set role none_user", false],
+    ["set role nonesuch", false],
+    // Session-scoped restore would override the transaction scope.
+    ["set local role none", false],
+    // `role` carries GUC_NO_RESET_ALL.
+    ["reset all", false],
+    ["discard temp", false],
+    ["set session authorization 'bob'", false],
+    ["set roles none", false],
+    ["select 'reset role'", false],
+  ];
+
+  it.each(cases)("%s -> %s", (sql, want) => {
+    expect(legacyRevertsToLoginRole(sql)).toBe(want);
+  });
 });

@@ -10,6 +10,11 @@ import {
 import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import { legacyParseBoolEnv } from "./legacy-diff-engine.ts";
 import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "./legacy-pgdelta-next-flag.ts";
+import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,
   legacyFindPendingMigrations,
@@ -322,6 +327,12 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
           const cacheEnabled =
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
+          const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
+            legacyPgDeltaImplementationFlag(
+              process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+              toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+            ),
+          );
           const pgDeltaCtx: LegacyPgDeltaContext = {
             // `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` before
             // `Config.Load` runs, so an absent config.toml `project_id` retains the
@@ -346,7 +357,10 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             projectEnv: toml.projectEnv,
           };
           yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
-            enabled: cacheEnabled,
+            // The catalog is an alpha.33-only artifact with no next-engine
+            // consumer. Default-next commands deliberately skip this obsolete
+            // warmup so a successful push/bootstrap cannot start edge-runtime.
+            enabled: cacheEnabled && pgDeltaImplementation === "legacy",
             targetUrl: legacyToPostgresURL(conn),
             conn,
             isLocal,

@@ -52,7 +52,7 @@
  *    ONLY, deliberately WITHOUT globals.sql — see `legacyInitSchema14`'s
  *    own doc comment for why this is NOT the same as `db start`'s PG<=14 path)
  *    + `ApplyApiPrivileges` (the exact same exported function `SetupDatabase`
- *    also calls).
+ *    also calls), then pg_net activation when Database Webhooks is enabled.
  * 3. `RestartDatabase` (`reset.go:214-225`) — `Restarting containers...\n`
  *    FIRST, then a REAL `docker restart` of the `db` container itself (NOT
  *    tolerant of "not found" — pg_cron must restart after
@@ -120,7 +120,9 @@ import {
   legacyRunFreshDbSetup,
   legacyResolveResetSeedConfig,
   legacyApplyApiPrivileges,
+  legacyApplyDatabaseWebhooks,
   legacyInitSchema14,
+  legacyRemoveDatabaseWebhooks,
   LegacyDbSetupError,
   type LegacyFreshDbSetupInput,
   type LegacyStartSetupLocalDatabaseError,
@@ -313,8 +315,8 @@ export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session
 // SQLSTATE-42704 extension hint, `At statement: <index>`) real migration files
 // get — NOT a real SQL transaction: `DROP`/`CREATE DATABASE` cannot run inside a
 // `BEGIN`/`COMMIT` block at all, so these stay bare, sequential, UNWRAPPED
-// `session.exec` calls (the pgconn network-pipeline batching `ExecBatch` uses
-// instead has no TS equivalent and no observable difference here). Each
+// `session.exec` calls instead of using the TS batch primitive, whose single Sync
+// would group them in an implicit transaction. Each
 // statement's index matches its position in this list, mirroring Go's
 // `m.Statements` indexing.
 const RESET_RECREATE_DATABASES_STATEMENTS = [
@@ -474,6 +476,14 @@ const legacyRecreateLocalDatabase14 = <E>(
             ),
           );
         yield* legacyInitSchema14(session, fs, path, tmpDir, setup.majorVersion);
+        // Same drop-then-conditionally-recreate sequence fresh setup runs
+        // (`db-setup.ts`'s `requiresPg14WebhooksCleanup`): the PG14 dump installs
+        // pg_net unconditionally because later statements grant on its schema, so
+        // without this drop a reset with webhooks disabled left pg_net installed and
+        // diverged from a fresh `supabase start` — visible as pg_net drift in the next
+        // engine's shadow baseline. `MigrateAndSeed` re-applies every migration below,
+        // so a user migration that creates pg_net still gets it back.
+        yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         yield* legacyApplyApiPrivileges(
           session,
           fs,
@@ -481,6 +491,7 @@ const legacyRecreateLocalDatabase14 = <E>(
           tmpDir,
           toml.baseline.apiAutoExposeNewTables,
         );
+        yield* legacyApplyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
       }),
     );
 
@@ -504,6 +515,7 @@ const legacyRecreateLocalDatabase14 = <E>(
           experimental: setup.experimental,
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
+          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
         });
       }),
     );

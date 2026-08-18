@@ -229,13 +229,13 @@ async function extractDockerEnvEntries(call: { args: ReadonlyArray<string>; opti
 
 function waitFor(condition: () => boolean, message: string) {
   return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      if (condition()) {
-        return;
+    const deadline = Date.now() + 3_000;
+    while (!condition()) {
+      if (Date.now() >= deadline) {
+        return yield* Effect.fail(new Error(message));
       }
       yield* Effect.sleep(Duration.millis(20));
     }
-    return yield* Effect.fail(new Error(message));
   });
 }
 

@@ -91,11 +91,11 @@ command.
 
 ## Files Written
 
-| Path                                                                                          | Format | When                                                                                                                                                                                                            |
-| --------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                 |
-| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start` |
+| Path                                                                                          | Format | When                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                                                                                                                                           |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`) AND the legacy engine is selected (`SUPABASE_USE_PG_DELTA_NEXT=false`); the default next engine skips this warmup entirely; a failure only warns on stderr and never fails `start` |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -152,6 +152,7 @@ not implemented.
 | `SUPABASE_*` (any dotted config field)                                                                               | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                                                                                                                        | no        |
 | `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                          | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | Enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                                                  | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`                                                                                         | Selects the pg-delta implementation; `false` selects the legacy edge-runtime engine and thereby restores the migrations-catalog cache warmup (unset/unrecognized defaults to the next engine, which skips it)                                                     | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                    | no        |
 | `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliConfig.workdir`                                                                                                                                                                                                                                | no        |
@@ -261,6 +262,14 @@ prose, not structured data.
 
 ## Notes
 
+- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (see
+  `docs/go-cli-divergences.md`): a fresh volume installs `pg_net` only when webhooks are
+  enabled or migration history contains a `create extension … pg_net`; an existing volume
+  additionally DROPS a `pg_net` that migration history does not own when webhooks are
+  disabled. Accepted, documented edge: `pg_net` installed outside migrations (local Studio
+  SQL editor / extension toggle) is dropped on the next start, and a tracked dependency on
+  `net.*` (PG14+ `BEGIN ATOMIC` functions) makes the non-`CASCADE` drop — and the start —
+  fail. Enable `[experimental.webhooks]` or declare the extension in a migration to opt out.
 - `--exclude`/`-x` accepts container names from the verified 13-key list (`gotrue`,
   `realtime`, `storage-api`, `imgproxy`, `kong`, `mailpit`, `postgrest`, `postgres-meta`,
   `studio`, `edge-runtime`, `logflare`, `vector`, `supavisor`) — `db`/`postgres` is never

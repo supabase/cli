@@ -8,6 +8,12 @@ export interface LegacyPgProveArgs {
   readonly cmd: ReadonlyArray<string>;
   /** Docker volume binds, each `hostpath:dockerpath:ro`. */
   readonly binds: ReadonlyArray<string>;
+  /**
+   * The searched paths as they exist on the *host*, for diagnostics. Deliberately
+   * not the `legacyToDockerPath` form used in `cmd`: on Windows that has the volume
+   * name stripped, so an error naming it would point at a path the user does not have.
+   */
+  readonly hostPaths: ReadonlyArray<string>;
   /** Container working directory (dir of the first test path). */
   readonly workingDir: Option.Option<string>;
 }
@@ -39,6 +45,7 @@ export function buildLegacyPgProveArgs(opts: {
 
   const cmd: string[] = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"];
   const binds: string[] = [];
+  const hostPaths: string[] = [];
   const seenTargets = new Set<string>();
   // `testFiles` is never empty (it defaults to supabase/tests), so the first
   // iteration always sets this; Go derives workingDir from the first path only.
@@ -48,6 +55,7 @@ export function buildLegacyPgProveArgs(opts: {
     const fp = nodePath.isAbsolute(candidate) ? candidate : nodePath.join(opts.cwd, candidate);
     const dockerPath = legacyToDockerPath(fp);
     cmd.push(dockerPath);
+    hostPaths.push(fp);
 
     // Mount the *directory* containing a test file (not the lone file) so psql
     // `\ir ./sibling.sql` includes resolve: they look relative to the test file's
@@ -70,5 +78,5 @@ export function buildLegacyPgProveArgs(opts: {
 
   if (opts.debug) cmd.push("--verbose");
 
-  return { cmd, binds, workingDir: Option.some(workingDir) };
+  return { cmd, binds, hostPaths, workingDir: Option.some(workingDir) };
 }

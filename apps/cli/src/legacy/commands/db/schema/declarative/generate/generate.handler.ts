@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
+  LegacyDnsResolverFlag,
   legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
@@ -18,12 +19,21 @@ import {
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
-import { legacyResolvePgDeltaProjectId } from "../../../../../shared/legacy-pgdelta.ts";
+import {
+  legacyIsPgDeltaDebugEnabled,
+  legacyResolvePgDeltaProjectId,
+} from "../../../../../shared/legacy-pgdelta.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+} from "../../../shared/legacy-pgdelta-engine.service.ts";
+import { LegacyDeclarativeWriteError } from "../../../shared/legacy-pgdelta.errors.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
+import { legacyWarnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -31,14 +41,15 @@ import {
 } from "../declarative.orchestrate.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,
-  legacyLocalUrl,
-  legacyResolveRemoteUrl,
-  legacyResolveSmartTargetUrl,
+  legacyLocalEndpoint,
+  legacyResolveRemoteEndpoint,
+  legacyResolveSmartTargetEndpoint,
 } from "../declarative.smart-target.ts";
 
 export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.declarative.generate")(
@@ -50,6 +61,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
+    const dnsResolver = yield* LegacyDnsResolverFlag;
+    const engine = yield* LegacyPgDeltaEngine;
     // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
     // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
     // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
@@ -106,7 +119,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
       let toml = baseToml;
       // The resolved linked ref (explicit `--linked` only) is threaded into the
-      // baseline `__catalog` export (so its platform baseline is built from the
+      // native raw-shadow export source (so its platform setup uses the
       // remote-merged config, matching Go's `Generate`) and into the post-run
       // linked-project cache finalizer below.
       if (Option.isSome(flags.linked)) {
@@ -119,14 +132,30 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      // Go prints `utils.GetDeclarativeDir()` verbatim (`declarative.go:156`,
-      // `db_schema_declarative.go:268`) — the config value, relative unless a user
-      // configures an absolute `declarative_schema_path` — so user-facing renders use
-      // `declarativeDirRel`. File I/O needs the resolved dir: `path.resolve` (not
-      // `path.join`) so an absolute config value is used as-is, matching Go's
-      // `config.resolve`, which only prefixes the workdir onto a RELATIVE path.
-      const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
-      const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
+      // Preserve the selected value for user-facing output: invocation-local
+      // `--output` wins, otherwise use the configured declarative path. File I/O
+      // resolves relative values from the project workdir while keeping absolute
+      // values unchanged.
+      const declarativeDirRel = Option.getOrElse(flags.outputDir, () =>
+        legacyResolveDeclarativeDir(path, toml.pgDelta),
+      );
+      const workdir = path.resolve(cliConfig.workdir);
+      const declarativeDir = path.resolve(workdir, declarativeDirRel);
+      const workdirFromOutput = path.relative(declarativeDir, workdir);
+      const outputContainsWorkdir =
+        workdirFromOutput.length === 0 ||
+        (!path.isAbsolute(workdirFromOutput) &&
+          workdirFromOutput !== ".." &&
+          !workdirFromOutput.startsWith(`..${path.sep}`));
+      if (declarativeDirRel.trim().length === 0 || outputContainsWorkdir) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeWriteError({
+            message:
+              "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
+          }),
+        );
+      }
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
@@ -149,15 +178,19 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
+        declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
+        debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
+        dnsResolver,
         ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
       };
 
       const hasExplicitTarget =
         Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
 
-      let targetUrl: string;
+      let target: LegacyPgDeltaDatabaseEndpoint;
       let overwrite: boolean;
       if (hasExplicitTarget) {
         const seam = yield* LegacyDeclarativeSeam;
@@ -171,9 +204,9 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           if (Option.getOrElse(flags.local, () => false)) {
             yield* seam.ensureLocalDatabaseStarted();
           }
-          targetUrl = legacyLocalUrl(local);
+          target = legacyLocalEndpoint(local, dnsResolver);
         } else {
-          targetUrl = yield* legacyResolveRemoteUrl(flags);
+          target = yield* legacyResolveRemoteEndpoint(flags);
         }
         overwrite = flags.overwrite;
       } else {
@@ -229,7 +262,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
             linkedProjectRef = linkedRef.value;
           }
         }
-        targetUrl = yield* legacyResolveSmartTargetUrl(
+        target = yield* legacyResolveSmartTargetEndpoint(
           flags,
           local,
           hasMigrations,
@@ -242,7 +275,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         overwrite = true;
       }
 
-      const result = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
+      const result = yield* legacyGenerateDeclarativeOutput(run, toml, target);
 
       if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
         // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
@@ -262,7 +295,11 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, result);
+      const written = yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, result);
+      // The overwrite prompts above promise existing files may be deleted, but the
+      // next writer only prunes what an export manifest claimed — say so when a
+      // manifest-less directory kept files the export did not replace.
+      yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
 
       // Warm the declarative catalog cache after writing the files and before the
       // success message, gated on `!--no-cache` — Go's `Generate`
@@ -271,14 +308,17 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
       // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
       //
-      // On explicit `--linked`, thread the resolved ref as `SUPABASE_PROJECT_ID` into the
-      // `__catalog` subprocess (the same channel the baseline export uses), so it loads
-      // the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()` resolves the
-      // remote-overridden `declarative_schema_path` — i.e. the warm builds from the same
-      // merged config and targets the same dir the handler wrote to (also computed from
-      // the merged `toml`). Go warms against the in-process merged config identically
-      // (`declarative.go:138-154`), so this always runs when `!--no-cache`.
-      if (!flags.noCache) {
+      // On explicit `--linked`, thread the resolved ref into the legacy cache-warm seam,
+      // so it loads the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()`
+      // resolves the remote-overridden `declarative_schema_path` — i.e. the warm builds
+      // from the same merged config and targets the same dir the handler wrote to (also
+      // computed from the merged `toml`). Go warms against the in-process merged config
+      // identically (`declarative.go:138-154`), so this always runs when `!--no-cache`.
+      // A command-local --output-dir is deliberately not activated in config. The
+      // legacy catalog seam resolves the configured declarative path itself, so
+      // warming here would inspect the wrong tree. Skip that optional legacy-only
+      // cache warm; the generated output remains complete and usable on its own.
+      if (!flags.noCache && engine.implementation === "legacy" && Option.isNone(flags.outputDir)) {
         yield* (yield* LegacyDeclarativeSeam).exportCatalog({
           mode: "declarative",
           noCache: flags.noCache,

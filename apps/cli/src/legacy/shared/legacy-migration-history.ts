@@ -7,10 +7,12 @@ import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   LEGACY_MIGRATION_VERSION_MAX,
+  legacyCompareMigrationVersions,
   legacyParseMigrationVersion,
+  legacySortMigrationVersions,
 } from "./legacy-migration-timestamp.format.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
-import { legacySplitAndTrim } from "./legacy-sql-split.ts";
+import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 
 /**
  * Consolidated `supabase_migrations.schema_migrations` history module — the
@@ -152,11 +154,16 @@ export function legacyReconcileMigrations(
   // exhausted side; `legacyParseMigrationVersion` mirrors Go's `strconv.Atoi`
   // (digits only, within int64, BigInt for exact ordering) and is shared with
   // `migration list` so both surfaces skip the same edge-case versions.
+  // `legacyLoadLocalVersions` yields versions in file-name order, which reverses
+  // `ORDER BY version` whenever one version is a prefix of another
+  // (supabase/cli#6036) — the same desynchronisation
+  // `legacyFindPendingMigrations` sorts away below.
+  const sortedLocal = legacySortMigrationVersions(local);
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remote.length || j < local.length) {
+  while (i < remote.length || j < sortedLocal.length) {
     let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
     if (i < remote.length) {
       const parsed = legacyParseMigrationVersion(remote[i]!);
@@ -167,8 +174,8 @@ export function legacyReconcileMigrations(
       remoteTs = parsed;
     }
     let localTs = LEGACY_MIGRATION_VERSION_MAX;
-    if (j < local.length) {
-      const parsed = legacyParseMigrationVersion(local[j]!);
+    if (j < sortedLocal.length) {
+      const parsed = legacyParseMigrationVersion(sortedLocal[j]!);
       if (parsed === undefined) {
         j++;
         continue;
@@ -176,7 +183,7 @@ export function legacyReconcileMigrations(
       localTs = parsed;
     }
     if (localTs < remoteTs) {
-      extraLocal.push(local[j]!);
+      extraLocal.push(sortedLocal[j]!);
       j++;
     } else if (remoteTs < localTs) {
       extraRemote.push(remote[i]!);
@@ -314,7 +321,7 @@ export function legacySortMigrationPathsByVersion(
   return [...localPaths].sort((a, b) => {
     const versionA = MIGRATE_FILE_PATTERN.exec(baseName(a))?.[1] ?? "";
     const versionB = MIGRATE_FILE_PATTERN.exec(baseName(b))?.[1] ?? "";
-    return versionA < versionB ? -1 : versionA > versionB ? 1 : 0;
+    return legacyCompareMigrationVersions(versionA, versionB);
   });
 }
 
@@ -382,11 +389,16 @@ export const legacyLoadPartialMigrations = (
 ) =>
   legacyListLocalMigrations(fs, path, migrationsDir).pipe(
     Effect.map((paths) =>
-      paths.filter((p) => {
-        if (version.length === 0) return true;
-        const v = MIGRATE_FILE_PATTERN.exec(path.basename(p))?.[1];
-        return v !== undefined && v <= version;
-      }),
+      // Sorted by version, not by file name: `db push` has applied in version
+      // order since supabase/cli#6038, so replaying in name order here would
+      // apply the same files in the opposite order locally (#6036).
+      legacySortMigrationPathsByVersion(
+        paths.filter((p) => {
+          if (version.length === 0) return true;
+          const v = MIGRATE_FILE_PATTERN.exec(path.basename(p))?.[1];
+          return v !== undefined && v <= version;
+        }),
+      ),
     ),
   );
 
@@ -477,11 +489,12 @@ export const legacyReadMigrationFile = (
         }),
     ),
     Effect.map((content) => {
+      const parsed = legacyParseMigrationContent(content);
       const match = MIGRATE_FILE_PATTERN.exec(path.basename(migrationPath));
       return {
         version: match?.[1] ?? "",
         name: match?.[2] ?? "",
-        statements: legacySplitAndTrim(content),
+        statements: parsed.statements,
       };
     }),
   );

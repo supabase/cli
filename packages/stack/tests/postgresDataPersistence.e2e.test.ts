@@ -3,8 +3,9 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createStack, prefetch, type StackHandle } from "../src/node.ts";
+import { prefetch, type StackHandle } from "../src/node.ts";
 import { hasDockerDaemon } from "./helpers/warmup.ts";
+import { createStackWithEphemeralPorts } from "./helpers/stack-ports.ts";
 
 const DEV_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 const NATIVE_SETUP_TIMEOUT_MS = 45_000;
@@ -83,7 +84,7 @@ persistenceDescribe("postgres native/docker data persistence e2e", () => {
     beforeAll(async () => {
       containerIdsBeforeCreate = new Set(runningContainerIds(POSTGRES_CONTAINER_NAME_PREFIX));
 
-      stack = await createStack({
+      stack = await createStackWithEphemeralPorts({
         mode: "native",
         ...onlyPostgresConfig,
         postgres: { dataDir },
@@ -134,7 +135,7 @@ persistenceDescribe("postgres native/docker data persistence e2e", () => {
     let apiPort: string;
 
     beforeAll(async () => {
-      stack = await createStack({
+      stack = await createStackWithEphemeralPorts({
         mode: "docker",
         ...onlyPostgresConfig,
         postgres: { dataDir },

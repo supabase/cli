@@ -76,6 +76,7 @@ import {
   type LegacyVolumeInspectError,
 } from "./container-lifecycle.ts";
 import {
+  legacyRunDatabaseWebhooksSetup,
   legacyRunFreshDbSetup,
   legacyStartInitCurrentBranch,
   type LegacyFreshDbSetupInput,
@@ -155,6 +156,8 @@ export interface LegacyStartDatabaseInput<E> {
    */
   readonly resolvePostgresImage: Effect.Effect<string, LegacyImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
+  /** Effective `[experimental.webhooks].enabled`, used to converge existing volumes. */
+  readonly webhooksEnabled: boolean;
   readonly setup: LegacyFreshDbSetupInput<E>;
   /**
    * Fired synchronously, exactly once, right after the pre-create volume probe resolves —
@@ -279,6 +282,15 @@ export const legacyStartDatabase = <E>(
         version: "",
         seedFlags: { noSeed: false, sqlPaths: [] },
         setup: input.setup,
+      });
+    } else if (fromBackup === undefined) {
+      yield* legacyRunDatabaseWebhooksSetup({
+        fs: input.fs,
+        path: input.path,
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        dbUrl: input.setup.dbUrl,
+        enabled: input.webhooksEnabled,
       });
     }
 
