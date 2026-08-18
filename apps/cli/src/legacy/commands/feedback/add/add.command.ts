@@ -12,7 +12,9 @@ import { legacyFeedbackAdd } from "./add.handler.ts";
 
 const config = {
   message: Argument.string("message").pipe(
-    Argument.withDescription("Freeform feedback. Bare words are joined with spaces."),
+    Argument.withDescription(
+      "Freeform feedback. Bare words are joined with spaces. 1000 character limit.",
+    ),
     Argument.variadic,
   ),
 } as const;
