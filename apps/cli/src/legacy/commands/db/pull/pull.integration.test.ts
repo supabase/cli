@@ -1155,6 +1155,29 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "an initial pull surfaces a crashed migra script instead of the dump-only migration",
+    () => {
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpStdout: "create table dumped ();\n",
+        edgeFailFirstWith:
+          "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit)
+          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
+          : undefined;
+        const message = (error as { message?: string } | undefined)?.message ?? "";
+        expect(message).toContain("Cannot read properties of undefined");
+        expect(message).not.toContain("No schema changes found");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
     // An empty dump + empty diff leaves the file empty → in sync.
     const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
