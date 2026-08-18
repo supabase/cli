@@ -131,10 +131,16 @@ try {
     .nothrow()
     .quiet();
   if (unpublished.exitCode === 1) {
-    const existing = await $`gh pr list --repo ${repo} --head ${branch} --state open --json number`
-      .cwd(tmpDir)
-      .text();
-    if (JSON.parse(existing).length > 0) {
+    const existing =
+      await $`gh pr list --repo ${repo} --head ${branch} --base ${base} --state open --json number,headRepositoryOwner`
+        .cwd(tmpDir)
+        .text();
+    const openPulls: Array<{ headRepositoryOwner?: { login?: string } }> = JSON.parse(existing);
+    const ownPulls = openPulls.filter(
+      (pull) =>
+        pull.headRepositoryOwner?.login?.toLowerCase() === repo.split("/")[0]?.toLowerCase(),
+    );
+    if (ownPulls.length > 0) {
       console.log(`Reusing the open PR for ${branch}`);
     } else {
       const body = [
