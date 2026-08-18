@@ -5,6 +5,7 @@ import {
   V2CreateWorkerUploadOutput,
   V2DeployAWorkerOutput,
   V2GetAWorkerOutput,
+  V2ListAllWorkersOutput,
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule, Schema } from "effect";
@@ -23,10 +24,11 @@ import {
  * The seam every worker command talks to: `/v2/projects/{ref}/workers` on the
  * Management API.
  *
- * The routes are deliberately few, so this module is thin and what it mostly
- * adds is status handling. The alpha's allow-list answers 404 for a project
- * that is not enrolled, which at the transport level is indistinguishable from
- * "no such worker"; so a 404 where no worker name could have been wrong becomes
+ * The routes are deliberately few — list, get, mint an upload slot, deploy,
+ * delete — so this module is thin, and what it mostly adds is status handling.
+ * The alpha's allow-list answers 404 for a project that is not enrolled, which
+ * at the transport level is indistinguishable from "no such worker"; so a 404
+ * on a collection endpoint (where no worker name could have been wrong) becomes
  * {@link WorkersUnavailableError}, and a 404 on a named worker is reported by
  * the caller as "not deployed".
  */
@@ -147,6 +149,33 @@ const decodeBody = <A, I>(
         }),
     ),
   );
+
+export const listWorkers = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+  const operation = "list workers";
+  const response = yield* api
+    .executeRaw(operationDefinitions.v2ListAllWorkers, { ref: projectRef })
+    .pipe(Effect.mapError(mapRequestError(operation)));
+
+  if (response.status === 404) {
+    return yield* Effect.fail(
+      new WorkersUnavailableError({
+        detail: `Workers are not available for project ${projectRef}.`,
+        suggestion: workersSuggestion,
+      }),
+    );
+  }
+  if (response.status !== 200) {
+    return yield* unexpectedStatus({
+      operation,
+      status: response.status,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+  }
+
+  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
+  const decoded = yield* decodeBody(V2ListAllWorkersOutput, operation, body, response.status);
+  return decoded.data.map(toWorkerRecord);
+});
 
 /**
  * One worker, or `None` when the API has no record of it — which is also what a
