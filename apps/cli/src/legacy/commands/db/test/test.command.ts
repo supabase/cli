@@ -10,7 +10,7 @@ import { legacyTestDbRuntimeLayer } from "../../../shared/legacy-test-db.layers.
 
 /**
  * `db test` is a hidden alias for `test db` (registered hidden by the
- * parent, `../db.command.ts`'s `legacyDbTestCommand.pipe(Command.withHidden)`).
+ * parent, `../db.command.ts`'s `legacyDbTestCommand.pipe(Command.unlisted)`).
  *
  * `db test` and `test db` share one implementation, registered as two
  * separate commands with identical flags and Short text. The native TS port

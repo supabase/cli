@@ -1,402 +1,155 @@
 # Service Versioning in the Supabase CLI
 
-How the old Go CLI handled local dev versions, and how the current TypeScript CLI resolves
-service versions today.
+The TypeScript CLI resolves service versions from a small set of explicit inputs and records the
+launch selection in the managed stack document. Runtime ownership and liveness are separate from
+version resolution: a stack is live only while its managed control endpoint has an owner.
 
-## Architecture Overview
+## Resolution flow
 
 ```text
 DEFAULT_VERSIONS
       |
       v
-candidate baseline
-(linked cache + defaults)
+linked project cache + checkout-local overrides
       |
       v
-.supabase/stacks/<name>/stack.json
-(pinned baseline)
+managed launch metadata (versions + exclusions)
       |
       v
-.supabase/local-versions.json
-(checkout-local overrides)
-      |
-      v
-supabase start --service-version service=version
-      |
-      v
-runtime versions
-      |
-      v
-@supabase/stack
+supervisor resolves and starts the stack
 ```
 
 The important separation is:
 
-- `project.json` caches linked remote service versions
-- `stack.json` pins what a named local stack should use by default
-- `local-versions.json` and `--service-version` override the pinned baseline at runtime
+- `project.json` caches linked remote service versions for the current checkout.
+- `local-versions.json` contains optional checkout-local overrides.
+- `--service-version service=version` applies a one-run override.
+- `launch` in the managed document is the persisted baseline and records exclusions and update
+  notification state for one managed stack.
 
-## Artifact Providers and Runtime Support
-
-Every service in the Stack has one entry in `ServiceCatalog.ts`, regardless of who maintains it.
-The entry records its default version, Docker image provider, tag convention, runtime support, and
-any native release source. Runtime code consumes the resulting service resolution and does not
-need to know which registry or release repository supplied it.
-
-Supabase-managed images currently retain their ECR, Docker Hub, and GHCR candidates. External
-services such as imgproxy, Mailpit, and Vector retain their upstream Docker images and are marked
-Docker-only. Other services remain Docker-only until a supported native release is explicitly added
-to the catalog.
-
-Native artifacts are cached by service, provider, version, platform, and architecture. Downloads
-are extracted into a private staging directory and published with an atomic rename. Concurrent
-downloaders race to publish; losers reuse the complete winner. A cache entry is reusable only after
-its completion marker has been written, so interrupted downloads and extractions cannot be mistaken
-for valid installations.
-
-This provider boundary is where the future `supabase/slim-services` GHCR images and native release
-artifacts will be connected. That source change should not require changes to Stack lifecycle or
-service definitions.
-
-## 1. Source of Truth for CLI Defaults
-
-The old Go CLI used `pkg/config/templates/Dockerfile` as a version manifest so Dependabot could
-bump image tags automatically.
-
-The TypeScript stack derives its typed `DEFAULT_VERSIONS` manifest from `ServiceCatalog.ts`. The
-catalog values are the built-in default version set for a given CLI release.
-
-These defaults are the fallback for:
-
-- unlinked projects
-- services that are not exposed by the linked project version probes
-- new stacks before the user pins anything explicitly
-
-## 2. Legacy Go Override System
-
-The old Go CLI wrote repo-local version files into `.supabase/.temp/` when a project was linked:
+The managed document is stored under the global CLI home:
 
 ```text
-.supabase/.temp/
-  postgres-version
-  gotrue-version
-  rest-version
-  storage-version
-  ...
+<SUPABASE_HOME>/managed/stacks/<stack-id>/stack.json
 ```
 
-At config load time, those files overrode the compiled defaults.
+It contains the stack identity, assigned ports and intents, lifecycle, runtime control endpoint,
+and launch metadata. There is no second state or metadata file. Start, status, logs, update,
+services, and stop all go through the managed lifecycle facade and its control protocol. A running
+document without an owned control endpoint is stale and can be reclaimed by the next lifecycle
+operation.
 
-Go CLI priority order:
+## Built-in defaults and remote versions
 
-1. `.temp/*-version` files written by `supabase link`
-2. `config.toml` settings such as `db.major_version`
-3. built-in defaults compiled into the binary
+`ServiceCatalog.ts` defines `DEFAULT_VERSIONS` for the services in a CLI release. These defaults
+are used for unlinked projects, services without a remote probe, and new stacks before a user
+selects a different version.
 
-The TypeScript CLI does not use repo-local `.temp/*-version` files as its normal runtime source of
-truth.
+When a project is linked, the CLI refreshes `.supabase/project.json` with the service versions it
+can probe. The currently supported remote probes are:
 
-## 3. Current TypeScript CLI State Files
+| Service     | Source                                  |
+| ----------- | --------------------------------------- |
+| `postgres`  | Management API project database version |
+| `postgrest` | Tenant REST probe                       |
+| `auth`      | Tenant health probe                     |
+| `storage`   | Tenant storage version probe            |
 
-The current TypeScript CLI uses gitignored repo-local state under:
+Other local services remain on the catalog defaults unless a launch override is provided. The
+artifact provider (Docker or a supported native release) is selected by the service catalog and is
+independent of stack lifecycle and control ownership.
+
+## Checkout-local inputs
+
+The linked cache remains checkout-local and gitignored:
 
 ```text
-<project-root>/.supabase/
+<project-root>/.supabase/project.json
+<project-root>/.supabase/local-versions.json
 ```
 
-`SUPABASE_HOME` is still used for global auth fallback, telemetry, and binary cache, but not for
-the primary linked-project record anymore.
+`project.json` is refreshed by `supabase link` and by `supabase stack update`. The optional
+`local-versions.json` file overrides the candidate baseline for that checkout. These files do not
+replace managed launch metadata and do not describe whether a stack is running.
 
-### `project.json`
+For ports, raw values and their origins are read from `supabase/config.toml`. Omitted sticky ports
+remain automatic; explicitly configured values are persisted as exact intents in each managed
+document. Sibling worktrees have independent stack identities: an explicit request asks for that
+exact port and conflicts with a live sibling using it, while automatic allocations are selected
+independently. Runtime-only service ports are allocated by the managed supervisor for that run and
+are not written to `stack.json`.
 
-`.supabase/project.json` stores cached linked-remote metadata for the current checkout.
-
-Shape:
-
-```json
-{
-  "ref": "abcdefghijklmnopqrst",
-  "name": "my-project",
-  "fetchedAt": "2026-03-25T12:34:56.000Z",
-  "versions": {
-    "postgres": "17.6.1.084",
-    "postgrest": "14.4",
-    "auth": "2.188.1",
-    "storage": "1.43.3"
-  }
-}
-```
-
-This file is written by `supabase link`, refreshed again by `supabase stack update` when the
-project is linked, and removed by `supabase unlink`.
-
-### `stack.json`
-
-`.supabase/stacks/<name>/stack.json` stores the pinned baseline for one named local stack.
-
-Shape:
-
-```json
-{
-  "schemaVersion": 1,
-  "updatedAt": "2026-03-25T12:40:00.000Z",
-  "ports": {
-    "apiPort": 54321,
-    "dbPort": 54322
-  },
-  "services": {
-    "postgres": "17.6.1.084",
-    "postgrest": "14.4",
-    "auth": "2.188.1",
-    "realtime": "2.34.47",
-    "storage": "1.43.3",
-    "imgproxy": "v3.8.0",
-    "mailpit": "v1.30.2",
-    "pgmeta": "0.95.2",
-    "studio": "2026.02.16-sha-26c615c",
-    "analytics": "1.33.3",
-    "vector": "0.28.1-alpine",
-    "pooler": "2.7.4"
-  }
-}
-```
-
-This file is:
-
-- created on the first `supabase start` for a new stack
-- rewritten by `supabase stack update`
-- kept when the stack is stopped normally
-- removed by `supabase stop --no-backup`
-
-### `state.json`
-
-`.supabase/stacks/<name>/state.json` is the live runtime record for a running stack.
-
-It contains:
-
-- connection info and service endpoints
-- process and socket metadata
-- the exact running service versions for that invocation
-
-It is written when the stack is running and removed on normal `supabase stop`.
-
-### `local-versions.json`
-
-`.supabase/local-versions.json` stores optional checkout-local service version overrides.
-
-Shape:
-
-```json
-{
-  "updatedAt": "2026-03-23T10:15:00.000Z",
-  "versions": {
-    "auth": "2.180.0",
-    "storage": "1.39.2"
-  }
-}
-```
-
-This file is CLI-owned runtime state, not user-authored project config.
-
-## 4. Remote Version Sources Today
-
-The current link flow gets remote version information from these sources:
-
-| Service     | Current source in code           | Route / field                                                        | Notes                                                                                   |
-| ----------- | -------------------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `postgres`  | Management API                   | `GET /v1/projects/{ref}` → `project.database.version`                | This is the only service version currently read directly from the Management API.       |
-| `postgrest` | Tenant probe                     | `GET https://{ref}.{projectHost}/rest/v1/` → `info.version`          | Requires a project API key to call the tenant endpoint.                                 |
-| `auth`      | Tenant probe                     | `GET https://{ref}.{projectHost}/auth/v1/health` → `version`         | Requires a project API key to call the tenant endpoint.                                 |
-| `storage`   | Tenant probe                     | `GET https://{ref}.{projectHost}/storage/v1/version` → response body | Requires a project API key to call the tenant endpoint.                                 |
-| `realtime`  | Not exposed in current link flow | none                                                                 | Included in local `DEFAULT_VERSIONS`, but no remote version probe is implemented today. |
-| `imgproxy`  | Not exposed in current link flow | none                                                                 | Local/dev-infra service; no hosted parity probe today.                                  |
-| `mailpit`   | Not exposed in current link flow | none                                                                 | Local-only dev service; no hosted parity probe today.                                   |
-| `pgmeta`    | Not exposed in current link flow | none                                                                 | Included in local `DEFAULT_VERSIONS`, but no remote version probe is implemented today. |
-| `studio`    | Not exposed in current link flow | none                                                                 | Included in local `DEFAULT_VERSIONS`, but no remote version probe is implemented today. |
-| `analytics` | Not exposed in current link flow | none                                                                 | Included in local `DEFAULT_VERSIONS`, but no remote version probe is implemented today. |
-| `vector`    | Not exposed in current link flow | none                                                                 | Local/dev-infra service; no hosted parity probe today.                                  |
-| `pooler`    | Not exposed in current link flow | none                                                                 | Included in local `DEFAULT_VERSIONS`, but no remote version probe is implemented today. |
-
-To bootstrap the tenant probes above, the CLI also calls:
-
-| Purpose                                                            | Management API route                                  | Notes                                                                                                                     |
-| ------------------------------------------------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Get a tenant API key for `postgrest`, `auth`, and `storage` probes | `GET /v1/projects/{ref}/api-keys` with `reveal: true` | This route does not return service versions itself; it only provides an API key the CLI can use against tenant endpoints. |
-
-So, in the current implementation, the complete Management API route set involved in remote
-version discovery is:
-
-- `GET /v1/projects/{ref}`
-- `GET /v1/projects/{ref}/api-keys` with `reveal: true`
-
-Only the first route currently returns a service version directly.
-
-## 5. Current Resolution Model
-
-There are two layers of resolution:
-
-### Candidate baseline
-
-The candidate baseline is computed from:
-
-1. cached linked service versions from `.supabase/project.json`
-2. `DEFAULT_VERSIONS` for everything else
-
-This baseline answers: "what would we pin if we adopted the currently known linked/default
-versions right now?"
-
-### Runtime versions
-
-The actual runtime precedence is:
-
-1. per-run `--service-version`
-2. checkout-local versions from `.supabase/local-versions.json`
-3. pinned versions from `.supabase/stacks/<name>/stack.json`
-
-So `project.json` does not directly win at startup once a stack has already been pinned. It only
-influences:
-
-- the first start of a new stack
-- later `supabase stack update` runs
-- drift information shown by `supabase stack status`
-
-## 6. Current Command Behavior
-
-### `supabase link`
-
-When a user runs `supabase link`:
-
-1. the CLI resolves or prompts for the linked remote project
-2. it fetches the current remote versions it knows how to probe
-3. it saves those values to `.supabase/project.json`
-4. it warns if any existing pinned `stack.json` records are now behind
-
-`link` does not rewrite pinned stack versions.
+## Commands
 
 ### `supabase start`
 
-When a stack has never been started before:
-
-1. the CLI computes the candidate baseline from `project.json + DEFAULT_VERSIONS`
-2. it writes that baseline to `.supabase/stacks/<name>/stack.json`
-3. it applies `.supabase/local-versions.json` and any `--service-version` flags on top
-4. it writes the exact running version set to `state.json`
-
-When `stack.json` already exists:
-
-1. the CLI uses the pinned baseline from `stack.json`
-2. it applies `.supabase/local-versions.json` and any `--service-version` flags on top
-3. it writes the exact running version set to `state.json`
-
-So `supabase start` does not silently adopt new linked/default versions for an existing stack.
+Start resolves the candidate versions, applies local and command-line overrides, and records the
+resulting launch selection in the managed document. Starting an existing stack reuses its persisted
+launch baseline unless an explicit update or override changes it. Port intent is read from the raw
+project config before defaults are applied so automatic and exact values remain distinguishable.
 
 ### `supabase stack status`
 
-`supabase stack status` is local-only. It does not make a network call.
-
-It compares:
-
-- the pinned baseline in `stack.json`
-- the candidate baseline from cached linked versions plus current defaults
-
-If they differ, it reports available updates and tells the user to run `supabase stack update`.
+Status reads the managed document and acquires its control ownership before reporting a running
+stack. This prevents a crashed process from being presented as live. It compares the persisted
+launch baseline with the current candidate versions and reports when `supabase stack update` can
+adopt newer linked or default versions.
 
 ### `supabase stack update`
 
-`supabase stack update` is the explicit adoption step.
+Update refreshes the linked cache when the project is linked, computes the candidate baseline, and
+updates `launch.versions` through the managed control route when the stack is running. A stopped
+stack is updated directly through the manager. It does not maintain a project-level copy of pinned
+versions and does not restart the runtime.
 
-When the project is linked, it first refreshes the cached linked remote service versions in
-`.supabase/project.json`. It then recomputes the candidate baseline and rewrites
-`.supabase/stacks/<name>/stack.json`.
+### `supabase stop`
 
-It does not start or restart the stack. If the stack is currently running, the CLI warns that the
-user must stop and start it again to apply the updated pinned versions.
+Stop asks the managed control owner to stop the runtime, waits for the document to record
+`stopped`, and waits for control ownership to be released. Normal stop keeps the managed document
+for the next start. `--no-backup` then removes the document and its managed runtime artifacts after
+deterministic cleanup.
 
-## 7. User Stories Implemented Today
+## User stories
 
 ### Fresh start
 
-For an unlinked project with no local override file and no existing `stack.json`:
-
-- `supabase start` pins the current `DEFAULT_VERSIONS`
-- no network fetch is required just to resolve versions
+An unlinked project with no overrides starts from `DEFAULT_VERSIONS` and persists that launch
+selection in its managed document.
 
 ### Linked project
 
-When the project is linked:
-
-- `supabase link` and `supabase stack update` refresh `.supabase/project.json`
-- the linked cache feeds the candidate baseline
-- existing stacks still keep their pinned `stack.json` versions until `supabase stack update`
+`supabase link` and `supabase stack update` refresh the checkout-local linked cache. Existing managed
+stacks keep their persisted launch baseline until the user explicitly runs update.
 
 ### Checkout-local experimentation
 
-When `.supabase/local-versions.json` exists for a project:
-
-- its values override `stack.json`
-- the override only affects that checkout
-- the override does not change committed config, the linked remote cache, or the pinned baseline
-
-### Per-run overrides
-
-When a user passes `--service-version`:
-
-- those values override both `stack.json` and `.supabase/local-versions.json`
-- the override lasts only for that one `supabase start` invocation
+Values in `.supabase/local-versions.json` override the candidate baseline for that checkout. A
+`--service-version` flag has the highest precedence for that invocation only.
 
 ### CLI upgrades
 
-When the CLI ships a newer `DEFAULT_VERSIONS` set:
-
-- new stacks can pin the newer defaults immediately
-- existing stacks keep their pinned `stack.json` baseline
-- `supabase stack status` can show that updates are available
-- `supabase stack update` adopts the new linked/default-backed baseline explicitly
+New stacks can adopt newer catalog defaults immediately. Existing stacks remain pinned until update
+changes their managed launch metadata.
 
 ### Team collaboration
 
-Linked parity is still not shared through VCS, but it is now visible in the checkout:
+Linked caches and local overrides are checkout-local and gitignored. Sibling worktrees have separate
+managed documents and control identities, while the global managed home provides deterministic
+lookup and conflict checks without a project-local second state format.
 
-1. each developer runs `supabase link` in their own checkout
-2. each checkout stores its linked cache in `.supabase/project.json`
-3. each named stack stores its pinned baseline in `.supabase/stacks/<name>/stack.json`
-4. the files stay gitignored and are not part of committed repo intent
+## Service inventory
 
-This is intentionally closer to the Vercel model: repo-local gitignored project metadata, plus a
-separate global CLI home for auth and caches.
+The local catalog currently represents:
 
-## 8. Service Inventory
+- `postgres`, `postgrest`, `auth`, `realtime`, `storage`
+- `imgproxy`, `mailpit`, `pgmeta`, `studio`, `analytics`, `vector`, `pooler`
 
-These are the services currently represented in `DEFAULT_VERSIONS` and the local stack manifests:
+Only the services with remote probes listed above are copied into `project.json`; all services can
+still be selected through launch metadata when a supported artifact is available.
 
-- `postgres`
-- `postgrest`
-- `auth`
-- `realtime`
-- `storage`
-- `imgproxy`
-- `mailpit`
-- `pgmeta`
-- `studio`
-- `analytics`
-- `vector`
-- `pooler`
+## Future work
 
-`project.json` only caches the subset of linked remote services the CLI can currently probe:
-
-- `postgres`
-- `postgrest`
-- `auth`
-- `storage`
-
-## 9. Future Improvements
-
-The main missing hosted-version improvement is not more local state; it is a cleaner public
-Management API route that exposes the remote project's service versions directly.
-
-The current CLI already has the local structure it needs:
-
-- linked remote cache in `.supabase/project.json`
-- pinned stack baseline in `.supabase/stacks/<name>/stack.json`
-- checkout-local overrides in `.supabase/local-versions.json`
-- one-off overrides through `--service-version`
+The main missing hosted-version improvement is a Management API route that exposes all service
+versions directly. Adding that route should only change the linked-cache adapter and candidate
+resolution; managed lifecycle, control ownership, and the single-document launch model remain the
+same.

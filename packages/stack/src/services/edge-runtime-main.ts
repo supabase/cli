@@ -6,16 +6,16 @@ const placeholder = {
   message: "Edge Functions are not configured for this local stack yet.",
 };
 
-export enum RequestErrors {
-  MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
-  InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
-  InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
-  UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
-}
+export const RequestErrors = {
+  MissingAuthHeader: "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidLegacyJWT: "UNAUTHORIZED_LEGACY_JWT",
+  InvalidAsymmetricJWT: "UNAUTHORIZED_ASYMMETRIC_JWT",
+  InvalidTokenFormat: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  UnsupportedTokenAlgorithm: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+};
 
 interface AuthFailure {
-  code: RequestErrors;
+  code: string;
   message?: string;
 }
 

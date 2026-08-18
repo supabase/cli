@@ -165,6 +165,12 @@ See `apps/cli/src/commands/login/` as the canonical example.
 - Run e2e tests only when the user asks for them, or when you specifically need them for the command you touched.
 - When you do run e2e tests automatically, run only the targeted e2e file(s) for the command you changed, not unrelated e2e tests.
 
+### Flake-resistant tests
+
+Tests must remain correct under file-level parallelism and slow or loaded CI. Synchronize on observable conditions—never use `Effect.sleep`, `setTimeout`, or polling delays for propagation, startup, cancellation, cleanup, or port release. Subscribe before triggering the transition, then await a `Deferred`, stream, fiber, readiness result, file, or state change. Timeouts are guards, not sub-second correctness assertions; use TestClock or fake timers for timing semantics. Assume files run concurrently: use unique IDs, roots, process markers, and derived resources, while intentional collisions stay within one test. Never bind an ephemeral port, close it, and reuse it as a reservation; never use a released endpoint as a guaranteed dead backend—own a reset/refusal listener or inject the failure. Subprocesses need explicit readiness plus stderr/stdout diagnostics. Cleanup must target only exact owned PIDs, tokens, paths, names, and labels; never machine-wide prefix or command snapshots, and never globally disable parallelism. For flake fixes, reproduce/stress the red case and repeat the green case.
+
+During review, arbitrary sleeps, wall-clock completion assertions, released-port reuse, static cross-file identities, and broad cleanup are blocking unless intrinsic to the behavior and documented.
+
 ### Integration test pattern
 
 Uses `@effect/vitest` with `it.live` — stateful mock factories return `{ layer, state }`. Avoid `vi.fn()` spies; assert on accumulated state after the effect runs:
