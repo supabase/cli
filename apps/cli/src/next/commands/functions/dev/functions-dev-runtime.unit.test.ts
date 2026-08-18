@@ -23,13 +23,13 @@ function makeFakeFileWatcher() {
   );
 
   const awaitWatch = Effect.fnUntraced(function* (expectedPath: string) {
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if (queues.has(expectedPath)) {
-        return;
+    const deadline = Date.now() + 2_000;
+    while (!queues.has(expectedPath)) {
+      if (Date.now() >= deadline) {
+        throw new Error(`No watcher registered for ${expectedPath}`);
       }
       yield* Effect.sleep("1 millis");
     }
-    throw new Error(`No watcher registered for ${expectedPath}`);
   });
 
   const emit = (path: string, events: ReadonlyArray<FileWatchEvent>) =>
