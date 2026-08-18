@@ -1043,20 +1043,33 @@ describe("detached supervisor child journeys", () => {
   test("bounds attached-owner recovery to one startup deadline", { timeout: 10_000 }, async () => {
     const roots = await workspace();
     const input = messageFor(roots);
-    const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
-    const owner = spawnChild(input, { testMode: "hold-start", environment });
+    const attachedReady = join(roots.root, "attached-before-ready-ready");
+    const attachedRelease = join(roots.root, "attached-before-ready-release");
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" },
+    });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
     try {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
-      contender = spawnChild(input, { testMode: "hold-start", environment });
+      contender = spawnChild(input, {
+        testMode: "hold-start",
+        environment: {
+          SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400",
+          SUPABASE_STACK_TEST_ATTACHED_READY_FILE: attachedReady,
+          SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE: attachedRelease,
+        },
+      });
       void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
+      await waitForFile(attachedReady);
 
       await kill(owner.child);
       fakeOwner = await listenStartingOwner(endpoint, document.id);
+      writeFileSync(attachedRelease, "release");
       await expect(contender.started).rejects.toMatchObject({
         message: expect.stringContaining("Timed out resolving attached supervisor owner"),
       });

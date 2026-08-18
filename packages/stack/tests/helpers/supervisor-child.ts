@@ -135,8 +135,17 @@ const testRuntime = ({
   });
 };
 
+const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
+  const readyFile = process.env["SUPABASE_STACK_TEST_ATTACHED_READY_FILE"];
+  const releaseFile = process.env["SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE"];
+  if (readyFile === undefined || releaseFile === undefined) return Effect.void;
+  return Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
+    Effect.andThen(waitForFile(releaseFile)),
+  );
+};
+
 const sendTestStage = (): Effect.Effect<void, SupervisorStartError> =>
-  Effect.callback((resume) => {
+  Effect.callback<void, SupervisorStartError>((resume) => {
     if (process.send === undefined || !process.connected) {
       resume(Effect.void);
       return Effect.void;
@@ -159,7 +168,7 @@ const sendTestStage = (): Effect.Effect<void, SupervisorStartError> =>
       );
     }
     return Effect.void;
-  });
+  }).pipe(Effect.andThen(waitForAttachedBeforeReadyRelease()));
 
 const resolutionTimeout = (): Duration.Input => {
   const milliseconds = Number(process.env["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
