@@ -36,8 +36,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   SDK on PATH and `supabase_typegen` as a dev dependency of the current
   project. `dart` generates one schema per run and therefore accepts at most
   one `--schema`. Both require a pg-meta image that ships a `json` output for
-  `PG_META_GENERATE_TYPES` (pending in postgres-meta after
-  supabase/postgres-meta#1084 lands the postgrest-typegen extraction).
+  `PG_META_GENERATE_TYPES` (supabase/postgres-meta#1110, stacked on the #1084
+  postgrest-typegen extraction).
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database
