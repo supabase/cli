@@ -411,16 +411,14 @@ describe("ApiProxy", () => {
   // ---------------------------------------------------------------------------
 
   test("returns 502 when backend is unreachable", async () => {
-    // Build a second proxy that points all routes to a port with nothing listening.
-    // Use a port that was assigned then freed so we know nothing is there.
+    // Keep ownership of the backend endpoint and deterministically refuse every
+    // connection. A released port could be reclaimed by another process.
     const deadServer = await new Promise<http.Server>((resolve) => {
-      const s = http.createServer();
+      const s = http.createServer((request) => request.socket.destroy());
       s.listen(0, "127.0.0.1", () => resolve(s));
     });
     const deadAddr = deadServer.address() as { port: number };
     const deadPort = deadAddr.port;
-    await new Promise<void>((res) => deadServer.close(() => res()));
-
     const deadConfig: ProxyConfig = {
       listenPort: 0,
       gotruePort: deadPort,
@@ -453,6 +451,9 @@ describe("ApiProxy", () => {
       expect(res.status).toBe(502);
     } finally {
       await deadRuntime.dispose();
+      await new Promise<void>((resolve, reject) =>
+        deadServer.close((error) => (error === undefined ? resolve() : reject(error))),
+      );
     }
   });
 
