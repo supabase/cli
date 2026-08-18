@@ -64,6 +64,7 @@ export const LEGACY_DOCS_TAGS: Readonly<Record<string, ReadonlyArray<string>>> =
   "supabase-secrets": ["management-api"],
   "supabase-seed": ["local-dev"],
   "supabase-services": ["local-dev"],
+  "supabase-workers": ["management-api"],
   "supabase-snippets": ["management-api"],
   "supabase-ssl-enforcement": ["management-api"],
   "supabase-sso": ["management-api"],
