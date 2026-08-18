@@ -224,11 +224,11 @@ describe("managed stack recovery journeys", () => {
               ownership: stackOwner.ownership,
             })
             .pipe(Effect.forkScoped);
-          yield* Deferred.await(repairRead).pipe(Effect.timeout("10 seconds"));
+          yield* Deferred.await(repairRead).pipe(Effect.timeout("30 seconds"));
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;
           yield* Effect.promise(() => repairDaemon.dispose());
-          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("15 seconds"));
+          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("60 seconds"));
           expect(started.stack.id).toBe(stackId);
           yield* releaseLease(started);
         }),

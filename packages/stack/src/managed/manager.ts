@@ -726,7 +726,12 @@ const makeManager = (
                   ),
             ),
             Effect.retry({
-              schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 250 })),
+              // A held repair fence means another process is actively
+              // repairing this workspace; wait out a realistic repair
+              // (Git operations included) instead of failing after ~5s.
+              schedule: Schedule.spaced("20 millis").pipe(
+                Schedule.upTo({ duration: "30 seconds" }),
+              ),
               while: (error) => error instanceof ManagedWorkspaceRepairConflictError,
             }),
           ),

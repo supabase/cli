@@ -456,9 +456,10 @@ const acquireAtCandidates = (
 
   return attempt.pipe(
     Effect.retry({
-      // Leave explicit margin inside the parent's 35-second startup handshake,
-      // even when every owner probe consumes its 500 ms transport timeout.
-      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 30 })),
+      // Bound by duration, not attempts: an attempt's own reads can each
+      // consume the 500 ms transport timeout, and a count-based budget would
+      // stretch a single acquire far past the parent's startup handshake.
+      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "1500 millis" })),
       while: (error) => error._tag === "ControlUnavailableError",
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>

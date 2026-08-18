@@ -78,6 +78,10 @@ const controlTransport: ControlTransport["Service"] = {
                 port: endpoint.port,
                 path: CONTROL_STATUS_PATH,
                 method: "GET",
+                // One-shot connection: a pooled keep-alive connection would
+                // let a closed listener keep answering status probes while
+                // the probes themselves keep the connection alive.
+                agent: false,
               },
               (response) => {
                 let body = "";
@@ -142,6 +146,7 @@ const controlTransport: ControlTransport["Service"] = {
               port: endpoint.port,
               path: CONTROL_STOP_PATH,
               method: "POST",
+              agent: false,
             },
             (response) => {
               response.resume();
