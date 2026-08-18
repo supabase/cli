@@ -32,7 +32,7 @@
     "docs:spec": "bun scripts/generate-docs-spec.ts",
     "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
-    "gen:feedback-types": "pnpm dev:legacy -- gen types typescript > src/shared/feedback/database.types.ts",
+    "gen:feedback-types": "pnpm dev:legacy -- gen types typescript --project-id imrwaufzgcaczqmpnxyr --schema public > src/shared/feedback/database.types.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
     "test:smoke": "bun run tests/smoke-test.ts",
