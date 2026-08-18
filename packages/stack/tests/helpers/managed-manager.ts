@@ -29,7 +29,7 @@ export const setupManagedManager = (roots: Array<string>) => {
   const workspace = join(root, "workspace");
   mkdirSync(workspace);
   const stateRoot = join(root, "state");
-  const layer = managedStackManagerLayer({ stateRoot });
+  const layer = managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false });
   return { layer, stateRoot, workspace };
 };
 
