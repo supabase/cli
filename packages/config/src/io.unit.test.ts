@@ -1246,6 +1246,34 @@ project_id = "dupref"
     }
   });
 
+  test("loads a [remotes.*.workers] section alongside the project's own", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[workers.api]
+runtime = "node"
+
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.workers.api]
+runtime = "deno"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.workers).toEqual({ api: { runtime: "node" } });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
     const cwd = makeTempProject();
 
