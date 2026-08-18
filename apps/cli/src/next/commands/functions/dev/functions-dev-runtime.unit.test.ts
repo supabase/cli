@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Queue, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { join } from "node:path";
 import {
   FileWatcher,
@@ -9,6 +9,15 @@ import { watchPaths } from "./functions-dev-runtime.ts";
 
 function makeFakeFileWatcher() {
   const queues = new Map<string, Queue.Enqueue<ReadonlyArray<FileWatchEvent>>>();
+  const registrations = new Map<string, Deferred.Deferred<void>>();
+  const registrationFor = (path: string) => {
+    let latch = registrations.get(path);
+    if (latch === undefined) {
+      latch = Deferred.makeUnsafe<void>();
+      registrations.set(path, latch);
+    }
+    return latch;
+  };
 
   const layer = Layer.succeed(
     FileWatcher,
@@ -17,20 +26,18 @@ function makeFakeFileWatcher() {
         Stream.callback<ReadonlyArray<FileWatchEvent>>((queue) =>
           Effect.sync(() => {
             queues.set(path, queue);
-          }),
+          }).pipe(Effect.andThen(Deferred.succeed(registrationFor(path), undefined))),
         ),
     }),
   );
 
-  const awaitWatch = Effect.fnUntraced(function* (expectedPath: string) {
-    const deadline = Date.now() + 2_000;
-    while (!queues.has(expectedPath)) {
-      if (Date.now() >= deadline) {
-        throw new Error(`No watcher registered for ${expectedPath}`);
-      }
-      yield* Effect.sleep("1 millis");
-    }
-  });
+  const awaitWatch = (expectedPath: string) =>
+    Deferred.await(registrationFor(expectedPath)).pipe(
+      Effect.timeoutOrElse({
+        duration: "2 seconds",
+        orElse: () => Effect.die(new Error(`No watcher registered for ${expectedPath}`)),
+      }),
+    );
 
   const emit = (path: string, events: ReadonlyArray<FileWatchEvent>) =>
     Effect.sync(() => {
