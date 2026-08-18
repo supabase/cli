@@ -226,6 +226,9 @@ importers:
       posthog-node:
         specifier: ^5.48.1
         version: 5.48.1
+      prettier:
+        specifier: 3.8.1
+        version: 3.8.1
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -6119,6 +6122,11 @@ packages:
     peerDependenciesMeta:
       rxjs:
         optional: true
+
+  prettier@3.8.1:
+    resolution: {integrity: sha512-UOnG6LftzbdaHZcKoPFtOcCKztrQ57WkHDeRD9t/PTQtmT0NHSeWWepj6pS0z/N7+08BHFDQVUrfmfMRcZwbMg==}
+    engines: {node: '>=14'}
+    hasBin: true
 
   pretty-ms@9.3.0:
     resolution: {integrity: sha512-gjVS5hOP+M3wMm5nmNOucbIrqudzs9v/57bWRHQWLYklXqoXKrVfYW2W9+glfGsqtPgpiz5WwyEEB+ksXIx3gQ==}
@@ -12845,6 +12853,8 @@ snapshots:
   posthog-node@5.48.1:
     dependencies:
       '@posthog/core': 1.47.0
+
+  prettier@3.8.1: {}
 
   pretty-ms@9.3.0:
     dependencies:
