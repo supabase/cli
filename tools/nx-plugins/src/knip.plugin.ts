@@ -34,13 +34,13 @@ export const createNodesV2: CreateNodesV2<KnipPluginOptions> = [
               [projectRoot]: {
                 targets: {
                   "knip:check": {
-                    command: "knip-bun",
+                    command: "knip-bun --exclude catalogReferences",
                     options: { cwd: "{projectRoot}" },
                     cache: true,
                     inputs,
                   },
                   "knip:fix": {
-                    command: "knip-bun --fix",
+                    command: "knip-bun --fix --exclude catalogReferences",
                     options: { cwd: "{projectRoot}" },
                     cache: false,
                   },

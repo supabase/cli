@@ -784,9 +784,7 @@ const effectCliActionabilityByTag = {
   DuplicateOption: () => actionability.invalidInput,
   UnexpectedArgument: () => actionability.invalidInput,
   InvalidValue: () => actionability.invalidInput,
-  // Effect 4.0.0-beta.103 has this typo in the runtime tag. Keep the adapter
-  // keyed to reality; the emitted fingerprint is normalized below.
-  UnknownSubcomand: () => actionability.invalidInput,
+  UnknownSubcommand: () => actionability.invalidInput,
   UnrecognizedOption: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
@@ -1227,8 +1225,7 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (Object.hasOwn(externalActionabilityByTag, tag)) {
       const external = externalActionabilityByTag[tag];
       if (external !== undefined) {
-        const fingerprintTag = tag === "UnknownSubcomand" ? "UnknownSubcommand" : tag;
-        return toActionability(external(error), "tag", fingerprintTag);
+        return toActionability(external(error), "tag", tag);
       }
     }
     return toActionability(actionability.unknown, "tag", undefined);

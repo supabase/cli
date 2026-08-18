@@ -68,7 +68,7 @@ catalogs:
       version: 4.1.10
 
 overrides:
-  '@effect/platform-node-shared': 4.0.0-beta.103
+  '@effect/platform-node-shared': 4.0.0-beta.107
   '@launchql/protobufjs>@types/node': 24.10.4
 
 patchedDependencies:
@@ -775,11 +775,11 @@ packages:
     peerDependencies:
       effect: ^4.0.0-beta.107
 
-  '@effect/platform-node-shared@4.0.0-beta.103':
-    resolution: {integrity: sha512-0aCZMBid5ifqmY55TkfCDLaGTIM8qu3bNFUW7qL9vh/7jFOkaIAMX2MA8muG4deqW17XWxawddWu4v0fK+UW3g==}
+  '@effect/platform-node-shared@4.0.0-beta.107':
+    resolution: {integrity: sha512-y6BqcRi86BfTJv+tvDrob4ozYVHxxlHYcn/zIQqZjXI9CvKnkgD6ng+38G1o45c4f2ucU+6HRI9POCmFdMoVGA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.0-beta.103
+      effect: ^4.0.0-beta.107
 
   '@effect/platform-node@4.0.0-beta.107':
     resolution: {integrity: sha512-k+6YNbV4Ck0L6YXtlgkvEnuP5tlxWD8EeWOrpn46PDqbGEwt4ONpRltTwm3tn2cyBXD0i+2P11cUH/6sdFagTA==}
@@ -7527,13 +7527,13 @@ snapshots:
 
   '@effect/platform-bun@4.0.0-beta.107(effect@4.0.0-beta.107)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.103(effect@4.0.0-beta.107)
+      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-beta.107)
       effect: 4.0.0-beta.107
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.0-beta.103(effect@4.0.0-beta.107)':
+  '@effect/platform-node-shared@4.0.0-beta.107(effect@4.0.0-beta.107)':
     dependencies:
       '@types/ws': 8.18.1
       effect: 4.0.0-beta.107
@@ -7544,7 +7544,7 @@ snapshots:
 
   '@effect/platform-node@4.0.0-beta.107(effect@4.0.0-beta.107)(ioredis@5.11.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.103(effect@4.0.0-beta.107)
+      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-beta.107)
       effect: 4.0.0-beta.107
       ioredis: 5.11.1
       mime: 4.1.0

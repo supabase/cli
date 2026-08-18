@@ -37,21 +37,21 @@ catalog:
 blockExoticSubdeps: true
 
 overrides:
-  "@effect/platform-node-shared": "4.0.0-beta.103"
+  "@effect/platform-node-shared": "4.0.0-beta.107"
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
-  - "@effect/atom-react@4.0.0-beta.103"
-  - "@effect/platform-bun@4.0.0-beta.103"
-  - "@effect/platform-node@4.0.0-beta.103"
-  - "@effect/platform-node-shared@4.0.0-beta.103"
-  - "@effect/sql-pg@4.0.0-beta.103"
-  - "@effect/vitest@4.0.0-beta.103"
+  - "@effect/atom-react@4.0.0-beta.107"
+  - "@effect/platform-bun@4.0.0-beta.107"
+  - "@effect/platform-node@4.0.0-beta.107"
+  - "@effect/platform-node-shared@4.0.0-beta.107"
+  - "@effect/sql-pg@4.0.0-beta.107"
+  - "@effect/vitest@4.0.0-beta.107"
   - "@supabase/pg-delta@1.0.0-alpha.42"
   - "@supabase/pg-topo@1.0.0-alpha.5"
-  - "effect@4.0.0-beta.103"
+  - "effect@4.0.0-beta.107"
 
 supportedArchitectures:
   cpu:

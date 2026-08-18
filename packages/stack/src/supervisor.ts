@@ -354,15 +354,14 @@ const runManaged = (
         Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
           if (candidate._tag === "Owned") return Effect.succeed(candidate);
           return candidate.ownerStatus.pipe(
-            Effect.flatMap(
-              (status): Effect.Effect<never, unknown> =>
-                status.state === "starting"
-                  ? Effect.fail(new SupervisorOwnerReacquirePending())
-                  : Effect.fail(
-                      new SupervisorStartError({
-                        message: `Attached supervisor owner is ${status.state} after disconnect`,
-                      }),
-                    ),
+            Effect.flatMap((status): Effect.Effect<never, unknown> =>
+              status.state === "starting"
+                ? Effect.fail(new SupervisorOwnerReacquirePending())
+                : Effect.fail(
+                    new SupervisorStartError({
+                      message: `Attached supervisor owner is ${status.state} after disconnect`,
+                    }),
+                  ),
             ),
             Effect.catch((error) =>
               error instanceof ControlTransportError && error.reason === "unreachable"
