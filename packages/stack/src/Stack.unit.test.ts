@@ -686,6 +686,40 @@ describe("Stack", () => {
     }).pipe(Effect.provide(providedLayer));
   });
 
+  it.live("disposal fails a cold eager start with a typed build error", () => {
+    return Effect.gen(function* () {
+      const preparationStarted = yield* Deferred.make<void>();
+      const resolver = mockBinaryResolver({
+        downloadedServices: ["auth"],
+        beforeResolve: ({ service }) =>
+          service === "auth"
+            ? Deferred.succeed(preparationStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
+      const { layer } = setupLayer(
+        defaultConfig,
+        noopPortLease(defaultConfig.ports),
+        undefined,
+        resolver,
+      );
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        const starting = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(preparationStarted);
+
+        const disposing = yield* stack.dispose().pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(disposing);
+
+        const startExit = yield* Fiber.await(starting);
+        expect(Exit.isFailure(startExit)).toBe(true);
+        if (Exit.isFailure(startExit)) {
+          expect(Cause.squash(startExit.cause)).toMatchObject({ _tag: "StackBuildError" });
+        }
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds"));
+  });
+
   it.live("can retry start after a build failure before services start", () => {
     let buildAttempts = 0;
     const graph = Effect.runSync(
@@ -725,6 +759,77 @@ describe("Stack", () => {
       expect(buildAttempts).toBe(2);
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
+
+  it.live("rejects a cached start when disposal begins during startup", () =>
+    Effect.gen(function* () {
+      const startEntered = yield* Deferred.make<void>();
+      const releaseStart = yield* Deferred.make<void>();
+      const config = {
+        ...defaultConfig,
+        postgrest: false,
+        auth: false,
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          postgrest: "off",
+          auth: "off",
+        },
+      } satisfies ResolvedStackConfig;
+      const graph = Effect.runSync(
+        buildGraph([{ name: "postgres", command: "true", restart: "no" }]),
+      );
+      const builderLayer = Layer.succeed(StackBuilder, {
+        build: () =>
+          Effect.succeed({
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([["postgres", { visibility: "public" as const }]]),
+          }),
+      });
+      let gateNextStart = false;
+      const portLease: PortLease = {
+        ports: config.ports,
+        reserve: () => {
+          if (!gateNextStart) return Effect.void;
+          gateNextStart = false;
+          return Deferred.succeed(startEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseStart)),
+          );
+        },
+        release: () => Effect.void,
+        releaseAll: Effect.void,
+      };
+      const resolver = mockBinaryResolver();
+      const layer = localStackLayer(config, portLease).pipe(
+        Layer.provide(builderLayer),
+        Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+        Layer.provide(mockChildProcessSpawner().layer),
+        Layer.provide(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        yield* stack.start();
+        yield* stack.stop();
+
+        gateNextStart = true;
+        const holder = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(startEntered);
+        const disposing = yield* stack.dispose().pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.succeed(releaseStart, undefined);
+        const holderExit = yield* Fiber.await(holder);
+        expect(Exit.isFailure(holderExit)).toBe(true);
+        if (Exit.isFailure(holderExit)) {
+          expect(Cause.squash(holderExit.cause)).toMatchObject({ _tag: "StackBuildError" });
+        }
+        yield* Fiber.join(disposing);
+
+        expect((yield* stack.getState("postgres")).status).toBe("Stopped");
+        const afterDisposal = yield* stack.start().pipe(Effect.flip);
+        expect(afterDisposal._tag).toBe("StackBuildError");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
 
   it.live("a partial startup failure disposes resources from services already started", () => {
     let cleaned = false;
@@ -943,6 +1048,28 @@ describe("Stack", () => {
       if (error._tag === "StackBuildError") {
         expect(error.detail).toContain("imgproxy was explicitly stopped");
       }
+      expect((yield* stack.getState("storage")).status).not.toBe("Downloading");
+      expect((yield* stack.getState("imgproxy")).status).not.toBe("Downloading");
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("rejects stopping a service before start without affecting a later start", () => {
+    const config = {
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const error = yield* stack.stopService("auth").pipe(Effect.flip);
+
+      expect(error._tag).toBe("StackNotRunningError");
+      if (error._tag === "StackNotRunningError") expect(error.phase).toBe("idle");
+
+      yield* stack.start();
+      expect((yield* stack.getState("auth")).status).toBe("Dormant");
       yield* stack.stop();
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
@@ -1127,7 +1254,10 @@ describe("Stack", () => {
         expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
 
         const error = yield* activator.activate("auth").pipe(Effect.flip);
-        expect(error._tag).toBe("StackNotRunningError");
+        expect(error._tag).toBe("StackBuildError");
+        if (error._tag === "StackBuildError") {
+          expect(error.detail).toContain("disposal has begun");
+        }
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );

@@ -330,21 +330,7 @@ export const isDockerOnlyService = (service: ServiceName): boolean =>
 
 export const DEFAULT_SERVICE_POLICIES: Readonly<
   Record<ServiceName, Exclude<ServicePreparationPolicy, "off">>
-> = {
-  postgres: SERVICE_CATALOG.postgres.preparation.default,
-  postgrest: SERVICE_CATALOG.postgrest.preparation.default,
-  auth: SERVICE_CATALOG.auth.preparation.default,
-  "edge-runtime": SERVICE_CATALOG["edge-runtime"].preparation.default,
-  realtime: SERVICE_CATALOG.realtime.preparation.default,
-  storage: SERVICE_CATALOG.storage.preparation.default,
-  imgproxy: SERVICE_CATALOG.imgproxy.preparation.default,
-  mailpit: SERVICE_CATALOG.mailpit.preparation.default,
-  pgmeta: SERVICE_CATALOG.pgmeta.preparation.default,
-  studio: SERVICE_CATALOG.studio.preparation.default,
-  analytics: SERVICE_CATALOG.analytics.preparation.default,
-  vector: SERVICE_CATALOG.vector.preparation.default,
-  pooler: SERVICE_CATALOG.pooler.preparation.default,
-};
+> = Record.map(SERVICE_CATALOG, (metadata) => metadata.preparation.default);
 
 export const requiredPreparationDependencies = (service: ServiceName): ReadonlyArray<ServiceName> =>
   serviceMetadata(service).preparation.dependencies;

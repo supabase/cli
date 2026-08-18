@@ -1,4 +1,9 @@
-import { DEFAULT_VERSIONS, SERVICE_NAMES, dockerImageForArtifact } from "./ServiceCatalog.ts";
+import {
+  DEFAULT_VERSIONS,
+  SERVICE_NAMES,
+  dockerImageForArtifact,
+  serviceMetadata,
+} from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 import { Schema } from "effect";
 
@@ -48,11 +53,13 @@ export function fullVersionManifest(
   return versions;
 }
 
-/**
- * Normalizes a version string without rewriting the frozen release tag.
- */
-export function normalizeServiceVersion(_service: ServiceName, version: string): string {
-  return version.trim();
+/** Normalizes a version string to the catalog's canonical stored form. */
+export function normalizeServiceVersion(service: ServiceName, version: string): string {
+  const normalized = version.trim();
+  const tagPrefix = serviceMetadata(service).artifact.docker.tagPrefix;
+  return tagPrefix !== undefined && normalized.startsWith(tagPrefix)
+    ? normalized.slice(tagPrefix.length)
+    : normalized;
 }
 
 export function normalizeServiceVersions(

@@ -393,6 +393,9 @@ export class DaemonServer extends Context.Service<
               Effect.catchTag("StackBuildError", (e) =>
                 Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
+              Effect.catchTag("StackNotRunningError", (e) =>
+                Effect.succeed(notRunningResponse(e.phase)),
+              ),
             ),
           ),
 

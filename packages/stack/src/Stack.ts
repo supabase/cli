@@ -69,7 +69,7 @@ export class Stack extends Context.Service<
     >;
     readonly stopService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError | StackNotRunningError>;
     readonly restartService: (
       name: string,
     ) => Effect.Effect<

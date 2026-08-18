@@ -23,6 +23,7 @@ interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly cmd?: ReadonlyArray<string>;
   readonly entrypoint?: string;
   readonly volumes?: ReadonlyArray<string>;
+  readonly securityOptions?: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
@@ -77,6 +78,7 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
       : ["--label", `${STACK_ID_LABEL}=${opts.identity.stackId}`]),
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
+    ...(opts.securityOptions ?? []).flatMap((option) => ["--security-opt", option]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),
     ...(opts.args ?? []),
     ...envArgs(opts.env ?? {}),

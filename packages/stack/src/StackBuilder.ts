@@ -166,11 +166,10 @@ export const validateResolvedConfig = (
   });
 
 export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
-  SERVICE_NAMES.filter((service) =>
-    service === "postgres" && config.servicePolicies?.postgres !== "off"
-      ? true
-      : config.servicePolicies?.[service] !== "off" &&
-        resolvedConfigForService(config, service) !== false,
+  SERVICE_NAMES.filter(
+    (service) =>
+      config.servicePolicies?.[service] !== "off" &&
+      resolvedConfigForService(config, service) !== false,
   );
 
 export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => {

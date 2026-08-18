@@ -423,7 +423,7 @@ export const RemoteStack = {
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
                 });
-                yield* expectDaemonOk(endpoint, path, response, name).pipe(
+                yield* expectMutatingDaemonOk(endpoint, path, response, name).pipe(
                   Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
                   Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
                 );

@@ -3,6 +3,7 @@ import {
   Context,
   Data,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Layer,
@@ -111,7 +112,7 @@ const resolveDockerImageForService = (
 ): Effect.Effect<string, DockerPullError> =>
   pullImage(spawner, runtime, dockerImageForService(service, version), callbacks);
 
-const preparationClosure = (
+export const preparationClosure = (
   services: ReadonlyArray<ServiceName>,
   enabledServices?: ReadonlyArray<ServiceName>,
 ): ReadonlyArray<ServiceName> => {
@@ -210,61 +211,68 @@ export class StackPreparation extends Context.Service<
         input: StackPreparationInput,
         publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
       ): Effect.Effect<ServiceResolution, StackPreparationError> =>
-        Effect.suspend(() => {
-          let downloadStarted = false;
-          const markDownloadStart = () =>
-            Effect.sync(() => {
-              downloadStarted = true;
-            }).pipe(
-              Effect.andThen(
-                publishEvent?.(new ServiceDownloadStarted({ service })) ?? Effect.void,
-              ),
+        Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            let downloadStarted = false;
+            const markDownloadStart = () =>
+              Effect.sync(() => {
+                downloadStarted = true;
+              }).pipe(
+                Effect.andThen(
+                  publishEvent?.(new ServiceDownloadStarted({ service })) ?? Effect.void,
+                ),
+              );
+            const markDownloadFinished = () =>
+              Effect.suspend(() =>
+                downloadStarted
+                  ? (publishEvent?.(new ServiceDownloadFinished({ service })) ?? Effect.void)
+                  : Effect.void,
+              );
+            const key = JSON.stringify({
+              service,
+              resolution,
+              containerRuntime: input.mode === "docker" ? input.containerRuntime : null,
+            });
+            const existing = inFlight.get(key);
+            if (existing !== undefined) return restore(Deferred.await(existing));
+            const deferred = Deferred.makeUnsafe<ServiceResolution, StackPreparationError>();
+            inFlight.set(key, deferred);
+            const version = input.versions?.[service] ?? DEFAULT_VERSIONS[service];
+            const effect: Effect.Effect<ServiceResolution, StackPreparationError> =
+              resolution.type === "docker"
+                ? input.mode === "docker"
+                  ? resolveDockerImageForService(
+                      spawner,
+                      input.containerRuntime,
+                      service,
+                      version,
+                      {
+                        onDownloadStart: markDownloadStart(),
+                      },
+                    ).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
+                  : Effect.die("Native preparation planned a Docker resolution")
+                : resolver
+                    .resolveWithMetadata(
+                      { service, version },
+                      {
+                        onDownloadStart: markDownloadStart(),
+                      },
+                    )
+                    .pipe(Effect.map(({ path }): ServiceResolution => ({ type: "binary", path })));
+            const coordinated = effect.pipe(
+              Effect.matchCauseEffect({
+                onSuccess: (value) =>
+                  Effect.andThen(markDownloadFinished(), Deferred.succeed(deferred, value)),
+                onFailure: (cause) => Deferred.failCause(deferred, cause),
+              }),
+              Effect.ensuring(Effect.sync(() => inFlight.delete(key))),
             );
-          const markDownloadFinished = () =>
-            Effect.suspend(() =>
-              downloadStarted
-                ? (publishEvent?.(new ServiceDownloadFinished({ service })) ?? Effect.void)
-                : Effect.void,
-            );
-          const key = JSON.stringify({
-            service,
-            resolution,
-            containerRuntime: input.mode === "docker" ? input.containerRuntime : null,
-          });
-          const existing = inFlight.get(key);
-          if (existing !== undefined) return Deferred.await(existing);
-          const deferred = Deferred.makeUnsafe<ServiceResolution, StackPreparationError>();
-          inFlight.set(key, deferred);
-          const version = input.versions?.[service] ?? DEFAULT_VERSIONS[service];
-          const effect: Effect.Effect<ServiceResolution, StackPreparationError> =
-            resolution.type === "docker"
-              ? input.mode === "docker"
-                ? resolveDockerImageForService(spawner, input.containerRuntime, service, version, {
-                    onDownloadStart: markDownloadStart(),
-                  }).pipe(Effect.map((image): ServiceResolution => ({ type: "docker", image })))
-                : Effect.die("Native preparation planned a Docker resolution")
-              : resolver
-                  .resolveWithMetadata(
-                    { service, version },
-                    {
-                      onDownloadStart: markDownloadStart(),
-                    },
-                  )
-                  .pipe(Effect.map(({ path }): ServiceResolution => ({ type: "binary", path })));
-          const coordinated = effect.pipe(
-            Effect.matchCauseEffect({
-              onSuccess: (value) =>
-                Effect.andThen(markDownloadFinished(), Deferred.succeed(deferred, value)),
-              onFailure: (cause) =>
-                Deferred.failCause(deferred, cause).pipe(Effect.andThen(Effect.failCause(cause))),
-            }),
-            Effect.ensuring(Effect.sync(() => inFlight.delete(key))),
-          );
-          return Effect.gen(function* () {
-            yield* Effect.forkIn(coordinated, scope, { startImmediately: true });
-            return yield* Deferred.await(deferred);
-          });
-        });
+            return Effect.gen(function* () {
+              yield* Effect.forkIn(coordinated, scope, { startImmediately: true });
+              return yield* restore(Deferred.await(deferred));
+            });
+          }),
+        );
 
       const prepareWithEvents = (
         input: StackPreparationInput,
@@ -325,7 +333,9 @@ const pullImage = (
     const attempt = runPullCommand(spawner, runtime, image).pipe(
       Effect.retry({
         while: (error) => shouldRetryPull(error.detail),
-        schedule: Schedule.recurs(1),
+        schedule: Schedule.recurs(1).pipe(
+          Schedule.addDelay(() => Effect.succeed(Duration.millis(500))),
+        ),
       }),
     );
     const result = yield* Effect.exit(attempt);

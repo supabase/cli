@@ -140,6 +140,13 @@ describe("normalizeServiceVersion", () => {
   it("passes through other services unchanged", () => {
     expect(normalizeServiceVersion("postgres", "17.6.1.090")).toBe("17.6.1.090");
   });
+
+  it("normalizes a prefixed pgmeta override to its catalog tag", () => {
+    expect(normalizeServiceVersion("pgmeta", "v0.98.0")).toBe("0.98.0");
+    expect(dockerImageForService("pgmeta", normalizeServiceVersion("pgmeta", "v0.98.0"))).toBe(
+      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    );
+  });
 });
 
 describe("fillServiceVersionManifest", () => {

@@ -214,15 +214,8 @@ const validateManifest = (
     if (osFloor !== null && typeof osFloor !== "object") {
       return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest os_floor is invalid"));
     }
-    const requiresGlibc = manifest.libc === "glibc" || runtimeRequires === "glibc";
-    if (requiresGlibc && platform.os !== "linux") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target: release.target,
-          detail: "Manifest requires Linux/glibc",
-        }),
-      );
-    }
+    const requiresGlibc =
+      manifest.libc === "glibc" || runtimeRequires === "glibc" || osFloor?.kind === "glibc";
     if (osFloor !== null && osFloor.kind === "macos" && platform.os !== "darwin") {
       return yield* Effect.fail(
         new BinaryHostCompatibilityError({
@@ -231,7 +224,7 @@ const validateManifest = (
         }),
       );
     }
-    if (osFloor !== null && osFloor.kind === "glibc" && platform.os !== "linux") {
+    if (requiresGlibc && platform.os !== "linux") {
       return yield* Effect.fail(
         new BinaryHostCompatibilityError({
           target: release.target,
@@ -248,12 +241,7 @@ const validateManifest = (
       );
     }
     const floor = osFloor?.floor;
-    if (
-      platform.os === "linux" &&
-      osFloor?.kind === "glibc" &&
-      floor !== null &&
-      floor !== undefined
-    ) {
+    if (requiresGlibc) {
       const host = yield* Effect.sync(() => {
         try {
           const report = process.report?.getReport?.();
@@ -282,7 +270,7 @@ const validateManifest = (
           }),
         );
       }
-      if (compareVersions(host, floor) < 0) {
+      if (floor !== null && floor !== undefined && compareVersions(host, floor) < 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
             target: release.target,
@@ -442,7 +430,7 @@ export class BinaryResolver extends Context.Service<
             return present.every(Boolean);
           }).pipe(Effect.catch(() => Effect.succeed(false)));
 
-        const plan = (spec: BinarySpec): Effect.Effect<string, BinaryNotFoundError> =>
+        const resolveRelease = (spec: BinarySpec) =>
           Effect.gen(function* () {
             const platform = yield* detectPlatform;
             const release = nativeReleaseForService(spec.service, spec.version, platform);
@@ -461,6 +449,12 @@ export class BinaryResolver extends Context.Service<
               runtime: "native",
               target: release.target,
             };
+            return { platform, release, info };
+          });
+
+        const plan = (spec: BinarySpec): Effect.Effect<string, BinaryNotFoundError> =>
+          Effect.gen(function* () {
+            const { info } = yield* resolveRelease(spec);
             return cachePath(spec.cacheDir ?? binDir, info);
           });
 
@@ -681,24 +675,7 @@ export class BinaryResolver extends Context.Service<
 
         const resolveWithMetadata = (spec: BinarySpec, options?: ResolveBinaryOptions) => {
           const core = Effect.gen(function* () {
-            const platform = yield* detectPlatform;
-            const release = nativeReleaseForService(spec.service, spec.version, platform);
-            if (release === undefined) {
-              return yield* Effect.fail(
-                new BinaryNotFoundError({
-                  service: spec.service,
-                  platform: `${platform.os}-${platform.arch}`,
-                }),
-              );
-            }
-
-            const info: AssetInfo = {
-              service: spec.service,
-              releaseSet: "slim-services",
-              version: spec.version,
-              runtime: "native",
-              target: release.target,
-            };
+            const { platform, release, info } = yield* resolveRelease(spec);
             const baseDir = spec.cacheDir ?? binDir;
             const cacheDir = cachePath(baseDir, info);
             const parentDir = path.dirname(cacheDir);

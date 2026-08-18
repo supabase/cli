@@ -33,6 +33,13 @@ describe("resolved service preparation policies", () => {
     expect(allocated).toBe(false);
   });
 
+  it("rejects disabling postgres through the service policy manifest", async () => {
+    await expect(resolveConfig({ servicePolicies: { postgres: "off" } })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+  });
+
   it("resolves explicitly disabled core services to false without reserving ports", async () => {
     const config = await resolveConfig({ servicePolicies: { postgrest: "off" } });
     expect(config.postgrest).toBe(false);

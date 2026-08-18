@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Schema } from "effect";
+import { Effect, Record, Schema } from "effect";
 import { StackBuildError, toStackError } from "./errors.ts";
 import { resolvedFunctionsBundleSchemaForProject } from "./functions.ts";
 import {
@@ -53,6 +53,7 @@ import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import {
   DEFAULT_SERVICE_POLICIES,
   DEFAULT_VERSIONS,
+  SERVICE_CATALOG,
   SERVICE_NAMES,
   serviceMetadata,
 } from "./ServiceCatalog.ts";
@@ -394,21 +395,7 @@ const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean =
  * are acquired. This keeps unsupported policies a pure user/configuration error.
  */
 const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
-  const policies: Record<ServiceName, ServicePolicy> = {
-    postgres: "off",
-    postgrest: "off",
-    auth: "off",
-    "edge-runtime": "off",
-    realtime: "off",
-    storage: "off",
-    imgproxy: "off",
-    mailpit: "off",
-    pgmeta: "off",
-    studio: "off",
-    analytics: "off",
-    vector: "off",
-    pooler: "off",
-  };
+  const policies: Record<ServiceName, ServicePolicy> = Record.map(SERVICE_CATALOG, () => "off");
   for (const service of SERVICE_NAMES) {
     const requested = config.servicePolicies?.[service];
     if (service === "postgres" && requested !== undefined && requested !== "eager") {

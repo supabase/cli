@@ -132,9 +132,11 @@ function mockStack(
     stopService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.sync(() => {
-            serviceCalls.push(`stop:${name}`);
-          }),
+        : options.notRunningPhase !== undefined
+          ? Effect.fail(new StackNotRunningError({ phase: options.notRunningPhase }))
+          : Effect.sync(() => {
+              serviceCalls.push(`stop:${name}`);
+            }),
     restartService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -592,6 +594,7 @@ describe("RemoteStack integration", () => {
 
       const operations = [
         (stack: Stack["Service"]) => stack.startService("auth"),
+        (stack: Stack["Service"]) => stack.stopService("auth"),
         (stack: Stack["Service"]) => stack.restartService("auth"),
         (stack: Stack["Service"]) => stack.reloadFunctions(),
         (stack: Stack["Service"]) =>

@@ -45,7 +45,9 @@ import {
 import { portFieldsForService } from "./ServicePorts.ts";
 import {
   PreparationCompleted,
+  preparationClosure,
   ServiceDownloadStarted,
+  ServiceDownloadFinished,
   StackPreparation,
 } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts, StackPreparationInput } from "./StackPreparation.ts";
@@ -63,15 +65,7 @@ import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
 
-type LifecyclePhase =
-  | "idle"
-  | "preparing"
-  | "prepared"
-  | "starting"
-  | "running"
-  | "stopping"
-  | "stopped"
-  | "disposed";
+type LifecyclePhase = "idle" | "starting" | "running" | "stopping" | "stopped" | "disposed";
 
 type StackService = typeof Stack.Service;
 
@@ -282,178 +276,212 @@ export const localStackLayer = (
             });
       };
 
-      const ensurePlanned = Effect.suspend(() => {
-        if (plannedArtifacts !== undefined) return Effect.succeed(plannedArtifacts);
-        if (planDeferred !== undefined) return Deferred.await(planDeferred);
-        const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
-        planDeferred = deferred;
-        const effect = Effect.gen(function* () {
-          yield* validateResolvedConfig(config);
-          const input = yield* preparationInput(enabledServicesForConfig(config));
-          return yield* preparation.plan(input).pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackBuildError({
-                  detail: "Failed to plan stack assets",
-                  cause,
-                  reason: "asset_preparation",
-                }),
-            ),
-          );
-        }).pipe(
-          Effect.tap((value) =>
-            Effect.sync(() => {
-              plannedArtifacts = value;
-            }),
-          ),
-          Effect.ensuring(Effect.sync(() => (planDeferred = undefined))),
-        );
-        return Effect.gen(function* () {
-          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
-          return yield* Deferred.await(deferred);
-        });
-      });
-
-      const prepareServices = (services: ReadonlyArray<ServiceName>) =>
+      const ensurePlanned = Effect.uninterruptibleMask((restore) =>
         Effect.suspend(() => {
-          const targets = [
-            ...new Set(
-              services.flatMap((service) => activationTargetsForService(enabledServices, service)),
-            ),
-          ];
-          const pending = targets.filter((service) => preparedResolutions[service] === undefined);
-          if (pending.length === 0) {
-            return Effect.succeed({
-              resolutions: preparedResolutions,
-            } satisfies PreparedStackArtifacts);
+          if (disposed || disposing) {
+            return Effect.fail(
+              new StackBuildError({
+                detail: "Cannot plan stack assets after stack disposal has begun",
+              }),
+            );
           }
-          const key = pending.toSorted().join(",");
-          const existing = preparationInFlight.get(key);
-          if (existing !== undefined) return Deferred.await(existing);
-          const previousStates = new Map(
-            pending.flatMap((service) => {
-              const state = SubscriptionRef.getUnsafe(stateRef).find(
-                (entry) => entry.name === service,
-              );
-              return state === undefined ? [] : [[service, state] as const];
-            }),
-          );
+          if (plannedArtifacts !== undefined) return Effect.succeed(plannedArtifacts);
+          if (planDeferred !== undefined) return restore(Deferred.await(planDeferred));
           const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
-          preparationInFlight.set(key, deferred);
-          const effect = preparationInput(pending).pipe(
-            Effect.flatMap((input) =>
-              Stream.runFoldEffect(
-                preparation.prepareEvents(input),
-                () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
-                (current, event) =>
-                  Effect.gen(function* () {
-                    if (event instanceof ServiceDownloadStarted) {
-                      const state = SubscriptionRef.getUnsafe(stateRef).find(
-                        (entry) => entry.name === event.service,
-                      );
-                      if (state !== undefined && state.status !== "Downloading") {
-                        yield* updateState(
-                          new StackServiceState({ ...state, status: "Downloading" }),
-                        );
-                      }
-                    }
-                    return event instanceof PreparationCompleted ? event.artifacts : current;
+          planDeferred = deferred;
+          const effect = Effect.gen(function* () {
+            yield* validateResolvedConfig(config);
+            const input = yield* preparationInput(enabledServicesForConfig(config));
+            return yield* preparation.plan(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackBuildError({
+                    detail: "Failed to plan stack assets",
+                    cause,
+                    reason: "asset_preparation",
                   }),
               ),
-            ),
-            Effect.mapError(
-              (cause) =>
-                new StackBuildError({
-                  detail: "Failed to prepare stack assets",
-                  cause,
-                  reason:
-                    cause instanceof DockerPullError && cause.daemonDown
-                      ? "docker_not_running"
-                      : "asset_preparation",
-                }),
-            ),
-            Effect.tapError(() =>
-              Effect.forEach(
-                pending,
-                (service) => {
-                  const previous = previousStates.get(service);
-                  const current = SubscriptionRef.getUnsafe(stateRef).find(
-                    (entry) => entry.name === service,
-                  );
-                  return previous !== undefined && current?.status === "Downloading"
-                    ? updateState(previous)
-                    : Effect.void;
-                },
-                { discard: true, concurrency: "unbounded" },
-              ),
-            ),
+            );
+          }).pipe(
             Effect.tap((value) =>
-              Effect.sync(() => Object.assign(preparedResolutions, value.resolutions)),
+              Effect.sync(() => {
+                plannedArtifacts = value;
+              }),
             ),
-            Effect.ensuring(Effect.sync(() => preparationInFlight.delete(key))),
+            Effect.ensuring(Effect.sync(() => (planDeferred = undefined))),
           );
           return Effect.gen(function* () {
             yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
-            return yield* Deferred.await(deferred);
+            return yield* restore(Deferred.await(deferred));
           });
-        });
+        }),
+      );
 
-      const ensureRuntime = Effect.suspend(() => {
-        if (runtimeState !== undefined) {
-          return Effect.succeed(runtimeState);
-        }
-        if (runtimeDeferred !== undefined) {
-          return Deferred.await(runtimeDeferred);
-        }
-
-        const deferred = Deferred.makeUnsafe<RuntimeState, StackBuildError>();
-        runtimeDeferred = deferred;
-
-        const effect = Effect.gen(function* () {
-          const prepared = yield* ensurePlanned;
-          const { graph, serviceProjection, cleanupTargets } = yield* builder.build(
-            config,
-            prepared,
-          );
-          exactCleanupTargets = cleanupTargets;
-
-          const orchLayer = Orchestrator.layer(graph).pipe(
-            Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
-            Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
-          );
-          const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
-          const orchestrator = Context.get(orchServices, Orchestrator);
-
-          yield* syncProjectedStates(orchestrator, serviceProjection);
-          yield* orchestrator.allStateChanges().pipe(
-            Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
-            Effect.ignore,
-            Effect.forkIn(scope),
-          );
-
-          return {
-            orchestrator,
-            graph,
-            serviceProjection,
-          } satisfies RuntimeState;
-        }).pipe(
-          Effect.tap((value) =>
-            Effect.sync(() => {
-              runtimeState = value;
-            }),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              runtimeDeferred = undefined;
-            }),
-          ),
+      const prepareServices = (services: ReadonlyArray<ServiceName>) =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            if (disposed || disposing) {
+              return Effect.fail(
+                new StackBuildError({
+                  detail: "Cannot prepare stack assets after disposal has begun",
+                }),
+              );
+            }
+            const targets = [
+              ...new Set(
+                services.flatMap((service) =>
+                  activationTargetsForService(enabledServices, service),
+                ),
+              ),
+            ];
+            const preparationTargets = preparationClosure(targets, enabledServices);
+            const pending = preparationTargets.filter(
+              (service) => preparedResolutions[service] === undefined,
+            );
+            if (pending.length === 0) {
+              return Effect.succeed({
+                resolutions: preparedResolutions,
+              } satisfies PreparedStackArtifacts);
+            }
+            const key = pending.toSorted().join(",");
+            const existing = preparationInFlight.get(key);
+            if (existing !== undefined) return restore(Deferred.await(existing));
+            const previousStates = new Map(
+              preparationTargets.flatMap((service) => {
+                const state = SubscriptionRef.getUnsafe(stateRef).find(
+                  (entry) => entry.name === service,
+                );
+                return state === undefined ? [] : [[service, state] as const];
+              }),
+            );
+            const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();
+            preparationInFlight.set(key, deferred);
+            const effect = preparationInput(pending).pipe(
+              Effect.flatMap((input) =>
+                Stream.runFoldEffect(
+                  preparation.prepareEvents(input),
+                  () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
+                  (current, event) =>
+                    Effect.gen(function* () {
+                      if (event instanceof ServiceDownloadStarted) {
+                        const state = SubscriptionRef.getUnsafe(stateRef).find(
+                          (entry) => entry.name === event.service,
+                        );
+                        if (state !== undefined && state.status !== "Downloading") {
+                          yield* updateState(
+                            new StackServiceState({ ...state, status: "Downloading" }),
+                          );
+                        }
+                      }
+                      if (event instanceof ServiceDownloadFinished) {
+                        const previous = previousStates.get(event.service);
+                        if (previous !== undefined) yield* updateState(previous);
+                      }
+                      return event instanceof PreparationCompleted ? event.artifacts : current;
+                    }),
+                ),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new StackBuildError({
+                    detail: "Failed to prepare stack assets",
+                    cause,
+                    reason:
+                      cause instanceof DockerPullError && cause.daemonDown
+                        ? "docker_not_running"
+                        : "asset_preparation",
+                  }),
+              ),
+              Effect.tapError(() =>
+                Effect.forEach(
+                  preparationTargets,
+                  (service) => {
+                    const previous = previousStates.get(service);
+                    const current = SubscriptionRef.getUnsafe(stateRef).find(
+                      (entry) => entry.name === service,
+                    );
+                    return previous !== undefined && current?.status === "Downloading"
+                      ? updateState(previous)
+                      : Effect.void;
+                  },
+                  { discard: true, concurrency: "unbounded" },
+                ),
+              ),
+              Effect.tap((value) =>
+                Effect.sync(() => Object.assign(preparedResolutions, value.resolutions)),
+              ),
+              Effect.ensuring(Effect.sync(() => preparationInFlight.delete(key))),
+            );
+            return Effect.gen(function* () {
+              yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
+              return yield* restore(Deferred.await(deferred));
+            });
+          }),
         );
 
-        return Effect.gen(function* () {
-          yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
-          return yield* Deferred.await(deferred);
-        });
-      });
+      const ensureRuntime = Effect.uninterruptibleMask((restore) =>
+        Effect.suspend(() => {
+          if (disposed || disposing) {
+            return Effect.fail(
+              new StackBuildError({
+                detail: "Cannot ensure stack runtime after stack disposal has begun",
+              }),
+            );
+          }
+          if (runtimeState !== undefined) {
+            return Effect.succeed(runtimeState);
+          }
+          if (runtimeDeferred !== undefined) return restore(Deferred.await(runtimeDeferred));
+
+          const deferred = Deferred.makeUnsafe<RuntimeState, StackBuildError>();
+          runtimeDeferred = deferred;
+
+          const effect = Effect.gen(function* () {
+            const prepared = yield* ensurePlanned;
+            const { graph, serviceProjection, cleanupTargets } = yield* builder.build(
+              config,
+              prepared,
+            );
+            exactCleanupTargets = cleanupTargets;
+
+            const orchLayer = Orchestrator.layer(graph).pipe(
+              Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
+              Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+            );
+            const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
+            const orchestrator = Context.get(orchServices, Orchestrator);
+
+            yield* syncProjectedStates(orchestrator, serviceProjection);
+            yield* orchestrator.allStateChanges().pipe(
+              Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
+              Effect.ignore,
+              Effect.forkIn(scope),
+            );
+
+            return {
+              orchestrator,
+              graph,
+              serviceProjection,
+            } satisfies RuntimeState;
+          }).pipe(
+            Effect.tap((value) =>
+              Effect.sync(() => {
+                runtimeState = value;
+              }),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                runtimeDeferred = undefined;
+              }),
+            ),
+          );
+
+          return Effect.gen(function* () {
+            yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
+            return yield* restore(Deferred.await(deferred));
+          });
+        }),
+      );
 
       let disposed = false;
       let disposing = false;
@@ -536,7 +564,11 @@ export const localStackLayer = (
       const syncRuntimeProjectedStates = (runtime: RuntimeState) =>
         syncProjectedStates(runtime.orchestrator, runtime.serviceProjection);
       const serviceStartOptions = {
-        beforeStart: (name: string) => portLease.reserve(portFieldsForService(name)),
+        // Reservation may yield while disposal flips the lifecycle state.
+        beforeStart: (name: string) =>
+          portLease
+            .reserve(portFieldsForService(name))
+            .pipe(Effect.andThen(requireMutable(`start service ${name}`))),
         beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
       };
       const knownServiceError = (service: string, cause: ServiceNotFoundError) =>
@@ -656,15 +688,10 @@ export const localStackLayer = (
       const disposeOnce = () =>
         Effect.suspend(() => {
           disposing = true;
-          return Effect.gen(function* () {
-            if (disposed) {
-              return;
-            }
-            disposed = true;
-            yield* Ref.set(phaseRef, "stopping");
-            const preparationError = new StackBuildError({
-              detail: "Stack disposed during asset preparation",
-            });
+          const preparationError = new StackBuildError({
+            detail: "Stack disposed during asset preparation",
+          });
+          const failInFlight = Effect.gen(function* () {
             if (planDeferred !== undefined) {
               yield* Deferred.fail(planDeferred, preparationError);
             }
@@ -674,6 +701,13 @@ export const localStackLayer = (
             if (runtimeDeferred !== undefined) {
               yield* Deferred.fail(runtimeDeferred, preparationError);
             }
+          });
+          const cleanup = Effect.gen(function* () {
+            if (disposed) {
+              return;
+            }
+            disposed = true;
+            yield* Ref.set(phaseRef, "stopping");
             yield* Scope.close(preparationScope, Exit.void);
             yield* cleanupLocalStackResources({
               stop: () =>
@@ -686,6 +720,7 @@ export const localStackLayer = (
               Effect.ensuring(Ref.set(phaseRef, "disposed")),
             );
           }).pipe(withLifecycleLock);
+          return failInFlight.pipe(Effect.andThen(cleanup));
         }).pipe(
           Effect.ensuring(Deferred.succeed(disposedSignal, undefined).pipe(Effect.asVoid)),
           Effect.uninterruptible,
@@ -729,6 +764,7 @@ export const localStackLayer = (
 
       const activateService = (name: ServiceName) =>
         Effect.gen(function* () {
+          yield* requireMutable(`activate service ${name}`);
           yield* requireRunningPhase;
           const service = yield* requireKnownServiceName(name);
           const existing = yield* inspectStartedTargets(service);
@@ -780,6 +816,7 @@ export const localStackLayer = (
             if (!allServicesEager) {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
               yield* prepareServices(["postgres", ...eager]);
+              yield* requireMutable("start");
               if (
                 runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
               ) {
@@ -801,6 +838,7 @@ export const localStackLayer = (
                 );
               }
               for (const service of eager) {
+                yield* requireMutable("start");
                 const started = yield* beginStartTargets(
                   service,
                   new Set(lifecycleTargetsForService(enabledServices, service)),
@@ -813,12 +851,14 @@ export const localStackLayer = (
               yield* syncRuntimeProjectedStates(runtime);
             } else {
               yield* prepareServices(enabledServices);
+              yield* requireMutable("start");
               yield* runtime.orchestrator.start(serviceStartOptions);
               yield* runtime.orchestrator
                 .waitAllReady()
                 .pipe((effect) => withReadinessPolicy(effect, "stack"));
               yield* syncRuntimeProjectedStates(runtime);
             }
+            yield* requireMutable("start");
             yield* Ref.set(phaseRef, "running");
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
@@ -859,6 +899,7 @@ export const localStackLayer = (
         stopService: (name) =>
           Effect.gen(function* () {
             yield* requireMutable(`stop service ${name}`);
+            yield* requireRunningPhase;
             const service = yield* requireKnownServiceName(name);
             const runtime = yield* ensureRuntime;
             for (const target of lifecycleTargetsForService(

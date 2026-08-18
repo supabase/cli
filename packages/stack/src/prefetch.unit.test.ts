@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
@@ -323,5 +323,44 @@ describe("prefetch", () => {
       image: `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`,
     });
     expect(resolver.resolved).toEqual([]);
+  });
+
+  test("concurrent prefetches share one materialization and return the same result", async () => {
+    const [result, resolved] = await Effect.runPromise(
+      Effect.gen(function* () {
+        const preparationStarted = yield* Deferred.make<void>();
+        const releasePreparation = yield* Deferred.make<void>();
+        const resolver = mockBinaryResolver({
+          downloadedServices: ["auth"],
+          beforeResolve: ({ service }) =>
+            service === "auth"
+              ? Deferred.succeed(preparationStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releasePreparation)),
+                )
+              : Effect.void,
+        });
+        const layer = StackPreparation.layer.pipe(
+          Layer.provide(resolver.layer),
+          Layer.provide(mockSequenceSpawner([]).layer),
+        );
+        return yield* Effect.gen(function* () {
+          const first = yield* prefetch({ mode: "native", services: ["auth"] }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(preparationStarted);
+          const second = yield* prefetch({ mode: "native", services: ["auth"] }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(releasePreparation, undefined);
+          return [
+            yield* Effect.all([Fiber.join(first), Fiber.join(second)]),
+            resolver.resolved,
+          ] as const;
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+
+    expect(result[0]).toEqual(result[1]);
+    expect(resolved.filter(({ service }) => service === "auth")).toHaveLength(1);
   });
 });
