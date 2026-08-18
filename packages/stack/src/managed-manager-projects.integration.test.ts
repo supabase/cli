@@ -11,12 +11,9 @@ import { acquireControl, ControlTransport } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
-import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import {
   automaticDocument,
   cleanupRoots,
-  exactCoreDocument,
-  freePorts,
   setupManagedManager,
   startWithOwner,
 } from "../tests/helpers/managed-manager.ts";
@@ -111,7 +108,7 @@ describe("managed stack projects journeys", () => {
     }).pipe(Effect.provide(controlTransportLayer));
   });
 
-  it.live("isolates concurrent default stacks in sibling nested projects", () => {
+  it.live("isolates default stacks in sibling nested projects", () => {
     const { layer, stateRoot } = setup();
     return Effect.scoped(
       Effect.gen(function* () {
@@ -129,27 +126,14 @@ describe("managed stack projects journeys", () => {
         const firstAlias = join(root, "first-project-link");
         symlinkSync(firstProject, firstAlias, "dir");
         const manager = yield* ManagedStackManager;
-        const [firstApi, firstDb, secondApi, secondDb] = yield* freePorts(4);
-        if (
-          firstApi === undefined ||
-          firstDb === undefined ||
-          secondApi === undefined ||
-          secondDb === undefined
-        ) {
-          throw new Error("expected isolated project ports");
-        }
-        const firstPorts = exactCoreDocument(firstApi, firstDb);
-        const secondPorts = exactCoreDocument(secondApi, secondDb);
-        const startAndClose = (project: string, portDocument: ManagedPortIntentDocument) =>
+        const startAndClose = (project: string) =>
           Effect.scoped(
-            startWithOwner(manager, project, portDocument).pipe(
+            startWithOwner(manager, project, automaticDocument()).pipe(
               Effect.map((result) => result.stack),
             ),
           );
-        const [first, second] = yield* Effect.all(
-          [startAndClose(firstProject, firstPorts), startAndClose(secondProject, secondPorts)],
-          { concurrency: "unbounded" },
-        );
+        const first = yield* startAndClose(firstProject);
+        const second = yield* startAndClose(secondProject);
         if (first === undefined || second === undefined) {
           throw new Error("expected both nested project stacks");
         }

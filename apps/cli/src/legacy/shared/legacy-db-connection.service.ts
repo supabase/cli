@@ -110,10 +110,15 @@ export interface LegacyDbSession {
    * Run statements as one extended-protocol batch with a single final Sync.
    * On failure, {@link LegacyDbExecError.statementIndex} is the number of
    * statements that completed before the error.
+   *
+   * A batch runs on its own pooled connection, which the driver checks out per
+   * call. Failing to acquire it raises `LegacyDbConnectError` (a connection-setup
+   * failure, surfaced verbatim — not masked as an exec error), consistent with
+   * {@link queryRaw}; only the batch's own execution raises `LegacyDbExecError`.
    */
-  readonly execBatch?: (
+  readonly execBatch: (
     statements: ReadonlyArray<LegacyDbBatchStatement>,
-  ) => Effect.Effect<void, LegacyDbExecError>;
+  ) => Effect.Effect<void, LegacyDbExecError | LegacyDbConnectError>;
   /**
    * Run a parameterized SQL query and return the result rows as plain objects
    * keyed by the query's column names (snake_case is preserved — the driver

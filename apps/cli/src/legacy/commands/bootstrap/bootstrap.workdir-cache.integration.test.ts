@@ -168,6 +168,7 @@ describe("legacy bootstrap linked-project cache location", () => {
               copyToCsv: () => Effect.succeed(new Uint8Array()),
               queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
               exec: () => Effect.void,
+              execBatch: () => Effect.void,
               query: () => Effect.succeed([]),
             };
           }),

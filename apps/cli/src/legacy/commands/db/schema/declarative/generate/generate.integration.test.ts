@@ -26,6 +26,7 @@ import {
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -40,7 +41,10 @@ import { LegacyPlatformApi } from "../../../../../auth/legacy-platform-api.servi
 import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-api-factory.service.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../../../shared/legacy-db-connection.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
@@ -112,8 +116,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         exec: (sql: string) =>
           Effect.sync(() => {
             dbExec.push(sql);
@@ -126,7 +130,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode, projectRef }) => {

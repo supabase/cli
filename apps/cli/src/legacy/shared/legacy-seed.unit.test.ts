@@ -13,6 +13,7 @@ function fakeSession() {
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: () => Effect.void,
+    execBatch: () => Effect.void,
     query: (sql, params) =>
       Effect.sync(() => {
         queries.push({ sql, params });
@@ -155,6 +156,7 @@ describe("legacyApplySeedFiles stepped-down session", () => {
         Effect.sync(() => {
           calls.push(sql);
         }),
+      execBatch: () => Effect.void,
       query: (sql) =>
         Effect.sync(() => {
           calls.push(sql);

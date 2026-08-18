@@ -170,6 +170,12 @@ an explicit private marker under `.supabase/`. Git checkout markers and
 ordinary-folder markers are private, unreleased storage owned by the current
 build; there is no migration layer or parallel document format.
 
+Consuming applications resolve and pass the canonical local Supabase project
+root to the managed environment APIs. `workspacePath` is an identity input, not
+an arbitrary current working directory: the stack does not inspect
+`supabase/config.toml`, remote-link metadata, or CLI-specific project layout
+conventions.
+
 Moved checkouts can be repaired with `repairWorkspace`, preserving the identity
 and ports. Duplicate checkout adoption is intentionally unsupported and
 requires an explicit ownership decision. Read-only project discovery treats

@@ -2,7 +2,7 @@ import { Data, Effect, Option, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
-import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -541,8 +541,7 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
  * the `postgres` role is re-asserted after the file's statements — before the history
  * insert, and on every path — since a migration's own `RESET ROLE` reverts to the
  * login role (supabase/cli#6236); each file therefore leaves the session role-clean
- * for whatever runs next. A file with no such statements uses one batch and one Sync
- * (a session without `execBatch` falls back to an explicit `BEGIN`/`COMMIT`).
+ * for whatever runs next. A file with no such statements uses one batch and one Sync.
  * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
  * every statement sequentially without a CLI-owned transaction. This keeps their
  * session preamble, nontransactional action, and cleanup on the same connection.
@@ -567,7 +566,7 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     // Receives an already-read/parsed file (the read
     // happens earlier, which wraps the open
@@ -712,32 +711,16 @@ const execMigrationBatch = <E>(
             });
           }
           const base = executed;
-          let completed = 0;
-          const execute =
-            session.execBatch === undefined
-              ? Effect.gen(function* () {
-                  yield* session.exec("BEGIN");
-                  const body = Effect.gen(function* () {
-                    for (const operation of operations) {
-                      if (operation.params === undefined) {
-                        yield* session.exec(operation.sql);
-                      } else {
-                        yield* session.query(operation.sql, operation.params);
-                      }
-                      completed += 1;
-                    }
-                    yield* session.exec("COMMIT");
-                  });
-                  yield* body.pipe(
-                    Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
-                  );
-                })
-              : session.execBatch(operations);
-
           const restoreOpIndex = trailingRestore === undefined ? undefined : batchStatements.length;
-          yield* execute.pipe(
+          yield* session.execBatch(operations).pipe(
             Effect.mapError((cause) => {
-              const index = cause.statementIndex ?? completed;
+              // Acquiring the batch's connection failed: there is no failing
+              // statement to name, so the connect error (and its suggestion) is
+              // surfaced verbatim instead of being rendered as `At statement: N`.
+              if (cause instanceof LegacyDbConnectError) return cause;
+              // `statementIndex` is set by every batch failure the driver raises; a
+              // session that omits it can only have failed before the first statement.
+              const index = cause.statementIndex ?? 0;
               // The CLI-internal role restore op doesn't count toward `At statement:
               // N`, so the history insert keeps reporting the file's statement count.
               // (Batch ops are contiguous with `statements` from `base`, so the op
@@ -772,7 +755,13 @@ const execMigrationBatch = <E>(
       yield* flushBatch(true);
     }).pipe(
       Effect.mapError((error) =>
-        mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
+        // A batch connection failure is not an execution failure: it keeps its own
+        // error class (and `suggestion`) all the way out, exactly like the connect
+        // failure a caller would have seen from `connect` itself, instead of being
+        // relabeled as this file's statement-execution failure.
+        error instanceof LegacyDbConnectError
+          ? error
+          : mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
   });
@@ -808,7 +797,7 @@ export const legacyApplyMigrationFile = <E>(
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string, dbError?: LegacyDbExecError) => E,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
@@ -836,7 +825,7 @@ export const legacyApplyMigrations = <E>(
   path: Path.Path,
   pending: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     if (pending.length === 0) return;
@@ -869,7 +858,7 @@ export const legacySeedGlobals = <E>(
   path: Path.Path,
   globals: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     for (const globalPath of globals) {
@@ -905,7 +894,7 @@ export const legacyExecSqlFile = <E>(
   mapError: (message: string, phase: "read" | "exec") => E,
   displayPath?: string,
   projectEnv?: Readonly<Record<string, string>>,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
 
 /**
@@ -954,7 +943,7 @@ export const legacyApplySchemaFiles = <E>(
   schemaPaths: ReadonlyArray<string>,
   mapError: (message: string, suggestion?: string) => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
     if (files.length === 0) {

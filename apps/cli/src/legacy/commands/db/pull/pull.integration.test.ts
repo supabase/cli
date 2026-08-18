@@ -37,7 +37,10 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../shared/legacy-db-connection.service.ts";
 import {
   LegacyDockerRun,
   type LegacyDockerRunOpts,
@@ -327,19 +330,30 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // ALSO issues a parameterized `INSERT_MIGRATION_VERSION` query, into its own
   // separate in-shadow history table).
   const TARGET_PORT = 5432;
-  const makeSession = (isShadow: boolean) => ({
-    exec: (sql: string) => Effect.sync(() => void execLog.push(sql)),
-    query: (sql: string, params?: ReadonlyArray<unknown>) => {
+  const makeSession = (isShadow: boolean): LegacyDbSession => {
+    const exec = (sql: string) => Effect.sync(() => void execLog.push(sql));
+    const query = (sql: string, params?: ReadonlyArray<unknown>) => {
       if (/SELECT version/u.test(sql)) {
         return Effect.succeed((opts.remoteVersions ?? []).map((v) => ({ version: v })));
       }
       if (!isShadow && params !== undefined) historyUpserts.push(params);
       return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
-    },
-    extensionExists: () => Effect.die("extensionExists unused"),
-    copyToCsv: () => Effect.die("copyToCsv unused"),
-    queryRaw: () => Effect.die("queryRaw unused"),
-  });
+    };
+    return {
+      exec,
+      query,
+      // A migration batch carries exactly the statements (and the parameterized
+      // history insert) the sequential path would run, so route each operation
+      // through the same recording.
+      execBatch: (statements) =>
+        Effect.forEach(statements, ({ sql, params }) =>
+          params === undefined ? exec(sql) : query(sql, params),
+        ).pipe(Effect.asVoid),
+      extensionExists: () => Effect.die("extensionExists unused"),
+      copyToCsv: () => Effect.die("copyToCsv unused"),
+      queryRaw: () => Effect.die("queryRaw unused"),
+    };
+  };
   const targetSession = makeSession(false);
   const shadowSession = makeSession(true);
   const dbConnection = Layer.succeed(LegacyDbConnection, {
@@ -1154,6 +1168,29 @@ describe("legacy db pull", () => {
       );
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "an initial pull surfaces a crashed migra script instead of the dump-only migration",
+    () => {
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpStdout: "create table dumped ();\n",
+        edgeFailFirstWith:
+          "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit)
+          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
+          : undefined;
+        const message = (error as { message?: string } | undefined)?.message ?? "";
+        expect(message).toContain("Cannot read properties of undefined");
+        expect(message).not.toContain("No schema changes found");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
     // An empty dump + empty diff leaves the file empty → in sync.

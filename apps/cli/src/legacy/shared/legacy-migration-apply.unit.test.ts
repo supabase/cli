@@ -11,6 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
@@ -41,7 +42,6 @@ function fakeSession(
     failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
     restoreRoleSql?: string;
-    noExecBatch?: boolean;
   } = {},
 ) {
   const calls: Array<{
@@ -58,30 +58,26 @@ function fakeSession(
         ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
         : Effect.void;
     },
-    ...(opts.noExecBatch === true
-      ? {}
-      : {
-          execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
-            calls.push({
-              kind: "batch",
-              sql: statements.map(({ sql }) => sql).join(";\n"),
-              statements,
-            });
-            const statementIndex = opts.failAfterBatch
-              ? statements.length
-              : statements.findIndex(({ sql }) =>
-                  opts.failOn === undefined ? false : sql.includes(opts.failOn),
-                );
-            return statementIndex >= 0
-              ? Effect.fail(
-                  new FakeExecError({
-                    ...(opts.failWith ?? { message: "exec failed" }),
-                    statementIndex,
-                  }),
-                )
-              : Effect.void;
-          },
-        }),
+    execBatch: (statements) => {
+      calls.push({
+        kind: "batch",
+        sql: statements.map(({ sql }) => sql).join(";\n"),
+        statements,
+      });
+      const statementIndex = opts.failAfterBatch
+        ? statements.length
+        : statements.findIndex(({ sql }) =>
+            opts.failOn === undefined ? false : sql.includes(opts.failOn),
+          );
+      return statementIndex >= 0
+        ? Effect.fail(
+            new FakeExecError({
+              ...(opts.failWith ?? { message: "exec failed" }),
+              statementIndex,
+            }),
+          )
+        : Effect.void;
+    },
     query: (sql, params) => {
       calls.push({ kind: "query", sql, params });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
@@ -110,7 +106,10 @@ const executedSql = (
         : [],
   );
 
-const run = (session: LegacyDbSession, migrationPath: string): Effect.Effect<void, TestError> =>
+const run = (
+  session: LegacyDbSession,
+  migrationPath: string,
+): Effect.Effect<void, TestError | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -691,32 +690,6 @@ describe("legacyApplyMigrationFile", () => {
         Effect.sync(() => {
           expect(error.message).toContain("At statement: 2");
           expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("keeps the insert index on the no-execBatch fallback with a restore op", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
-    const file = join(dir, "20240101120000_fail.sql");
-    writeFileSync(file, "SELECT 1;");
-    const { session, calls } = fakeSession({
-      restoreRoleSql: "SET SESSION ROLE postgres",
-      noExecBatch: true,
-      failOn: "INSERT INTO supabase_migrations",
-    });
-    return run(session, file).pipe(
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          expect(error.message).toContain("At statement: 1");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
-          // The fallback executes the restore between the statements and the insert.
-          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
-          expect(execs.indexOf("SET SESSION ROLE postgres")).toBeGreaterThan(
-            execs.indexOf("SELECT 1"),
-          );
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
