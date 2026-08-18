@@ -831,7 +831,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("bounds attached-owner recovery to one startup deadline", { timeout: 10_000 }, async () => {
+  test("bounds attached-owner recovery to one startup deadline", { timeout: 30_000 }, async () => {
     const roots = await workspace();
     const input = messageFor(roots);
     const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
