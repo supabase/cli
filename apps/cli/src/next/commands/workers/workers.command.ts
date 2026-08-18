@@ -1,4 +1,5 @@
 import { Command } from "effect/unstable/cli";
+import { workersDeleteCommand } from "./delete/delete.command.ts";
 import { workersListCommand } from "./list/list.command.ts";
 import { workersNewCommand } from "./new/new.command.ts";
 import { workersPushCommand } from "./push/push.command.ts";
@@ -14,5 +15,6 @@ export const workersCommand = Command.make("workers").pipe(
     workersPushCommand,
     workersListCommand,
     workersStatusCommand,
+    workersDeleteCommand,
   ]),
 );
