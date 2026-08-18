@@ -156,9 +156,23 @@ const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
     const resolveIfReleased = () => {
       if (existsSync(releaseFile)) settle(Effect.void);
     };
-    try {
+    // Re-arm on ENOENT watcher errors: the runtime's directory watcher can
+    // report ENOENT when a watched entry vanishes mid-scan.
+    const arm = () => {
+      if (settled) return;
       watcher = watch(dirname(releaseFile), () => resolveIfReleased());
-      watcher.once("error", (cause) => settle(Effect.die(cause)));
+      watcher.once("error", (cause) => {
+        watcher?.close();
+        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+          arm();
+          resolveIfReleased();
+          return;
+        }
+        settle(Effect.die(cause));
+      });
+    };
+    try {
+      arm();
       writeFileSync(readyFile, "ready");
       resolveIfReleased();
     } catch (cause) {
@@ -205,7 +219,7 @@ const testPlatform = (): "node" | "bun" =>
   process.env["SUPABASE_STACK_TEST_PLATFORM"] === "bun" ? "bun" : "node";
 
 const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
-  managedStackManagerLayer({ stateRoot }).pipe(
+  managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
     Layer.provide(
       platform === "bun"
         ? Layer.mergeAll(BunFileSystem.layer, gitConfigStoreLayer, bunControlTransportLayer)

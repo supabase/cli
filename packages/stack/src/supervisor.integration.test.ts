@@ -89,6 +89,43 @@ const workspace = async (): Promise<{
   throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
 };
 
+/**
+ * Watches a directory, re-arming on ENOENT watcher errors: the runtime's
+ * directory watcher can report ENOENT when a watched entry (for example an
+ * atomic-write temp file) vanishes mid-scan. Callers keep their own timeout
+ * as the guard. Returns a close function.
+ */
+const watchDirectoryWithRetry = (
+  directory: string,
+  onEvent: () => void,
+  onError: (cause: unknown) => void,
+): (() => void) => {
+  let watcher: FSWatcher | undefined;
+  let closed = false;
+  const arm = () => {
+    if (closed) return;
+    try {
+      watcher = watch(directory, () => onEvent());
+      watcher.once("error", (cause) => {
+        watcher?.close();
+        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+          arm();
+          onEvent();
+          return;
+        }
+        onError(cause);
+      });
+    } catch (cause) {
+      onError(cause);
+    }
+  };
+  arm();
+  return () => {
+    closed = true;
+    watcher?.close();
+  };
+};
+
 const waitForFile = (path: string): Promise<void> =>
   new Promise((resolve, reject) => {
     if (existsSync(path)) {
@@ -97,20 +134,21 @@ const waitForFile = (path: string): Promise<void> =>
     }
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let watcher: FSWatcher | undefined;
+    let stopWatching: (() => void) | undefined;
     const settle = (continuation: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout !== undefined) clearTimeout(timeout);
-      watcher?.close();
+      stopWatching?.();
       continuation();
     };
-    watcher = watch(dirname(path), () => {
-      if (existsSync(path)) settle(resolve);
-    });
-    watcher.once("error", (cause) => {
-      settle(() => reject(cause));
-    });
+    stopWatching = watchDirectoryWithRetry(
+      dirname(path),
+      () => {
+        if (existsSync(path)) settle(resolve);
+      },
+      (cause) => settle(() => reject(cause instanceof Error ? cause : new Error(String(cause)))),
+    );
     timeout = setTimeout(
       () => settle(() => reject(new Error(`timed out waiting for file ${path}`))),
       FILE_WAIT_TIMEOUT_MS,
@@ -504,14 +542,14 @@ const waitForStackDocument = async (
   if (existing?.lifecycle === lifecycle) return existing;
 
   return new Promise((resolve, reject) => {
-    let watcher: FSWatcher | undefined;
+    let stopWatching: (() => void) | undefined;
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     const settle = (continuation: () => void) => {
       if (settled) return;
       settled = true;
       if (timeout !== undefined) clearTimeout(timeout);
-      watcher?.close();
+      stopWatching?.();
       continuation();
     };
     const check = () => {
@@ -520,9 +558,9 @@ const waitForStackDocument = async (
         settle(() => resolve(document));
       }
     };
-    const fail = (cause: unknown) => settle(() => reject(cause));
-    watcher = watch(stackDirectory, () => check());
-    watcher.once("error", fail);
+    const fail = (cause: unknown) =>
+      settle(() => reject(cause instanceof Error ? cause : new Error(String(cause))));
+    stopWatching = watchDirectoryWithRetry(stackDirectory, check, fail);
     timeout = setTimeout(
       () => fail(new Error(`timed out waiting for stack document lifecycle ${lifecycle}`)),
       FILE_WAIT_TIMEOUT_MS,

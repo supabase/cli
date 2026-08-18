@@ -151,17 +151,23 @@ describe("managed stack projects journeys", () => {
       const baseTransport = yield* ControlTransport;
       const readStarted = yield* Deferred.make<void>();
       const continueRead = yield* Deferred.make<void>();
+      // Hold only the status probe's first read in flight. Later reads (the
+      // concurrent acquire scans its endpoint candidates before binding) must
+      // pass through, mirroring the real transport's bounded read timeout.
       let gateReads = false;
+      let gatedRead = false;
       const gatedTransport = Layer.succeed(ControlTransport, {
         ...baseTransport,
         read: (endpoint) =>
-          gateReads
-            ? Effect.gen(function* () {
-                yield* Deferred.succeed(readStarted, void 0);
-                yield* Deferred.await(continueRead);
-                return yield* baseTransport.read(endpoint);
-              })
-            : baseTransport.read(endpoint),
+          Effect.suspend(() => {
+            if (!gateReads || gatedRead) return baseTransport.read(endpoint);
+            gatedRead = true;
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(readStarted, void 0);
+              yield* Deferred.await(continueRead);
+              return yield* baseTransport.read(endpoint);
+            });
+          }),
       });
 
       yield* Effect.scoped(
