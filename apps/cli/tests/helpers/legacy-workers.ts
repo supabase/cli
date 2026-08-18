@@ -11,7 +11,8 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { LegacyOutputFlag, LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
@@ -227,8 +228,16 @@ export interface WorkersSetupOptions {
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly routes?: WorkersHttpRoutes;
-  /** The Go `-o`/`--output` flag, which every command family here honours. */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  /**
+   * The `-o`/`--output` flag, with every value the global flag accepts —
+   * including `table` and `csv`, which these commands are meant to ignore and
+   * render text for.
+   */
+  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  /** The root `--yes`, read by `delete` through `legacyResolveYes`. */
+  readonly yes?: boolean;
+  /** Raw argv, which `legacyResolveYes` scans for an explicit `--yes=false`. */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 /**
@@ -286,6 +295,8 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
         LegacyOutputFlag,
         options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
       ),
+      Layer.succeed(LegacyYesFlag, options.yes ?? false),
+      Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       BunServices.layer,
     ),
   };

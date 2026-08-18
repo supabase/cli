@@ -130,6 +130,19 @@ export class WorkersApiNetworkError extends Data.TaggedError("WorkersApiNetworkE
 }
 
 /**
+ * The named worker is not deployed. `status`/`delete` share this verbatim: the
+ * question "does this exist?" is asked of the API, never of a local directory.
+ */
+export class WorkerNotDeployedError extends Data.TaggedError("WorkerNotDeployedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
  * Workers are in private alpha: the routes answer 404 for a project that is not
  * enrolled, which is indistinguishable from an unknown worker at the transport
  * level — so this is only raised for the collection endpoints, where there is
@@ -177,5 +190,36 @@ export class WorkersApiUnexpectedStatusError extends Data.TaggedError(
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status);
+  }
+}
+
+/** The user answered the `delete` confirmation with something other than the name. */
+export class WorkerDeleteNotConfirmedError extends Data.TaggedError(
+  "WorkerDeleteNotConfirmedError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
+
+/**
+ * `delete` could not ask for confirmation and was not told to skip it.
+ *
+ * There is nowhere to read a typed answer from without an interactive terminal,
+ * and the alternative to refusing is deleting on the strength of the command
+ * line alone — so a redirected stdout or a CI runner has to pass `--yes`
+ * (or `SUPABASE_YES`) to say that out loud.
+ */
+export class WorkerDeleteConfirmationRequiredError extends Data.TaggedError(
+  "WorkerDeleteConfirmationRequiredError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }

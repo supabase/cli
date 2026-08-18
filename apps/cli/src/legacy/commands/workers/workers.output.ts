@@ -19,13 +19,28 @@ import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
  * rendering — `output.success` writes to stdout in text mode and would corrupt
  * the payload otherwise.
  */
+/**
+ * Which `-o` values these commands answer with a payload.
+ *
+ * `pretty` is the human default. `table` and `csv` are accepted by the global
+ * flag because `db query` reads them, and every resource command is meant to
+ * ignore them and fall through to its own text rendering — so treating them as
+ * machine output emitted TOML for `-o table`, and would now suppress the text
+ * rendering without putting anything in its place.
+ */
+function emitsPayloadFor(goFormat: string | undefined): boolean {
+  return (
+    goFormat !== undefined && goFormat !== "pretty" && goFormat !== "table" && goFormat !== "csv"
+  );
+}
+
 export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {
   const output = yield* Output;
   const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
 
-  if (goFormat === undefined || goFormat === "pretty") {
+  if (!emitsPayloadFor(goFormat)) {
     return false;
   }
 
@@ -56,8 +71,7 @@ export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
  * by which point those lines would already be on stdout.
  */
 export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* () {
-  const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
-  return goFormat !== undefined && goFormat !== "pretty";
+  return emitsPayloadFor(Option.getOrUndefined(yield* LegacyOutputFlag));
 });
 
 /**
