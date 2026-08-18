@@ -57,6 +57,15 @@ export class WorkerDirectoryExistsError extends Data.TaggedError("WorkerDirector
   }
 }
 
+export class WorkerSourceMissingError extends Data.TaggedError("WorkerSourceMissingError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /**
  * `--source` names a directory it is not allowed to name. Worth its own error
  * because the destination is a directory `--force` will delete outright, so a
@@ -79,5 +88,73 @@ export class InvalidWorkersRootError extends Data.TaggedError("InvalidWorkersRoo
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
+  }
+}
+
+/** The deploy finished, and the build it started failed. */
+export class WorkerBuildFailedError extends Data.TaggedError("WorkerBuildFailedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/** The build never left `building` inside the CLI's polling budget. */
+export class WorkerBuildTimeoutError extends Data.TaggedError("WorkerBuildTimeoutError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
+
+/** PUTting the build context to the presigned slot failed. */
+export class WorkerUploadFailedError extends Data.TaggedError("WorkerUploadFailedError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
+
+/** Transport failure talking to the Management API. */
+export class WorkersApiNetworkError extends Data.TaggedError("WorkersApiNetworkError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
+
+/**
+ * Workers are in private alpha: the routes answer 404 for a project that is not
+ * enrolled, which is indistinguishable from an unknown worker at the transport
+ * level — so this is only raised for the collection endpoints, where there is
+ * no worker name that could have been wrong.
+ */
+export class WorkersUnavailableError extends Data.TaggedError("WorkersUnavailableError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
+
+/** Any other status the Workers routes answered with. */
+export class WorkersApiUnexpectedStatusError extends Data.TaggedError(
+  "WorkersApiUnexpectedStatusError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+  readonly status: number;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
   }
 }
