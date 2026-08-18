@@ -197,4 +197,22 @@ describe("legacySeedData (dirty parse)", () => {
       ),
     );
   });
+
+  it.effect("restores the role right after a mid-seed reset, before later statements", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+    writeFileSync(join(dir, "data.sql"), "set role r;\nreset role;\ninsert into t values (1);");
+    const { session, calls } = fakeSeedSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return runSeed(session, dir, [{ path: "data.sql", hash: "h", dirty: false }]).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const sqls = calls.map((c) => c.sql);
+          const resetAt = sqls.indexOf("reset role");
+          // Injected immediately, so the following insert runs as postgres again.
+          expect(sqls[resetAt + 1]).toBe("SET SESSION ROLE postgres");
+          expect(sqls.indexOf("insert into t values (1)")).toBeGreaterThan(resetAt + 1);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });

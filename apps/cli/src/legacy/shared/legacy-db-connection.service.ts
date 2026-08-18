@@ -99,9 +99,10 @@ export interface LegacyDbSession {
    * SQL that restores the role this session stepped down to after authenticating
    * as a temp/privileged login role (`SET SESSION ROLE postgres`). Absent when no
    * step-down ran. A migration's own `RESET ROLE` reverts the session to the
-   * login role — not `postgres` — so file runners re-assert this after each file's
-   * statements and before CLI-owned ledger writes (supabase/cli#6236). Must stay a
-   * fixed, non-user-derived statement: consumers embed it verbatim in batches.
+   * login role — not `postgres` — so file runners re-assert this immediately after
+   * each top-level role-reverting statement, at the end of each file, and before
+   * CLI-owned ledger writes (supabase/cli#6236). Must stay a fixed, non-user-derived
+   * statement: consumers embed it verbatim in batches.
    */
   readonly restoreRoleSql?: string;
   /** Run a single SQL statement, ignoring any returned rows. */

@@ -118,20 +118,31 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   empty tests directory, or a bind the daemon resolved against a different filesystem than the
   CLI's (a sibling-container Docker socket) all reported a green build that ran zero tests. The
   TAP stream on stdout is unchanged; the diagnostic goes to stderr like every other failure.
-- SQL file runners on a stepped-down session re-assert `SET SESSION ROLE postgres` after each
-  file's statements — before the migration history insert and the `seed_files` upsert, and at
-  the end of globals/seed/schema files — so every CLI-owned ledger write and every subsequent
-  file runs as `postgres` (CLI-2205, #6236). A stepped-down session is any remote connection
-  authenticating as `cli_login_*` (the passwordless linked path) or `supabase_admin`, which
-  steps down with a session-level `SET SESSION ROLE postgres`; a file's own `RESET ROLE`
-  reverted it to the login role, so the appended history insert failed with 42501
-  (`permission denied for schema supabase_migrations`) and any later file ran as the login
-  role. The old Go CLI had the same defect. Statements between `RESET ROLE` and the end of
-  the same file still execute as the login role — a connection-time `role=postgres` default
-  cannot be guaranteed through the pooler — so `granted by current_user` semantics inside a
-  single file still differ from a real password session; the CLI now prints a TS-only
-  `WARN: statements after RESET ROLE in <file> run as the session's login role, not postgres.`
-  to stderr when a stepped-down session runs such a file.
+- SQL file runners on a stepped-down session re-assert `SET SESSION ROLE postgres`
+  immediately after each top-level role revert (`RESET ROLE`, the generic-`SET` spellings
+  such as `SET ROLE [TO|=] NONE|DEFAULT` and a case-sensitively quoted `'none'`,
+  `RESET SESSION AUTHORIZATION`, `SET SESSION AUTHORIZATION DEFAULT`, `DISCARD ALL`),
+  at the end of each file, and before the migration history insert and the `seed_files`
+  upsert — so the whole file (including a post-reset `granted by current_user` cleanup),
+  every CLI-owned ledger write, and every subsequent file run as `postgres`, matching a
+  password session for `current_user` and privilege checks (CLI-2205, #6236).
+  `session_user` remains the login role and `current_setting('role')` reads `postgres`
+  rather than `none`, so a file keying on `session_user` still diverges. A stepped-down
+  session is any remote connection authenticating as `cli_login_*` (the passwordless
+  linked path) or `supabase_admin`, which steps down with a session-level
+  `SET SESSION ROLE postgres`; a file's own `RESET ROLE` reverted it to the login role,
+  so the appended history insert failed with SQLSTATE 42501 and any later file ran as
+  the login role. The old Go CLI had the same defect; on a `supabase_admin` `--db-url`,
+  `RESET ROLE` consequently no longer re-escalates to superuser mid-file.
+  Statement-level re-assertion is used because a connection-time `role=postgres` default
+  cannot be guaranteed through the pooler. Injected restores never shift
+  `At statement: N` and are never recorded in the history row. Residual: a role revert
+  issued through dynamic SQL, or a spelling outside the list above (for example
+  `SET LOCAL ROLE NONE` — deliberately unmatched, a session-scoped restore would
+  override its transaction scope — or the `session_authorization` GUC spellings), is
+  invisible to the lexical check, so statements after it run as the login role until
+  the next restore point; the end-of-file restore still protects every CLI-owned write.
+  (`RESET ALL` needs no entry — `role` carries `GUC_NO_RESET_ALL`.)
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

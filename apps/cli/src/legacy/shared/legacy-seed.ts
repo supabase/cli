@@ -9,7 +9,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyResolveUnderWorkdir } from "./legacy-glob.ts";
-import { checkScannerBufferSize, legacyWarnResetRoleDrift } from "./legacy-migration-apply.ts";
+import { checkScannerBufferSize, legacyRevertsToLoginRole } from "./legacy-migration-apply.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -160,14 +160,20 @@ export const legacyApplySeedFiles = (
         );
         statements = legacySplitAndTrim(content);
       }
-      yield* legacyWarnResetRoleDrift(session, statements, seed.path);
       const txn = Effect.gen(function* () {
         yield* session.exec("BEGIN");
         if (!seed.dirty) {
-          for (const statement of statements) yield* session.exec(statement);
+          for (const statement of statements) {
+            yield* session.exec(statement);
+            // A top-level role revert drops a stepped-down session to the login
+            // role; restore `postgres` right away (supabase/cli#6236).
+            if (session.restoreRoleSql !== undefined && legacyRevertsToLoginRole(statement)) {
+              yield* session.exec(session.restoreRoleSql);
+            }
+          }
         }
-        // A seed's own `RESET ROLE` reverts a stepped-down session to the login
-        // role; restore `postgres` before the CLI-owned upsert (supabase/cli#6236).
+        // Backstop for reverts the lexical check cannot see, so the
+        // CLI-owned upsert always runs as `postgres`.
         if (session.restoreRoleSql !== undefined) yield* session.exec(session.restoreRoleSql);
         yield* session.query(UPSERT_SEED_FILE, [seed.path, seed.hash]);
         yield* session.exec("COMMIT");

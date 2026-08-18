@@ -4,7 +4,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { checkScannerBufferSize, legacyWarnResetRoleDrift } from "./legacy-migration-apply.ts";
+import { checkScannerBufferSize, legacyRevertsToLoginRole } from "./legacy-migration-apply.ts";
 import { legacyCreateSeedTable } from "./legacy-migration-history.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
@@ -138,12 +138,18 @@ export const legacySeedData = <E>(
       yield* checkScannerBufferSize(content, (message) => new Error(message));
       const lines = legacySplitAndTrim(content);
       const statements = seed.dirty ? [] : lines;
-      yield* legacyWarnResetRoleDrift(session, statements, seed.path);
       yield* session.exec("BEGIN");
       const body = Effect.gen(function* () {
-        for (const statement of statements) yield* session.exec(statement);
-        // A seed's own `RESET ROLE` reverts a stepped-down session to the login
-        // role; restore `postgres` before the CLI-owned upsert (supabase/cli#6236).
+        for (const statement of statements) {
+          yield* session.exec(statement);
+          // A top-level role revert drops a stepped-down session to the login
+          // role; restore `postgres` right away (supabase/cli#6236).
+          if (session.restoreRoleSql !== undefined && legacyRevertsToLoginRole(statement)) {
+            yield* session.exec(session.restoreRoleSql);
+          }
+        }
+        // Backstop for reverts the lexical check cannot see, so the
+        // CLI-owned upsert always runs as `postgres`.
         if (session.restoreRoleSql !== undefined) yield* session.exec(session.restoreRoleSql);
         yield* session.query(UPSERT_SEED_FILE, [seed.path, seed.hash]);
         yield* session.exec("COMMIT");

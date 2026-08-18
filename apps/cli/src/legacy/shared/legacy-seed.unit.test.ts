@@ -146,7 +146,7 @@ describe("legacyApplySeedFiles scanner buffer size", () => {
 });
 
 describe("legacyApplySeedFiles stepped-down session", () => {
-  it.effect("re-asserts the role before the seed_files upsert and warns on drift", () => {
+  it.effect("restores the role right after a reset and before the seed_files upsert", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
     writeFileSync(join(dir, "seed.sql"), "set role r;\nreset role;\ninsert into t values (1);");
     const calls: Array<string> = [];
@@ -170,13 +170,15 @@ describe("legacyApplySeedFiles stepped-down session", () => {
     return run(session, dir, ["seed.sql"], out).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          const restoreAt = calls.indexOf("SET SESSION ROLE postgres");
+          const resetAt = calls.indexOf("reset role");
           const upsertAt = calls.findIndex((sql) =>
             sql.includes("INSERT INTO supabase_migrations.seed_files"),
           );
-          expect(restoreAt).toBeGreaterThan(calls.indexOf("reset role"));
-          expect(upsertAt).toBeGreaterThan(restoreAt);
-          expect(out.stderrText).toContain("WARN: statements after RESET ROLE in seed.sql");
+          // Injected immediately after the reset, so the following insert (and
+          // everything else in the file) runs as postgres again.
+          expect(calls[resetAt + 1]).toBe("SET SESSION ROLE postgres");
+          expect(upsertAt).toBeGreaterThan(resetAt);
+          expect(out.stderrText).not.toContain("WARN:");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

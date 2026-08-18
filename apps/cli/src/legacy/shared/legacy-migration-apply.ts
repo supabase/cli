@@ -1,4 +1,4 @@
-import { Data, Effect, Option, type FileSystem, type Path } from "effect";
+import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
@@ -124,36 +124,33 @@ export const legacyHasTransactionControl = (sql: string): boolean => {
   return TRANSACTION_CONTROL_PATTERN.test(upper);
 };
 
-const RESET_ROLE_PATTERN = /^RESET\s+ROLE(?:\s|$)/u;
+const ROLE_REVERT_PATTERN =
+  /^(?:RESET\s+ROLE|RESET\s+SESSION\s+AUTHORIZATION|SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(?:NONE|DEFAULT)|SET\s+SESSION\s+AUTHORIZATION\s+DEFAULT|DISCARD\s+ALL)(?:\s|;|$)/u;
 
-/** Whether the statement reverts a stepped-down session to its login role. */
-const legacyIsResetRole = (sql: string): boolean =>
-  RESET_ROLE_PATTERN.test(legacyTrimLeadingSqlComments(sql).toUpperCase());
+// PostgreSQL's `check_role` compares the quoted value case-sensitively against
+// "none", so the quoted spellings are matched before the uppercase fold —
+// `SET ROLE "NONE"` selects a real role named `NONE`, never a reset.
+const QUOTED_ROLE_VALUE_PATTERN =
+  /^SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(['"])(.*?)\1(?:\s|;|$)/iu;
 
 /**
- * Surfaces the residual drift on a stepped-down session: statements AFTER a
- * `RESET ROLE` run as the login role, not `postgres` (supabase/cli#6236). The
- * detector is deliberately narrow — a missed sibling (`SET ROLE NONE`, dynamic
- * SQL) costs only this advisory, never the role restore itself. A no-op when
- * `RESET ROLE` is the file's last statement (the trailing restore then makes the
- * file behave as on a password session) or when no `Output` service is wired.
+ * Whether a top-level statement reverts a stepped-down session to its login role
+ * (`RESET ROLE`, the generic-`SET` spellings of `role`'s reset, `RESET SESSION
+ * AUTHORIZATION` and friends, `DISCARD ALL`). File runners re-assert `postgres`
+ * right after each match, so the rest of the file keeps `current_user = postgres`
+ * as on a password session (supabase/cli#6236); reverts a lexical check cannot
+ * see (dynamic SQL, `SET LOCAL ROLE NONE` — deliberately unmatched, since a
+ * session-scoped restore would override its transaction scope) are backstopped
+ * by the trailing restore before any CLI-owned write. `RESET ALL` is
+ * deliberately absent — `role` carries `GUC_NO_RESET_ALL`.
  */
-export const legacyWarnResetRoleDrift = (
-  session: LegacyDbSession,
-  statements: ReadonlyArray<string>,
-  label: string,
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    if (session.restoreRoleSql === undefined) return;
-    const resetRoleIndex = statements.findIndex(legacyIsResetRole);
-    if (resetRoleIndex < 0 || resetRoleIndex >= statements.length - 1) return;
-    const output = yield* Effect.serviceOption(Output);
-    if (Option.isNone(output)) return;
-    yield* output.value.raw(
-      `WARN: statements after RESET ROLE in ${label} run as the session's login role, not postgres.\n`,
-      "stderr",
-    );
-  });
+export const legacyRevertsToLoginRole = (sql: string): boolean => {
+  const trimmed = legacyTrimLeadingSqlComments(sql);
+  return (
+    ROLE_REVERT_PATTERN.test(trimmed.toUpperCase()) ||
+    QUOTED_ROLE_VALUE_PATTERN.exec(trimmed)?.[2] === "none"
+  );
+};
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
@@ -538,10 +535,12 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
  * insert goes in the final batch, so the migration is recorded only after every
  * statement succeeds. On a stepped-down session ({@link LegacyDbSession.restoreRoleSql})
- * the `postgres` role is re-asserted after the file's statements — before the history
- * insert, and on every path — since a migration's own `RESET ROLE` reverts to the
- * login role (supabase/cli#6236); each file therefore leaves the session role-clean
- * for whatever runs next. A file with no such statements uses one batch and one Sync.
+ * the `postgres` role is re-asserted immediately after each top-level role-reverting
+ * statement ({@link legacyRevertsToLoginRole}) and again at the end of the file before
+ * the history insert (supabase/cli#6236), so the whole file behaves as on a password
+ * session and leaves the session role-clean for whatever runs next. Injected restores
+ * never shift `At statement: N` and are never recorded in the history row.
+ * A file with no such statements uses one batch and one Sync.
  * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
  * every statement sequentially without a CLI-owned transaction. This keeps their
  * session preamble, nontransactional action, and cleanup on the same connection.
@@ -632,7 +631,6 @@ const execMigrationBatch = <E>(
       const name = matches?.[2] ?? "";
 
       const restoreRole = session.restoreRoleSql;
-      yield* legacyWarnResetRoleDrift(session, statements, filename);
 
       const executeSequentially = (cleanup: string) =>
         Effect.gen(function* () {
@@ -642,8 +640,18 @@ const execMigrationBatch = <E>(
               .pipe(
                 Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
               );
+            if (restoreRole !== undefined && legacyRevertsToLoginRole(statement)) {
+              yield* session
+                .exec(restoreRole)
+                .pipe(
+                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, restoreRole)),
+                );
+            }
           }
-          if (restoreRole !== undefined) {
+          if (
+            restoreRole !== undefined &&
+            !(statements.length > 0 && legacyRevertsToLoginRole(statements[statements.length - 1]!))
+          ) {
             yield* session
               .exec(restoreRole)
               .pipe(
@@ -702,16 +710,38 @@ const execMigrationBatch = <E>(
           const trailingRestore = final ? restoreRole : undefined;
           if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
           const batchStatements = pending;
-          const operations: Array<LegacyDbBatchStatement> = batchStatements.map((sql) => ({ sql }));
-          if (trailingRestore !== undefined) operations.push({ sql: trailingRestore });
+          const operations: Array<LegacyDbBatchStatement> = [];
+          // Injected role restores don't count toward `At statement: N`; track how
+          // many precede each op so failures keep the file's own numbering (a
+          // mid-file restore inherits its host statement's index; the trailing
+          // restore and the history insert report the file's statement count).
+          const injectedBefore: Array<number> = [];
+          let injected = 0;
+          let lastOpIsInjectedRestore = false;
+          for (const sql of batchStatements) {
+            operations.push({ sql });
+            injectedBefore.push(injected);
+            lastOpIsInjectedRestore = false;
+            if (restoreRole !== undefined && legacyRevertsToLoginRole(sql)) {
+              injected += 1;
+              operations.push({ sql: restoreRole });
+              injectedBefore.push(injected);
+              lastOpIsInjectedRestore = true;
+            }
+          }
+          if (trailingRestore !== undefined && !lastOpIsInjectedRestore) {
+            operations.push({ sql: trailingRestore });
+            injectedBefore.push(injected);
+            injected += 1;
+          }
           if (recordVersion) {
             operations.push({
               sql: INSERT_MIGRATION_VERSION,
               params: [version, name, statements],
             });
+            injectedBefore.push(injected);
           }
           const base = executed;
-          const restoreOpIndex = trailingRestore === undefined ? undefined : batchStatements.length;
           yield* session.execBatch(operations).pipe(
             Effect.mapError((cause) => {
               // Acquiring the batch's connection failed: there is no failing
@@ -720,17 +750,12 @@ const execMigrationBatch = <E>(
               if (cause instanceof LegacyDbConnectError) return cause;
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.
-              const index = cause.statementIndex ?? 0;
-              // The CLI-internal role restore op doesn't count toward `At statement:
-              // N`, so the history insert keeps reporting the file's statement count.
-              // (Batch ops are contiguous with `statements` from `base`, so the op
-              // lookup and the old `statements[globalIndex]` lookup agree.)
-              const globalIndex =
-                base + index - (restoreOpIndex !== undefined && index > restoreOpIndex ? 1 : 0);
+              const raw = cause.statementIndex ?? 0;
+              const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
               return legacyFormatExecBatchError(
                 cause,
                 globalIndex,
-                operations[index]?.sql ?? statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
+                operations[raw]?.sql ?? statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
               );
             }),
           );
