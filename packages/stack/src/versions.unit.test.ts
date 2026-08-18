@@ -13,7 +13,7 @@ import {
   SERVICE_NAMES,
   type VersionManifest,
 } from "./versions.ts";
-import { SERVICE_ARTIFACTS } from "./ServiceArtifacts.ts";
+import { SERVICE_CATALOG } from "./ServiceCatalog.ts";
 
 const sampleDockerfile = `
 FROM supabase/postgres:17.0.0.1 AS pg
@@ -35,44 +35,29 @@ FROM supabase/migra:3.0.1663481299 AS migra
 
 describe("syncDefaultVersionsSource", () => {
   it("rewrites the DEFAULT_VERSIONS block from Dockerfile versions", () => {
-    const source = `before
-export const DEFAULT_VERSIONS: VersionManifest = {
-  postgres: "old",
-  postgrest: "old",
-  auth: "old",
-  "edge-runtime": "old",
-  realtime: "old",
-  storage: "old",
-  imgproxy: "old",
-  mailpit: "old",
-  pgmeta: "old",
-  studio: "old",
-  analytics: "old",
-  vector: "old",
-  pooler: "old",
-} as const;
-after`;
+    const source = SERVICE_NAMES.map(
+      (service) => `  ${JSON.stringify(service)}: {
+    name: ${JSON.stringify(service)},
+    configKey: "example",
+    defaultVersion: "old",
+  },`,
+    ).join("\n");
 
-    expect(syncDefaultVersionsSource(source, readVersionManifestFromDockerfile(sampleDockerfile)))
-      .toMatchInlineSnapshot(`
-        "before
-        export const DEFAULT_VERSIONS: VersionManifest = {
-          postgres: "17.0.0.1",
-          postgrest: "14.0",
-          auth: "2.100.0",
-          "edge-runtime": "1.70.0",
-          realtime: "2.100.0",
-          storage: "1.50.0",
-          imgproxy: "v3.8.0",
-          mailpit: "v1.2.3",
-          pgmeta: "0.90.0",
-          studio: "2026.01.01-sha-abcdef0",
-          analytics: "1.40.0",
-          vector: "0.50.0-alpine",
-          pooler: "2.1.0",
-        } as const;
-        after"
-      `);
+    const updated = syncDefaultVersionsSource(
+      source,
+      readVersionManifestFromDockerfile(sampleDockerfile),
+    );
+
+    expect(updated).toContain(
+      'name: "postgres",\n    configKey: "example",\n    defaultVersion: "17.0.0.1"',
+    );
+    expect(updated).toContain(
+      'name: "edge-runtime",\n    configKey: "example",\n    defaultVersion: "1.70.0"',
+    );
+    expect(updated).toContain(
+      'name: "mailpit",\n    configKey: "example",\n    defaultVersion: "v1.2.3"',
+    );
+    expect(updated).not.toContain('defaultVersion: "old"');
   });
 
   it("fails when a required Dockerfile image alias is missing", () => {
@@ -92,7 +77,7 @@ after`;
 
 describe("dockerImageForService", () => {
   it("defines artifact capabilities for every stack service", () => {
-    expect(Object.keys(SERVICE_ARTIFACTS).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(Object.keys(SERVICE_CATALOG).sort()).toEqual([...SERVICE_NAMES].sort());
   });
 
   it("returns correct image for postgres", () => {
@@ -134,17 +119,17 @@ describe("dockerImageForService", () => {
   });
 
   it("keeps non-managed services Docker-only", () => {
-    expect(SERVICE_ARTIFACTS.imgproxy).toMatchObject({
+    expect(SERVICE_CATALOG.imgproxy).toMatchObject({
       runtimeSupport: "docker-only",
-      docker: { ownership: "upstream", repository: "darthsim/imgproxy" },
+      artifact: { docker: { ownership: "upstream", repository: "darthsim/imgproxy" } },
     });
-    expect(SERVICE_ARTIFACTS.mailpit).toMatchObject({
+    expect(SERVICE_CATALOG.mailpit).toMatchObject({
       runtimeSupport: "docker-only",
-      docker: { ownership: "upstream", repository: "axllent/mailpit" },
+      artifact: { docker: { ownership: "upstream", repository: "axllent/mailpit" } },
     });
-    expect(SERVICE_ARTIFACTS.vector).toMatchObject({
+    expect(SERVICE_CATALOG.vector).toMatchObject({
       runtimeSupport: "docker-only",
-      docker: { ownership: "upstream", repository: "timberio/vector" },
+      artifact: { docker: { ownership: "upstream", repository: "timberio/vector" } },
     });
   });
 });

@@ -49,6 +49,23 @@ describe("legacyPathMatch", () => {
     });
   });
 
+  describe("byte-offset `*` retry against multibyte characters (Go path.Match parity)", () => {
+    it.each([
+      // `path.Match`'s byte-offset `*`-retry loop can land mid-multibyte-character and have a `?`
+      // consume the resulting invalid continuation byte as a single-byte `U+FFFD` "rune" —
+      // producing matches a code-point-stepping port would miss. Verified empirically
+      // (a fullwidth exclamation mark, U+FF01, is a
+      // single character but 3 UTF-8 bytes; an emoji, U+1F600, is 4 UTF-8 bytes):
+      ["*??.sql", "！.sql", true],
+      ["*??.sql", "😀.sql", true],
+      ["*?.sql", "！.sql", true],
+      ["*???.sql", "！.sql", false],
+      ["schemas/*??.sql", "schemas/！.sql", true],
+    ] as const)("%s ~ %s => %s", (pattern, name, expected) => {
+      expect(legacyPathMatch(pattern, name).matched).toBe(expected);
+    });
+  });
+
   describe("escapes", () => {
     it.each([
       ["\\*.sql", "*.sql", true],

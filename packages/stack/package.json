@@ -8,7 +8,16 @@
       "bun": "./src/bun.ts",
       "default": "./src/node.ts"
     },
-    "./effect": "./src/effect.ts",
+    "./effect": {
+      "bun": "./src/effect-bun.ts",
+      "default": "./src/effect-node.ts"
+    },
+    "./managed": {
+      "bun": "./src/managed-bun.ts",
+      "default": "./src/managed-node.ts"
+    },
+    "./managed-model": "./src/managed/model.ts",
+    "./testing": "./src/testing.ts",
     "./daemon-bun": "./src/daemon-bun.ts"
   },
   "scripts": {
@@ -22,7 +31,6 @@
   "dependencies": {
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
-    "@supabase/config": "workspace:*",
     "@supabase/process-compose": "workspace:*",
     "effect": "catalog:"
   },
@@ -53,8 +61,7 @@
       "oxlint-tsgolint"
     ],
     "ignoreBinaries": [
-      "nx",
-      "ps"
+      "nx"
     ]
   }
 }

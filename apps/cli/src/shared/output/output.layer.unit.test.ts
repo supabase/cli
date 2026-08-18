@@ -3,6 +3,8 @@ import { afterEach, beforeEach, vi } from "vitest";
 import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
+import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import {
   jsonOutputLayer,
@@ -55,7 +57,7 @@ vi.mock("@clack/prompts", () => ({
   select: (a: unknown) => mockClack.select(a),
   autocomplete: (a: unknown) => mockClack.autocomplete(a),
   multiselect: (a: unknown) => mockClack.multiselect(a),
-  cancel: (a: unknown) => mockClack.cancel(a),
+  cancel: (a: unknown, b?: unknown) => mockClack.cancel(a, b),
   isCancel: (a: unknown) => mockClack.isCancel(a),
 }));
 
@@ -104,7 +106,9 @@ function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
 
 describe("Output", () => {
   describe("text layer", () => {
-    const layer = textOutputLayer.pipe(Layer.provide(mockTty({ stdoutIsTty: true })));
+    const layer = textOutputLayer.pipe(
+      Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), mockStdio().layer)),
+    );
 
     it.effect("task uses clack spinner and can resolve into info", () =>
       Effect.gen(function* () {
@@ -327,6 +331,21 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("raw and rawBytes write unframed through the stdio sink", () => {
+      const mock = mockStdio();
+      const sunk = textOutputLayer.pipe(
+        Layer.provide(Layer.mergeAll(mockTty({ stdoutIsTty: true }), mock.layer)),
+      );
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.raw("plain text\n");
+        yield* out.rawBytes(new TextEncoder().encode("raw bytes\n"));
+        yield* out.raw("to stderr\n", "stderr");
+        expect(mock.stdout).toEqual(["plain text\n", "raw bytes\n"]);
+        expect(mock.stderr).toEqual(["to stderr\n"]);
+      }).pipe(Effect.provide(sunk));
+    });
+
     it.effect("promptText interrupts on cancel", () => {
       mockClack.text.mockResolvedValue(Symbol.for("clack:cancel"));
       mockClack.isCancel.mockReturnValue(true);
@@ -403,6 +422,57 @@ describe("Output", () => {
         expect(mockClack.autocomplete).not.toHaveBeenCalled();
       }).pipe(Effect.provide(layer));
     });
+
+    it.effect("promptSelect defaults to clack's own stdout when stream is unset", () => {
+      mockClack.select.mockResolvedValue("pro");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }]);
+        expect(mockClack.select).toHaveBeenCalledWith(
+          expect.not.objectContaining({ output: expect.anything() }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    // Go's own interactive picker always writes to stderr (`internal/utils/prompt.go`'s
+    // `PromptChoice`: `tea.WithOutput(os.Stderr)`, "Interactive prompts should always be
+    // written to stderr") — but clack's `select()`/`autocomplete()` default to stdout, which
+    // would corrupt a command whose own stdout is a machine-readable payload even in text
+    // mode (e.g. `gen bearer-jwt`'s signed token — Codex review finding, CLI-1961). `{ stream:
+    // "stderr" }` is the opt-in escape hatch such a command passes.
+    it.effect('promptSelect routes the picker to stderr when stream: "stderr" is requested', () => {
+      mockClack.select.mockResolvedValue("pro");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }], {
+          stream: "stderr",
+        });
+        expect(mockClack.select).toHaveBeenCalledWith(
+          expect.objectContaining({ output: process.stderr }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "promptSelect routes a cancelled stderr-routed picker's cancel message to stderr too",
+      () => {
+        mockClack.select.mockResolvedValue(Symbol("clack-cancel"));
+        mockClack.isCancel.mockReturnValueOnce(true);
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const exit = yield* Effect.exit(
+            out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }], {
+              stream: "stderr",
+            }),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(mockClack.cancel).toHaveBeenCalledWith(
+            "Operation cancelled.",
+            expect.objectContaining({ output: process.stderr }),
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.effect("promptSelect uses autocomplete for long lists in auto mode", () => {
       mockClack.autocomplete.mockResolvedValue("project-11");
@@ -654,6 +724,76 @@ describe("Output", () => {
         });
       }).pipe(Effect.provide(layer));
     });
+
+    // CLI-2167 follow-up: `MachineErrorContext` is a command-scoped, opt-in
+    // cell — merged ALONGSIDE the output layer (not nested inside its own
+    // `Layer.provide`), matching how a real command runtime composes it, so
+    // the same live cell is visible both to this test's own `set` call and to
+    // `fail`'s read.
+    it.effect(
+      "fail merges MachineErrorContext fields at the envelope top level when provided",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          jsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({ linked_project: { project_ref: "abc" } });
+          yield* out.fail({ code: "E_TEST", message: "failed" });
+          expect(mock.stdout).toHaveLength(1);
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed).toEqual({
+            _tag: "Error",
+            error: { code: "E_TEST", message: "failed" },
+            linked_project: { project_ref: "abc" },
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("fail leaves the envelope unchanged when MachineErrorContext isn't provided", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          _tag: "Error",
+          error: { code: "E_TEST", message: "failed" },
+        });
+        expect(Object.keys(parsed).sort()).toEqual(["_tag", "error"]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    // PR #6168 review: `extra` spreads FIRST in `fail`, so a context field
+    // sharing a name with the envelope's own keys (`_tag`/`error`) can never
+    // clobber them — a non-colliding field alongside it still merges fine.
+    it.effect(
+      "fail: a MachineErrorContext field named _tag or error cannot clobber the envelope",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          jsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({ _tag: "Hacked", error: "Hacked", safe_field: "ok" });
+          yield* out.fail({ code: "E_TEST", message: "failed" });
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed).toEqual({
+            _tag: "Error",
+            error: { code: "E_TEST", message: "failed" },
+            safe_field: "ok",
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("stream-json layer", () => {
@@ -873,6 +1013,75 @@ describe("Output", () => {
         expect(parsed.timestamp).toBeDefined();
       }).pipe(Effect.provide(layer));
     });
+
+    // CLI-2167 follow-up: same mechanism as the json layer's equivalent pair
+    // above — merged alongside `streamJsonOutputLayer`, not nested inside its
+    // `Layer.provide`.
+    it.effect("fail merges MachineErrorContext fields at the event top level when provided", () => {
+      const mock = mockStdio();
+      const layer = Layer.mergeAll(
+        streamJsonOutputLayer.pipe(Layer.provide(mock.layer)),
+        machineErrorContextLayer,
+      );
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const context = yield* MachineErrorContext;
+        yield* context.set({ linked_project: { project_ref: "abc" } });
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed.type).toBe("error");
+        expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
+        expect(parsed.linked_project).toEqual({ project_ref: "abc" });
+        expect(Object.keys(parsed).sort()).toEqual([
+          "error",
+          "linked_project",
+          "timestamp",
+          "type",
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fail leaves the event unchanged when MachineErrorContext isn't provided", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(Object.keys(parsed).sort()).toEqual(["error", "timestamp", "type"]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    // PR #6168 review: same reasoning as the json layer's equivalent test —
+    // `extra` spreads FIRST, so a context field named `type`/`error`/`timestamp`
+    // can never clobber the event's own keys; a non-colliding field still merges.
+    it.effect(
+      "fail: a MachineErrorContext field named type, error, or timestamp cannot clobber the event",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          streamJsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({
+            type: "hacked",
+            error: "hacked",
+            timestamp: "hacked",
+            safe_field: "ok",
+          });
+          yield* out.fail({ code: "E_FAIL", message: "boom" });
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed.type).toBe("error");
+          expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
+          expect(typeof parsed.timestamp).toBe("string");
+          expect(parsed.timestamp).not.toBe("hacked");
+          expect(parsed.safe_field).toBe("ok");
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("layerFor", () => {

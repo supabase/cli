@@ -1,8 +1,7 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
   legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
@@ -10,6 +9,7 @@ import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
+import { legacyResetLocalDatabase } from "../../../../../shared/db-bootstrap/reset-local-database.ts";
 import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
@@ -20,14 +20,25 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { legacyMakeDir } from "../../../../../shared/legacy-make-dir.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
+import { LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../shared/legacy-pg-net-guidance.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyListLocalMigrations,
   legacyPgDeltaTempPath,
-} from "../../../shared/legacy-pgdelta.cache.ts";
-import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
+  legacyResolveSetupInputs,
+} from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
+import {
+  legacyIsPgDeltaDebugEnabled,
+  legacyResolvePgDeltaProjectId,
+} from "../../../../../shared/legacy-pgdelta.ts";
+import { legacyWritePgDeltaMigrations } from "../../../shared/legacy-pgdelta-migrations.write.ts";
+import {
+  legacyLocalEndpoint,
+  legacyResolveSmartTargetEndpoint,
+} from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,
   legacyCollectMigrationsList,
@@ -37,14 +48,24 @@ import {
 } from "../../../shared/legacy-debug-bundle.ts";
 import {
   LegacyDeclarativeApplyError,
+  LegacyDeclarativeCompatibilityError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
   LegacyDeclarativeNonInteractiveError,
+  legacyReadErrorSuggestion,
 } from "../declarative.errors.ts";
 import {
+  legacyClassifyDeclarativeCompatibilityGap,
+  legacyCurrentShellPlatform,
+  legacyFormatDeclarativeGapEvidence,
+  legacyFormatDeclarativeUpgradeGate,
+  legacyFormatStagedExportAdoption,
+  legacyResolveStagedDeclarativeDir,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
+import { legacyWarnFormerDeclarativeDefault } from "../declarative.former-default.ts";
+import { legacyAppendExtensionDeclarations } from "../declarative.extension-repair.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -55,6 +76,7 @@ import {
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
@@ -89,9 +111,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
     // auto-confirm too, not just the flag (CLI-1974).
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
+    const engine = yield* LegacyPgDeltaEngine;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
     // Go's sync bootstrap delegates to `runDeclarativeGenerate`, whose
@@ -114,7 +136,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       });
 
       // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:561`) runs via
+      // (`apps/cli-go/cmd/db_schema_declarative.go:561`, deleted in CLI-1970;
+      // last present at commit 7b469f5b3) runs via
       // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
       // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
       // Reject the conflict here rather than letting `--no-apply` silently win in
@@ -131,7 +154,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
 
       // Go's `utils.GetDeclarativeDir()` — the config value verbatim (already
-      // `supabase/`-prefixed when relative) or the relative `supabase/database`
+      // `supabase/`-prefixed when relative) or the relative `supabase/schemas`
       // default. Printed verbatim in the bootstrap's written-to line below, exactly
       // as Go prints it (Go chdirs into the workdir, so its paths stay relative).
       const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
@@ -139,27 +162,43 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
       const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
+      const stagedDirRel = legacyResolveStagedDeclarativeDir(declarativeDirRel);
+      // Repair prompts name the file they would edit by its full configured path —
+      // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
+      const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
+        declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
+        debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
+        dnsResolver,
       };
       const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
       // treat the bundle path as empty when the debug directory cannot be created, so
       // an apply failure still surfaces without claiming a bundle was saved
-      // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`).
+      // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`, deleted in
+      // CLI-1970; last present at commit 7b469f5b3).
       const saveApplyDebugBundle = (bundle: LegacyDebugBundle) =>
         legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
           Effect.matchEffect({
@@ -225,7 +264,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         }
         // sync has no target flags (Go passes its target-less `cmd` into generate),
         // so reset stays interactive (the prompt fires under the local choice).
-        const targetUrl = yield* legacyResolveSmartTargetUrl(
+        const target = yield* legacyResolveSmartTargetEndpoint(
           { dbUrl: Option.none(), linked: Option.none(), password: Option.none(), reset: false },
           { port: toml.port, password: toml.password },
           hasMigrations,
@@ -235,8 +274,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           linkedRef,
           ensureLocalPostgresImageCurrent,
         );
-        const generated = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
-        yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
+        const generated = yield* legacyGenerateDeclarativeOutput(run, toml, target);
+        const written = yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
+        // A manifest-less directory keeps files the export did not replace, and those
+        // files go straight into the plan below — warn before diffing against them.
+        yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
           return yield* Effect.fail(
             new LegacyDeclarativeNoFilesGeneratedError({
@@ -251,7 +293,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // catalog / emitting a diff debug bundle, and warming the catalog the following
         // diff reuses. (sync is target-less and writes to the single toml-resolved dir,
         // so the generate handler's remote-override dir guard isn't needed here.)
-        if (!run.noCache) {
+        if (!run.noCache && engine.implementation === "legacy") {
           yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
         }
         // Go's delegated `declarative.Generate` prints the written-to line to stderr
@@ -259,34 +301,295 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // both the interactive-accept and --yes/SUPABASE_YES bootstrap paths, and
         // regardless of --no-cache (the warm is skipped, the line is not). It prints
         // `utils.GetDeclarativeDir()` — the relative dir above, never a resolved
-        // absolute path, because Go chdirs into the workdir (CLI-1980). NOTE:
-        // `generate`'s port of this same Go line still prints the absolute dir
-        // today — a follow-up candidate for the same relative-dir treatment.
+        // absolute path, because Go chdirs into the workdir (CLI-1980).
         yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
-      const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
-        run,
-      ).pipe(
-        Effect.tapError((error) =>
-          Effect.gen(function* () {
-            const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-            yield* legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, {
-              id: formatDebugId(yield* Clock.currentTimeMillis),
-              error: error.message,
-              migrations,
-            }).pipe(
-              Effect.matchEffect({
-                // Go prints nothing when SaveDebugBundle errors on the diff path
-                // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
-                onFailure: () => Effect.void,
-                onSuccess: (debugDir) => output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+      // `setupInputs` is the cache-key/baseline-setup subset of `toml` that the now-
+      // native migrations-catalog resolution needs (CLI-1959) — see
+      // `legacyResolveSetupInputs`'s doc comment.
+      const setupInputs = yield* legacyResolveSetupInputs(
+        fs,
+        path,
+        cliConfig.workdir,
+        toml.majorVersion,
+        Option.getOrUndefined(toml.orioledbVersion),
+        toml.baseline,
+      );
+      const stageNextExport = Effect.fnUntraced(function* () {
+        const stagedDir = path.resolve(cliConfig.workdir, stagedDirRel);
+        // Reject the active directory itself AND anything nested under it: a
+        // staged export inside the declarative tree would be loaded recursively
+        // by the next sync, and the printed `rm -rf && mv` adoption command
+        // would delete the staged copy along with the tree.
+        const stagedRelative = path.relative(declarativeDir, stagedDir);
+        if (
+          stagedRelative === "" ||
+          (!stagedRelative.startsWith("..") && !path.isAbsolute(stagedRelative))
+        ) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
+            }),
+          );
+        }
+        const stagedExists = yield* fs.exists(stagedDir).pipe(Effect.orElseSucceed(() => false));
+        if (stagedExists) {
+          const [entries, hasManifest] = yield* Effect.all([
+            fs.readDirectory(stagedDir),
+            fs.exists(path.join(stagedDir, ".pgdelta-export.json")),
+          ]);
+          if (entries.length > 0 && !hasManifest) {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({
+                message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
               }),
             );
-          }),
-        ),
-      );
+          }
+        }
+        yield* ensureLocalPostgresImageCurrent;
+        yield* seam.ensureLocalDatabaseStarted();
+        // The staged export snapshots the RUNNING local database verbatim — not a
+        // shadow built from migrations, which is what the failed plan compared. Say
+        // so, and offer the same reset the smart-target local path offers, so stale
+        // Studio-made drift does not silently become the staged declarative tree.
+        // This path is only reachable interactively (both prompts above gate on a
+        // TTY without --yes), so the prompt always really asks.
+        yield* output.raw(
+          `Exporting from the running local database (not the migrations state). Review ${stagedDirRel} before adopting it.\n`,
+          "stderr",
+        );
+        const shouldReset = yield* legacyPromptYesNo(
+          output,
+          yes,
+          "Reset local database to match migrations first? (local data will be lost)",
+          false,
+        );
+        if (shouldReset) {
+          yield* legacyResetLocalDatabase().pipe(
+            Effect.mapError(
+              (error) =>
+                new LegacyDeclarativeApplyError({
+                  message: `database reset failed: ${error.message}`,
+                  suggestion: legacyReadErrorSuggestion(error),
+                }),
+            ),
+          );
+        }
+        const generated = yield* legacyGenerateDeclarativeOutput(
+          { ...run, declarativeDir: stagedDir },
+          toml,
+          legacyLocalEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
+        );
+        const written = yield* legacyWriteDeclarativeSchemas(fs, path, stagedDir, generated);
+        yield* legacyWarnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
+        yield* output.raw(legacyDeclarativeSchemaWrittenLine(stagedDirRel), "stderr");
+        yield* output.raw(
+          [
+            ...legacyFormatStagedExportAdoption({
+              declarativeDir: declarativeDirRel,
+              schema: flags.schema,
+              platform: legacyCurrentShellPlatform(),
+            }),
+            "",
+          ].join("\n"),
+          "stderr",
+        );
+      });
+
+      const planDeclarativeSync = () =>
+        legacyDiffDeclarativeToMigrations(run, toml, setupInputs).pipe(
+          Effect.tapError((error) =>
+            error instanceof LegacyDeclarativeCompatibilityError
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
+                  yield* legacySaveDebugBundle(
+                    fs,
+                    path,
+                    cliConfig.workdir,
+                    tempDir,
+                    migrationsDir,
+                    {
+                      id: formatDebugId(yield* Clock.currentTimeMillis),
+                      error: error.message,
+                      migrations,
+                    },
+                  ).pipe(
+                    Effect.matchEffect({
+                      // Go prints nothing when SaveDebugBundle errors on the diff path
+                      // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
+                      onFailure: () => Effect.void,
+                      onSuccess: (debugDir) =>
+                        output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+                    }),
+                  );
+                }),
+          ),
+        );
+
+      const planWithLoadRecovery = Effect.fnUntraced(function* () {
+        while (true) {
+          const attempt = yield* planDeclarativeSync().pipe(
+            Effect.match({
+              onFailure: (error) => ({ error }),
+              onSuccess: (result) => ({ result }),
+            }),
+          );
+          if ("result" in attempt) return Option.some(attempt.result);
+          const error = attempt.error;
+          if (
+            !(error instanceof LegacyDeclarativeCompatibilityError) ||
+            error.loadFindings === undefined
+          ) {
+            return yield* Effect.fail(error);
+          }
+
+          const missingExtensions = [
+            ...new Set(error.loadFindings.map((finding) => finding.extension)),
+          ].sort();
+          if (missingExtensions.includes("pg_net") && !toml.webhooksEnabled) {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({
+                message: [
+                  "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
+                  "",
+                  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+                ].join("\n"),
+              }),
+            );
+          }
+          if (!tty.stdinIsTty || yes) return yield* Effect.fail(error);
+
+          yield* output.raw(`${legacyYellow(error.message)}\n`, "stderr");
+          const choice = yield* output.promptSelect("How would you like to continue?", [
+            {
+              value: "stage",
+              label: `Generate next export to ${stagedDirRel}`,
+              hint: "recommended",
+            },
+            {
+              value: "repair",
+              label: `Add missing extension declarations to ${extensionSqlRel} and re-plan`,
+              hint: "may surface another gap",
+            },
+            { value: "cancel", label: "Cancel" },
+          ]);
+          if (choice === "cancel") return Option.none<LegacyDeclarativeSyncResult>();
+          if (choice === "stage") {
+            yield* stageNextExport();
+            return Option.none<LegacyDeclarativeSyncResult>();
+          }
+          const repaired = yield* legacyAppendExtensionDeclarations(
+            declarativeDir,
+            missingExtensions,
+          );
+          yield* output.raw(
+            `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
+            "stderr",
+          );
+        }
+      });
+
+      const initialResult = yield* planWithLoadRecovery();
+      if (Option.isNone(initialResult)) return;
+      let result: LegacyDeclarativeSyncResult = initialResult.value;
+
+      // Resolve successful manifest-less plans too. Repairs re-enter planning so a
+      // second, broader legacy gap (for example cron intents) cannot fall through to
+      // migration writing after the first missing extension is declared.
+      while (true) {
+        if (
+          engine.implementation === "next" &&
+          !result.manifestPresent &&
+          !toml.webhooksEnabled &&
+          result.removals.extensions.includes("pg_net")
+        ) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: [
+                "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+                "",
+                LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+              ].join("\n"),
+            }),
+          );
+        }
+        const compatibility = legacyClassifyDeclarativeCompatibilityGap({
+          implementation: engine.implementation,
+          manifestPresent: result.manifestPresent,
+          removals: result.removals,
+        });
+        if (compatibility.recommendedAction === "none") break;
+
+        // Both recommended actions mean the same thing to the user — the tree is a
+        // legacy export — so they render one shared template and differ only in the
+        // choices offered. Non-interactively there is exactly one recovery: the
+        // staged regenerate, carried on `suggestion` so `Output.fail` prints it
+        // instead of the "rerun with --debug" footer.
+        const gate = legacyFormatDeclarativeUpgradeGate({
+          evidence: legacyFormatDeclarativeGapEvidence(compatibility),
+          context: {
+            declarativeDir: declarativeDirRel,
+            schema: flags.schema,
+            platform: legacyCurrentShellPlatform(),
+          },
+        });
+        if (!tty.stdinIsTty || yes) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: gate.message,
+              suggestion: gate.suggestion,
+            }),
+          );
+        }
+        yield* output.raw(`${legacyYellow(gate.message)}\n`, "stderr");
+
+        if (compatibility.recommendedAction === "stage-next-export") {
+          const choice = yield* output.promptSelect("How would you like to continue?", [
+            {
+              value: "stage",
+              label: `Generate next export to ${stagedDirRel}`,
+              hint: "recommended",
+            },
+            { value: "cancel", label: "Cancel" },
+          ]);
+          if (choice === "stage") yield* stageNextExport();
+          return;
+        }
+
+        // Repairing the tree in place is offered only interactively, and only as an
+        // advanced choice: on a real legacy tree each added declaration tends to
+        // unlock the next refusal, so it is a false trail for a scripted run.
+        const choice = yield* output.promptSelect("How would you like to continue?", [
+          { value: "stage", label: `Generate next export to ${stagedDirRel}`, hint: "recommended" },
+          {
+            value: "repair",
+            label: `Add declarations to ${extensionSqlRel} and re-plan`,
+            hint: "may surface another gap",
+          },
+          { value: "continue", label: "Continue with removals" },
+          { value: "cancel", label: "Cancel" },
+        ]);
+        if (choice === "cancel") return;
+        if (choice === "stage") {
+          yield* stageNextExport();
+          return;
+        }
+        if (choice === "continue") break;
+        const repaired = yield* legacyAppendExtensionDeclarations(
+          declarativeDir,
+          compatibility.repairableExtensions,
+        );
+        yield* output.raw(
+          `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
+          "stderr",
+        );
+        const replanned = yield* planWithLoadRecovery();
+        if (Option.isNone(replanned)) return;
+        result = replanned.value;
+      }
 
       // Step 3: empty diff.
       if (result.diffSQL.trim().length < 2) {
@@ -308,16 +611,37 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
 
       // Step 5: write the timestamped migration file.
-      const timestamp = formatTimestamp(yield* Clock.currentTimeMillis);
-      const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
-      yield* legacyMakeDir(fs, migrationsDir);
-      yield* fs.writeFileString(migrationPath, result.diffSQL);
-      yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
+      const nowMillis = yield* Clock.currentTimeMillis;
+      let migrationPaths: ReadonlyArray<string>;
+      if (engine.implementation === "next" && result.files.length > 1) {
+        const written = yield* legacyWritePgDeltaMigrations(fs, path, {
+          workdir: cliConfig.workdir,
+          baseMillis: nowMillis,
+          name: migrationName,
+          files: result.files,
+        }).pipe(
+          Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+        );
+        migrationPaths = written.map((migration) => migration.path);
+      } else {
+        const timestamp = formatTimestamp(nowMillis);
+        const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
+        yield* legacyMakeDir(fs, migrationsDir);
+        yield* fs.writeFileString(migrationPath, result.diffSQL);
+        migrationPaths = [migrationPath];
+      }
+      for (const migrationPath of migrationPaths) {
+        yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
+      }
 
       // Step 6: drop warnings.
       if (result.dropWarnings.length > 0) {
         yield* output.raw(
-          `${legacyYellow("Found drop statements in schema diff. Please double check if these are expected:")}\n`,
+          `${legacyYellow(
+            engine.implementation === "next"
+              ? "Found destructive changes in schema diff. Please double check if these are expected:"
+              : "Found drop statements in schema diff. Please double check if these are expected:",
+          )}\n`,
           "stderr",
         );
         yield* output.raw(`${legacyYellow(result.dropWarnings.join("\n"))}\n`, "stderr");
@@ -346,7 +670,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       yield* ensureLocalPostgresImageCurrent;
       const applyExit = yield* applyMigrationToLocal(
         { port: toml.port, password: toml.password, dnsResolver },
-        migrationPath,
+        migrationPaths,
       ).pipe(Effect.exit);
 
       if (Exit.isSuccess(applyExit)) {
@@ -354,10 +678,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         return;
       }
 
+      // A Ctrl-C or defect during the apply is not a migration-apply failure —
+      // propagate it unchanged instead of synthesizing a fake
+      // `LegacyDeclarativeApplyError` (review CLI-1958).
+      const applyFailure = Cause.findFail(applyExit.cause);
+      if (Result.isFailure(applyFailure)) {
+        return yield* Effect.failCause(applyFailure.failure);
+      }
+
       // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-      const applyError =
-        applyExit.cause.reasons.find(Cause.isFailReason)?.error ??
-        new LegacyDeclarativeApplyError({ message: "failed to apply migration" });
+      const applyError = applyFailure.success.error;
       yield* output.raw(
         `${legacyRed(`Migration failed to apply: ${applyError.message}`)}\n`,
         "stderr",
@@ -379,22 +709,29 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           { defaultValue: false },
         );
         if (shouldReset) {
-          // Forward --network-id: Go's in-process reset.Run honors the root viper
-          // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
-          // seam-spawned reset must carry it to stay on a custom network.
-          const code = yield* seam.execInherit([
-            "db",
-            "reset",
-            "--local",
-            ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-          ]);
-          if (code !== 0) {
-            // Go returns `resetErr` here (`apps/cli-go/cmd/db_schema_declarative.go:414-423`),
-            // surfacing the failure that actually blocked recovery — not the original
-            // apply error. The seam yields only an exit code, so build the reset error
-            // from it and use that one value for the message, debug bundle, and return.
+          // Go runs reset in-process (`cmd/db_schema_declarative.go:414-423`).
+          // `legacyResetLocalDatabase` now runs the same way — in-process, sharing this
+          // command's own context — rather than shelling out to a second `supabase-go`
+          // child (CLI-2062): it resolves `LegacyNetworkIdFlag` itself, so no
+          // argv-forwarding is needed to stay on a custom network.
+          const resetExit = yield* legacyResetLocalDatabase().pipe(Effect.exit);
+          if (Exit.isFailure(resetExit)) {
+            // A Ctrl-C or defect during the recovery reset must cancel the command,
+            // not get rewritten into a synthetic "unknown error" apply failure —
+            // propagate it unchanged (review CLI-1958).
+            const resetFailure = Cause.findFail(resetExit.cause);
+            if (Result.isFailure(resetFailure)) {
+              return yield* Effect.failCause(resetFailure.failure);
+            }
+            // Go returns `resetErr` here, surfacing the failure that actually blocked
+            // recovery — not the original apply error — and prints it exactly once (no
+            // extra "database reset failed:" wrapper). Build the reset error from the
+            // real typed failure and use that one value for the message, suggestion,
+            // debug bundle, and return.
+            const rawResetFailure = resetFailure.success.error;
             const resetError = new LegacyDeclarativeApplyError({
-              message: `database reset failed (exit ${code})`,
+              message: rawResetFailure.message,
+              suggestion: legacyReadErrorSuggestion(rawResetFailure),
             });
             yield* output.raw(
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,
@@ -460,10 +797,10 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   return entries.length > 0;
 });
 
-/** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
+/** Connects once and applies the ordered migration files (Go's `applyMigrationToLocal`). */
 const applyMigrationToLocal = (
   local: { port: number; password: string; dnsResolver: "native" | "https" },
-  migrationPath: string,
+  migrationPaths: ReadonlyArray<string>,
 ) =>
   Effect.gen(function* () {
     const dbConnection = yield* LegacyDbConnection;
@@ -473,7 +810,8 @@ const applyMigrationToLocal = (
       .connect(
         {
           // Go's applyMigrationToLocal connects with utils.Config.Hostname
-          // (`apps/cli-go/cmd/db_schema_declarative.go:463`), honoring
+          // (`apps/cli-go/cmd/db_schema_declarative.go:463`, deleted in
+          // CLI-1970; last present at commit 7b469f5b3), honoring
           // SUPABASE_SERVICES_HOSTNAME / tcp DOCKER_HOST — not a hardcoded loopback.
           host: legacyGetHostname(),
           port: local.port,
@@ -484,13 +822,17 @@ const applyMigrationToLocal = (
         { isLocal: true, dnsResolver: local.dnsResolver },
       )
       .pipe(
-        Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+        Effect.mapError(
+          (error) => new LegacyDeclarativeApplyError({ message: error.message, connect: true }),
+        ),
       );
-    yield* legacyApplyMigrationFile(
-      session,
-      fs,
-      path,
-      migrationPath,
-      (message) => new LegacyDeclarativeApplyError({ message }),
-    );
+    for (const migrationPath of migrationPaths) {
+      yield* legacyApplyMigrationFile(
+        session,
+        fs,
+        path,
+        migrationPath,
+        (message) => new LegacyDeclarativeApplyError({ message }),
+      );
+    }
   }).pipe(Effect.scoped);

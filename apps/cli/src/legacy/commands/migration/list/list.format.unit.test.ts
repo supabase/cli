@@ -26,6 +26,19 @@ describe("legacyMakeMigrationListRows", () => {
     ]);
   });
 
+  it("pairs an 8-digit and a 14-digit version that share a prefix (#6036)", () => {
+    // Local versions arrive in file-name order, where `20260420010000_b.sql`
+    // precedes `20260420_a.sql` ('0' < '_') — the reverse of the `ORDER BY
+    // version` order `schema_migrations` is read back in. Unsorted, the walk
+    // desynchronises and reports `20260420` as both remote-only and local-only.
+    expect(
+      legacyMakeMigrationListRows(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
+    ).toEqual([
+      { local: "20260420", remote: "20260420", time: "20260420" },
+      { local: "20260420010000", remote: "20260420010000", time: "2026-04-20 01:00:00" },
+    ]);
+  });
+
   it("skips non-numeric versions on both sides", () => {
     expect(legacyMakeMigrationListRows(["a", "c"], ["a", "b"])).toEqual([]);
   });

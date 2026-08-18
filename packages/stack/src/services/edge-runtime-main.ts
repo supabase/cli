@@ -6,16 +6,16 @@ const placeholder = {
   message: "Edge Functions are not configured for this local stack yet.",
 };
 
-export enum RequestErrors {
-  MissingAuthHeader = "UNAUTHORIZED_NO_AUTH_HEADER",
-  InvalidLegacyJWT = "UNAUTHORIZED_LEGACY_JWT",
-  InvalidAsymmetricJWT = "UNAUTHORIZED_ASYMMETRIC_JWT",
-  InvalidTokenFormat = "UNAUTHORIZED_INVALID_JWT_FORMAT",
-  UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
-}
+export const RequestErrors = {
+  MissingAuthHeader: "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidLegacyJWT: "UNAUTHORIZED_LEGACY_JWT",
+  InvalidAsymmetricJWT: "UNAUTHORIZED_ASYMMETRIC_JWT",
+  InvalidTokenFormat: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  UnsupportedTokenAlgorithm: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+};
 
 interface AuthFailure {
-  code: RequestErrors;
+  code: string;
   message?: string;
 }
 
@@ -177,6 +177,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
 
   const envVars = Object.entries({
     ...config.env,
+    ...functionConfig.env,
     SUPABASE_URL: config.supabaseUrl,
     SUPABASE_ANON_KEY: config.publishableKey,
     SUPABASE_SERVICE_ROLE_KEY: config.secretKey,
@@ -192,7 +193,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
       workerTimeoutMs: 400000,
       noModuleCache: false,
       noNpm: false,
-      importMapPath: functionConfig.importMapPath,
+      importMapPath: functionConfig.importMapPath ?? undefined,
       envVars,
       forceCreate: false,
       customModuleRoot: "",

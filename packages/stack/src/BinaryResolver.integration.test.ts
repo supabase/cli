@@ -18,7 +18,7 @@ import { afterEach } from "vitest";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import { DownloadError } from "./errors.ts";
 import { detectPlatform } from "./Platform.ts";
-import { nativeReleaseForService } from "./ServiceArtifacts.ts";
+import { nativeReleaseForService } from "./ServiceCatalog.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const tempRoots: string[] = [];

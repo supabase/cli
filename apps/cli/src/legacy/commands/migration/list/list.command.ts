@@ -15,11 +15,15 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Lists migrations applied to the linked project."),
-    // Go: `listFlags.Bool("linked", true, …)`.
     Flag.withDefault(true),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Lists migrations applied to the local database."),
+  ),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
   ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
@@ -40,9 +44,13 @@ export const legacyMigrationListCommand = Command.make("list", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,

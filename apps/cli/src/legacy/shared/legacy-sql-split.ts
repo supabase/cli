@@ -1,5 +1,5 @@
 /**
- * PostgreSQL statement splitter, ported 1:1 from Go's `pkg/parser`
+ * PostgreSQL statement splitter, ported 1:1 from `pkg/parser`
  * (`token.go` + `state.go`). A finite-state machine tracks string literals
  * (`'…'`, `"…"`), line/block comments, dollar-quoted bodies (`$tag$…$tag$`),
  * backslash escapes, and `BEGIN ATOMIC … END` / parenthesised bodies, so a `;`
@@ -19,7 +19,11 @@ interface State {
 const BEGIN_ATOMIC = "ATOMIC";
 const END_ATOMIC = "END";
 
-const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{N}_$]/u.test(rune);
+// `\p{Nd}` (decimal digits only), not `\p{N}` (all Unicode numbers): Go's
+// `unicode.IsDigit` — what `isIdentifierRune`/`TagState.next` port — is an alias for
+// category `Nd` alone, so it rejects `No`/`Nl` runes like superscript-2 (`²`) that
+// `\p{N}` would wrongly accept as a valid identifier/dollar-tag character.
+const isIdentifierRune = (rune: string): boolean => /[\p{L}\p{Nd}_$]/u.test(rune);
 
 function isBeginAtomic(data: string): boolean {
   let offset = data.length - BEGIN_ATOMIC.length;
@@ -114,8 +118,9 @@ class TagState implements State {
   constructor(private readonly offset: number) {}
   next(rune: string, data: string): State | null {
     if (rune === "$") return new DollarState(data.slice(this.offset));
-    // Valid dollar-tag characters.
-    if (/[\p{L}\p{N}_]/u.test(rune)) return this;
+    // Valid dollar-tag characters — see `isIdentifierRune`'s comment on why `\p{Nd}`,
+    // not `\p{N}`.
+    if (/[\p{L}\p{Nd}_]/u.test(rune)) return this;
     return new ReadyState().next(rune, data);
   }
 }
@@ -144,23 +149,28 @@ class AtomicState implements State {
 }
 
 /**
- * Splits `sql` into raw statements (comments/whitespace preserved), then applies
- * the optional transforms to each. Mirrors Go's `parser.Split`.
+ * One raw token from {@link splitRaw}. `terminated` is `false` only for a
+ * trailing statement emitted at EOF with no closing delimiter (the
+ * `acc.length > 0` fallback below) — every other token was emitted because the
+ * FSM itself found a boundary (a bare `;` in `ReadyState`, or `AtomicState`
+ * closing). Only ever `false` on the LAST element `splitRaw` returns, since
+ * that fallback fires at most once, after the main loop.
  */
-export function legacySplitSql(
-  sql: string,
-  ...transform: ReadonlyArray<(s: string) => string>
-): string[] {
+interface RawToken {
+  readonly text: string;
+  readonly terminated: boolean;
+}
+
+/** The FSM traversal shared by every `legacySplitSql*` entry point below. */
+function splitRaw(sql: string): RawToken[] {
   let state: State = new ReadyState();
-  const statements: string[] = [];
+  const tokens: RawToken[] = [];
   let acc = "";
   for (const rune of Array.from(sql)) {
     acc += rune;
     const next = state.next(rune, acc);
     if (next === null) {
-      let token = acc;
-      for (const apply of transform) token = apply(token);
-      if (token.length > 0) statements.push(token);
+      tokens.push({ text: acc, terminated: true });
       acc = "";
       state = new ReadyState();
     } else {
@@ -168,30 +178,93 @@ export function legacySplitSql(
     }
   }
   // Trailing non-terminated statement at EOF.
-  if (acc.length > 0) {
-    let token = acc;
+  if (acc.length > 0) tokens.push({ text: acc, terminated: false });
+  return tokens;
+}
+
+/**
+ * Splits `sql` into raw statements (comments/whitespace preserved), then applies
+ * the optional transforms to each. Mirrors `parser.Split`.
+ */
+export function legacySplitSql(
+  sql: string,
+  ...transform: ReadonlyArray<(s: string) => string>
+): string[] {
+  const statements: string[] = [];
+  for (const { text: raw } of splitRaw(sql)) {
+    let token = raw;
     for (const apply of transform) token = apply(token);
     if (token.length > 0) statements.push(token);
   }
   return statements;
 }
 
-/** Mirrors Go's `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
+/** `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
+const legacyTrimStatement = (token: string): string => token.replace(/;+$/u, "").trim();
+
+/** Mirrors `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
 export function legacySplitAndTrim(sql: string): string[] {
-  return legacySplitSql(
-    sql,
-    (token) => token.replace(/;+$/u, ""),
-    (token) => token.trim(),
-  );
+  return legacySplitSql(sql, legacyTrimStatement);
 }
 
-// `(?i)drop\s+` — Go's `dropStatementPattern` (`internal/db/diff/diff.go:100`,
-// also `internal/db/declarative/declarative.go:62`).
+/** One statement, paired with both its RAW and trimmed forms. */
+export interface LegacySplitSqlToken {
+  /** The exact text `legacySplitSql(sql)` (no transforms) would emit for this statement. */
+  readonly raw: string;
+  /** `legacyTrimStatement(raw)` — what `legacySplitAndTrim` emits, including when empty. */
+  readonly trimmed: string;
+  /**
+   * `false` only for a trailing statement with no closing delimiter, emitted at
+   * real EOF (`splitRaw`'s `acc.length > 0` fallback) — see {@link RawToken}.
+   * `checkScannerBufferSize` (`legacy-migration-apply.ts`) needs this to decide
+   * `>` vs `>=` against the effective buffer limit: `bufio.Scanner` can
+   * only apply its too-long check (`len(s.buf) >= s.maxTokenSize`) once it has
+   * given up looking for a delimiter and still needs more data — for a
+   * delimiter-terminated token the delimiter is found (and the token emitted)
+   * in the SAME `Scan()` call that fills the buffer to capacity, before that
+   * check is ever reached, so a token exactly AT the limit still succeeds. An
+   * unterminated trailing token has no delimiter to find: once the buffer
+   * fills to the effective limit without one, the too-long check fires
+   * immediately — there's never a chance to attempt the extra `Read()` that would
+   * reveal real EOF and let the split function emit the trailing token
+   * instead. Verified empirically against `pkg/parser.Split`: a
+   * single terminated statement of exactly `maxbuf` bytes always succeeds,
+   * while an unterminated one of exactly `maxbuf` bytes always fails with
+   * `bufio.ErrTooLong` (one byte under still succeeds; one byte over always
+   * fails either way).
+   */
+  readonly terminated: boolean;
+}
+
+/**
+ * Same FSM traversal as {@link legacySplitAndTrim}, but pairs each statement's RAW
+ * (pre-trim) text with its trimmed form instead of discarding the raw text once
+ * emitted. `bufio.Scanner`-based `parser.Split`
+ * enforces `SUPABASE_SCANNER_BUFFER_SIZE` against the untransformed
+ * `scanner.Text()` — the RAW form — and its `bufio.ErrTooLong` message reports
+ * that same raw text for the LAST successfully scanned statement, so a caller
+ * replicating that check (`legacy-migration-apply.ts`'s `execMigrationBatch`)
+ * needs both forms, not just the trimmed one `legacySplitAndTrim` returns.
+ *
+ * Unlike `legacySplitSql`/`legacySplitAndTrim`, this does NOT drop a statement
+ * whose trimmed form is empty — callers that replicate `len(stats)` counter
+ * (which only increments for a non-empty trimmed statement) need to see every raw
+ * token, including the ones `legacySplitAndTrim` itself would filter out.
+ */
+export function legacySplitSqlTokens(sql: string): ReadonlyArray<LegacySplitSqlToken> {
+  return splitRaw(sql).map(({ text: raw, terminated }) => ({
+    raw,
+    trimmed: legacyTrimStatement(raw),
+    terminated,
+  }));
+}
+
+// `(?i)drop\s+` — `dropStatementPattern`.
 const DROP_STATEMENT_PATTERN = /drop\s+/i;
 
 /**
  * Extracts DROP statements from a schema diff for the safety warning shown by
- * `db diff` / `db pull` / declarative `sync`. Mirrors Go's `findDropStatements`:
+ * `db diff` / `db pull` / declarative `sync`. Mirrors `findDropStatements`:
  * split the SQL into statements, then keep those matching `(?i)drop\s+`.
  */
 export function legacyFindDropStatements(sql: string): ReadonlyArray<string> {

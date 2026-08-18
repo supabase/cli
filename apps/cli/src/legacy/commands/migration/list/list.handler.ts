@@ -36,9 +36,9 @@ const runList = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
-  // cobra `MarkFlagsMutuallyExclusive`, in registration order: the target group
-  // first, then {db-url, password} (`cmd/migration.go`). `setFlags` is already
-  // alphabetically sorted, matching cobra's group-error formatting.
+  // Mutually-exclusive flag groups, in registration order: the target group
+  // first, then {db-url, password}. `setFlags` is already
+  // alphabetically sorted, matching the established group-error formatting.
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyMigrationTargetFlagsError({
@@ -55,19 +55,32 @@ const runList = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const listBody = Effect.gen(function* () {
-    // list defaults to `--linked` (Go: `Bool("linked", true)`).
+    // list defaults to `--linked`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "linked",
       dnsResolver,
       password: flags.password,
+      linkedProjectRef: flags.projectRef,
     });
 
     const remote = yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -95,12 +108,12 @@ const runList = Effect.fnUntraced(function* (
   });
 
   // `--linked` resolves the project ref and writes the linked-project cache so
-  // telemetry carries the org/project grouping (Go's PersistentPostRun
-  // `ensureProjectGroupsCached`). `--local` / `--db-url` leave the ref empty.
+  // telemetry carries the org/project grouping. `--local` / `--db-url` leave the
+  // ref empty.
   if ((target.connType ?? "linked") === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(Option.none());
+    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }
   return yield* listBody;

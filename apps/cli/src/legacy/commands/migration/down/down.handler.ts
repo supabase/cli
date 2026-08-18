@@ -31,7 +31,6 @@ import { legacyMigrationConfirm } from "../migration.prompt.ts";
 import type { LegacyMigrationDownFlags } from "./down.command.ts";
 import { LegacyMigrationLastTooLargeError, LegacyMigrationLastZeroError } from "./down.errors.ts";
 
-/** Go's `confirmResetAll` (`internal/migration/down/down.go:64`). */
 const confirmResetAll = (pending: ReadonlyArray<string>): string => {
   let title = "Do you want to revert the following migrations?\n";
   for (const version of pending) title += ` • ${legacyBold(version)}\n`;
@@ -51,8 +50,8 @@ const runDown = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
-  // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
-  // parse time, ahead of the root `PersistentPreRunE` (`cmd/migration.go:156`).
+  // Flag-group mutual-exclusion first: validated at
+  // parse time, ahead of the root pre-run.
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyMigrationTargetFlagsError({
@@ -61,27 +60,38 @@ const runDown = Effect.fnUntraced(function* (
     );
   }
 
-  const connType = target.connType ?? "local"; // down defaults to `--local` (Go: `Bool("local", true)`).
+  const connType = target.connType ?? "local"; // down defaults to `--local`.
 
-  // Resolve the DB config BEFORE the `--last` validation — Go's root `PersistentPreRunE`
-  // runs `ParseDatabaseConfig` (`cmd/root.go:118`) before `down.Run`'s `last == 0` check
-  // (`internal/migration/down/down.go:20-23`), so an unlinked/invalid target surfaces
-  // before the `--last must be greater than 0` error.
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
+  // Resolve the DB config BEFORE the `--last` validation, so an unlinked/invalid
+  // target surfaces before the `--last must be greater than 0` error.
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
-  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
-  // i.e. after the parse-time flag-group validation above — so a SUPABASE_YES set only in
-  // supabase/.env auto-confirms, but a flag conflict still surfaces before any .env read.
-  // Resolve --yes against the project env here, not just process.env (root.go:318-334).
+  // The project .env loads after the parse-time flag-group validation above — so a
+  // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
+  // surfaces before any .env read. Resolve --yes against the project env here, not
+  // just process.env.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
-  // Linked down caches the project ref (Go's `ensureProjectGroupsCached` from `Execute()`,
-  // gated on the ref loaded in pre-run, NOT on the RunE error). Load it now and attach the
+  // Linked down caches the project ref, gated on the ref loaded in pre-run, NOT
+  // on the handler's own failure. Load it now and attach the
   // cache to the whole flow via `Effect.ensuring`, so it runs even on the `--last`/cancel
   // failure paths.
   const cacheLinkedRef =
@@ -89,14 +99,13 @@ const runDown = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+          const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
           return linkedProjectCache.cache(linkedRef);
         })
       : undefined;
 
   const downFlow = Effect.gen(function* () {
-    // `--last` zero-value validation runs after DB-config resolution (Go's check is inside
-    // `down.Run`, after `PersistentPreRunE`).
+    // `--last` zero-value validation runs after DB-config resolution.
     if (flags.last === 0) {
       return yield* Effect.fail(
         new LegacyMigrationLastZeroError({ message: "--last must be greater than 0" }),
@@ -108,8 +117,8 @@ const runDown = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -150,6 +159,13 @@ const runDown = Effect.fnUntraced(function* (
         yield* legacyMigrateAndSeed(session, fs, path, cliConfig.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
+          // `version` is always non-empty here (`migration down` reverts to a concrete
+          // target) — the empty-version half of `legacyMigrateAndSeed`'s declarative
+          // branch gate is therefore always false on this call site regardless of these
+          // three values, matching the file's own doc comment.
+          experimental: false,
+          pgDeltaEnabled: false,
+          schemaPaths: [],
         });
 
         if (output.format !== "text") {

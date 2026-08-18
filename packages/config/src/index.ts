@@ -15,6 +15,8 @@ export {
   type ConfigFormat,
   type LoadedProjectConfig,
   type LoadProjectConfigOptions,
+  type ProjectConfigValueOrigin,
+  type ProjectConfigValueSource,
   type SaveProjectConfigOptions,
   configJsonPath,
   configTomlPath,
@@ -22,6 +24,7 @@ export {
   encodeProjectConfigToToml,
   loadProjectConfig,
   loadProjectConfigFile,
+  projectConfigValueSourceAt,
   saveProjectConfig,
 } from "./io.ts";
 export {
@@ -37,6 +40,7 @@ export {
   type ProjectEnvironment,
   type ResolvedProjectValue,
   type ResolveProjectOptions,
+  loadDotEnvFile,
   loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,

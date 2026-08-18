@@ -48,7 +48,7 @@ const FULL_VALUES: Record<string, string> = {
 
 describe("legacyRenderStatusPretty", () => {
   // Byte-for-byte parity with a real `tablewriter@v1.1.4` + `tw.StyleRounded`
-  // render of Go's `PrettyPrint` group layout (verified by running the actual
+  // render of `PrettyPrint` group layout (verified by running the actual
   // vendored Go module against this exact value set — see the port plan).
   it("matches the Go rounded-table fixture for a fully running stack", () => {
     const out = stripAnsi(legacyRenderStatusPretty(FULL_VALUES, NAMES));
@@ -151,7 +151,6 @@ describe("legacyRenderStatusPretty", () => {
     const out = stripAnsi(legacyRenderStatusPretty({ DB_URL: FULL_VALUES.DB_URL ?? "" }, NAMES));
     const lines = out.split("\n");
 
-    // No rounded-box characters before the Database group's own box.
     expect(lines[0]).not.toMatch(/[╭│╰]/);
     expect(lines[0]).toBe("");
     expect(out).not.toContain("Development Tools");
@@ -168,7 +167,7 @@ describe("legacyRenderStatusPretty", () => {
   // are reachable through `names`' keys, with no opinion on how the caller
   // derived either. This is NOT asserting that `--override-name` reaches
   // pretty-mode output in production — `status.handler.ts` deliberately always
-  // calls this function with un-overridden names (matching Go's `PrettyPrint`,
+  // calls this function with un-overridden names (matching `PrettyPrint`,
   // which unmarshals a fresh empty `EnvSet{}` rather than the CLI's overridden
   // `CustomName`). This test only proves the renderer's KEY-based lookup itself
   // works correctly for an arbitrary names/values pairing.

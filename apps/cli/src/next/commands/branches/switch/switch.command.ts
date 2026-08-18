@@ -4,7 +4,6 @@ import { credentialsLayer } from "../../../auth/credentials.layer.ts";
 import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
-import { projectStackStateManagerLayer } from "../../../config/project-stack-state-manager.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
@@ -15,7 +14,6 @@ const branchesRuntimeLayer = provideProjectCommandRuntime(
   Layer.mergeAll(
     branchesPlatformApiLayer,
     projectLinkStateLayer,
-    projectStackStateManagerLayer,
     commandRuntimeLayer(["branches", "switch"]),
   ),
 );

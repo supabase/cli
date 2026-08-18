@@ -39,7 +39,7 @@ function sortSecrets(secrets: Secrets): Secrets {
   return [...secrets].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-/** Mirror of Go's `api.SecretResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+/** Type shape for the secrets response, used to drive `-o yaml|toml` key casing (see `apps/cli-go/pkg/api/types.gen.go`). */
 const LEGACY_GO_SECRET_RESPONSE = legacyGoStruct([
   ["name", legacyGoString],
   ["updated_at", legacyGoPtr(legacyGoString)],
@@ -65,8 +65,8 @@ export const legacySecretsList = Effect.fn("legacy.secrets.list")(function* (
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Mirror Go's PersistentPostRun: write the linked-project cache and persist
-  // the telemetry state file whether the main API call succeeds or fails.
+  // Write the linked-project cache and persist the telemetry state file
+  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching secrets...") : undefined;

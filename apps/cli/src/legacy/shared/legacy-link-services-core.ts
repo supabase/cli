@@ -32,12 +32,12 @@ export interface LegacyLinkServicesInput {
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
 /**
- * Ports Go's `link.LinkServices` (`apps/cli-go/internal/link/link.go:71-103`): the
+ * Ports `link.LinkServices`: the
  * best-effort portion of linking that writes `supabase/.temp/{storage-migration,
  * pooler-url,rest-version,gotrue-version,storage-version}`. Every probe is
  * best-effort — a single unreachable service never fails the caller. This core
  * does NOT write `project-ref`, the linked-project cache, or fire
- * `cli_project_linked`; `link.Run` (the standalone command) owns those, and Go's
+ * `cli_project_linked`; `link.Run` (the standalone command) owns those, and
  * `bootstrap` deliberately skips them by calling `LinkServices` directly.
  */
 export const legacyLinkServicesCore = Effect.fnUntraced(function* (input: LegacyLinkServicesInput) {
@@ -109,7 +109,7 @@ const linkPooler = (opts: {
 }) =>
   Effect.gen(function* () {
     if (opts.skipPooler) {
-      // Use direct connection: drop any cached pooler URL (link.go:81-84).
+      // Use direct connection: drop any cached pooler URL.
       yield* opts.fs.remove(opts.poolerUrlPath, { recursive: true }).pipe(Effect.ignore);
       return;
     }
@@ -117,7 +117,7 @@ const linkPooler = (opts: {
     const primary = configs.find((c) => c.database_type === "PRIMARY");
     if (primary === undefined) return;
     // Strip the [YOUR-PASSWORD] placeholder; force session mode 5432 unless the
-    // pooler already reports session mode (link.go:221-229).
+    // pooler already reports session mode.
     let connectionString = primary.connection_string.replaceAll(":[YOUR-PASSWORD]", "");
     if (primary.pool_mode !== "session") {
       connectionString = connectionString.replaceAll(":6543/", ":5432/");

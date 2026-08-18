@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
@@ -6,9 +6,14 @@ import { Output } from "../../shared/output/output.service.ts";
 import {
   legacyListLocalMigrations,
   legacyTryCacheMigrationsCatalog,
-} from "../commands/db/shared/legacy-pgdelta.cache.ts";
-import { type LegacyPgDeltaContext } from "../commands/db/shared/legacy-pgdelta.ts";
-import { legacyParseBoolEnv } from "../commands/db/shared/legacy-diff-engine.ts";
+} from "./legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import { legacyParseBoolEnv } from "./legacy-diff-engine.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "./legacy-pgdelta-next-flag.ts";
 import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,
@@ -41,11 +46,11 @@ const CUSTOM_ROLES_PATH = "supabase/roles.sql";
 
 const toSlash = (p: string): string => p.replaceAll("\\", "/");
 
-/** Go's `confirmPushAll` (`internal/db/push/push.go:123-129`) — bold filenames. */
+/** `confirmPushAll` — bold filenames. */
 const confirmPushAll = (filenames: ReadonlyArray<string>): string =>
   filenames.map((name) => ` • ${legacyBold(name)}\n`).join("");
 
-/** Go's `confirmSeedAll` (`internal/db/push/push.go:131-140`) — bold paths, hash notice. */
+/** `confirmSeedAll` — bold paths, hash notice. */
 const confirmSeedAll = (seeds: ReadonlyArray<LegacySeedFile>): string =>
   seeds
     .map((seed) => ` • ${legacyBold(seed.dirty ? `${seed.path} (hash update)` : seed.path)}\n`)
@@ -54,28 +59,28 @@ const confirmSeedAll = (seeds: ReadonlyArray<LegacySeedFile>): string =>
 const applyError = (message: string) => new LegacyDbPushApplyError({ message });
 
 /**
- * Everything Go's `push.Run` does once its target connection AND config are
- * already resolved (`apps/cli-go/internal/db/push/push.go`). Shared by two
- * callers, matching Go's own structure exactly — Go's `push.Run` never
+ * Everything `push.Run` does once its target connection AND config are
+ * already resolved. Shared by two
+ * callers, following the same structure — `push.Run` never
  * resolves the project ref or loads `config.toml` itself, it just uses
  * whatever its caller already resolved:
  *
  * - `db push` (`push.handler.ts`) resolves `--db-url`/`--linked`/`--local` via
- *   `LegacyDbConfigResolver`/`LegacyProjectRefResolver`, loads + validates
- *   `config.toml` itself (so the "Loading config override" line — printed by
- *   Go's config-load path, which runs before `push.Run` — prints before this
- *   core runs), then calls this core with the resolved connection.
+ * `LegacyDbConfigResolver`/`LegacyProjectRefResolver`, loads + validates
+ * `config.toml` itself (so the "Loading config override" line — printed by
+ * the config-load path, which runs before `push.Run` — prints before this
+ * core runs), then calls this core with the resolved connection.
  * - `bootstrap` calls `push.Run(ctx, false, false, true, true, config, fsys)`
- *   directly in Go (`bootstrap.go:122-127`) — it never re-resolves the
- *   project ref or db config for push, reusing the config it already derived
- *   for `.env`. `bootstrap.handler.ts` mirrors that: it passes its own
- *   `workdir` / `projectRef` / connection directly, never touching
- *   `LegacyProjectRefResolver` or `LegacyDbConfigResolver` (which key off
- *   `LegacyCliConfig.workdir` — stale after bootstrap's `process.chdir`, see
- *   bootstrap.handler.ts's workdir comments).
+ * directly — it never re-resolves the
+ * project ref or db config for push, reusing the config it already derived
+ * for `.env`. `bootstrap.handler.ts` mirrors that: it passes its own
+ * `workdir` / `projectRef` / connection directly, never touching
+ * `LegacyProjectRefResolver` or `LegacyDbConfigResolver` (which key off
+ * `LegacyCliConfig.workdir` — stale after bootstrap's `process.chdir`, see
+ * bootstrap.handler.ts's workdir comments).
  *
- * The "DRY RUN: …" heads-up line is the literal first line of Go's `push.Run`
- * (`push.go:22-24`) — i.e. it prints AFTER the connection-resolution phase's
+ * The "DRY RUN: …" heads-up line is the literal first line of `push.Run` —
+ * i.e. it prints AFTER the connection-resolution phase's
  * own output (e.g. "Initialising login role..."), not before — so it lives
  * here, right before "Connecting to...", not at either caller's call site.
  */
@@ -91,7 +96,7 @@ export interface LegacyDbPushCoreInput {
    * selector — distinct from `isLocal` (whether the *resolved* connection
    * happens to point at a local address, e.g. a `--db-url` pointing at
    * `127.0.0.1`). Only feeds the "missing local migrations" repair
-   * suggestion's `--local` flag (Go's `connType === "local"` check,
+   * suggestion's `--local` flag (`connType === "local"` check,
    * `push.handler.ts`). `bootstrap` never selects `--local`, so it is always
    * `false` there.
    */
@@ -99,21 +104,22 @@ export interface LegacyDbPushCoreInput {
   /**
    * Gates the "DRY RUN: …" heads-up line, the "Would push/seed/create …"
    * plan, and the JSON `dryRun` field — matches Go's single `dryRun` check at
-   * the top of `push.Run` (`push.go:22-24`).
+   * the top of `push.Run`.
    */
   readonly dryRun: boolean;
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /**
    * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
    * top precedence tier of the pg-delta Docker-volume id. Combined internally
    * with `toml.projectId`, `projectRef`, and a workdir-basename default via
-   * {@link legacyResolveLocalProjectId}, mirroring Go's `Config.ProjectId`
+   * {@link legacyResolveLocalProjectId}, mirroring `Config.ProjectId`
    * resolution: env override → config.toml `project_id` → `flags.ProjectRef`
    * (when non-empty) → workdir basename. That third tier comes from
-   * `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeding
+   * `flags.LoadConfig` seeding
    * `utils.Config.ProjectId = ProjectRef` *before* `Config.Load` runs, so on
    * the linked path (default `db push`, and bootstrap — both resolve
    * `ProjectRef` before loading config) a config.toml that omits `project_id`
@@ -125,8 +131,8 @@ export interface LegacyDbPushCoreInput {
    * already built) would bind the pg-delta edge-runtime cache volume to the
    * generic `supabase_edge_runtime_` name shared by every unrelated project.
    * The resolved id is sanitized ({@link legacySanitizeProjectId}) before it
-   * reaches {@link LegacyPgDeltaContext.projectId} — Go's `Config.Validate`
-   * (`pkg/config/config.go:992-995`) rewrites `Config.ProjectId` to its
+   * reaches {@link LegacyPgDeltaContext.projectId} — `Config.Validate`
+   * rewrites `Config.ProjectId` to its
    * sanitized form once at config-load time, so every later reader (including
    * `EdgeRuntimeId`) sees the already-sanitized value; an unsanitized
    * `project_id` (e.g. `"my app"` from a downloaded bootstrap template) would
@@ -161,6 +167,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
     includeAll,
     includeRoles,
     includeSeed,
+    includeVault,
     dnsResolver,
     projectId,
     toml,
@@ -170,7 +177,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
 
   const vaultSecrets = toml.vault;
 
-  // Literal first line of Go's `push.Run` (`push.go:22-24`) — prints AFTER the
+  // Literal first line of `push.Run` — prints AFTER the
   // caller's own connection-resolution output (e.g. "Loading config override",
   // "Initialising login role..."), never before.
   if (dryRun) {
@@ -313,13 +320,21 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
               new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
             );
           }
-          yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          if (includeVault) {
+            yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          }
           yield* legacyApplyMigrations(session, fs, path, pending, applyError);
           const cacheEnabled =
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
+          const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
+            legacyPgDeltaImplementationFlag(
+              process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+              toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+            ),
+          );
           const pgDeltaCtx: LegacyPgDeltaContext = {
-            // Go's `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` before
+            // `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` before
             // `Config.Load` runs, so an absent config.toml `project_id` retains the
             // linked ref, not the workdir basename — that fallback only applies when
             // `flags.ProjectRef` is unset (`--local`/`--db-url`, where `projectRef` is
@@ -339,14 +354,17 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
             denoVersion: toml.denoVersion,
+            projectEnv: toml.projectEnv,
           };
           yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
-            enabled: cacheEnabled,
+            // The catalog is an alpha.33-only artifact with no next-engine
+            // consumer. Default-next commands deliberately skip this obsolete
+            // warmup so a successful push/bootstrap cannot start edge-runtime.
+            enabled: cacheEnabled && pgDeltaImplementation === "legacy",
             targetUrl: legacyToPostgresURL(conn),
             conn,
             isLocal,
             migrationsDir: path.join(workdir, "supabase", "migrations"),
-            nowMillis: yield* Clock.currentTimeMillis,
           }).pipe(
             Effect.catch((error) =>
               output.raw(

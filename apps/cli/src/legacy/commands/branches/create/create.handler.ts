@@ -2,7 +2,6 @@ import type { V1CreateABranchOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
@@ -17,9 +16,11 @@ import {
   encodeLegacyGoYaml,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
+  LegacyBranchesBranchNameEmptyError,
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
   LegacyBranchesCreateUnexpectedStatusError,
@@ -42,31 +43,29 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
   // -----------------------------------------------------------------------
-  // Branch-name resolution. Go's `create.go:17-28` defaults to the current
-  // git branch when the arg is omitted, prompting Y/N first. The decline
-  // path returns `context.Canceled` — we tag-error and short-circuit before
-  // resolving the project ref so the linked-project cache write does not fire.
+  // Branch-name resolution: defaults to the current git branch when the arg
+  // is omitted, prompting Y/N first. The decline path returns
+  // `context.Canceled` — tag-error and short-circuit before resolving the
+  // project ref so the linked-project cache write does not fire.
   // -----------------------------------------------------------------------
   let branchName = Option.getOrElse(flags.name, () => "");
   // An explicit `--git-branch` flag takes precedence over the auto-detected
-  // branch, mirroring Go's `cmd/branches.go` (the flag sets `body.GitBranch`)
-  // and `create.go`'s `if body.GitBranch == nil` guard during auto-detect.
+  // branch (the flag sets `body.GitBranch`, guarded during auto-detect).
   let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
 
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
-      // Go's `create.go:20-25` routes this through `PromptYesNo(title, true)`
-      // (`console.go:64-82`), so `--yes`/`SUPABASE_YES` auto-confirms with the
-      // `<title> [Y/n] y` stderr echo instead of blocking a TTY, and a non-TTY
-      // stdin prints the label and scans one piped line (100ms) before falling
-      // back to the Yes default — `echo n | supabase branches create` cancels
-      // (CLI-1974). Go wraps the branch name in `utils.Aqua` (`create.go:20`).
+      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms
+      // with the `<title> [Y/n] y` stderr echo instead of blocking a TTY,
+      // and a non-TTY stdin prints the label and scans one piped line
+      // (100ms) before falling back to the Yes default —
+      // `echo n | supabase branches create` cancels. The branch name is
+      // wrapped in `utils.Aqua`.
       const yes = yield* legacyResolveYes;
       const confirmed = yield* legacyPromptYesNo(
         output,
@@ -84,7 +83,16 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
     }
   }
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  if (branchName.length === 0) {
+    return yield* new LegacyBranchesBranchNameEmptyError({
+      message: "branch name cannot be empty",
+    });
+  }
+
+  // `branches` is PARENT-scoped: after `supabase link <branch>`,
+  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
+  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const creating =
@@ -104,18 +112,35 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        // Mirror Go's `create.go:34-37`: on any non-201 status (including
-        // gated 4xx), run the plan-gate check before mapping the error.
+        // On any non-201 status (including gated 4xx), run the plan-gate
+        // check before mapping the error.
         Effect.catch(
-          legacyGateMapError({ projectRef: ref, featureKey: "branching_limit" }, mapCreateErrorRaw),
+          legacyGateMapError(
+            { projectRef: ref, featureKey: "branching_limit" },
+            (cause, upgradeSuggested) =>
+              Effect.gen(function* () {
+                const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
+                if (mapped._tag === "LegacyBranchesCreateUnexpectedStatusError") {
+                  return yield* Effect.fail(
+                    new LegacyBranchesCreateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  );
+                }
+                return yield* Effect.fail(mapped);
+              }),
+          ),
         ),
       );
     yield* creating?.clear() ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go writes "Created preview branch:" to stdout (`fmt.Println`), then
-    // the table or the encoded payload via EncodeOutput.
+    // Established output: "Created preview branch:" writes to stdout, then
+    // the table or the encoded payload.
     if (goFmt === "json") {
       yield* output.raw("Created preview branch:\n");
       yield* output.raw(encodeGoJson(created));

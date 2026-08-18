@@ -12,6 +12,10 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const goCliRoot = join(here, "../../../../cli-go");
+// Vendored copies of Go's `internal/init/templates/` scaffold files (deleted in
+// CLI-1970; last present at commit 7b469f5b3). The dotted file names are
+// de-dotted so git/tooling don't interpret the fixtures themselves.
+const goTemplatesFixtureDir = join(here, "testdata/go-templates");
 
 function normalizeNewlines(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -19,6 +23,10 @@ function normalizeNewlines(text: string): string {
 
 function readGoTemplate(...segments: ReadonlyArray<string>): string {
   return normalizeNewlines(readFileSync(join(goCliRoot, ...segments), "utf8"));
+}
+
+function readVendoredTemplate(name: string): string {
+  return normalizeNewlines(readFileSync(join(goTemplatesFixtureDir, name), "utf8"));
 }
 
 // Go renders its config.toml scaffold through text/template (config.Eject), so an action
@@ -43,10 +51,17 @@ function renderExpectedGoEject(): string {
   );
 }
 
+function renderExpectedNativeEject(): string {
+  return renderExpectedGoEject().replace(
+    '# content_path = "./templates/password_changed_notification.html"',
+    '# content_path = "./supabase/templates/password_changed_notification.html"',
+  );
+}
+
 describe("project init templates", () => {
-  it("renders config.toml with the same content as the Go CLI ejects", () => {
+  it("renders config.toml with the native notification content_path base", () => {
     expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(
-      renderExpectedGoEject(),
+      renderExpectedNativeEject(),
     );
   });
 
@@ -74,26 +89,18 @@ describe("project init templates", () => {
   });
 
   it("matches the Go .gitignore scaffold", () => {
-    expect(INIT_GITIGNORE_TEMPLATE).toBe(
-      readGoTemplate("internal", "init", "templates", ".gitignore"),
-    );
+    expect(INIT_GITIGNORE_TEMPLATE).toBe(readVendoredTemplate("gitignore"));
   });
 
   it("matches the Go VS Code extensions scaffold", () => {
-    expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(
-      readGoTemplate("internal", "init", "templates", ".vscode", "extensions.json"),
-    );
+    expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(readVendoredTemplate("vscode-extensions.json.golden"));
   });
 
   it("matches the Go VS Code settings scaffold", () => {
-    expect(VSCODE_SETTINGS_TEMPLATE).toBe(
-      readGoTemplate("internal", "init", "templates", ".vscode", "settings.json"),
-    );
+    expect(VSCODE_SETTINGS_TEMPLATE).toBe(readVendoredTemplate("vscode-settings.json.golden"));
   });
 
   it("matches the Go IntelliJ scaffold", () => {
-    expect(INTELLIJ_DENO_TEMPLATE).toBe(
-      readGoTemplate("internal", "init", "templates", ".idea", "deno.xml"),
-    );
+    expect(INTELLIJ_DENO_TEMPLATE).toBe(readVendoredTemplate("idea-deno.xml"));
   });
 });

@@ -9,14 +9,16 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
-// Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
-// CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
+// `--exclude`/`-x` is a pflag-style string-slice flag, which CSV-splits each
+// occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
 // across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
 // Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005); the
 // shorthand makes pflag frame it as `"-x, --exclude"` (see `legacyStringSliceFlag`).
@@ -39,14 +41,14 @@ const config = {
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` makes no Management API calls (Go's start needs no access token) and talks
-// directly to Docker, so it deliberately avoids `legacyManagementApiRuntimeLayer` —
+// `start` makes no Management API calls and talks directly to Docker, so it
+// deliberately avoids `legacyManagementApiRuntimeLayer` —
 // it provides only the services the handler + instrumentation consume, mirroring
 // `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
 // are not listed here: they come from `BunServices`/`processControlLayer`/
 // `runtimeInfoLayer` in the root runtime (`shared/cli/run.ts`), the same way
 // `stop`/`status` rely on the former. `HttpClient.HttpClient` is NOT provided by the
-// root runtime — `BunServices.layer` never supplies it, and `unixHttpClientLayer` is a
+// root runtime — `BunServices.layer` never supplies it, and `httpTransportClientLayer` is a
 // different service tag entirely — so it's composed here via `legacyHttpClientLayer`,
 // the same `FetchHttpClient`-backed layer `db reset`/`seed buckets` use, needed for the
 // health-check probes (`legacyWaitForHealthyServices`) and `legacySeedBucketsRun`.
@@ -54,8 +56,16 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // `SetupLocalDatabase` equivalent (`start.handler.ts`'s `legacyStartSetupLocalDatabase`
 // call) needs both: the PG15+ one-shot migrate jobs run through `LegacyDockerRun`, and
 // the schema/globals/API-privileges SQL runs over a direct `LegacyDbConnection` session.
+// `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same fresh-volume
+// pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
+// `legacyTryCacheMigrationsCatalog` call) — the exact same pair `db push` already composes
+// for its own call to that function (`push.layers.ts`).
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
 
 const legacyStartRuntimeLayer = Layer.mergeAll(
   cliConfig,
@@ -64,6 +74,8 @@ const legacyStartRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   legacyDbConnectionLayer,
   httpClient,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
 );
 
 export const legacyStartCommand = Command.make("start", config).pipe(

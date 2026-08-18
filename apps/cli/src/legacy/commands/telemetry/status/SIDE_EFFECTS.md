@@ -61,7 +61,6 @@ stdout line above.
 
 ## Notes
 
-- `status` always rewrites the state file, matching Go's
-  `telemetry.Status(...)->LoadOrCreateState(...)` path.
+- `status` always rewrites the state file.
 - Existing `device_id`, `session_id`, and `distinct_id` fields are preserved
   when the current state file is readable and valid enough to recover them.

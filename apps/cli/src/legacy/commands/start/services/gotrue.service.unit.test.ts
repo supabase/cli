@@ -11,10 +11,8 @@ import {
   type LegacyGotrueWebauthnInput,
 } from "./gotrue.service.ts";
 
-// Mirrors the fixture Go's `TestBuildGotrueEnv` builds via `config.NewConfig()`
-// (`apps/cli-go/internal/start/start_test.go:440-520`), translated into this
-// pure function's explicit input shape. Every field not asserted by a
-// specific Go subtest below reflects `config.NewConfig()`'s own defaults.
+// Every field not asserted by a specific subtest below reflects the
+// default config's own values.
 const baseEnvInput: LegacyBuildGotrueEnvInput = {
   dbHost: "db",
   dbPassword: "postgres",
@@ -94,7 +92,6 @@ const baseEnvInput: LegacyBuildGotrueEnvInput = {
 };
 
 describe("legacyBuildGotrueEnv", () => {
-  // Port of TestBuildGotrueEnv's 4 sub-cases (start_test.go:440-520).
   describe("TestBuildGotrueEnv parity", () => {
     test("uses auth scoped external url and absolute mailer verify urls", () => {
       const env = legacyBuildGotrueEnv({
@@ -208,9 +205,8 @@ describe("legacyBuildGotrueEnv", () => {
     });
   });
 
-  // Port of TestFormatMapForEnvConfig (start_test.go:566-612), exercised
-  // through GOTRUE_SMS_TEST_OTP since `formatMapForEnvConfig` is only ever
-  // called from inside `buildGotrueEnv`.
+  // Exercised through GOTRUE_SMS_TEST_OTP since `legacyFormatMapForEnvConfig`
+  // is only ever called from inside `legacyBuildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
     test("legacyFormatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
       expect(legacyFormatMapForEnvConfig({})).toBe("");
@@ -516,9 +512,9 @@ describe("legacyBuildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // Go's `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`); `start.go:668-676`
-    // gates strictly on `subject != nil`, not on string length — an explicit blank subject is
-    // still emitted, distinct from an absent one below.
+    // The email template's subject is optional; the gate is strictly
+    // `subject !== undefined`, not on string length — an explicit blank
+    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
       const env = legacyBuildGotrueEnv({
         ...baseEnvInput,

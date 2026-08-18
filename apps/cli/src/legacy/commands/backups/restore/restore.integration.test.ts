@@ -17,10 +17,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBackupsRestore } from "./restore.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
@@ -46,10 +42,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy backups restore integration", () => {
   it.live("sends recovery_time_target_unix=0 when --timestamp is omitted", () => {

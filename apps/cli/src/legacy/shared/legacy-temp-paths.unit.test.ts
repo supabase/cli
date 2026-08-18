@@ -5,7 +5,12 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
-import { legacyReadProjectRefFile, legacyTempPaths } from "./legacy-temp-paths.ts";
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
+import {
+  LegacyProjectRefReadError,
+  legacyReadProjectRefFile,
+  legacyTempPaths,
+} from "./legacy-temp-paths.ts";
 
 const readRef = (workdir: string) =>
   Effect.gen(function* () {
@@ -91,8 +96,8 @@ describe("legacyReadProjectRefFile", () => {
   });
 
   it.effect("fails with LegacyProjectRefReadError when the ref path is unreadable", () => {
-    // Go's LoadProjectRef returns `failed to load project ref` for a non-not-exist
-    // read error (project_ref.go:71-72). Seeding project-ref as a DIRECTORY makes the
+    // Returns `failed to load project ref` for a non-not-exist
+    // read error. Seeding project-ref as a DIRECTORY makes the
     // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
     // collapse to "unlinked".
     const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));
@@ -111,5 +116,16 @@ describe("legacyReadProjectRefFile", () => {
         }),
       ),
     );
+  });
+
+  it("classifies an unreadable ref file as permission without an unrelated command", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyProjectRefReadError({ message: "failed to load project ref: permission denied" }),
+    );
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("permission");
+    expect(result.has_suggestion).toBe(false);
+    expect(result.suggestion_type).toBe("none");
+    expect(result.suggested_command).toBeUndefined();
   });
 });

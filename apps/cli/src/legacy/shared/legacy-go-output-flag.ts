@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Per-command `--output`/`-o` enums, mirroring Go. Go registers `--output` per
@@ -25,7 +30,11 @@ export const LEGACY_QUERY_OUTPUT_FORMATS = ["json", "table", "csv"] as const;
  */
 export class LegacyInvalidOutputFormatError extends Data.TaggedError(
   "LegacyInvalidOutputFormatError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 /** Go's `must be one of [ a | b | c ]` (`enum.go:23`, joined with `" | "`). */
 export function legacyOutputFormatEnumMessage(allowed: ReadonlyArray<string>): string {

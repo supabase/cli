@@ -6,7 +6,6 @@ import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import {
   noteStackProjectHome,
   registerTempHome,
@@ -54,6 +53,9 @@ function subprocessBaseEnv(): Record<string, string> {
     if (value !== undefined) env[key] = value;
   }
   for (const key of AGENT_DETECTION_ENV_KEYS) delete env[key];
+  // Keep test spawns hermetic: never let the upgrade notice hit GitHub or
+  // print into asserted output. Tests exercising the notice override this.
+  env["SUPABASE_NO_UPDATE_NOTIFIER"] = "1";
   return env;
 }
 
@@ -162,20 +164,37 @@ export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
     poolerApiPort: await pickFreePort(),
   };
 
-  const stackDir = path.join(project.dir, ".supabase", "stacks", "default");
-  await mkdir(stackDir, { recursive: true });
+  const supabaseDir = path.join(project.dir, "supabase");
+  await mkdir(supabaseDir, { recursive: true });
   await writeFile(
-    path.join(stackDir, "stack.json"),
-    `${JSON.stringify(
-      {
-        schemaVersion: 1,
-        updatedAt: new Date().toISOString(),
-        ports,
-        services: DEFAULT_VERSIONS,
-      },
-      null,
-      2,
-    )}\n`,
+    path.join(supabaseDir, "config.toml"),
+    [
+      'project_id = "e2e"',
+      "",
+      "[api]",
+      `port = ${ports.apiPort}`,
+      "",
+      "[db]",
+      `port = ${ports.dbPort}`,
+      "",
+      "[db.pooler]",
+      `port = ${ports.poolerPort}`,
+      "",
+      "[edge_runtime]",
+      `inspector_port = ${ports.edgeRuntimeInspectorPort}`,
+      "",
+      "[local_smtp]",
+      `port = ${ports.mailpitPort}`,
+      `smtp_port = ${ports.mailpitSmtpPort}`,
+      `pop3_port = ${ports.mailpitPop3Port}`,
+      "",
+      "[studio]",
+      `port = ${ports.studioPort}`,
+      "",
+      "[analytics]",
+      `port = ${ports.analyticsPort}`,
+      "",
+    ].join("\n"),
   );
 
   const stackProject = {

@@ -3,6 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effec
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
+import { GoProxyInvocation, goProxyInvocationLayer } from "./go-proxy-invocation.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
 import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
@@ -258,6 +259,49 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
 });
 
 describe("makeGoProxyLayer", () => {
+  it.effect("records delegated execution for the parent success trailer", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = Layer.mergeAll(
+      makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
+        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      ),
+      goProxyInvocationLayer,
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      const invocation = yield* GoProxyInvocation;
+
+      expect(yield* invocation.wasDelegated).toBe(false);
+      yield* proxy.exec(["migration", "squash", "--local"]);
+      expect(yield* invocation.wasDelegated).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("leaves captured success tails to the parent when configured", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = Layer.mergeAll(
+      makeGoProxyLayer({
+        binary: TEST_BINARY,
+        env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+        parentOwnsCapturedSuccessTail: true,
+      }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer))),
+      goProxyInvocationLayer,
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      const invocation = yield* GoProxyInvocation;
+
+      yield* proxy.execCapture(["db", "diff"], {
+        env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+      });
+
+      expect(spawner.spawned[0]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(yield* invocation.wasDelegated).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("passes detached:false and inherited stdio to the spawner", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
@@ -280,6 +324,70 @@ describe("makeGoProxyLayer", () => {
       expect(captured.options.stdout).toBe("inherit");
       expect(captured.options.stderr).toBe("inherit");
       expect(captured.options.extendEnv).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("leaves child telemetry enabled for pure proxy commands", () => {
+    // Pure proxy commands (`migration squash`, `db branch *`, `db remote *`,
+    // `gen keys`) have no TS instrumentation, so the Go child is the only
+    // emitter of `cli_command_executed`. Disabling it here would drop those
+    // commands from telemetry entirely.
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
+      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["migration", "squash"]);
+      yield* proxy.execCapture(["gen", "keys"]);
+
+      for (const captured of spawner.spawned) {
+        expect(captured.options.env ?? {}).not.toHaveProperty("SUPABASE_TELEMETRY_DISABLED");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("suppresses child telemetry when the caller owns the parent event", () => {
+    // Instrumented handlers that delegate the whole command (db pull/diff/reset,
+    // functions download) already emit `cli_command_executed` themselves, so the
+    // child's copy would double-count.
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
+      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["db", "pull"], { suppressChildTelemetry: true });
+      yield* proxy.execCapture(["db", "diff"], {
+        env: { CUSTOM: "kept" },
+        suppressChildTelemetry: true,
+      });
+
+      for (const captured of spawner.spawned) {
+        expect(captured.options.env).toMatchObject({ SUPABASE_TELEMETRY_DISABLED: "1" });
+      }
+      expect(spawner.spawned[1]?.options.env).toMatchObject({ CUSTOM: "kept" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("passes the layer's env to children, letting per-call env win", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = makeGoProxyLayer({
+      binary: TEST_BINARY,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "1" },
+    }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)));
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["projects", "list"]);
+      yield* proxy.execCapture(["gen", "keys"]);
+      yield* proxy.exec(["projects", "list"], { env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" } });
+
+      expect(spawner.spawned[0]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(spawner.spawned[1]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(spawner.spawned[2]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("0");
     }).pipe(Effect.provide(layer));
   });
 

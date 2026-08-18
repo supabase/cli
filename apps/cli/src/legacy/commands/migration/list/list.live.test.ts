@@ -19,7 +19,7 @@ const LIVE_TIMEOUT_MS = 120_000;
 // The `--linked` default mints a temp login role via the Management API, then
 // reads `supabase_migrations.schema_migrations`. On a freshly provisioned
 // project the history table is absent, which the handler maps to an empty list
-// (Go's `pgerrcode.UndefinedTable`), so the command still exits 0. The ref is
+// (an undefined-table error), so the command still exits 0. The ref is
 // supplied via SUPABASE_PROJECT_ID (migration commands resolve the linked ref
 // from env / config.toml / ref-file, not a `--project-ref` flag).
 describeLiveDataPlane("supabase migration list (live)", () => {

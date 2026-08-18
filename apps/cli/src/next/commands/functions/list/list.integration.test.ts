@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -95,7 +95,7 @@ function cliConfigLayer() {
 function commandTreeSupportLayer(cwd: string) {
   const projectHomeDir = join(cwd, ".supabase");
   return Layer.mergeAll(
-    unixHttpClientLayer,
+    httpTransportClientLayer,
     cliConfigLayer(),
     Layer.succeed(
       ProjectHome,
@@ -106,11 +106,6 @@ function commandTreeSupportLayer(cwd: string) {
         projectLinkPath: join(projectHomeDir, "project.json"),
         projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
         ensureProjectHomeDir: Effect.void,
-        stackDir: (name) => join(projectHomeDir, "stacks", name),
-        stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-        stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-        stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-        stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
       }),
     ),
   );

@@ -1,4 +1,4 @@
-import { Effect, Exit } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
@@ -8,6 +8,7 @@ import {
   legacyFindPendingMigrations,
   legacyListRemoteMigrations,
   legacyReconcileMigrations,
+  legacyResolveMigrationFile,
   legacySuggestMigrationRepair,
   legacySuggestRevertHistory,
 } from "./legacy-migration-history.ts";
@@ -53,6 +54,17 @@ describe("legacyReconcileMigrations", () => {
   it("reports a conflict with an extra local migration", () => {
     const result = legacyReconcileMigrations([], ["20240102000000"]);
     expect(result.kind).toBe("conflict");
+  });
+
+  it("is in sync when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
+    // Local versions arrive in file-name order, where `20260420010000_b.sql`
+    // precedes `20260420_a.sql` ('0' < '_') — the reverse of the `ORDER BY
+    // version` order `schema_migrations` is read back in. Unsorted, the walk
+    // desynchronises into a conflict whose repair suggestion asks for the same
+    // version to be marked both reverted and applied.
+    expect(
+      legacyReconcileMigrations(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
+    ).toEqual({ kind: "in-sync" });
   });
 
   it("skips versions that do not parse as integers", () => {
@@ -186,5 +198,43 @@ describe("legacySuggestRevertHistory", () => {
     );
     expect(legacySuggestRevertHistory(["0002"])).toMatch(/\n$/u);
     expect(legacySuggestRevertHistory(["0002"])).toContain("supabase db pull");
+  });
+});
+
+describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
+  it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
+    // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
+    // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
+    // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
+    // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
+    // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
+    const surrogatePair = "20240101000000_a\u{1f600}.sql";
+    const privateUse = "20240101000000_a\u{e000}.sql";
+    expect([surrogatePair, privateUse].sort()[0]).toBe(surrogatePair);
+
+    const layer = Layer.mergeAll(
+      Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readDirectory: () => Effect.succeed([surrogatePair, privateUse]),
+        }),
+      ),
+      Path.layer,
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyResolveMigrationFile(
+          fs,
+          path,
+          "/supabase/migrations",
+          "20240101000000",
+        );
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(Option.isSome(result) ? result.value : undefined).toBe(
+      `/supabase/migrations/${privateUse}`,
+    );
   });
 });

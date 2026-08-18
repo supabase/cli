@@ -1,34 +1,20 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"os"
-	"path"
-	"path/filepath"
 
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/internal/db/advisors"
 	"github.com/supabase/cli/internal/db/diff"
-	"github.com/supabase/cli/internal/db/dump"
-	"github.com/supabase/cli/internal/db/lint"
 	"github.com/supabase/cli/internal/db/pull"
-	"github.com/supabase/cli/internal/db/push"
-	"github.com/supabase/cli/internal/db/query"
-	"github.com/supabase/cli/internal/db/reset"
-	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/db/test"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/legacy/branch/create"
 	"github.com/supabase/cli/legacy/branch/delete"
 	"github.com/supabase/cli/legacy/branch/list"
 	"github.com/supabase/cli/legacy/branch/switch_"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/migration"
 )
 
 var (
@@ -98,6 +84,7 @@ var (
 	outputPath string
 	schema     []string
 	file       string
+	dbPassword string
 
 	dbDiffCmd = &cobra.Command{
 		Use:   "diff",
@@ -126,53 +113,6 @@ var (
 		},
 	}
 
-	dataOnly     bool
-	useCopy      bool
-	roleOnly     bool
-	keepComments bool
-	excludeTable []string
-
-	dbDumpCmd = &cobra.Command{
-		Use:   "dump",
-		Short: "Dumps data or schemas from the remote database",
-		PreRun: func(cmd *cobra.Command, args []string) {
-			if useCopy || len(excludeTable) > 0 {
-				cobra.CheckErr(cmd.MarkFlagRequired("data-only"))
-			}
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			opts := []migration.DumpOptionFunc{
-				migration.WithSchema(schema...),
-				migration.WithoutTable(excludeTable...),
-				migration.WithComments(keepComments),
-				migration.WithColumnInsert(!useCopy),
-			}
-			return dump.Run(cmd.Context(), file, flags.DbConfig, dataOnly, roleOnly, dryRun, afero.NewOsFs(), opts...)
-		},
-		PostRun: func(cmd *cobra.Command, args []string) {
-			if len(file) > 0 {
-				if absPath, err := filepath.Abs(file); err != nil {
-					fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(file)+".")
-				} else {
-					fmt.Fprintln(os.Stderr, "Dumped schema to "+utils.Bold(absPath)+".")
-				}
-			}
-		},
-	}
-
-	dryRun       bool
-	includeAll   bool
-	includeRoles bool
-	includeSeed  bool
-
-	dbPushCmd = &cobra.Command{
-		Use:   "push",
-		Short: "Push new migrations to the remote database",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return push.Run(cmd.Context(), dryRun, includeAll, includeRoles, includeSeed, flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
 	dbPullCmd = &cobra.Command{
 		Use:   "pull [migration name]",
 		Short: "Pull schema from the remote database",
@@ -198,141 +138,6 @@ var (
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
-		},
-	}
-
-	shadowMode        string
-	shadowTargetLocal bool
-	shadowUsePgDelta  bool
-	shadowSchema      []string
-	shadowProjectRef  string
-
-	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
-	// commands to provision the throwaway shadow database that the diff "source"
-	// runs against, then leave it running so the TS caller can run the differ
-	// (migra or pg-delta) itself and remove the container afterwards. It prints
-	// three newline-separated lines to stdout: the container id, the source
-	// Postgres URL, and an optional target-override URL (empty unless the
-	// local-target declarative branch redirects the diff target to a second
-	// shadow database). The URLs are emitted WITHOUT the password
-	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
-	// (CWE-312); the TS caller re-injects the local Postgres password it already
-	// resolves from config.toml, which is the same value the shadow uses. Shadow
-	// provisioning (start.SetupDatabase) is not yet ported, which is why this
-	// stays in Go.
-	dbShadowCmd = &cobra.Command{
-		Use:    "__shadow",
-		Hidden: true,
-		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// The hidden __shadow command carries none of the db-url/local/linked
-			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
-			// never loads supabase/config.toml (it only loads when a target flag
-			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
-			// the shadow is provisioned from the project's [db] settings — shadow
-			// port, Postgres version, service baseline, and especially the
-			// password: the native-TS caller injects the config.toml password into
-			// the seam URLs, so the shadow must be created with that same password.
-			fsys := afero.NewOsFs()
-			// On the linked path the native-TS caller passes the resolved project
-			// ref via --project-ref so the shadow is built from the same
-			// remote-merged config the Go monolith uses: LoadConfig seeds
-			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
-			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
-			// shadows, which the monolith never remote-merges, so the base config is
-			// used exactly as before.
-			if len(shadowProjectRef) > 0 {
-				flags.ProjectRef = shadowProjectRef
-			}
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			var src diff.ShadowSource
-			var err error
-			switch shadowMode {
-			case "declarative":
-				src, err = diff.PrepareRawShadow(cmd.Context())
-			case "diff", "":
-				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
-			default:
-				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
-			}
-			if err != nil {
-				return err
-			}
-			fmt.Println(src.Container)
-			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
-			if src.TargetOverride != nil {
-				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
-			} else {
-				fmt.Println("")
-			}
-			return nil
-		},
-	}
-
-	bootstrapMode       string
-	bootstrapSqlPaths   []string
-	bootstrapFromBackup string
-	bootstrapVersion    string
-	bootstrapNoSeed     bool
-
-	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db start` and
-	// `db reset --local` commands to drive the container-bootstrap primitives that
-	// are not yet ported to TypeScript: creating/recreating the local Postgres
-	// container, applying the initial schema, and the storage health gate. The TS
-	// caller orchestrates everything else (the "already running?" check and its
-	// message, version/last resolution, bucket seeding, the git-branch "Finished…"
-	// line, telemetry, and --output-format shaping); the seam stays in Go only for
-	// the Docker lifecycle. It mirrors the existing db __shadow seam: it carries no
-	// db-url/local/linked target flags, so it loads supabase/config.toml explicitly
-	// (the root PersistentPreRunE only loads it when a target flag is set). Progress
-	// goes to stderr; the only stdout output is a single machine-parseable marker
-	// for --mode await-storage ("ready" or "absent").
-	dbBootstrapCmd = &cobra.Command{
-		Use:    "__db-bootstrap",
-		Hidden: true,
-		Short:  "Internal: container bootstrap for the native db start / db reset commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			switch bootstrapMode {
-			case "start":
-				// Mirror start.Run minus the "already running?" check, which the TS
-				// caller performs (and prints "Postgres database is already running.").
-				if err := start.StartDatabase(cmd.Context(), bootstrapFromBackup, fsys, os.Stderr); err != nil {
-					if rmErr := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); rmErr != nil {
-						fmt.Fprintln(os.Stderr, rmErr)
-					}
-					return err
-				}
-				return nil
-			case "recreate":
-				// The PG14/PG15 container-recreate half of local db reset. The TS
-				// caller has already printed "Resetting local database…" and validated
-				// the flags. Apply the same seed handling as `db reset` (dbResetCmd):
-				// `--no-seed` disables the seed, `--sql-paths` overrides the seed paths,
-				// before MigrateAndSeed runs inside the recreate.
-				if err := applyDbResetSeedFlags(bootstrapNoSeed, bootstrapSqlPaths); err != nil {
-					return err
-				}
-				return reset.RecreateLocalDatabase(cmd.Context(), bootstrapVersion, fsys)
-			case "await-storage":
-				ready, err := reset.AwaitStorageReady(cmd.Context())
-				if err != nil {
-					return err
-				}
-				if ready {
-					fmt.Println("ready")
-				} else {
-					fmt.Println("absent")
-				}
-				return nil
-			default:
-				return fmt.Errorf("unknown bootstrap mode: %s", bootstrapMode)
-			}
 		},
 	}
 
@@ -368,155 +173,6 @@ var (
 			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", false, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 	}
-
-	noSeed       bool
-	lastVersion  uint
-	seedSqlPaths []string
-
-	dbResetCmd = &cobra.Command{
-		Use:   "reset",
-		Short: "Resets the local database to current migrations",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateDbResetSeedFlags(noSeed, seedSqlPaths); err != nil {
-				return err
-			}
-			warnRemoteResetSeedOverride(cmd, seedSqlPaths)
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := applyDbResetSeedFlags(noSeed, seedSqlPaths); err != nil {
-				return err
-			}
-			return reset.Run(cmd.Context(), migrationVersion, lastVersion, flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	level = utils.EnumFlag{
-		Allowed: lint.AllowedLevels,
-		Value:   lint.AllowedLevels[0],
-	}
-
-	lintFailOn = utils.EnumFlag{
-		Allowed: append([]string{"none"}, lint.AllowedLevels...),
-		Value:   "none",
-	}
-
-	dbLintCmd = &cobra.Command{
-		Use:   "lint",
-		Short: "Checks local database for typing error",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return lint.Run(cmd.Context(), schema, level.Value, lintFailOn.Value, flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	fromBackup string
-
-	dbStartCmd = &cobra.Command{
-		Use:   "start",
-		Short: "Starts local Postgres database",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return start.Run(cmd.Context(), fromBackup, afero.NewOsFs())
-		},
-	}
-
-	dbTestCmd = &cobra.Command{
-		Hidden: true,
-		Use:    "test [path] ...",
-		Short:  "Tests local database with pgTAP",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return test.Run(cmd.Context(), args, flags.DbConfig, afero.NewOsFs())
-		},
-	}
-
-	queryFile   string
-	queryOutput = utils.EnumFlag{
-		Allowed: []string{"json", "table", "csv"},
-		Value:   "json",
-	}
-
-	dbQueryCmd = &cobra.Command{
-		Use:   "query [sql]",
-		Short: "Execute a SQL query against the database",
-		Long: `Execute a SQL query against the local or linked database.
-
-When used by an AI coding agent (auto-detected or via --agent=yes), the default
-output format is JSON with an untrusted data warning envelope. When used by a
-human (--agent=no or no agent detected), the default output format is table
-without the envelope.`,
-		Args: cobra.MaximumNArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
-				fsys := afero.NewOsFs()
-				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
-					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
-					return err
-				}
-				return flags.LoadProjectRef(fsys)
-			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sql, err := query.ResolveSQL(args, queryFile, os.Stdin)
-			if err != nil {
-				return err
-			}
-			agentMode := utils.IsAgentMode()
-			// If user didn't explicitly set --output, pick default based on agent mode
-			outputFormat := queryOutput.Value
-			if outputFlag := cmd.Flags().Lookup("output"); outputFlag != nil && !outputFlag.Changed {
-				if agentMode {
-					outputFormat = "json"
-				} else {
-					outputFormat = "table"
-				}
-			}
-			// db query resolves --output into a command-local flag, so mirror the
-			// resolved value onto the global that telemetry's output_format reads.
-			utils.OutputFormat.Value = outputFormat
-			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
-				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, outputFormat, agentMode, os.Stdout)
-			}
-			return query.RunLocal(cmd.Context(), sql, flags.DbConfig, outputFormat, agentMode, os.Stdout)
-		},
-	}
-
-	advisorType = utils.EnumFlag{
-		Allowed: advisors.AllowedTypes,
-		Value:   advisors.AllowedTypes[0],
-	}
-
-	advisorLevel = utils.EnumFlag{
-		Allowed: advisors.AllowedLevels,
-		Value:   advisors.AllowedLevels[1],
-	}
-
-	advisorFailOn = utils.EnumFlag{
-		Allowed: append([]string{"none"}, advisors.AllowedLevels...),
-		Value:   "none",
-	}
-
-	dbAdvisorsCmd = &cobra.Command{
-		Use:   "advisors",
-		Short: "Checks database for security and performance issues",
-		Long:  "Inspects the database for common security and performance issues such as missing RLS policies, unindexed foreign keys, exposed auth.users, and more.",
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
-				fsys := afero.NewOsFs()
-				if _, err := utils.LoadAccessTokenFS(fsys); err != nil {
-					utils.CmdSuggestion = fmt.Sprintf("Run %s first.", utils.Aqua("supabase login"))
-					return err
-				}
-				return flags.LoadProjectRef(fsys)
-			}
-			return nil
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
-				return advisors.RunLinked(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.ProjectRef)
-			}
-			return advisors.RunLocal(cmd.Context(), advisorType.Value, advisorLevel.Value, advisorFailOn.Value, flags.DbConfig)
-		},
-	}
 )
 
 func shouldUsePgDelta() bool {
@@ -547,62 +203,6 @@ func resolvePullDiffEngine(engineFlagChanged bool, engine string, pgDeltaDefault
 	return pgDeltaDefault
 }
 
-func validateDbResetSeedFlags(noSeed bool, patterns []string) error {
-	if noSeed && len(patterns) > 0 {
-		utils.CmdSuggestion = fmt.Sprintf("Use either %s to skip seeding or %s to override seed files, not both.", utils.Aqua("--no-seed"), utils.Aqua("--sql-paths"))
-		return errors.New("--no-seed cannot be used with --sql-paths")
-	}
-	for _, pattern := range patterns {
-		if len(pattern) == 0 {
-			utils.CmdSuggestion = fmt.Sprintf("Pass a non-empty file path or glob pattern to %s.", utils.Aqua("--sql-paths"))
-			return errors.New("--sql-paths requires a non-empty path or glob pattern")
-		}
-	}
-	return nil
-}
-
-func warnRemoteResetSeedOverride(cmd *cobra.Command, patterns []string) {
-	if len(patterns) == 0 {
-		return
-	}
-	if cmd.Flags().Changed("linked") || cmd.Flags().Changed("db-url") {
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--sql-paths overrides [db.seed].sql_paths and seeds the remote database selected by --linked or --db-url.")
-	}
-}
-
-func applyDbResetSeedFlags(noSeed bool, patterns []string) error {
-	if noSeed {
-		utils.Config.Db.Seed.Enabled = false
-		return nil
-	}
-	if len(patterns) == 0 {
-		return nil
-	}
-	resolved, err := resolveSeedSqlPaths(patterns)
-	if err != nil {
-		return err
-	}
-	utils.Config.Db.Seed.Enabled = true
-	utils.Config.Db.Seed.SqlPaths = resolved
-	return nil
-}
-
-func resolveSeedSqlPaths(patterns []string) ([]string, error) {
-	resolved := make([]string, len(patterns))
-	base := config.NewPathBuilder("").SupabaseDirPath
-	for i, pattern := range patterns {
-		if len(pattern) == 0 {
-			return nil, errors.New("--sql-paths requires a non-empty path or glob pattern")
-		}
-		if !filepath.IsAbs(pattern) {
-			resolved[i] = path.Join(base, pattern)
-		} else {
-			resolved[i] = pattern
-		}
-	}
-	return resolved, nil
-}
-
 func init() {
 	// Build branch command
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
@@ -627,39 +227,6 @@ func init() {
 	diffFlags.StringVarP(&file, "file", "f", "", "Saves schema diff to a new migration file.")
 	diffFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	dbCmd.AddCommand(dbDiffCmd)
-	// Build dump command
-	dumpFlags := dbDumpCmd.Flags()
-	dumpFlags.BoolVar(&dryRun, "dry-run", false, "Prints the pg_dump script that would be executed.")
-	dumpFlags.BoolVar(&dataOnly, "data-only", false, "Dumps only data records.")
-	dumpFlags.BoolVar(&useCopy, "use-copy", false, "Use copy statements in place of inserts.")
-	dumpFlags.StringSliceVarP(&excludeTable, "exclude", "x", []string{}, "List of schema.tables to exclude from data-only dump.")
-	dumpFlags.BoolVar(&roleOnly, "role-only", false, "Dumps only cluster roles.")
-	dbDumpCmd.MarkFlagsMutuallyExclusive("role-only", "data-only")
-	dumpFlags.BoolVar(&keepComments, "keep-comments", false, "Keeps commented lines from pg_dump output.")
-	dbDumpCmd.MarkFlagsMutuallyExclusive("keep-comments", "data-only")
-	dumpFlags.StringVarP(&file, "file", "f", "", "File path to save the dumped contents.")
-	dumpFlags.String("db-url", "", "Dumps from the database specified by the connection string (must be percent-encoded).")
-	dumpFlags.Bool("linked", true, "Dumps from the linked project.")
-	dumpFlags.Bool("local", false, "Dumps from the local database.")
-	dbDumpCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	dumpFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
-	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", dumpFlags.Lookup("password")))
-	dumpFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	dbDumpCmd.MarkFlagsMutuallyExclusive("schema", "role-only")
-	dbCmd.AddCommand(dbDumpCmd)
-	// Build push command
-	pushFlags := dbPushCmd.Flags()
-	pushFlags.BoolVar(&includeAll, "include-all", false, "Include all migrations not found on remote history table.")
-	pushFlags.BoolVar(&includeRoles, "include-roles", false, "Include custom roles from "+utils.CustomRolesPath+".")
-	pushFlags.BoolVar(&includeSeed, "include-seed", false, "Include seed data from your config.")
-	pushFlags.BoolVar(&dryRun, "dry-run", false, "Print the migrations that would be applied, but don't actually apply them.")
-	pushFlags.String("db-url", "", "Pushes to the database specified by the connection string (must be percent-encoded).")
-	pushFlags.Bool("linked", true, "Pushes to the linked project.")
-	pushFlags.Bool("local", false, "Pushes to the local database.")
-	dbPushCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	pushFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
-	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pushFlags.Lookup("password")))
-	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
 	// --declarative switches pull output from a timestamped migration to declarative
@@ -678,22 +245,6 @@ func init() {
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
-	// Build hidden shadow-provisioning seam command
-	shadowFlags := dbShadowCmd.Flags()
-	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations) or declarative (bare shadow).")
-	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
-	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
-	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
-	dbCmd.AddCommand(dbShadowCmd)
-	// Build hidden container-bootstrap seam command (native db start / db reset)
-	bootstrapFlags := dbBootstrapCmd.Flags()
-	bootstrapFlags.StringVar(&bootstrapMode, "mode", "start", "Bootstrap mode: start, recreate, or await-storage.")
-	bootstrapFlags.StringVar(&bootstrapFromBackup, "from-backup", "", "Path to a logical backup file (start mode).")
-	bootstrapFlags.StringVar(&bootstrapVersion, "version", "", "Reset up to the specified version (recreate mode).")
-	bootstrapFlags.BoolVar(&bootstrapNoSeed, "no-seed", false, "Skip the seed script after recreate (recreate mode).")
-	bootstrapFlags.StringArrayVar(&bootstrapSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for the recreate (recreate mode).")
-	dbCmd.AddCommand(dbBootstrapCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
@@ -705,57 +256,5 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
-	// Build reset command
-	resetFlags := dbResetCmd.Flags()
-	resetFlags.String("db-url", "", "Resets the database specified by the connection string (must be percent-encoded).")
-	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
-	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
-	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
-	resetFlags.StringArrayVar(&seedSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.")
-	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
-	resetFlags.UintVar(&lastVersion, "last", 0, "Reset up to the last n migration versions.")
-	dbResetCmd.MarkFlagsMutuallyExclusive("version", "last")
-	dbCmd.AddCommand(dbResetCmd)
-	// Build lint command
-	lintFlags := dbLintCmd.Flags()
-	lintFlags.String("db-url", "", "Lints the database specified by the connection string (must be percent-encoded).")
-	lintFlags.Bool("linked", false, "Lints the linked project for schema errors.")
-	lintFlags.Bool("local", true, "Lints the local database for schema errors.")
-	dbLintCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	lintFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	lintFlags.Var(&level, "level", "Error level to emit.")
-	lintFlags.Var(&lintFailOn, "fail-on", "Error level to exit with non-zero status.")
-	dbCmd.AddCommand(dbLintCmd)
-	// Build start command
-	startFlags := dbStartCmd.Flags()
-	startFlags.StringVar(&fromBackup, "from-backup", "", "Path to a logical backup file.")
-	dbCmd.AddCommand(dbStartCmd)
-	// Build test command
-	dbCmd.AddCommand(dbTestCmd)
-	testFlags := dbTestCmd.Flags()
-	testFlags.String("db-url", "", "Tests the database specified by the connection string (must be percent-encoded).")
-	testFlags.Bool("linked", false, "Runs pgTAP tests on the linked project.")
-	testFlags.Bool("local", true, "Runs pgTAP tests on the local database.")
-	dbTestCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	// Build query command
-	queryFlags := dbQueryCmd.Flags()
-	queryFlags.String("db-url", "", "Queries the database specified by the connection string (must be percent-encoded).")
-	queryFlags.Bool("linked", false, "Queries the linked project's database via Management API.")
-	queryFlags.Bool("local", true, "Queries the local database.")
-	dbQueryCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	queryFlags.StringVarP(&queryFile, "file", "f", "", "Path to a SQL file to execute.")
-	queryFlags.VarP(&queryOutput, "output", "o", "Output format: table, json, or csv.")
-	dbCmd.AddCommand(dbQueryCmd)
-	// Build advisors command
-	advisorsFlags := dbAdvisorsCmd.Flags()
-	advisorsFlags.String("db-url", "", "Checks the database specified by the connection string (must be percent-encoded).")
-	advisorsFlags.Bool("linked", false, "Checks the linked project for issues.")
-	advisorsFlags.Bool("local", true, "Checks the local database for issues.")
-	dbAdvisorsCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
-	advisorsFlags.Var(&advisorType, "type", "Type of advisors to check: all, security, performance.")
-	advisorsFlags.Var(&advisorLevel, "level", "Minimum issue level to display: info, warn, error.")
-	advisorsFlags.Var(&advisorFailOn, "fail-on", "Issue level to exit with non-zero status: none, info, warn, error.")
-	dbCmd.AddCommand(dbAdvisorsCmd)
 	rootCmd.AddCommand(dbCmd)
 }

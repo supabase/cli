@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
   cobraMutuallyExclusiveErrorMessage,
+  explicitBooleanLongFlag,
   hasExplicitLongFlag,
+  lastExplicitLongFlagValue,
   PERSISTENT_VALUE_FLAG_NAMES,
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
   pflagArgvScan,
@@ -47,6 +49,59 @@ describe("hasExplicitLongFlag", () => {
   test("falls back to a bare scan when the command path is not found", () => {
     expect(hasExplicitLongFlag(["--use-api"], COMMAND_PATH, "use-api")).toBe(true);
     expect(hasExplicitLongFlag(["--use-docker"], COMMAND_PATH, "use-api")).toBe(false);
+  });
+});
+
+describe("lastExplicitLongFlagValue", () => {
+  test("resolves repeated occurrences last-wins, like pflag", () => {
+    expect(
+      lastExplicitLongFlagValue(["link", "--profile", "a", "--profile", "b"], [], "profile"),
+    ).toBe("b");
+    expect(
+      lastExplicitLongFlagValue(["link", "--profile=a", "--profile", "b"], [], "profile"),
+    ).toBe("b");
+  });
+
+  test("reads inline and separate values, undefined when absent or valueless", () => {
+    expect(lastExplicitLongFlagValue(["--profile=x"], [], "profile")).toBe("x");
+    expect(lastExplicitLongFlagValue(["--profile="], [], "profile")).toBe("");
+    expect(lastExplicitLongFlagValue(["link"], [], "profile")).toBeUndefined();
+    expect(lastExplicitLongFlagValue(["link", "--profile"], [], "profile")).toBeUndefined();
+    expect(lastExplicitLongFlagValue(["--", "--profile", "x"], [], "profile")).toBeUndefined();
+  });
+});
+
+describe("explicitBooleanLongFlag", () => {
+  test("a bare flag records pflag's NoOptDefVal true", () => {
+    expect(explicitBooleanLongFlag(["--debug"], "debug")).toBe(true);
+  });
+
+  test("an inline =false records false", () => {
+    expect(explicitBooleanLongFlag(["--debug=false"], "debug")).toBe(false);
+  });
+
+  test("an inline =0 records false, matching pflag's ParseBool false set", () => {
+    expect(explicitBooleanLongFlag(["--debug=0"], "debug")).toBe(false);
+  });
+
+  test("an inline =F records false, matching pflag's ParseBool false set", () => {
+    expect(explicitBooleanLongFlag(["--debug=F"], "debug")).toBe(false);
+  });
+
+  test("an inline =true records true", () => {
+    expect(explicitBooleanLongFlag(["--debug=true"], "debug")).toBe(true);
+  });
+
+  test("a garbage inline value is truthy, matching pflag's permissive cast", () => {
+    expect(explicitBooleanLongFlag(["--debug=yes"], "debug")).toBe(true);
+  });
+
+  test("repeated occurrences resolve last-wins", () => {
+    expect(explicitBooleanLongFlag(["--debug", "--debug=false"], "debug")).toBe(false);
+  });
+
+  test("returns undefined when the flag never appears", () => {
+    expect(explicitBooleanLongFlag(["--other"], "debug")).toBeUndefined();
   });
 });
 

@@ -10,8 +10,11 @@ import {
   classifyParseErrorConsoleOutput,
   exitCodeForFailure,
   extractCommandPath,
+  hasRootHelpOrVersionFlag,
+  rootFlagTokens,
   shouldReportFailure,
   shouldUseGlobalSignalInterrupt,
+  hasRootVersionFlag,
 } from "./run.ts";
 
 // Real command tree (not a hand-rolled stand-in) so `classifyParseErrorConsoleOutput`'s
@@ -44,23 +47,42 @@ describe("extractCommandPath", () => {
   });
 });
 
+describe("local shorthand clusters", () => {
+  const localValues = (token: string) => token === "-p";
+
+  it("does not read an attached local shorthand value as help", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-ph"], localValues)).toBe(false);
+  });
+
+  it("recognizes help after boolean shorthand flags at subcommand depth", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-xh"], localValues)).toBe(true);
+  });
+
+  it("skips a following token consumed by a local shorthand value flag", () => {
+    expect([...rootFlagTokens(["link", "-p", "--debug"], localValues)]).toEqual([
+      { token: "-p", index: 1 },
+    ]);
+  });
+});
+
 describe("shouldUseGlobalSignalInterrupt", () => {
   it("opts out for self-managed signal commands, even behind global flags", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "serve"])).toBe(false);
-    expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(false);
-    // `db reset` drives the bootstrap seam (holds signals for the Go child), so it must not
-    // be wrapped in the global handler either.
-    expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(false);
     expect(
       shouldUseGlobalSignalInterrupt(["--workdir", "/tmp/app", "functions", "serve", "--debug"]),
     ).toBe(false);
   });
 
-  it("opts in for ordinary commands, including native start (it installs no signal handling of its own, so the global wrapper's rollback-on-interrupt is the only thing that runs legacyRollbackStart on Ctrl-C)", () => {
+  it("opts in for ordinary commands, including native start/db start/db reset (each installs no signal handling of its own, so the global wrapper's rollback-on-interrupt/finalizers are the only thing that runs on Ctrl-C)", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["db", "push"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["projects", "list"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(true);
+    expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(true);
+    // `db reset` (CLI-1955): the hidden `db __db-bootstrap` seam this used to drive is
+    // gone — the local path is fully native TS, installing no signal handling of its
+    // own, so it participates in the global handler like `db start` (CLI-1954) before it.
+    expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(true);
     expect(shouldUseGlobalSignalInterrupt([])).toBe(true);
   });
 
@@ -496,5 +518,31 @@ describe("classifyParseErrorConsoleOutput", () => {
         args: [],
       }),
     ).toBe("flush-unchanged");
+  });
+});
+
+describe("hasRootVersionFlag", () => {
+  it.each([
+    [["--version"], true],
+    [["-v"], false],
+    [["--version=true"], true],
+    [["--version=false"], true],
+    [["-v=1"], false],
+    [["-hv"], false],
+    [["-xv"], false],
+    [["--version", "true"], true],
+    [["--version", "foo"], true],
+    [["-v", "1"], false],
+    [["--debug", "-v"], false],
+    [["--profile", "-v"], false],
+    [["--profile=x", "-v"], false],
+    [["-o", "-v"], false],
+    [["db", "reset", "--version", "20240101000000"], false],
+    [["migration", "squash", "--version", "x"], false],
+    [["branches", "-v"], false],
+    [["--", "--version"], false],
+    [[], false],
+  ])("%j -> %s", (args, expected) => {
+    expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);
   });
 });

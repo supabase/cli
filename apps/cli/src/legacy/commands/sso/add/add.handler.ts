@@ -60,7 +60,8 @@ const SAML_DISABLED_MESSAGE =
 
 const readMetadata = readMetadataFile({
   openError: (args) => new LegacySsoAddMetadataFileError(args),
-  nonUtf8Error: (args) => new LegacySsoAddMetadataFileError({ message: args.message }),
+  nonUtf8Error: (args) =>
+    new LegacySsoAddMetadataFileError({ message: args.message, reason: "invalid_content" }),
 });
 
 const readAttributeMapping = readAttributeMappingFile({
@@ -70,10 +71,9 @@ const readAttributeMapping = readAttributeMappingFile({
 const SSO_ADD_COMMAND_PATH = ["sso", "add"] as const;
 
 /**
- * `sso add`'s single mutually-exclusive group, in Go's registration order
- * (`cmd/sso.go:164` — `MarkFlagsMutuallyExclusive("metadata-file",
- * "metadata-url")`). Registration order determines the first bracket of
- * cobra's error template; only the violating subset gets sorted.
+ * `sso add`'s single mutually-exclusive group. Declaration order determines
+ * the first bracket of the mutual-exclusion error template; only the
+ * violating subset gets sorted.
  */
 const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
 
@@ -83,9 +83,8 @@ const SSO_ADD_MUTEX_GROUP = ["metadata-file", "metadata-url"] as const;
  * flags — these tell `pflagArgvScan` which bare tokens consume the next
  * argv token as their value. `--skip-url-validation` is this command's only
  * boolean flag and is deliberately excluded; booleans never consume a
- * following token. `--type`'s `-t` shorthand (Go `cmd/sso.go:157` `VarP`)
- * is covered via the shorthand map so a genuine `-t saml` invocation is
- * seen exactly as pflag sees it.
+ * following token. `--type`'s `-t` shorthand is covered via the shorthand
+ * map so a genuine `-t saml` invocation is seen exactly as pflag sees it.
  */
 const SSO_ADD_SCAN_SPEC = {
   valueFlagNames: new Set([
@@ -113,34 +112,30 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
   const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    // cobra runs `ValidateRequiredFlags` (`command.go:1007`) and
-    // `ValidateFlagGroups` (`command.go:1010`) — in that order — before
-    // `RunE` (`command.go:1015`), so these checks must precede everything Go
-    // does inside `RunE`. Keep this block first.
+    // Required-flag and flag-group validation must precede everything else
+    // in the handler. Keep this block first.
     //
-    // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
-    // all — not the resulting value: `--metadata-file= --metadata-url x` must
-    // still trip the error even though the file path is empty. Scanning raw
-    // argv keeps detection aligned with pflag's semantics rather than with
-    // whatever the TS parser produced — e.g. a bare
-    // `--metadata-file --metadata-url` parses to two `none`s here but is a
-    // single consumed value in pflag (CLI-1982).
+    // "Set" means the flag was passed at all — not the resulting value:
+    // `--metadata-file= --metadata-url x` must still trip the error even
+    // though the file path is empty. Scanning raw argv keeps detection
+    // aligned with pflag's semantics rather than with whatever the TS parser
+    // produced — e.g. a bare `--metadata-file --metadata-url` parses to two
+    // `none`s here but is a single consumed value in pflag.
     const scan = pflagArgvScan(rawArgs, SSO_ADD_COMMAND_PATH, SSO_ADD_SCAN_SPEC);
     const occurrences = scan.occurrences;
 
     // pflag calls `Value.Set` for every occurrence in argv order, and an
-    // invalid value fails `ParseFlags` (cobra `command.go:919`) before
-    // `ValidateArgs`, every hook, `ValidateRequiredFlags`, and `RunE` —
-    // reachable here because the Effect parser resolves repeated flags
-    // first-wins without validating later occurrences (`--type saml --type
-    // bogus` parses, then Go rejects `bogus` and never POSTs) and accepts
-    // `yes`/`no`, which `strconv.ParseBool` rejects (binary-verified, PR
-    // #5974 review round 4). These checks precede the missing-value check
-    // because a missing value can only arise at the final argv token, so
-    // every recorded occurrence pflag would reject sits earlier in its
-    // sequential walk. Flags are checked in Go registration order
-    // (`cmd/sso.go:157-163`); pflag itself errors in argv order when several
-    // flags carry invalid occurrences at once — accepted micro-divergence.
+    // invalid value fails flag parsing before required-flag/mutex validation
+    // and the handler body — reachable here because the Effect parser
+    // resolves repeated flags first-wins without validating later
+    // occurrences (`--type saml --type bogus` parses here, but pflag rejects
+    // `bogus` and never lets the request happen) and accepts `yes`/`no`,
+    // which `strconv.ParseBool` rejects. These checks precede the
+    // missing-value check because a missing value can only arise at the
+    // final argv token, so every recorded occurrence pflag would reject
+    // sits earlier in its sequential walk. Flags are checked in declaration
+    // order; pflag itself errors in argv order when several flags carry
+    // invalid occurrences at once — accepted micro-divergence.
     // The enum helpers also yield the pflag-effective (last-occurrence)
     // values; `--type`'s stays unused because every valid occurrence is the
     // enum's single member, so the parsed `flags.type` is already
@@ -166,49 +161,43 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       },
     );
 
-    // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
-    // value-taking flag is the final token (`sso add --type saml --domains`)
-    // — before every validation, hook, and `RunE`, so no POST is ever made.
-    // The Effect parser accepts that argv (the flag parses as unset), hence
-    // the emulation. Binary-verified against `apps/cli-go` (PR #5974 review
-    // round 3). Keep this ahead of the profile/workdir/required-flag/mutex
-    // checks.
+    // Flag parsing fails when a bare value-taking flag is the final token
+    // (`sso add --type saml --domains`) — before every validation and the
+    // handler body, so no POST is ever made. The Effect parser accepts that
+    // argv (the flag parses as unset), hence the emulation. Keep this ahead
+    // of the profile/workdir/required-flag/mutex checks.
     if (scan.missingValueError !== undefined) {
       return yield* Effect.fail(
         new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
       );
     }
 
-    // Go's root `PersistentPreRunE` loads the pflag/viper-effective
-    // `--profile`/`SUPABASE_PROFILE` (`LoadProfile`, `cmd/root.go:98-102`,
-    // `internal/utils/profile.go:94-118`) immediately BEFORE `ChangeWorkDir`,
-    // so an unloadable profile aborts before the workdir check, the
-    // required-type check, the mutex check, and any POST — and a loadable one
-    // decides which API host receives the POST. Reachable exactly where the
-    // scan and the parser disagree: in `sso add --type saml --domains
-    // --profile alternate.yml` pflag hands `--profile` to `--domains` and Go
-    // targets the env/default profile, while the Effect parser read
-    // `alternate.yml` as the profile and built `LegacyCliConfig` from it —
-    // without this reconciliation the POST goes to an API host Go never
-    // contacts (binary-verified, PR #5974 review round 7). Where the scan
-    // and the parser agree, this resolves to `none` and the config layer's
-    // apiUrl below is already pflag-effective.
+    // The effective `--profile`/`SUPABASE_PROFILE` is resolved immediately
+    // before the workdir check, so an unloadable profile aborts before the
+    // workdir check, the required-type check, the mutex check, and any
+    // POST — and a loadable one decides which API host receives the POST.
+    // Reachable exactly where the scan and the parser disagree: in `sso add
+    // --type saml --domains --profile alternate.yml` pflag hands `--profile`
+    // to `--domains` and targets the env/default profile, while the Effect
+    // parser read `alternate.yml` as the profile and built `LegacyCliConfig`
+    // from it — without this reconciliation the POST goes to an API host the
+    // established behavior never contacts. Where the scan and the parser
+    // agree, this resolves to `none` and the config layer's apiUrl below is
+    // already pflag-effective.
     const reconciledProfile = yield* legacyResolvePflagProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Reconciled-profile credentials, resolved ONCE for the main request and
     // every auxiliary call (linked-project cache fill, upgrade-gate fallback
-    // GETs): Go's reconciled `CurrentProfile` + `GetAccessToken` apply
-    // process-wide (`access_token.go:43`, review r3684524241). `undefined`
-    // when the scan and the parser agree — every consumer then resolves from
-    // the config-layer services as before.
+    // GETs): the reconciled profile's credentials apply process-wide.
+    // `undefined` when the scan and the parser agree — every consumer then
+    // resolves from the config-layer services as before.
     // Reconciled-profile credentials, resolved LAZILY (memoized) so the first
-    // read happens at the request site — Go's token gate is `GetSupabase`
-    // inside RunE (`api.go:119-124`), AFTER required/mutex/workdir
-    // validation, so a missing or invalid reconciled token must not pre-empt
-    // those errors (review r3686720488). Missing → Go's ErrMissingToken;
-    // invalid → ErrInvalidToken (the validation failure propagates). The
-    // auxiliary calls (cache fill, upgrade-gate GETs) use the absorbed
-    // variant: failures skip like Go's best-effort `ensureProjectGroupsCached`.
+    // read happens at the request site — the token gate fires AFTER
+    // required/mutex/workdir validation, so a missing or invalid reconciled
+    // token must not pre-empt those errors. Missing → the missing-token
+    // error; invalid → the validation failure propagates. The auxiliary
+    // calls (cache fill, upgrade-gate GETs) use the absorbed variant:
+    // failures skip, best-effort.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(legacyAccessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -219,25 +208,22 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
             Effect.succeed(Option.none<Redacted.Redacted<string>>()),
           );
 
-    // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
-    // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
-    // `internal/utils/misc.go:238-257`) after `ParseFlags` and before
-    // `ValidateRequiredFlags` (`command.go:1007`) and `ValidateFlagGroups`
-    // (`command.go:1010`), so a missing directory aborts before the
-    // required-type check, the mutex check, and any POST. Reachable exactly
-    // where the scan and the parser disagree: in `sso add --type saml
-    // --project-ref <ref> --workdir --metadata-file missing.xml` pflag binds
-    // `"--metadata-file"` to `--workdir` and Go exits at chdir, while the
-    // Effect parser refused that flag-shaped value and read `missing.xml` as
-    // metadata — without this check the reconciliation below would silently
-    // drop the metadata source and POST a provider Go never creates
-    // (binary-verified, PR #5974 review round 6).
+    // The effective `--workdir`/`SUPABASE_WORKDIR` is validated after flag
+    // parsing and before the required-type check and the mutex check, so a
+    // missing directory aborts before those checks and any POST. Reachable
+    // exactly where the scan and the parser disagree: in `sso add --type
+    // saml --project-ref <ref> --workdir --metadata-file missing.xml` pflag
+    // binds `"--metadata-file"` to `--workdir` and the established behavior
+    // exits at chdir, while the Effect parser refused that flag-shaped value
+    // and read `missing.xml` as metadata — without this check the
+    // reconciliation below would silently drop the metadata source and
+    // POST a provider that should never be created.
     yield* legacyValidatePflagWorkdir(scan);
 
-    // `MarkFlagRequired("type")` (`cmd/sso.go:165`): when pflag consumed the
-    // `--type` or `-t` token as another flag's value (e.g. `--domains --type
-    // saml` or `--domains -t saml`), pflag never marks `type` changed and Go
-    // fails the required-flag check before `RunE` — no POST is ever made.
+    // `--type` is required: when pflag consumed the `--type` or `-t` token
+    // as another flag's value (e.g. `--domains --type saml` or `--domains -t
+    // saml`), pflag never marks `type` changed and the required-flag check
+    // fails before the handler runs — no POST is ever made.
     // The Effect parser can't see this (it refuses flag-shaped values, so it
     // read `--type saml` / `-t saml` as a normal flag), hence the emulation
     // here. A genuine `-t saml` records a `type` occurrence via the scan's
@@ -262,12 +248,12 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // not. Everything the handler acts on below is therefore reconciled to
     // the pflag-effective values from the same scan, so a suppressed mutex
     // can never pair with a metadata source pflag never set (e.g.
-    // `--project-ref --metadata-file x.xml --metadata-url u`, where Go hands
-    // `--metadata-file` to `--project-ref` and fails ref validation without
-    // ever touching metadata). `--type` keeps its parsed value: the enum has
-    // a single member every occurrence was validated against above, so
-    // whenever the handler runs at all the parsed value equals the
-    // pflag-effective one (the consumed-token case is rejected by the
+    // `--project-ref --metadata-file x.xml --metadata-url u`, where pflag
+    // hands `--metadata-file` to `--project-ref` and fails ref validation
+    // without ever touching metadata). `--type` keeps its parsed value: the
+    // enum has a single member every occurrence was validated against
+    // above, so whenever the handler runs at all the parsed value equals
+    // the pflag-effective one (the consumed-token case is rejected by the
     // required-flag check above). `--name-id-format` and
     // `--skip-url-validation` were reconciled above, alongside their pflag
     // value validation.
@@ -281,9 +267,9 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
 
     // Effective API base URL: the pflag-reconciled profile's when the scan
     // and the parser disagreed on `--profile`, the config layer's otherwise.
-    // Go's reconciled `CurrentProfile` applies process-wide, so the POST, the
-    // upgrade-gate fallback GETs, and the linked-project cache GET all target
-    // the same host (PR #5974 round 7).
+    // The reconciled profile applies process-wide, so the POST, the
+    // upgrade-gate fallback GETs, and the linked-project cache GET all
+    // target the same host.
     const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
 
     yield* Effect.gen(function* () {
@@ -301,11 +287,13 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       } else if (Option.isSome(metadataUrl)) {
         if (!skipUrlValidation) {
           yield* validateMetadataUrl(metadataUrl.value).pipe(
-            // Note: Go suffixes with no trailing period (matches `create.go:47`).
+            // Note: this error message suffix has no trailing period
+            // (differs from `update`, which does).
             Effect.mapError(
               (cause) =>
                 new LegacySsoAddMetadataFileError({
                   message: `${cause.message} Use --skip-url-validation to suppress this error`,
+                  reason: "invalid_url",
                 }),
             ),
           );
@@ -370,7 +358,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         // mapper uses (`mapLegacyHttpError`) so error output stays bounded and
         // shell-safe — the raw-HTTP path must not skip these defences.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* legacySuggestUpgrade({
+        const upgradeSuggested = yield* legacySuggestUpgrade({
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
@@ -383,7 +371,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
           return yield* Effect.fail(
-            new LegacySsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+            new LegacySsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
           );
         }
         return yield* Effect.fail(
@@ -391,6 +379,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
             status: response.status,
             body: bodyText,
             message: `Unexpected error adding identity provider: ${bodyText}`,
+            upgradeSuggested,
           }),
         );
       }
@@ -409,8 +398,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (review r3684270640) — same pattern as list/show.
+        // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
@@ -422,7 +410,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         return;
       }
       if (goFmt === "env") {
-        // Go's `create.go:94-96` returns nil for env — emit nothing.
+        // `-o env` emits nothing for `sso add`.
         return;
       }
 
@@ -438,11 +426,11 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
 
       yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
     }).pipe(
-      // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
-      // process-wide `CurrentProfile` — the reconciled host, never the layer's.
+      // Linked-project cache fill GETs `/v1/projects/{ref}` through the
+      // reconciled host, never the config layer's.
       Effect.ensuring(
         // Resolved INSIDE the ensuring effect — the memoized token read must
-        // not run before the handler body (Go's gate order, see above).
+        // not run before the handler body (see the token-gate ordering above).
         Effect.flatMap(reconciledTokenForAux, (token) =>
           linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
         ),

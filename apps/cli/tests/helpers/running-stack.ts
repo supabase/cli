@@ -1,111 +1,83 @@
 import { BunServices } from "@effect/platform-bun";
-import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
-import { unixHttpClientLayer } from "@supabase/stack";
 import {
-  DaemonServer,
-  DEFAULT_VERSIONS,
-  fullVersionManifest,
-  type PartialVersionManifest,
-  projectStateManagerPathsFromRoot,
   Stack,
   StackServiceState,
-  stackMetadata,
-  StateManager,
   type StackInfo,
-  type StackMetadata,
-  type StackState,
+  httpTransportClientLayer,
 } from "@supabase/stack/effect";
-import { Effect, Layer, ManagedRuntime, Option, Stream } from "effect";
-import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { DaemonServer } from "@supabase/stack/testing";
+import {
+  ManagedStackManager,
+  deriveStackId,
+  managedStackManagerLayer,
+  type ControlOwnership,
+  type ManagedStackManagerShape,
+  type ManagedPortIntentDocument,
+} from "@supabase/stack/managed";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type LogEntry,
-  ServiceNotFoundError,
-} from "../../../../packages/process-compose/src/index.ts";
+import { ServiceNotFoundError } from "@supabase/process-compose";
 import { CliConfig } from "../../src/next/config/cli-config.service.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 
-const DEFAULT_PORTS = {
-  apiPort: 54321,
-  dbPort: 54322,
-  authPort: 54323,
-  postgrestPort: 54324,
-  postgrestAdminPort: 54325,
-  edgeRuntimePort: 54337,
-  edgeRuntimeInspectorPort: 54338,
-  realtimePort: 54326,
-  storagePort: 54327,
-  imgproxyPort: 54328,
-  mailpitPort: 54329,
-  mailpitSmtpPort: 54330,
-  mailpitPop3Port: 54331,
-  pgmetaPort: 54332,
-  studioPort: 54333,
-  analyticsPort: 54334,
-  poolerPort: 54335,
-  poolerApiPort: 54336,
+const launch = { mode: "auto" as const, versions: { postgres: "17.6.1" }, excludedServices: [] };
+const portDocument: ManagedPortIntentDocument = {
+  activeFields: ["apiPort", "dbPort"],
+  document: {},
 };
 
-const DEFAULT_SERVICES: PartialVersionManifest = {
-  ...DEFAULT_VERSIONS,
-  postgres: "17.6.1.081",
-  postgrest: "14.5",
-  auth: "2.188.0-rc.15",
-  storage: "1.41.8",
-};
-
-const DEFAULT_INFO: StackInfo = {
-  url: `http://127.0.0.1:${DEFAULT_PORTS.apiPort}`,
-  dbUrl: `postgresql://postgres:postgres@127.0.0.1:${DEFAULT_PORTS.dbPort}/postgres`,
-  publishableKey: "test-publishable-key",
-  secretKey: "test-secret-key",
-  anonJwt: "test-anon-jwt",
-  serviceRoleJwt: "test-service-role-jwt",
-  serviceEndpoints: {
-    auth: `http://127.0.0.1:${DEFAULT_PORTS.authPort}`,
-  },
-};
-
-const DEFAULT_STATES = [
+const stackStates = [
   new StackServiceState({
-    name: "auth",
-    status: "Healthy",
+    name: "postgres",
+    status: "Running",
     pid: 123,
     exitCode: null,
     restartCount: 0,
     startedAt: Date.now(),
     error: null,
   }),
-  new StackServiceState({
-    name: "postgres",
-    status: "Running",
-    pid: 456,
-    exitCode: null,
-    restartCount: 0,
-    startedAt: Date.now(),
-    error: null,
-  }),
 ];
 
-const DEFAULT_HISTORY: ReadonlyArray<LogEntry> = [
-  {
-    timestamp: 1_000,
-    service: "auth",
-    stream: "stdout",
-    line: '{"path":"/signup"}',
-  },
-  {
-    timestamp: 1_001,
-    service: "postgres",
-    stream: "stdout",
-    line: "database system is ready to accept connections",
-  },
+const history = [
+  { timestamp: 1_000, service: "postgres", stream: "stdout" as const, line: "ready" },
 ];
 
-function makeProjectHome(projectRoot: string) {
+const stackLayer = (info: StackInfo, onStop: Effect.Effect<void>): Layer.Layer<Stack> =>
+  Layer.succeed(Stack, {
+    getInfo: () => Effect.succeed(info),
+    start: () => Effect.void,
+    stop: () => onStop,
+    dispose: () => onStop,
+    startService: () => Effect.void,
+    stopService: () => Effect.void,
+    restartService: () => Effect.void,
+    reloadFunctions: () => Effect.void,
+    reloadEdgeRuntime: () => Effect.void,
+    getState: (name: string) => {
+      const state = stackStates.find((candidate) => candidate.name === name);
+      return state === undefined
+        ? Effect.fail(new ServiceNotFoundError({ name }))
+        : Effect.succeed(state);
+    },
+    getAllStates: () => Effect.succeed(stackStates),
+    stateChanges: (name: string) =>
+      Effect.succeed(Stream.fromIterable(stackStates.filter((state) => state.name === name))),
+    allStateChanges: () => Stream.fromIterable(stackStates),
+    waitReady: () => Effect.void,
+    waitAllReady: () => Effect.void,
+    subscribeLogs: (name: string) =>
+      Stream.fromIterable(history.filter((entry) => entry.service === name)),
+    subscribeAllLogs: () => Stream.fromIterable(history),
+    logHistory: (name: string, limit?: number) =>
+      Effect.succeed(history.filter((entry) => entry.service === name).slice(-(limit ?? 100))),
+    logHistoryAll: (limit?: number) => Effect.succeed(history.slice(-(limit ?? 100))),
+  });
+
+function projectHome(projectRoot: string): ProjectHome["Service"] {
   const projectHomeDir = join(projectRoot, ".supabase");
   return ProjectHome.of({
     projectRoot,
@@ -114,245 +86,115 @@ function makeProjectHome(projectRoot: string) {
     projectLinkPath: join(projectHomeDir, "project.json"),
     projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
     ensureProjectHomeDir: Effect.void,
-    stackDir: (name: string) => join(projectHomeDir, "stacks", name),
-    stackStatePath: (name: string) => join(projectHomeDir, "stacks", name, "state.json"),
-    stackMetadataPath: (name: string) => join(projectHomeDir, "stacks", name, "stack.json"),
-    stackDataDir: (name: string) => join(projectHomeDir, "stacks", name, "data"),
-    stackLogsDir: (name: string) => join(projectHomeDir, "stacks", name, "logs"),
   });
 }
 
-function makeStackLayer(opts: {
-  info: StackInfo;
-  states: ReadonlyArray<StackServiceState>;
-  waitAllReadyNever?: boolean;
-  history: ReadonlyArray<LogEntry>;
-  live: ReadonlyArray<LogEntry>;
-  onStop?: () => void;
-}) {
-  return Layer.succeed(Stack, {
-    getInfo: () => Effect.succeed(opts.info),
-    start: () => Effect.void,
-    stop: () =>
-      Effect.sync(() => {
-        opts.onStop?.();
-      }),
-    dispose: () =>
-      Effect.sync(() => {
-        opts.onStop?.();
-      }),
-    startService: (name: string) =>
-      opts.states.some((state) => state.name === name)
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name })),
-    stopService: (name: string) =>
-      opts.states.some((state) => state.name === name)
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name })),
-    restartService: (name: string) =>
-      opts.states.some((state) => state.name === name)
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name })),
-    reloadFunctions: () =>
-      opts.states.some((state) => state.name === "edge-runtime")
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" })),
-    reloadEdgeRuntime: () =>
-      opts.states.some((state) => state.name === "edge-runtime")
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" })),
-    getState: (name: string) => {
-      const state = opts.states.find((candidate) => candidate.name === name);
-      return state === undefined
-        ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.succeed(state);
-    },
-    getAllStates: () => Effect.succeed(opts.states),
-    stateChanges: (name: string) => {
-      const state = opts.states.find((candidate) => candidate.name === name);
-      return state === undefined
-        ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.succeed(Stream.make(state));
-    },
-    allStateChanges: () => Stream.fromIterable(opts.states),
-    waitReady: (name: string) =>
-      opts.states.some((state) => state.name === name)
-        ? Effect.void
-        : Effect.fail(new ServiceNotFoundError({ name })),
-    waitAllReady: () => (opts.waitAllReadyNever ? Effect.never : Effect.void),
-    subscribeLogs: (name: string) =>
-      Stream.fromIterable(opts.live.filter((entry) => entry.service === name)),
-    subscribeAllLogs: (services?: ReadonlyArray<string>) =>
-      Stream.fromIterable(
-        services === undefined || services.length === 0
-          ? opts.live
-          : opts.live.filter((entry) => services.includes(entry.service)),
-      ),
-    logHistory: (name: string, limit?: number) =>
-      Effect.succeed(opts.history.filter((entry) => entry.service === name).slice(-(limit ?? 100))),
-    logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
-      Effect.succeed(
-        (services === undefined || services.length === 0
-          ? opts.history
-          : opts.history.filter((entry) => services.includes(entry.service))
-        ).slice(-(limit ?? 100)),
-      ),
-  });
-}
-
-function spawnAliveProcess(): ChildProcess {
-  return spawn("sleep", ["1000"], {
-    stdio: "ignore",
-  });
-}
-
-async function terminateProcess(child: ChildProcess | undefined) {
-  if (child?.pid === undefined) {
-    return;
-  }
-
-  if (child.exitCode == null && child.signalCode == null) {
-    child.kill("SIGTERM");
-  }
-
-  await new Promise<void>((resolve) => {
-    const timeout = setTimeout(() => {
-      if (child.exitCode == null && child.signalCode == null) {
-        child.kill("SIGKILL");
-      }
-      resolve();
-    }, 200);
-
-    child.once("exit", () => {
-      clearTimeout(timeout);
-      resolve();
-    });
-  });
-}
-
-export async function makeStackFixture(
-  opts: {
-    running?: boolean;
-    stackName?: string;
-    projectRootName?: string;
-    info?: Partial<StackInfo>;
-    services?: PartialVersionManifest;
-    metadata?: StackMetadata;
-    states?: ReadonlyArray<StackServiceState>;
-    waitAllReadyNever?: boolean;
-    history?: ReadonlyArray<LogEntry>;
-    live?: ReadonlyArray<LogEntry>;
-  } = {},
+export async function makeManagedStackFixture(
+  options: { running?: boolean; stackName?: string } = {},
 ) {
-  const rootDir = mkdtempSync(join(tmpdir(), "supabase-cli-running-stack-"));
-  const projectRoot = join(rootDir, opts.projectRootName ?? "repo");
-  const homeDir = join(rootDir, "home");
-  const projectHome = makeProjectHome(projectRoot);
-  const socketPath = join(rootDir, "daemon.sock");
-  const stackName = opts.stackName ?? "default";
-  const running = opts.running ?? true;
-  const services = fullVersionManifest({
-    ...DEFAULT_SERVICES,
-    ...opts.services,
-  });
-  const info = { ...DEFAULT_INFO, ...opts.info };
-  const states = opts.states ?? DEFAULT_STATES;
-  const history = opts.history ?? DEFAULT_HISTORY;
-  const live = opts.live ?? [];
-  let stopped = false;
-  let child: ChildProcess | undefined;
-  let daemonRuntime: ManagedRuntime.ManagedRuntime<DaemonServer, never> | undefined;
-
+  const root = mkdtempSync(join(tmpdir(), "supabase-cli-managed-stack-"));
+  const projectRoot = join(root, "repo");
+  const homeDir = join(root, "home");
+  const stateRoot = join(homeDir, "managed");
   mkdirSync(projectRoot, { recursive: true });
-  mkdirSync(projectHome.stackDir(stackName), { recursive: true });
-
-  const metadata =
-    opts.metadata ??
-    stackMetadata({
-      ports: DEFAULT_PORTS,
-      services,
-      launch: { mode: "auto", excludedServices: [] },
-    });
-
-  const stateManagerLayer = StateManager.make(
-    projectStateManagerPathsFromRoot(projectHome.projectHomeDir),
-  ).pipe(Layer.provide(BunServices.layer));
-
+  const stackName = options.stackName ?? "default";
+  const running = options.running ?? true;
+  const project = projectHome(projectRoot);
+  const managerRuntime = ManagedRuntime.make(managedStackManagerLayer({ stateRoot }));
+  const ready = await managerRuntime.runPromise(Deferred.make<void>());
+  const ownerReady = await managerRuntime.runPromise(
+    Deferred.make<{
+      ownership: ControlOwnership;
+      info: StackInfo;
+      manager: ManagedStackManagerShape;
+    }>(),
+  );
+  const daemonReady = await managerRuntime.runPromise(Deferred.make<void>());
+  let stackId = "";
+  let daemonRuntime: ManagedRuntime.ManagedRuntime<DaemonServer, never> | undefined;
+  const setup = managerRuntime.runFork(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* manager.ensureWorkspace(projectRoot);
+        stackId = deriveStackId(environment.identity, stackName);
+        const ownership = yield* manager.acquireControl(stackId);
+        if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");
+        const started = yield* manager.startStack({
+          workspacePath: projectRoot,
+          stackName,
+          portDocument,
+          ownership,
+          lifecycle: running ? "running" : "stopped",
+          runtime: running
+            ? { pid: process.pid, controlEndpoint: ownership.endpoint.url, protocolVersion: 1 }
+            : undefined,
+          launch,
+        });
+        const apiPort = started.stack.ports.find(
+          (assignment) => assignment.key === "api.port",
+        )?.port;
+        const dbPort = started.stack.ports.find((assignment) => assignment.key === "db.port")?.port;
+        if (apiPort === undefined || dbPort === undefined)
+          throw new Error("fixture missing core ports");
+        const info: StackInfo = {
+          url: `http://127.0.0.1:${apiPort}`,
+          dbUrl: `postgresql://postgres:postgres@127.0.0.1:${dbPort}/postgres`,
+          publishableKey: "test-publishable-key",
+          secretKey: "test-secret-key",
+          anonJwt: "test-anon-jwt",
+          serviceRoleJwt: "test-service-role-jwt",
+          serviceEndpoints: {},
+        };
+        if (running) {
+          yield* Deferred.succeed(ownerReady, { ownership, info, manager });
+          yield* Deferred.await(daemonReady);
+          yield* ownership.setState("running", true);
+        } else {
+          yield* ownership.close;
+        }
+        yield* Deferred.succeed(ready, void 0);
+        yield* Effect.succeed(started);
+        yield* Effect.never;
+      }),
+    ),
+  );
   if (running) {
-    child = spawnAliveProcess();
-    const pid = child.pid;
-    if (pid === undefined) {
-      throw new Error("Failed to spawn a child process for the running stack fixture.");
-    }
-
-    const state: StackState = {
-      pid,
-      name: stackName,
-      projectDir: projectRoot,
-      apiPort: DEFAULT_PORTS.apiPort,
-      dbPort: DEFAULT_PORTS.dbPort,
-      ports: DEFAULT_PORTS,
-      socketPath,
-      startedAt: new Date().toISOString(),
-      url: info.url,
-      dbUrl: info.dbUrl,
-      publishableKey: info.publishableKey,
-      secretKey: info.secretKey,
-      anonJwt: info.anonJwt,
-      serviceRoleJwt: info.serviceRoleJwt,
-      serviceEndpoints: info.serviceEndpoints,
-      services,
-    };
-
-    daemonRuntime = ManagedRuntime.make(
-      DaemonServer.layer.pipe(
-        Layer.provide(
-          makeStackLayer({
-            info,
-            states,
-            waitAllReadyNever: opts.waitAllReadyNever,
-            history,
-            live,
-            onStop: () => {
-              stopped = true;
-              if (child !== undefined && child.exitCode == null && child.signalCode == null) {
-                child.kill("SIGTERM");
-              }
-            },
-          }),
-        ),
-        Layer.provide(
-          Layer.mergeAll(
-            BunServices.layer,
-            BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
+    const owner = await managerRuntime.runPromise(Deferred.await(ownerReady));
+    const daemonLayer = DaemonServer.layerWithShutdown(
+      Effect.forkDetach(Effect.sleep("50 millis").pipe(Effect.andThen(owner.ownership.close))).pipe(
+        Effect.asVoid,
+      ),
+      owner.ownership.ownerStatus,
+      {
+        includeOwnerRoute: false,
+        launchUpdate: (next) =>
+          owner.manager
+            .updateLaunch(owner.ownership, { stackId, launch: next })
+            .pipe(Effect.asVoid),
+      },
+    ).pipe(
+      Layer.provide(
+        stackLayer(
+          owner.info,
+          owner.manager.recordLifecycle(owner.ownership, { stackId, lifecycle: "stopped" }).pipe(
+            Effect.asVoid,
+            Effect.catch(() => Effect.void),
           ),
         ),
       ),
+      Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.ownership.server)),
     );
-
+    daemonRuntime = ManagedRuntime.make(daemonLayer);
     await daemonRuntime.runPromise(DaemonServer);
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const stateManager = yield* StateManager;
-        yield* stateManager.write(state);
-        yield* stateManager.writeMetadata(stackName, metadata);
-      }).pipe(Effect.provide(stateManagerLayer)),
-    );
-  } else {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const stateManager = yield* StateManager;
-        yield* stateManager.writeMetadata(stackName, metadata);
-      }).pipe(Effect.provide(stateManagerLayer)),
-    );
+    await managerRuntime.runPromise(Deferred.succeed(daemonReady, void 0));
   }
+  await managerRuntime.runPromise(Deferred.await(ready));
 
   const baseLayer = Layer.mergeAll(
     BunServices.layer,
-    unixHttpClientLayer,
-    stateManagerLayer,
-    Layer.succeed(ProjectHome, projectHome),
+    httpTransportClientLayer,
+    Layer.succeed(ProjectHome, project),
     Layer.succeed(
       CliConfig,
       CliConfig.of({
@@ -360,7 +202,7 @@ export async function makeStackFixture(
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",
         telemetryPosthogHost: "https://us.i.posthog.com",
-        telemetryPosthogKey: Option.some("phc_test_key"),
+        telemetryPosthogKey: Option.none(),
         accessToken: Option.none(),
         noKeyring: Option.none(),
         supabaseHome: homeDir,
@@ -375,7 +217,7 @@ export async function makeStackFixture(
       RuntimeInfo.of({
         cwd: projectRoot,
         platform: "darwin",
-        arch: "x64",
+        arch: "arm64",
         homeDir,
         execPath: "/test/bin/bun",
         pid: process.pid,
@@ -385,33 +227,49 @@ export async function makeStackFixture(
 
   return {
     projectRoot,
-    projectHomeDir: projectHome.projectHomeDir,
+    homeDir,
+    stateRoot,
     stackName,
-    stackStatePath: projectHome.stackStatePath(stackName),
-    stackMetadataPath: projectHome.stackMetadataPath(stackName),
-    services,
+    stackId,
     baseLayer,
-    get stopped() {
-      return stopped;
-    },
+    stackInfo: await managerRuntime.runPromise(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const document = yield* manager.inspectStack(stackId);
+        const apiPort = document?.ports.find((assignment) => assignment.key === "api.port")?.port;
+        const dbPort = document?.ports.find((assignment) => assignment.key === "db.port")?.port;
+        if (apiPort === undefined || dbPort === undefined)
+          throw new Error("fixture missing core ports");
+        return {
+          url: `http://127.0.0.1:${apiPort}`,
+          dbUrl: `postgresql://postgres:postgres@127.0.0.1:${dbPort}/postgres`,
+          publishableKey: "test-publishable-key",
+          secretKey: "test-secret-key",
+          anonJwt: "test-anon-jwt",
+          serviceRoleJwt: "test-service-role-jwt",
+          serviceEndpoints: {},
+        } satisfies StackInfo;
+      }),
+    ),
+    readDocument: () =>
+      managerRuntime.runPromise(
+        Effect.gen(function* () {
+          const manager = yield* ManagedStackManager;
+          return yield* manager.inspectStack(stackId);
+        }),
+      ),
+    launch,
     async dispose() {
-      if (daemonRuntime !== undefined) {
-        await daemonRuntime.dispose();
-      }
-      await terminateProcess(child);
-      rmSync(rootDir, { recursive: true, force: true });
+      await managerRuntime.runPromise(Fiber.interrupt(setup));
+      await daemonRuntime?.dispose();
+      await managerRuntime.dispose();
+      rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-export async function makeRunningStackFixture(
-  opts: Omit<Parameters<typeof makeStackFixture>[0], "running"> = {},
-) {
-  return makeStackFixture({ ...opts, running: true });
-}
+export const makeRunningStackFixture = (options: { stackName?: string } = {}) =>
+  makeManagedStackFixture({ ...options, running: true });
 
-export async function makeStoppedStackFixture(
-  opts: Omit<Parameters<typeof makeStackFixture>[0], "running"> = {},
-) {
-  return makeStackFixture({ ...opts, running: false });
-}
+export const makeStoppedStackFixture = (options: { stackName?: string } = {}) =>
+  makeManagedStackFixture({ ...options, running: false });

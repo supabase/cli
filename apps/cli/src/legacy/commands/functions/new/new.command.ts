@@ -31,7 +31,7 @@ const legacyFunctionsNewRuntimeLayer = Layer.mergeAll(
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["functions", "new"]),
   // `stdinLayer`: the first-function IDE prompts read piped stdin via
-  // `legacyPromptYesNo` (Go's `Console.ReadLine`, `console.go:38-61`).
+  // `legacyPromptYesNo`.
   stdinLayer,
 );
 

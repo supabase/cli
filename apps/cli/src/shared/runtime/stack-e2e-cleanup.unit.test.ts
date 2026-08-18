@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createStackE2eCleanupManager } from "../../../tests/helpers/stack-e2e-cleanup.ts";
 
 function permissionError(message = "permission denied") {
@@ -15,9 +18,8 @@ function cleanupEnvironment(
       return { exitCode: 0 };
     },
     captureSnapshot: () => ({
-      stacksRootExists: false,
-      stateFiles: [],
-      socketPaths: [],
+      managedStacksRootExists: false,
+      documentFiles: [],
       stackDirs: [],
       trackedPids: [],
     }),
@@ -43,9 +45,8 @@ describe("stack e2e cleanup manager", () => {
     const manager = createStackE2eCleanupManager(
       cleanupEnvironment(calls, {
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: ["/tmp/state.json"],
-          socketPaths: [],
+          managedStacksRootExists: true,
+          documentFiles: ["/tmp/stack.json"],
           stackDirs: ["/tmp/stack"],
           trackedPids: [],
         }),
@@ -69,6 +70,46 @@ describe("stack e2e cleanup manager", () => {
     await manager.drain();
 
     expect(calls).toEqual(["stop:/tmp/project:/tmp/home", "cleanup-project", "dispose-home"]);
+  });
+
+  it("canonicalizes symlinked project and home paths before matching stack state", async () => {
+    const root = mkdtempSync(join(tmpdir(), "stack-e2e-cleanup-"));
+    const project = join(root, "project");
+    const projectLink = join(root, "project-link");
+    const home = join(root, "home");
+    const homeLink = join(root, "home-link");
+    mkdirSync(project);
+    mkdirSync(home);
+    symlinkSync(project, projectLink);
+    symlinkSync(home, homeLink);
+
+    const snapshots: Array<{ readonly projectDir: string; readonly homeDir?: string }> = [];
+    const manager = createStackE2eCleanupManager(
+      cleanupEnvironment([], {
+        captureSnapshot: (projectDir, homeDir) => {
+          snapshots.push({ projectDir, homeDir });
+          return {
+            managedStacksRootExists: false,
+            documentFiles: [],
+            stackDirs: [],
+            trackedPids: [],
+          };
+        },
+      }),
+    );
+
+    try {
+      manager.registerHome({ dir: homeLink, dispose: () => {} });
+      manager.registerStackProject({ dir: projectLink, cleanup: async () => {} });
+      manager.associateHome(projectLink, homeLink);
+      await manager.drain();
+
+      expect(snapshots).toEqual([
+        { projectDir: realpathSync(project), homeDir: realpathSync(home) },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("ignores non-stack homes", async () => {
@@ -96,9 +137,8 @@ describe("stack e2e cleanup manager", () => {
           return { exitCode: 0 };
         },
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: ["/tmp/state.json"],
-          socketPaths: ["/tmp/daemon.sock"],
+          managedStacksRootExists: true,
+          documentFiles: ["/tmp/stack.json"],
           stackDirs: ["/tmp/stack"],
           trackedPids: [123],
         }),
@@ -135,10 +175,9 @@ describe("stack e2e cleanup manager", () => {
     const manager = createStackE2eCleanupManager(
       cleanupEnvironment(calls, {
         captureSnapshot: () => ({
-          stacksRootExists: true,
-          stateFiles: [],
-          socketPaths: [],
-          stackDirs: ["/tmp/project/.supabase/stacks/default"],
+          managedStacksRootExists: true,
+          documentFiles: [],
+          stackDirs: ["/tmp/home/managed/stacks/stack-id"],
           trackedPids: [],
         }),
       }),

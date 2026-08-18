@@ -26,7 +26,23 @@ const spawnError = () =>
   // credential-free message that still points at the likely cause.
   new LegacyDockerRunError({
     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+    reason: "spawn",
+    daemonDown: false,
   });
+
+/**
+ * Docker's/Podman's "image not found" stderr shape for `image inspect` — the subprocess
+ * equivalent of `errdefs.IsNotFound`, mirroring `db-bootstrap/container-lifecycle.ts`'s
+ * (private) `isVolumeNotFoundMessage` for `volume inspect`. Confirmed empirically: `docker image
+ * inspect <missing>` prints `Error response from daemon: No such image: <ref>` and exits 1;
+ * an uncached Podman inspect exits non-zero with the differently worded `<ref>: image not
+ * known` instead (Podman's `libimage` not-found error, independent of Docker's daemon-response
+ * wording — see e.g. containers/podman-compose#358's `failed to find image …: image not known`
+ * trace). Both must resolve to "not cached" or the pull loop below never runs on a Podman-only
+ * host, matching the same Docker/Podman fallback `spawnContainerCli` already builds in.
+ */
+const isImageNotFoundMessage = (message: string): boolean =>
+  /no such image/iu.test(message) || /image not known/iu.test(message);
 
 const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
@@ -42,18 +58,18 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 /**
  * Builds a Docker image resolver bound to `spawner`: given an image, finds the
  * best registry candidate (already-local first, then pulled with retry),
- * mirroring Go's `DockerResolveImageIfNotCached` /
- * `DockerImagePullWithRetry` (`apps/cli-go/internal/utils/docker.go:304-343`).
+ * mirroring `DockerResolveImageIfNotCached` /
+ * `DockerImagePullWithRetry`.
  * The local-image check fails fast (never reaching the pull loop at all) when
  * the daemon itself is unreachable — Go's own inspect call distinguishes a
  * typed `errdefs.IsNotFound` from any other inspect error and returns the
- * latter immediately (`docker.go:326-334`); see `hasLocalImage` below for how
+ * latter immediately; see `hasLocalImage` below for how
  * this port makes the same distinction from a CLI subprocess's stderr instead
  * of a typed Engine API error. Once past that gate, a pull failure IS retried
  * unconditionally — Go retries on any non-nil error as long as the context
  * wasn't canceled, with no message-pattern gating — up to 2 times per
  * candidate (3 total attempts) with an escalating 4s/8s backoff
- * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching Go's `2<<(i+1)` seconds for `i` in
+ * (`DOCKER_PULL_RETRY_DELAYS_MS`), matching `2<<(i+1)` seconds for `i` in
  * `0,1`. A spawn failure (the Docker/Podman binary itself couldn't be run) is
  * a different, non-retryable case — see `spawnError` below. Used by both the
  * foreground `db dump`-style run-to-completion containers
@@ -62,10 +78,12 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * the caller's process lifecycle differs.
  *
  * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
- * comment) — only `start` currently threads it through, since its caller
- * already has the project's dotenv-merged values in scope; `legacy-docker-run.layer.ts`
- * is a statically-composed `Layer` built before any `projectEnvValues` is
- * known, so its own callers stay ambient-only for now.
+ * comment) — `start` and the `functions` Docker paths (`deploy`, `download`,
+ * `serve`, via `resolveFunctionsDockerImage`) all thread it through, since
+ * each already has the project's dotenv-merged values in scope by the time
+ * it resolves an image; `legacy-docker-run.layer.ts` is a statically-composed
+ * `Layer` built before any `projectEnvValues` is known, so its own callers
+ * stay ambient-only for now.
  */
 export function legacyMakeDockerImageResolver(
   spawner: Spawner,
@@ -97,14 +115,25 @@ export function legacyMakeDockerImageResolver(
       );
       if (exitCode === 0) return true;
       const stderr = new TextDecoder().decode(concat(stderrChunks)).trim();
-      if (legacyIsDockerDaemonUnreachable(stderr)) {
-        return yield* Effect.fail(
-          new LegacyDockerRunError({
-            message: `failed to inspect docker image: ${stderr}\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`,
-          }),
-        );
-      }
-      return false;
+      // `DockerResolveImageIfNotCached` proceeds to the pull loop only when the inspect
+      // error is a confirmed `errdefs.IsNotFound` — any OTHER inspect error (daemon unreachable,
+      // an auth-plugin denial, an invalid reference, an API error, ...) returns immediately
+      // instead. Defaulting anything-but-daemon-unreachable
+      // to "not cached" (as this used to) would instead send every OTHER inspect failure through
+      // the multi-registry pull loop too — performing unauthorized network operations, delaying
+      // the failure by each retry backoff, and replacing the real inspect error with a pull
+      // aggregate. So this must default to failing, and only treat a confirmed not-found as a
+      // cache miss — the inverse of the daemon-unreachable-only gate this replaced.
+      if (isImageNotFoundMessage(stderr)) return false;
+      const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
+      const hint = daemonDown ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}` : "";
+      return yield* Effect.fail(
+        new LegacyDockerRunError({
+          message: `failed to inspect docker image: ${stderr}${hint}`,
+          reason: "inspect",
+          daemonDown,
+        }),
+      );
     }).pipe(Effect.scoped);
 
   const pullImage = (
@@ -178,8 +207,8 @@ export function legacyMakeDockerImageResolver(
         // `deadline` (epoch ms) is opt-in and no production caller passes one:
         // a human watching `supabase start` can Ctrl-C a slow pull, CI cannot,
         // so only the e2e helper (`tests/helpers/docker-image.ts`) bounds the
-        // resolve. Remaining time is split across the candidates still to run
-        // — recomputed per candidate so a fast failure carries its unused
+        // resolve. Remaining time is split across the candidates still to run —
+        // recomputed per candidate so a fast failure carries its unused
         // share forward and the last candidate gets all remaining time — and
         // a stalled registry can never starve the fallbacks behind it.
         let candidateShareMs: number | undefined;
@@ -238,8 +267,8 @@ export function legacyMakeDockerImageResolver(
             }
           } else {
             // A failed effect (rather than a non-zero exit, which returns a
-            // value) means the container runtime could not be spawned at all
-            // — a down daemon is caught earlier, by `hasLocalImage`'s own
+            // value) means the container runtime could not be spawned at all —
+            // a down daemon is caught earlier, by `hasLocalImage`'s own
             // fail-fast check above, and never reaches this loop. No registry
             // candidate can fix a missing Docker/Podman binary, so stop here
             // and surface the install hint instead of an opaque, repeated
@@ -256,11 +285,11 @@ export function legacyMakeDockerImageResolver(
           if (candidateDeadline !== undefined && Date.now() + delay >= candidateDeadline) {
             break;
           }
-          // Go prints a per-retry banner before sleeping (`docker.go:314`):
-          // `fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)`
-          // — `%v` of the 4s/8s backoff `time.Duration` renders as `4s`/`8s`.
+          // Go prints a per-retry banner before sleeping:
+          // `fmt.Fprintf(os.Stderr, "Retrying after %v: %s\n", period, image)` —
+          // `%v` of the 4s/8s backoff `time.Duration` renders as `4s`/`8s`.
           // Go also `Fprintln`s the failed attempt's error just before the
-          // banner (`docker.go:312`); here the `docker pull` child's own
+          // banner; here the `docker pull` child's own
           // stderr — already teed live to the parent's stderr above — plays
           // that role. `Fprintln` always newline-terminates, so when the
           // child's final output didn't, add the `\n` ourselves — otherwise
@@ -279,6 +308,8 @@ export function legacyMakeDockerImageResolver(
       return yield* Effect.fail(
         new LegacyDockerRunError({
           message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+          reason: "pull",
+          daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
         }),
       );
     });

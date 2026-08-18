@@ -5,9 +5,9 @@ import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.t
 import { bytesSize, intToUint, ramInBytes } from "../../../../shared/legacy-size-units.ts";
 
 /**
- * Push-subset of Go's `storage` struct (`pkg/config/storage.go`). `toml:"-"`
- * locals (image, imgproxy, s3 credentials) are excluded. `file_size_limit`
- * fields are `sizeInBytes` → serialised as a quoted `BytesSize` string.
+ * Push-subset of the `storage` config section. Locals (image, imgproxy, s3
+ * credentials) are excluded. `file_size_limit` fields are `sizeInBytes` →
+ * serialised as a quoted `BytesSize` string.
  */
 
 interface ImageTransformationSubset {
@@ -124,12 +124,12 @@ export interface StoragePresence {
 /**
  * Projects the loaded `config.storage` into the push subset.
  *
- * Go's `storage.ImageTransformation` and `storage.S3Protocol` are `*pointer`
- * fields (nil unless `[storage.image_transformation]` / `[storage.s3_protocol]`
- * is declared). `@supabase/config` decodes both to a defaulted struct
- * regardless, so `presence` (from raw-TOML key detection) is passed to recover
- * Go's nil-pointer skip semantics — a nil pointer is excluded from the diff and
- * the update body.
+ * `storage.image_transformation` and `storage.s3_protocol` are optional
+ * sections (absent unless `[storage.image_transformation]` /
+ * `[storage.s3_protocol]` is declared). `@supabase/config` decodes both to a
+ * defaulted struct regardless, so `presence` (from raw-TOML key detection)
+ * is passed to recover nil-pointer skip semantics — a section that was never
+ * declared is excluded from the diff and the update body.
  */
 export function storageSubsetFromConfig(
   config: ProjectConfig,

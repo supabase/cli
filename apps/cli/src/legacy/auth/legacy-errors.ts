@@ -1,39 +1,65 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 export class LegacyInvalidAccessTokenError extends Data.TaggedError(
   "LegacyInvalidAccessTokenError",
 )<{
   readonly message: string;
-}> {}
+  /**
+   * Where the malformed token was read from. An env-var token
+   * (`SUPABASE_ACCESS_TOKEN`) takes precedence over stored credentials, so
+   * `supabase login` cannot fix it — the remediation is to correct the env
+   * var. A stored (keyring/file) token, or an unknown source, is fixable by
+   * logging in again.
+   */
+  readonly source?: "env" | "stored";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.source === "env" ? actionability.authToken : actionability.authLogin;
+  }
+}
 
 export class LegacyPlatformAuthRequiredError extends Data.TaggedError(
   "LegacyPlatformAuthRequiredError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /**
  * Raised by `deleteProjectCredential` when removing a stored database-password
  * credential from the OS keyring fails for a reason other than "entry not
- * found" (which is ignored). Mirrors `supabase unlink`'s behaviour of collecting
- * non-`ErrNotFound` / non-`ErrNotSupported` keyring errors
- * (`apps/cli-go/internal/unlink/unlink.go:36-40`).
+ * found" (which is ignored), as part of `supabase unlink`.
  */
 export class LegacyCredentialDeleteError extends Data.TaggedError("LegacyCredentialDeleteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Raised by `deleteAccessToken` when there is no access token to delete, i.e.
  * the profile keyring entry is absent or the keyring backend is unavailable
- * (WSL / `SUPABASE_NO_KEYRING` / unsupported platform). Mirrors Go's
- * `utils.ErrNotLoggedIn` (`apps/cli-go/internal/utils/access_token.go:19`),
- * which `supabase logout` surfaces as `You were not logged in, nothing to do.`
- * on stderr while still exiting 0.
+ * (WSL / `SUPABASE_NO_KEYRING` / unsupported platform). `supabase logout`
+ * surfaces this as `You were not logged in, nothing to do.` on stderr while
+ * still exiting 0.
  */
 export class LegacyNotLoggedInError extends Data.TaggedError("LegacyNotLoggedInError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /**
  * Raised by `deleteAccessToken` when removing the token fails for a real reason
@@ -44,4 +70,8 @@ export class LegacyNotLoggedInError extends Data.TaggedError("LegacyNotLoggedInE
  */
 export class LegacyDeleteTokenError extends Data.TaggedError("LegacyDeleteTokenError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

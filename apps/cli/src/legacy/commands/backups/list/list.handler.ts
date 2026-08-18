@@ -28,7 +28,7 @@ import { formatLegacyTimestamp } from "../../../shared/legacy-timestamp.format.t
 import { formatRegion } from "../backups.format.ts";
 import type { LegacyBackupsListFlags } from "./list.command.ts";
 
-/** Mirror of Go's `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+/** Type shape for `api.V1BackupsResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
 const LEGACY_GO_BACKUPS_RESPONSE = legacyGoStruct([
   [
     "backups",
@@ -104,9 +104,8 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): write the
-  // linked-project cache and persist the telemetry state file whether the main
-  // API call succeeds or fails.
+  // Write the linked-project cache and persist the telemetry state file
+  // whether the main API call succeeds or fails.
   yield* Effect.gen(function* () {
     // The fetching spinner is only meaningful in human-facing text mode — in JSON / stream-json
     // it would surface dangling `[task] start:` lines on stderr with no completion message.
@@ -129,9 +128,9 @@ export const legacyBackupsList = Effect.fn("legacy.backups.list")(function* (
       return;
     }
     if (goFmt === "toml") {
-      // The schema decodes Go's PITR-only `"backups": null` to `[]` (see the
+      // The schema decodes the PITR-only `"backups": null` to `[]` (see the
       // `nullForEmptyArrays` JSON hint above); mirror that by treating an
-      // empty list as Go's nil slice, which BurntSushi omits entirely.
+      // empty list as a nil slice, which BurntSushi omits entirely.
       yield* output.raw(
         encodeLegacyGoToml(
           {

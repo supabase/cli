@@ -20,7 +20,6 @@ const KEYRING_SERVICE = "Supabase CLI";
 const LEGACY_KEYRING_ACCOUNT = "access-token";
 const WSL_OSRELEASE_PATH = "/proc/sys/kernel/osrelease";
 
-// Go's `utils.ErrNotLoggedIn` (`access_token.go:19`).
 const NOT_LOGGED_IN_MESSAGE = "You were not logged in, nothing to do.";
 
 type KeyringModule = typeof import("@napi-rs/keyring");
@@ -260,11 +259,9 @@ const deleteKeyringEntryStrict = (
     return deleted;
   });
 
-// Delete the access-token profile entry, distinguishing the three outcomes Go's
-// `credentials.StoreProvider.Delete(profile)` collapses into via the
-// `access_token.go:110-117` error mapping:
+// Delete the access-token profile entry, distinguishing three outcomes:
 //   - `"deleted"`  — an entry existed and was removed (→ logged out, exit 0);
-//   - `"notFound"` — no entry existed (→ Go's `ErrNotLoggedIn`, exit 0);
+//   - `"notFound"` — no entry existed (→ not logged in, exit 0);
 //   - `LegacyDeleteTokenError` — a real `deleteCredential()` failure (exit 1).
 // Like `deleteKeyringEntryStrict`, the entry is probed first so deleting an
 // absent macOS entry never blocks on a Keychain prompt, and the Windows
@@ -306,14 +303,13 @@ const deleteProfileKeyringEntry = (
     return found ? "deleted" : "notFound";
   });
 
-// Best-effort wipe of the `"Supabase CLI"` keyring namespace, mirroring Go's
-// `keyring.DeleteAll` (`store.go:71`); errors are swallowed so one stuck
-// credential can't abort logout, matching Go's own handling (`logout.go:35`).
+// Best-effort wipe of the `"Supabase CLI"` keyring namespace; errors are
+// swallowed so one stuck credential can't abort logout.
 //
-// Go writes Windows credentials under the target-shaped form
+// Windows credentials are also written under the target-shaped form
 // (`Supabase CLI:<account>`), invisible to the plain enumeration below, so
 // it's swept separately. `findCredentials` decodes every matched blob and
-// aborts entirely on one undecodable entry, unlike Go's raw-byte `wincred.List`.
+// aborts entirely on one undecodable entry.
 const deleteAllKeyringEntries = (
   module: KeyringModule,
   platform: RuntimePlatform,
@@ -483,14 +479,14 @@ const makeLegacyCredentials = Effect.gen(function* () {
       // Env takes precedence (matches access_token.go:38).
       if (Option.isSome(cliConfig.accessToken)) {
         yield* debugLogger.debug("Using access token from env var...");
-        yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value));
+        yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value), "env");
         return Option.some(cliConfig.accessToken.value);
       }
 
       // Keyring (profile key, then legacy key). Skipped on WSL.
       const keyringValue = yield* readKeyring;
       if (Option.isSome(keyringValue)) {
-        yield* validateLegacyAccessToken(keyringValue.value);
+        yield* validateLegacyAccessToken(keyringValue.value, "stored");
         return Option.some(Redacted.make(keyringValue.value));
       }
 
@@ -498,7 +494,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
         yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
-        yield* validateLegacyAccessToken(fileValue.value);
+        yield* validateLegacyAccessToken(fileValue.value, "stored");
         return Option.some(Redacted.make(fileValue.value));
       }
 
@@ -517,20 +513,16 @@ const makeLegacyCredentials = Effect.gen(function* () {
           );
           if (ok) return;
         }
-        // Go's `fallbackSaveToken` creates the dir via `MkdirIfNotExistFS` →
-        // `MkdirAll(path, 0755)` (`access_token.go:91`, `misc.go:273`); only
-        // the token FILE itself is private (0600, `access_token.go:94`).
+        // The containing directory is world-readable (0755); only the token
+        // FILE itself needs to be private (0600).
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o755 }).pipe(Effect.orDie);
         yield* fs.writeFileString(fallbackPath, token, { mode: 0o600 }).pipe(Effect.orDie);
       }),
 
     deleteAccessToken: Effect.gen(function* () {
-      // Reproduce Go's `utils.DeleteAccessToken` (`access_token.go:100-119`) in
-      // its exact order.
-
       // 1. Always remove the fallback token file first. A missing file is
-      //    ignored (Go's `errors.Is(err, os.ErrNotExist)`); any other removal
-      //    failure aborts before the keyring is touched.
+      //    ignored; any other removal failure aborts before the keyring is
+      //    touched.
       const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
       if (exists) {
         yield* fs.remove(fallbackPath).pipe(
@@ -545,14 +537,14 @@ const makeLegacyCredentials = Effect.gen(function* () {
       }
 
       // 2. Best-effort delete of the legacy `access-token` keyring account.
-      //    Go debug-logs and ignores any error here — never affects the result.
+      //    Any error here is ignored — never affects the result.
       if (Option.isSome(keyringModule)) {
         yield* tryKeyringDelete(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform);
       }
 
       // 3. Delete the profile keyring account — this alone decides the outcome.
-      //    No keyring backend (WSL / `SUPABASE_NO_KEYRING` / unsupported) maps to
-      //    Go's `ErrNotSupported`/`ErrUnsupportedPlatform` → `ErrNotLoggedIn`.
+      //    No keyring backend (WSL / `SUPABASE_NO_KEYRING` / unsupported) maps
+      //    to `LegacyNotLoggedInError`.
       if (Option.isNone(keyringModule)) {
         return yield* Effect.fail(new LegacyNotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
       }

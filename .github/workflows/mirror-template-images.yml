@@ -8,11 +8,14 @@ name: Mirror template images
 #
 # It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
 # AWS role + packages:write, which a dependabot-triggered `pull_request` run
-# cannot be granted, and we deliberately avoid `pull_request_target`. The CI
-# `Start` job pins SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io, so it only goes
-# green once a bumped tag is mirrored here; this backfill runs as soon as the
-# bump lands on develop, repopulating ghcr.io/ECR so develop and any PR rebased
-# on it pass `Start` instead of inheriting a `manifest unknown` failure.
+# cannot be granted, and we deliberately avoid `pull_request_target`. This
+# backfill runs as soon as the bump lands on develop, repopulating ghcr.io/ECR
+# so anyone pinning SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io doesn't inherit a
+# `manifest unknown` failure. (No CI job pins that registry anymore -- the
+# `cli-go-ci.yml` `Start` job that used to made it CI-observable was removed in
+# CLI-1966 along with `internal/start`; this mirror now only serves users who
+# opt into the mirror directly, and a mirroring failure no longer turns any
+# check red.)
 
 on:
   push:

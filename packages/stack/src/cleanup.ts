@@ -1,20 +1,37 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { Duration, Effect } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
+import { dockerContainerName, stackIdentity } from "./StackIdentity.ts";
+
+export const candidateCleanupTargets = (config: ResolvedStackConfig): CleanupTargets => {
+  const identity = stackIdentity(config);
+  return {
+    dockerContainerNames: SERVICE_NAMES.filter((service) => {
+      const serviceConfig = config[serviceMetadata(service).configKey];
+      return service === "postgres" || serviceConfig !== false;
+    }).map((service) => dockerContainerName(service, identity.key)),
+  };
+};
 
 /**
  * Force-remove Docker containers by name. Best-effort safety net —
  * silently ignores containers that don't exist or are already removed.
  */
-export function dockerForceRemove(containerNames: ReadonlyArray<string>): void {
-  for (const name of containerNames) {
-    try {
-      execFileSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 5_000 });
-    } catch {}
-  }
-}
+export const dockerForceRemove = (containerNames: ReadonlyArray<string>): Effect.Effect<void> =>
+  Effect.forEach(
+    containerNames,
+    (name) =>
+      Effect.callback<void>((resume) => {
+        const child = execFile("docker", ["rm", "-f", name], { timeout: 5_000 }, () =>
+          resume(Effect.void),
+        );
+        return Effect.sync(() => child.kill());
+      }),
+    { concurrency: 4, discard: true },
+  );
 
 export function cleanupAutoManagedPaths(config: ResolvedStackConfig): void {
   if (config.autoManagedPaths.length === 0) {
@@ -77,8 +94,6 @@ export const cleanupLocalStackResources = (opts: {
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client
     // may not stop the container.
-    yield* Effect.sync(() => {
-      dockerForceRemove(opts.cleanupTargets.dockerContainerNames);
-    });
+    yield* dockerForceRemove(opts.cleanupTargets.dockerContainerNames);
     yield* cleanupAutoManagedPathsWithRetry(opts.config);
   });

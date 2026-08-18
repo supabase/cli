@@ -7,6 +7,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
+import { LegacySeedMutuallyExclusiveFlagsError } from "./buckets.errors.ts";
 
 /**
  * `supabase seed buckets` — seeds Storage buckets from
@@ -19,37 +20,50 @@ import type { LegacyBucketsFlags } from "./buckets.command.ts";
  * target-flag resolution and the post-run cache + telemetry side effects.
  */
 export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
-  // Target is selected from the changed-flag set (Go's flag.Changed), not the
-  // parsed value, so the flags arg itself is unused here.
-  _flags: LegacyBucketsFlags,
+  // Target (linked vs. local) is selected from the changed-flag set
+  // (`flag.Changed`), not the parsed `linked`/`local` values — only
+  // `projectRef` is read directly below.
+  flags: LegacyBucketsFlags,
 ) {
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const cliArgs = yield* CliArgs;
 
   // Set once --linked resolves a ref; drives the post-run linked-project cache
-  // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`
-  // (`cmd/root.go`, gated on a non-empty `flags.ProjectRef`). Empty on the local
+  // write + org/project group identify (`cmd/root.go`'s `ensureProjectGroupsCached`,
+  // gated on a non-empty `flags.ProjectRef`). Empty on the local
   // path, so the cache is never written there.
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
     // Resolve the project ref for --linked BEFORE loading config, so that the
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is merged
-    // over the base config by `loadProjectConfig`. Go selects the target from
+    // over the base config by `loadProjectConfig`. The target is selected from
     // `flag.Changed`, not the flag value: `--linked` is the linked path whenever
     // it's *set* (even `--linked=false`).
     const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
+    const isLinked = setFlags.includes("linked");
+
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && !isLinked) {
+      return yield* Effect.fail(
+        new LegacySeedMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
     const projectRefResolver = yield* LegacyProjectRefResolver;
-    const projectRef = setFlags.includes("linked")
-      ? yield* projectRefResolver.loadProjectRef(Option.none())
-      : "";
+    const projectRef = isLinked ? yield* projectRefResolver.loadProjectRef(flags.projectRef) : "";
     linkedRef = projectRef;
 
     yield* legacySeedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
-    // Go's root `Execute` caches the linked project + fires org/project group
-    // identify whenever `flags.ProjectRef` is set — only on the --linked path.
+    // Caches the linked project + fires org/project group identify whenever
+    // `flags.ProjectRef` is set — only on the --linked path.
     Effect.ensuring(
       Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
     ),

@@ -52,8 +52,8 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    // Matches Go's `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
-    // — empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
+    // Matches the established "encodes json output" fixture —
+    // empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
     const out = encodeGoJson(
       {
         region: "ap-southeast-1",
@@ -101,6 +101,36 @@ describe("encodeGoJson", () => {
 `,
     );
   });
+
+  it("keeps Go's true lexicographic order for numeric-looking keys (CLI-1961 Codex review finding)", () => {
+    // A plain JS object always reorders integer-like string keys ("2", "10") into
+    // ascending NUMERIC order on enumeration, regardless of insertion order — Go's
+    // `encoding/json` has no such special case for a real Go map, so "10" sorts before
+    // "2" lexicographically. `sortKeysDeep` must build a `Map` (not a plain object) to
+    // carry that sort through to the final encoded output intact.
+    const out = encodeGoJson({ 10: "a", 2: "b", role: "anon" });
+    expect(out).toBe(
+      `{
+  "10": "a",
+  "2": "b",
+  "role": "anon"
+}
+`,
+    );
+  });
+
+  it("sorts keys by Go's byte/code-point order, not JS's UTF-16 code-unit order (CLI-1961 Codex review finding)", () => {
+    // U+E000 is a single UTF-16 code unit (0xE000); U+10000 is a surrogate PAIR whose
+    // leading unit (0xD800) is numerically SMALLER than 0xE000 — so plain JS `.sort()`
+    // (which compares UTF-16 code units) puts the astral key FIRST, while Go's real
+    // `encoding/json` (byte/code-point order) puts the high-BMP key first instead.
+    // Verified against the real binary: `json.Marshal` of a Go map keyed by these two
+    // strings emits the U+E000 key first.
+    const highBmp = String.fromCodePoint(0xe000);
+    const astral = String.fromCodePoint(0x10000);
+    const out = encodeGoJson({ [astral]: 2, [highBmp]: 1 });
+    expect(out).toBe(`{\n  "${highBmp}": 1,\n  "${astral}": 2\n}\n`);
+  });
 });
 
 describe("encodeYaml", () => {
@@ -142,8 +172,8 @@ describe("encodeEnv", () => {
   });
 
   it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
-    // Go output for `backups: [{...}]` is `BACKUPS=""`, not `BACKUPS_0_STATUS=...`
-    // — viper.AllKeys() stops at slice boundaries and GetString of a slice is "".
+    // Go output for `backups: [{...}]` is `BACKUPS=""`, not `BACKUPS_0_STATUS=...` —
+    // viper.AllKeys() stops at slice boundaries and GetString of a slice is "".
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('BACKUPS=""');
@@ -151,7 +181,7 @@ describe("encodeEnv", () => {
   });
 
   it("matches Go's full env output for the sample backup response", () => {
-    // Verified byte-for-byte against `apps/cli-go` invoking utils.EncodeOutput("env", ...).
+    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`.
     expect(encodeEnv(SAMPLE_RESPONSE)).toBe(
       [
         'BACKUPS=""',
@@ -190,7 +220,7 @@ describe("encodeEnv", () => {
   });
 
   it("matches Go for the PITR-only response shape with empty physical_backup_data", () => {
-    // Verified byte-for-byte against `apps/cli-go` invoking utils.EncodeOutput("env", ...)
+    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`
     // with a JSON-decoded V1BackupsResponse whose physical_backup_data is `{}`.
     expect(
       encodeEnv({

@@ -1,16 +1,29 @@
 import { Data } from "effect";
+import {
+  actionability,
+  CliSuggestionType,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site.
-// Names trace back to `apps/cli-go/internal/branches/<sub>/` for grepability.
-// Templates match Go's `errors.Errorf(...)` phrasing byte-for-byte.
+// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
+// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
 // ---------------------------------------------------------------------------
 
 export class LegacyBranchesListNetworkError extends Data.TaggedError(
   "LegacyBranchesListNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesListUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesListUnexpectedStatusError",
@@ -18,13 +31,24 @@ export class LegacyBranchesListUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesCreateNetworkError extends Data.TaggedError(
   "LegacyBranchesCreateNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesCreateUnexpectedStatusError",
@@ -32,14 +56,37 @@ export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+  readonly upgradeSuggested?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A non-gated 409 on `branches create` means the branch name already
+    // exists (the next shell maps this endpoint's 409 to
+    // BranchAlreadyExistsError) — user input, not a raw API status. The gate
+    // guard stays ahead so a confirmed plan-limited 409 still classifies as
+    // plan_limit via the shared policy.
+    if (this.upgradeSuggested !== true && this.status === 409) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };
+    }
+    return statusCodeActionability(this.status, {
+      upgradeSuggested: this.upgradeSuggested,
+      notFoundIsInvalidInput: true,
+    });
+  }
+}
 
 // Lookup phase of `branches get` (only runs when input is not UUID / not ref).
 export class LegacyBranchesFindNetworkError extends Data.TaggedError(
   "LegacyBranchesFindNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesFindUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesFindUnexpectedStatusError",
@@ -47,7 +94,11 @@ export class LegacyBranchesFindUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // `branches get` detail phase + the resolver's UUID branch (both use
 // V1GetABranchConfig; Go shares the same error template).
@@ -55,7 +106,14 @@ export class LegacyBranchesGetNetworkError extends Data.TaggedError(
   "LegacyBranchesGetNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesGetUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesGetUnexpectedStatusError",
@@ -63,13 +121,24 @@ export class LegacyBranchesGetUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesApiKeysNetworkError extends Data.TaggedError(
   "LegacyBranchesApiKeysNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesApiKeysUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesApiKeysUnexpectedStatusError",
@@ -77,13 +146,24 @@ export class LegacyBranchesApiKeysUnexpectedStatusError extends Data.TaggedError
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesPoolerNetworkError extends Data.TaggedError(
   "LegacyBranchesPoolerNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesPoolerUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesPoolerUnexpectedStatusError",
@@ -91,19 +171,36 @@ export class LegacyBranchesPoolerUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesPrimaryNotFoundError extends Data.TaggedError(
   "LegacyBranchesPrimaryNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A successful pooler-config response with no PRIMARY entry — an API
+    // response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
 
 export class LegacyBranchesUpdateNetworkError extends Data.TaggedError(
   "LegacyBranchesUpdateNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesUpdateUnexpectedStatusError",
@@ -111,13 +208,28 @@ export class LegacyBranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+  readonly upgradeSuggested?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, {
+      upgradeSuggested: this.upgradeSuggested,
+      notFoundIsInvalidInput: true,
+    });
+  }
+}
 
 export class LegacyBranchesPauseNetworkError extends Data.TaggedError(
   "LegacyBranchesPauseNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesPauseUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesPauseUnexpectedStatusError",
@@ -125,13 +237,24 @@ export class LegacyBranchesPauseUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesUnpauseNetworkError extends Data.TaggedError(
   "LegacyBranchesUnpauseNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesUnpauseUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesUnpauseUnexpectedStatusError",
@@ -139,13 +262,24 @@ export class LegacyBranchesUnpauseUnexpectedStatusError extends Data.TaggedError
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesDeleteNetworkError extends Data.TaggedError(
   "LegacyBranchesDeleteNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesDeleteUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesDeleteUnexpectedStatusError",
@@ -153,13 +287,24 @@ export class LegacyBranchesDeleteUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 export class LegacyBranchesDisableNetworkError extends Data.TaggedError(
   "LegacyBranchesDisableNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyBranchesDisableUnexpectedStatusError extends Data.TaggedError(
   "LegacyBranchesDisableUnexpectedStatusError",
@@ -167,7 +312,11 @@ export class LegacyBranchesDisableUnexpectedStatusError extends Data.TaggedError
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure-path errors (validation, prompt-time semantics, user cancellation).
@@ -177,28 +326,49 @@ export class LegacyBranchesEnvNotSupportedError extends Data.TaggedError(
   "LegacyBranchesEnvNotSupportedError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 export class LegacyBranchesCreateCancelledError extends Data.TaggedError(
   "LegacyBranchesCreateCancelledError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
 
 export class LegacyBranchesBranchNameEmptyError extends Data.TaggedError(
   "LegacyBranchesBranchNameEmptyError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 export class LegacyBranchesBranchingDisabledError extends Data.TaggedError(
   "LegacyBranchesBranchingDisabledError",
 )<{
   readonly message: string;
   /**
-   * Mirrors Go's `utils.CmdSuggestion = "Create your first branch with: supabase
-   * branches create"` (`apps/cli-go/cmd/branches.go:252`). Picked up by
-   * `normalizeCliError` and printed after the error message in text mode.
+   * Established suggestion text: "Create your first branch with: supabase
+   * branches create". Picked up by `normalizeCliError` and printed after the
+   * error message in text mode.
    */
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return {
+      ...actionability.invalidInput,
+      has_suggestion: true,
+      suggestion_type: CliSuggestionType.RunCommand,
+      suggested_command: "supabase branches create",
+    };
+  }
+}

@@ -1,24 +1,33 @@
-import { NodeServices } from "@effect/platform-node";
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { createServer } from "node:http";
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
-import { runDaemon } from "./daemon.ts";
+import { runSupervisor } from "./supervisor.ts";
+import { managedStackManagerLayer as makeManagerLayer } from "./managed/manager.ts";
+import { gitConfigStoreLayer } from "./managed/git.ts";
+import { controlTransportLayer, platformFactory } from "./platform-node.ts";
 
-// Live child-process entrypoint for Node root consumers. `node.ts` resolves this module by file URL
-// and passes its filesystem path to daemonLayer, so it is deliberately not a package export. The
-// `knip.entry` declaration in package.json preserves this file-URL-only reachability.
-runDaemon(
-  ({ apiPort, releaseApiPort }) =>
-    Layer.mergeAll(
-      NodeServices.layer,
-      Layer.unwrap(
-        releaseApiPort.pipe(
-          Effect.as(
-            NodeHttpServer.layer(() => createServer(), { port: apiPort }).pipe(Layer.orDie),
-          ),
-        ),
+const managerLayer = (stateRoot: string) =>
+  makeManagerLayer({ stateRoot }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeFileSystem.layer,
+        NodePath.layer,
+        gitConfigStoreLayer,
+        controlTransportLayer,
       ),
     ),
-  (socketPath) =>
-    NodeHttpServer.layer(() => createServer(), { path: socketPath }).pipe(Layer.orDie),
-);
+  );
+
+/** Thin Node child entrypoint shared by managed and ordinary detached starts. */
+export const runNodeSupervisor = (): void => {
+  void Effect.runPromise(
+    runSupervisor({ platformFactory, managerLayer }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    ),
+  );
+};
+
+if (import.meta.main) runNodeSupervisor();

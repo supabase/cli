@@ -1,10 +1,13 @@
 import type { OrganizationResponseV1, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { LEGACY_GLOBAL_FLAGS } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LEGACY_GLOBAL_FLAGS,
+  LegacyExperimentalFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import {
   type LegacyApiResponse,
   type LegacyHttpMethod,
@@ -40,6 +43,8 @@ const BASE_FLAGS: LegacyProjectsCreateFlags = {
   region: Option.none(),
   size: Option.none(),
   highAvailability: Option.none(),
+  releaseChannel: Option.none(),
+  postgresEngine: Option.none(),
   interactive: Option.none(),
   plan: Option.none(),
 };
@@ -56,6 +61,7 @@ interface SetupOpts {
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly promptPasswordResponses?: ReadonlyArray<string>;
   readonly tracked?: boolean;
+  readonly experimental?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -79,7 +85,7 @@ function setup(opts: SetupOpts = {}) {
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
-  const layer = buildLegacyTestRuntime({
+  const runtime = buildLegacyTestRuntime({
     out,
     api,
     cliConfig,
@@ -88,11 +94,27 @@ function setup(opts: SetupOpts = {}) {
     linkedProjectCache: cache.layer,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
+  const layer = Layer.mergeAll(
+    runtime,
+    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+  );
   return { layer, out, api, telemetry, cache };
 }
 
 function postBody(api: { requests: ReadonlyArray<{ method: string; body?: unknown }> }) {
   return api.requests.find((r) => r.method === "POST")?.body as Record<string, unknown> | undefined;
+}
+
+// Mirrors init.integration.test.ts's `findFailure`: pulls the first typed
+// error out of an `Exit`'s `Cause` without an `as` cast on the union member.
+function findFailure(exit: Exit.Exit<unknown, unknown>): Record<string, unknown> {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (!Exit.isFailure(exit)) {
+    return {};
+  }
+  const failure = Cause.findErrorOption(exit.cause);
+  expect(Option.isSome(failure)).toBe(true);
+  return Option.isSome(failure) ? (failure.value as Record<string, unknown>) : {};
 }
 
 describe("legacy projects create integration", () => {
@@ -163,6 +185,139 @@ describe("legacy projects create integration", () => {
         highAvailability: Option.some(false),
       });
       expect(postBody(api)?.high_availability).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "sends both release_channel and postgres_engine when both flags and --experimental are set",
+    () => {
+      const { layer, api } = setup({ experimental: true });
+      return Effect.gen(function* () {
+        yield* legacyProjectsCreate({
+          ...BASE_FLAGS,
+          name: Option.some("alpha"),
+          orgId: Option.some("acme"),
+          dbPassword: Option.some("s3cret-pass"),
+          region: Option.some("us-east-1"),
+          releaseChannel: Option.some("internal"),
+          postgresEngine: Option.some("17-oriole"),
+        });
+        expect(postBody(api)?.release_channel).toBe("internal");
+        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "sends only postgres_engine when only --postgres-engine is set (with --experimental)",
+    () => {
+      const { layer, api } = setup({ experimental: true });
+      return Effect.gen(function* () {
+        yield* legacyProjectsCreate({
+          ...BASE_FLAGS,
+          name: Option.some("alpha"),
+          orgId: Option.some("acme"),
+          dbPassword: Option.some("s3cret-pass"),
+          region: Option.some("us-east-1"),
+          postgresEngine: Option.some("17-oriole"),
+        });
+        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+        expect(postBody(api)).not.toHaveProperty("release_channel");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "fails with LegacyExperimentalRequiredError when --release-channel is set without --experimental",
+    () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyProjectsCreate({
+            ...BASE_FLAGS,
+            name: Option.some("alpha"),
+            orgId: Option.some("acme"),
+            dbPassword: Option.some("s3cret-pass"),
+            region: Option.some("us-east-1"),
+            releaseChannel: Option.some("internal"),
+          }),
+        );
+        const failure = findFailure(exit);
+        expect(failure["_tag"]).toBe("LegacyExperimentalRequiredError");
+        expect(failure["message"]).toBe("must set the --experimental flag to run this command");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "fails with LegacyExperimentalRequiredError when --postgres-engine is set without --experimental",
+    () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyProjectsCreate({
+            ...BASE_FLAGS,
+            name: Option.some("alpha"),
+            orgId: Option.some("acme"),
+            dbPassword: Option.some("s3cret-pass"),
+            region: Option.some("us-east-1"),
+            postgresEngine: Option.some("15"),
+          }),
+        );
+        const failure = findFailure(exit);
+        expect(failure["_tag"]).toBe("LegacyExperimentalRequiredError");
+        expect(failure["message"]).toBe("must set the --experimental flag to run this command");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
+    () => {
+      const { layer, api } = setup();
+      const previous = process.env["SUPABASE_EXPERIMENTAL"];
+      process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      return Effect.gen(function* () {
+        yield* legacyProjectsCreate({
+          ...BASE_FLAGS,
+          name: Option.some("alpha"),
+          orgId: Option.some("acme"),
+          dbPassword: Option.some("s3cret-pass"),
+          region: Option.some("us-east-1"),
+          releaseChannel: Option.some("internal"),
+          postgresEngine: Option.some("17-oriole"),
+        });
+        expect(postBody(api)?.release_channel).toBe("internal");
+        expect(postBody(api)?.postgres_engine).toBe("17-oriole");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) {
+              delete process.env["SUPABASE_EXPERIMENTAL"];
+            } else {
+              process.env["SUPABASE_EXPERIMENTAL"] = previous;
+            }
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("excludes release_channel and postgres_engine when neither flag is set", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacyProjectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+      });
+      expect(postBody(api)).not.toHaveProperty("release_channel");
+      expect(postBody(api)).not.toHaveProperty("postgres_engine");
     }).pipe(Effect.provide(layer));
   });
 
@@ -335,7 +490,7 @@ describe("legacy projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      // Go field names (PascalCase) at the top level — no table header (CLI-1975).
+      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "alpha"');
     }).pipe(Effect.provide(layer));
   });
@@ -391,9 +546,9 @@ describe("legacy projects create integration", () => {
         region: Option.some("us-east-1"),
         size: Option.some("micro"),
       });
-      // Go's `json.Marshal` serializes struct fields alphabetically; the
-      // cli-e2e replay server byte-compares the request body. JSON.parse →
-      // stringify round-trips key order, so this asserts the on-the-wire order.
+      // Struct fields serialize in alphabetical order; the cli-e2e replay
+      // server byte-compares the request body. JSON.parse → stringify
+      // round-trips key order, so this asserts the on-the-wire order.
       const body = api.requests.find((r) => r.method === "POST")?.body;
       expect(JSON.stringify(body)).toBe(
         '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
@@ -455,10 +610,10 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go parity (`apps/cli-go/cmd/projects.go:34-55`): Go's --size EnumFlag is an
-  // 18-value list that does not include "nano" (or "pico") and rejects any other
-  // value at flag-parse time. TS previously listed "nano" as a valid choice,
-  // silently succeeding where Go errors.
+  // The established --size enum is an 18-value list that does not include
+  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
+  // previously listed "nano" as a valid choice, silently succeeding where
+  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([legacyProjectsCreateCommand]),

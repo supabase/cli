@@ -2,11 +2,11 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
+import { legacyResetLocalDatabase } from "../../../../shared/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../../shared/legacy-db-config.service.ts";
 import { legacyLoadProjectEnv } from "../../../../shared/legacy-db-config.toml-read.ts";
@@ -16,9 +16,11 @@ import {
 } from "../../../../shared/legacy-db-config.parse.ts";
 import { legacyGetHostname } from "../../../../shared/legacy-hostname.ts";
 import { legacyToPostgresURL } from "../../../../shared/legacy-postgres-url.ts";
+import type { LegacyPgDeltaDatabaseEndpoint } from "../../shared/legacy-pgdelta-engine.service.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
+  legacyReadErrorSuggestion,
 } from "./declarative.errors.ts";
 import type { LegacyDeclarativeShadowDbError } from "../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
@@ -46,39 +48,58 @@ export interface LegacySmartTargetFlags {
   readonly reset: boolean;
 }
 
-export const legacyLocalUrl = (local: LegacyLocalConn): string =>
-  legacyToPostgresURL({
-    // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
-    // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
-    // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
-    host: legacyGetHostname(),
-    port: local.port,
-    user: "postgres",
-    password: local.password,
-    database: "postgres",
-  });
+const legacyLocalConnection = (local: LegacyLocalConn) => ({
+  // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
+  // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
+  // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
+  host: legacyGetHostname(),
+  port: local.port,
+  user: "postgres",
+  password: local.password,
+  database: "postgres",
+});
 
-/** Resolves `--linked` / `--db-url` to a Postgres URL via the shared resolver. */
-export const legacyResolveRemoteUrl = Effect.fnUntraced(function* (flags: LegacySmartTargetFlags) {
+export const legacyLocalEndpoint = (
+  local: LegacyLocalConn,
+  dnsResolver: "native" | "https",
+): LegacyPgDeltaDatabaseEndpoint => {
+  const connection = legacyLocalConnection(local);
+  return {
+    kind: "database",
+    ref: legacyToPostgresURL(connection),
+    connection,
+    connectOptions: { isLocal: true, dnsResolver },
+  };
+};
+
+/** Resolves a remote target without discarding TLS and connection options. */
+export const legacyResolveRemoteEndpoint = Effect.fnUntraced(function* (
+  flags: LegacySmartTargetFlags,
+) {
   const resolver = yield* LegacyDbConfigResolver;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const resolved = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    // Remote-only resolution: `--db-url` wins, otherwise the linked project.
     connType: Option.isSome(flags.dbUrl) ? "db-url" : "linked",
     dnsResolver,
     password: flags.password,
   });
-  return legacyToPostgresURL(resolved.conn);
+  return {
+    kind: "database",
+    ref: legacyToPostgresURL(resolved.conn),
+    connection: resolved.conn,
+    connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+  } satisfies LegacyPgDeltaDatabaseEndpoint;
 });
 
 /**
  * Smart-mode (no explicit target) interactive target resolution — Go's
- * `runDeclarativeGenerate` smart branch (`apps/cli-go/cmd/db_schema_declarative.go:198-298`).
+ * `runDeclarativeGenerate` smart branch (`apps/cli-go/cmd/db_schema_declarative.go:198-298`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  * Shared by `generate` (smart mode) and `sync` (no-declarative-files bootstrap) so
  * both offer the same local / linked / custom choice and local-reset prompt.
  */
-export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
+export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   flags: LegacySmartTargetFlags,
   local: LegacyLocalConn,
   hasMigrations: boolean,
@@ -93,7 +114,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
     // (db_schema_declarative.go:291), starting a stopped stack.
     yield* beforeLocalTarget;
     yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
-    return legacyLocalUrl(local);
+    return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
   }
 
   const output = yield* Output;
@@ -102,7 +123,6 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   // project `.env` — must auto-confirm too, not just the flag (CLI-1974).
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  const networkId = yield* LegacyNetworkIdFlag;
   // Insert "Linked project" between local and custom (Go's choice order) when the
   // workdir is linked with a valid ref. Go gates this on `LoadProjectRef`, which
   // validates the ref (`project_ref.go:75`), so an invalid on-disk ref hides the
@@ -125,7 +145,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   if (choice === "linked") {
     // Same path as an explicit `--linked` (Go calls `NewDbConfigWithPassword`):
     // login-role mint + pooler fallback, then `ToPostgresURL`.
-    return yield* legacyResolveRemoteUrl({ ...flags, linked: Option.some(true) });
+    return yield* legacyResolveRemoteEndpoint({ ...flags, linked: Option.some(true) });
   }
 
   if (choice === "custom") {
@@ -136,7 +156,8 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
       );
     }
     // Go parses the entry with pgconn.ParseConfig then feeds pg-delta a normalized
-    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`). Layer the
+    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`, deleted
+    // in CLI-1970; last present at commit 7b469f5b3). Layer the
     // project env (loaded once above) under the shell env like the --db-url path so
     // libpq PG* fallbacks resolve, and reject malformed input with Go's "failed to
     // parse connection string" error (password redacted, CWE-209).
@@ -151,7 +172,12 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
         }),
       );
     }
-    return legacyToPostgresURL(conn);
+    return {
+      kind: "database",
+      ref: legacyToPostgresURL(conn),
+      connection: conn,
+      connectOptions: { isLocal: false, dnsResolver: yield* LegacyDnsResolverFlag },
+    } satisfies LegacyPgDeltaDatabaseEndpoint;
   }
 
   // "Local database" choice: Go runs ensureLocalDatabaseStarted before the reset
@@ -174,25 +200,20 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   }
   if (shouldReset) {
     // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).
-    // `execInherit` (not `LegacyGoProxy.exec`) returns the child's exit code as a
-    // catchable value rather than exiting the host process — the same
-    // typed-failure design CLI-1879 gave `LegacyGoProxy.exec` itself, predating
-    // it here as its own seam. Propagate a failure on a non-zero reset exit.
-    const seam = yield* LegacyDeclarativeSeam;
-    // Forward --network-id: Go's in-process reset.Run honors the root viper
-    // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
-    // seam-spawned reset must carry it to stay on a custom Docker network.
-    const code = yield* seam.execInherit([
-      "db",
-      "reset",
-      "--local",
-      ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-    ]);
-    if (code !== 0) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeApplyError({ message: `database reset failed (exit ${code})` }),
-      );
-    }
+    // `legacyResetLocalDatabase` now runs the same way — in-process, sharing this
+    // command's own context — rather than shelling out to a second `supabase-go` child
+    // (CLI-2062): it resolves `LegacyNetworkIdFlag` itself, so no argv-forwarding is
+    // needed to stay on a custom Docker network, and a real failure propagates through
+    // the effect's own failure channel instead of a synthesized exit code.
+    yield* legacyResetLocalDatabase().pipe(
+      Effect.mapError(
+        (error) =>
+          new LegacyDeclarativeApplyError({
+            message: `database reset failed: ${error.message}`,
+            suggestion: legacyReadErrorSuggestion(error),
+          }),
+      ),
+    );
   }
-  return legacyLocalUrl(local);
+  return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
 });

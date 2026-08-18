@@ -13,7 +13,7 @@ export const list = Effect.fnUntraced(function* () {
 
   const stacks = yield* listStacks({
     cacheRoot: cliConfig.supabaseHome,
-    projectStateRoot: projectHome.projectHomeDir,
+    projectDir: projectHome.projectRoot,
   });
 
   if (stacks.length === 0) {

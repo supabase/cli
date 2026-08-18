@@ -65,9 +65,20 @@ export const isAccessTokenProvided = Boolean(
   process.env["SUPABASE_ACCESS_TOKEN"] ?? process.env["SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN"],
 );
 
-// Which target to run. Defaults to "ts-legacy"; set to "go" for recording and as
-// the source-of-truth target when authoring live tests.
-export const TARGET = (process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy") as CLITarget;
+// Which target to run. Defaults to "ts-legacy" — the only shipped CLI shell and
+// therefore the authoritative target for both recording and live tests. Validated
+// eagerly so a stale value (e.g. the retired "go" target) fails with a clear error
+// instead of an undefined-command crash inside the harness.
+const VALID_TARGETS: ReadonlyArray<CLITarget> = ["ts-legacy", "ts-next"];
+const rawTarget = process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy";
+const matchedTarget = VALID_TARGETS.find((target) => target === rawTarget);
+if (matchedTarget === undefined) {
+  throw new Error(
+    `Unknown CLI_HARNESS_TARGET "${rawTarget}". Valid targets: ${VALID_TARGETS.join(", ")}. ` +
+      `(The "go" target was retired when the Go CLI was trimmed to the proxied subset.)`,
+  );
+}
+export const TARGET = matchedTarget;
 
 // Optional org for the fresh live project. When unset, live-setup resolves it via
 // `orgs list` (which also exercises that command against the real API).

@@ -126,6 +126,32 @@ describe("legacyLoadProfile", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  it.effect("returns the full endpoint set for built-in and YAML profiles", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      // Built-in: endpoints come from the `allProfiles` table.
+      const builtin = yield* legacyLoadProfile("supabase-staging", fs);
+      expect(builtin.projectHost).toBe("supabase.red");
+      expect(builtin.poolerHost).toBe("supabase.green");
+      expect(builtin.dashboardUrl).toBe("https://supabase.green/dashboard");
+      // YAML: `project_host`/`dashboard_url` are required, `pooler_host` is
+      // `omitempty` and stays empty when absent (disables the MITM assertion).
+      const file = writeProfile(
+        "endpoints.yml",
+        [
+          "name: harness",
+          "api_url: http://127.0.0.1:44444",
+          "dashboard_url: http://127.0.0.1:44444/dashboard",
+          "project_host: example.test",
+        ].join("\n"),
+      );
+      const fromFile = yield* legacyLoadProfile(file, fs);
+      expect(fromFile.projectHost).toBe("example.test");
+      expect(fromFile.poolerHost).toBe("");
+      expect(fromFile.dashboardUrl).toBe("http://127.0.0.1:44444/dashboard");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
   it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
     Effect.gen(function* () {
       const file = writeProfile(
@@ -148,7 +174,7 @@ describe("legacyLoadProfile", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         // Built-in: EqualFold match resolves to the canonical (lower-case)
-        // table name — the keyring account Go reads (`access_token.go:43`).
+        // table name — the keyring account Go reads.
         expect((yield* legacyLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
         // File profile: `UnmarshalExact` populates Name from the required
         // `name:` key, NOT from the file path.

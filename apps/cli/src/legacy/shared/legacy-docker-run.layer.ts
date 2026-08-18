@@ -28,6 +28,8 @@ export const legacyDockerRunLayer: Layer.Layer<
       // credential-free message that still points at the likely cause.
       new LegacyDockerRunError({
         message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+        reason: "spawn",
+        daemonDown: false,
       });
 
     const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
@@ -61,9 +63,9 @@ export const legacyDockerRunLayer: Layer.Layer<
               legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
             );
             // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
-            // captured and redirected to `--file`/post-processing. Go's `dockerExec`
+            // captured and redirected to `--file`/post-processing. `dockerExec`
             // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
-            // errBuf)` (`apps/cli-go/internal/db/dump/dump.go:50-90`).
+            // errBuf)`.
             const handle = yield* spawnContainerCli(spawner, args, {
               stdin: "inherit",
               stdout: "pipe",
@@ -111,6 +113,7 @@ export const legacyDockerRunLayer: Layer.Layer<
         Effect.scoped(
           Effect.gen(function* () {
             const teeStderr = streamOpts.teeStderr ?? false;
+            const captureStderr = streamOpts.captureStderr ?? true;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const resolvedOpts = yield* withResolvedImage(opts);
             const args = buildLegacyDockerArgs(
@@ -129,7 +132,7 @@ export const legacyDockerRunLayer: Layer.Layer<
             // Stream stdout to the caller's sink in arrival order while draining
             // stderr concurrently — reading one pipe to completion before the other
             // would deadlock once the unread pipe's OS buffer fills. Go does the same
-            // via `stdcopy.StdCopy(stdout, stderr, logs)` (`docker.go:394`).
+            // via `stdcopy.StdCopy(stdout, stderr, logs)`.
             yield* Effect.all(
               [
                 // Map the stdout pipe's own read errors to a docker error while letting
@@ -140,7 +143,9 @@ export const legacyDockerRunLayer: Layer.Layer<
                 ),
                 Stream.runForEach(handle.stderr, (chunk) =>
                   Effect.sync(() => {
-                    stderrChunks.push(chunk);
+                    // Retained only for the returned string — skipped when the caller
+                    // opts out, so a tee-only consumer stays at constant memory.
+                    if (captureStderr) stderrChunks.push(chunk);
                     if (teeStderr) globalThis.process.stderr.write(chunk);
                   }),
                 ).pipe(Effect.mapError(spawnError)),
@@ -181,6 +186,8 @@ export const legacyDockerRunLayer: Layer.Layer<
                 () =>
                   new LegacyDockerRunError({
                     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+                    reason: "spawn",
+                    daemonDown: false,
                   }),
               ),
             );

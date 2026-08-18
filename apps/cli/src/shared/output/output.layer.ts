@@ -14,14 +14,22 @@ import {
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
-import { Effect, Layer, Stdio, Stream } from "effect";
+import { Effect, Layer, Option, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
 const TASK_SPINNER_DELAY_MS = 200;
+
+// Reads the opt-in `MachineErrorContext` cell, if any command in this run
+// provided it — see that service's doc comment for the envelope contract.
+const readMachineErrorContext = Effect.fnUntraced(function* () {
+  const context = yield* Effect.serviceOption(MachineErrorContext);
+  return Option.isSome(context) ? yield* context.value.get : {};
+});
 
 function formatTaskMessage(message: string | undefined): string | undefined {
   if (message === undefined || !message.includes("\n")) {
@@ -34,6 +42,18 @@ function formatTaskMessage(message: string | undefined): string | undefined {
 }
 
 /**
+ * Shared by all three layers. The sink waits for `drain`; `process.stdout.write`
+ * does not, so a streamed payload piped to a slow consumer buffers in memory.
+ */
+const stdioWriter =
+  (stdio: typeof Stdio.Stdio.Service) =>
+  (chunk: string | Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+    Stream.make(chunk).pipe(
+      Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+      Effect.orDie,
+    );
+
+/**
  * Output layers - Concrete output mode implementations for the CLI.
  *
  * Each layer binds the shared `Output` contract to one transport policy:
@@ -43,6 +63,8 @@ export const textOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
     const tty = yield* Tty;
+    const write = stdioWriter(yield* Stdio.Stdio);
+
     const DEFAULT_AUTOCOMPLETE_THRESHOLD = 10;
     const buildSelectOptions = (
       options: ReadonlyArray<{
@@ -112,6 +134,7 @@ export const textOutputLayer = Layer.effect(
         readonly autocompleteThreshold?: number;
         readonly placeholder?: string;
         readonly maxItems?: number;
+        readonly stream?: "stdout" | "stderr";
       } = {},
     ) =>
       Effect.gen(function* () {
@@ -122,6 +145,11 @@ export const textOutputLayer = Layer.effect(
               ? "autocomplete"
               : "select"
             : mode;
+        // clack itself defaults every one of these to `process.stdout` (verified against
+        // the installed `@clack/prompts` source) — only override when a caller explicitly
+        // asks for stderr (e.g. a command whose own stdout is a machine-readable payload
+        // even in text mode).
+        const clackOutput = behavior.stream === "stderr" ? process.stderr : undefined;
         const value = yield* Effect.promise(() =>
           effectiveMode === "autocomplete"
             ? autocomplete<string>({
@@ -131,15 +159,20 @@ export const textOutputLayer = Layer.effect(
                   ? { placeholder: behavior.placeholder }
                   : {}),
                 ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
               })
             : select<string>({
                 message,
                 options: buildSelectOptions(options),
                 ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
               }),
         );
         if (isCancel(value)) {
-          cancel("Operation cancelled.");
+          cancel(
+            "Operation cancelled.",
+            clackOutput !== undefined ? { output: clackOutput } : undefined,
+          );
           return yield* Effect.interrupt;
         }
         return value;
@@ -360,22 +393,8 @@ export const textOutputLayer = Layer.effect(
             );
           }
         }),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        Effect.sync(() => {
-          if (stream === "stderr") {
-            process.stderr.write(text);
-          } else {
-            process.stdout.write(text);
-          }
-        }),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Effect.sync(() => {
-          if (stream === "stderr") {
-            process.stderr.write(bytes);
-          } else {
-            process.stdout.write(bytes);
-          }
-        }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );
@@ -384,12 +403,9 @@ export const textOutputLayer = Layer.effect(
 export const jsonOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-
-    const writeStdout = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
-    const writeStderr = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
+    const write = stdioWriter(yield* Stdio.Stdio);
+    const writeStdout = (s: string) => write(s, "stdout");
+    const writeStderr = (s: string) => write(s, "stderr");
 
     const nonInteractive = (action: string) =>
       Effect.fail(
@@ -442,14 +458,16 @@ export const jsonOutputLayer = Layer.effect(
       success: (message: string, data?: Record<string, unknown>) =>
         writeStdout(JSON.stringify({ ...data, message }) + "\n"),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
-        writeStdout(JSON.stringify({ _tag: "Error", error: err }) + "\n"),
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        stream === "stderr" ? writeStderr(text) : writeStdout(text),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Stream.make(bytes).pipe(
-          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-          Effect.orDie,
-        ),
+        Effect.gen(function* () {
+          const extra = yield* readMachineErrorContext();
+          // `extra` spreads FIRST so the envelope's own `_tag`/`error` can
+          // never be clobbered by a context field of the same name (PR #6168
+          // review) — this is opt-in, command-contributed data; the envelope
+          // shape it's decorating always wins.
+          yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
+        }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );
@@ -458,12 +476,8 @@ export const jsonOutputLayer = Layer.effect(
 export const streamJsonOutputLayer = Layer.effect(
   Output,
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-
-    const writeStdout = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stdout()), Effect.orDie);
-    const writeStderr = (s: string) =>
-      Stream.make(s).pipe(Stream.run(stdio.stderr()), Effect.orDie);
+    const write = stdioWriter(yield* Stdio.Stdio);
+    const writeStdout = (s: string) => write(s, "stdout");
     const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
       const event: StreamEvent = {
         type: "log",
@@ -538,21 +552,21 @@ export const streamJsonOutputLayer = Layer.effect(
             timestamp: new Date().toISOString(),
           }) + "\n",
         ),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) => {
-        const event: StreamEvent = {
-          type: "error",
-          error: err,
-          timestamp: new Date().toISOString(),
-        };
-        return writeStdout(JSON.stringify(event) + "\n");
-      },
-      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
-        stream === "stderr" ? writeStderr(text) : writeStdout(text),
-      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
-        Stream.make(bytes).pipe(
-          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
-          Effect.orDie,
-        ),
+      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+        Effect.gen(function* () {
+          const extra = yield* readMachineErrorContext();
+          const event: StreamEvent = {
+            type: "error",
+            error: err,
+            timestamp: new Date().toISOString(),
+          };
+          // `extra` spreads FIRST — same reasoning as the json layer's `fail`
+          // above: the event's own `type`/`error`/`timestamp` must always win
+          // over an opt-in context field of the same name (PR #6168 review).
+          yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
+        }),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
     });
   }),
 );

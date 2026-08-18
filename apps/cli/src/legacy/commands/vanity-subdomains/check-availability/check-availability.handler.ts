@@ -25,7 +25,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { LegacyVanitySubdomainsCheckAvailabilityFlags } from "./check-availability.command.ts";
 
-/** Mirror of Go's `api.SubdomainAvailabilityResponse` (`types.gen.go`). */
+/** Type shape for `api.SubdomainAvailabilityResponse` (`types.gen.go`). */
 const LEGACY_GO_AVAILABILITY_RESPONSE = legacyGoStruct([["available", legacyGoBool]]);
 
 const mapCheckError = mapLegacyHttpError({
@@ -49,13 +49,13 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      // Go validates the required `--desired-subdomain` only after
-      // `PersistentPreRunE` completes (gate → login → ref resolution,
-      // `cmd/root.go:93-117`; `cobra@v1.10.2/command.go:985,1005`), and
-      // `PersistentPostRun` still fires telemetry + the linked-project cache
-      // on that failure — hence this check sits inside both `Effect.ensuring`
-      // wrappers, after ref resolution. Cobra checks the flag was *changed*,
-      // not non-empty, so `--desired-subdomain ""` passes and reaches the API.
+      // The required `--desired-subdomain` is validated only after the
+      // gate → login → ref resolution sequence completes (`cmd/root.go:93-117`;
+      // `cobra@v1.10.2/command.go:985,1005`), and telemetry + the
+      // linked-project cache still fire on that failure — hence this check
+      // sits inside both `Effect.ensuring` wrappers, after ref resolution.
+      // Cobra checks the flag was *changed*, not non-empty, so
+      // `--desired-subdomain ""` passes and reaches the API.
       if (Option.isNone(flags.desiredSubdomain)) {
         return yield* Effect.fail(
           new LegacyDesiredSubdomainRequiredError({
@@ -81,15 +81,23 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
               // tagged error before deciding whether to suggest an upgrade, then re-fail.
               const mapped = yield* Effect.flip(mapCheckError(cause));
               if (mapped._tag === "LegacyVanitySubdomainsCheckUnexpectedStatusError") {
-                // Go's check command calls SuggestUpgradeOnError without a following
-                // TrackUpgradeSuggested, so suppress the analytics event for parity.
-                yield* legacySuggestUpgrade({
+                // The check command calls SuggestUpgradeOnError without a following
+                // TrackUpgradeSuggested, so the analytics event is suppressed here too.
+                const upgradeSuggested = yield* legacySuggestUpgrade({
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
                   statusCode: mapped.status,
                   response: legacyGateResponse(cause),
                   trackAnalytics: false,
                 });
+                return yield* Effect.fail(
+                  new LegacyVanitySubdomainsCheckUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  }),
+                );
               }
               return yield* Effect.fail(mapped);
             }),

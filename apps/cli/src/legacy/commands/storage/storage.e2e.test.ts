@@ -39,10 +39,9 @@ describe("supabase storage (legacy)", () => {
   });
 
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
-    // Go's PersistentPreRunE runs the experimental gate BEFORE cobra's
-    // ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,1010), so
-    // --experimental must be set here to reach the mutex check at all —
-    // otherwise the experimental-gate error wins (see the next test).
+    // The experimental gate runs BEFORE the mutex check, so --experimental
+    // must be set here to reach the mutex check at all — otherwise the
+    // experimental-gate error wins (see the next test).
     const { exitCode, stdout, stderr } = await runSupabase(
       ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
       { entrypoint: "legacy", cwd: projectDir },
@@ -57,8 +56,8 @@ describe("supabase storage (legacy)", () => {
     "rejects storage subcommands without --experimental",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
-      // `storageCmd` is in Go's experimental slice (root.go:63); running it without
-      // --experimental is rejected by the PersistentPreRunE gate (root.go:91-96).
+      // `storage` is an experimental command group; running it without
+      // --experimental is rejected by the experimental gate.
       const { exitCode, stdout, stderr } = await runSupabase(
         ["storage", "ls", "ss:///", "--local"],
         {

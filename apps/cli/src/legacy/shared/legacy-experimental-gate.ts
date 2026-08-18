@@ -1,5 +1,10 @@
 import { Data, Effect } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyResolveExperimental } from "../../shared/legacy/global-flags.ts";
 
 /**
@@ -34,6 +39,10 @@ export class LegacyExperimentalRequiredError extends Data.TaggedError(
 }> {
   constructor() {
     super({ message: "must set the --experimental flag to run this command" });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 

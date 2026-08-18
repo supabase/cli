@@ -22,15 +22,14 @@ export interface LegacyCostItem {
 }
 
 /**
- * Port of Go `push.getCostMatrix` (`internal/config/push/push.go`).
- *
  * GETs `/v1/projects/{ref}/billing/addons` and builds a map of `addon.type` →
  * `{ name, price }` for every addon that has exactly one variant.
  *
- * Uses raw HTTP rather than the typed client: the generated `available_addons[].type`
- * is a closed enum (`custom_domain | compute_instance | …`) that rejects values
- * the Go CLI accepts as a plain string (e.g. the `"api"` GraphQL addon in
- * `TestPushConfig`). Mirrors the `sso add` / `postgres-config` raw-HTTP precedent.
+ * Uses raw HTTP rather than the typed client: the generated
+ * `available_addons[].type` is a closed enum (`custom_domain |
+ * compute_instance | …`) that rejects values accepted as a plain string
+ * (e.g. the `"api"` GraphQL addon). Mirrors the `sso add` /
+ * `postgres-config` raw-HTTP precedent.
  */
 export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(function* (ref: string) {
   const httpClient = yield* HttpClient.HttpClient;
@@ -72,6 +71,7 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
     catch: (cause) =>
       new LegacyConfigPushListAddonsNetworkError({
         message: `failed to list addons: ${String(cause)}`,
+        decode: true,
       }),
   });
 

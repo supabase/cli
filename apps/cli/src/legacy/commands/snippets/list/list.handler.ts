@@ -52,9 +52,11 @@ function asRecord(obj: unknown): Record<string, unknown> {
 }
 
 /**
- * Mirror of Go's `api.SnippetList` (`apps/cli-go/pkg/api/types.gen.go`). The
- * `description` field is a `nullable.Nullable[string]` — yaml.v3 renders it as
- * a `map[bool]string`, and BurntSushi refuses it whenever present (CLI-1975).
+ * Type shape for the snippets-list response, used to drive `-o yaml|toml`
+ * key casing (see `apps/cli-go/pkg/api/types.gen.go`; re-audit if it
+ * regenerates). The `description` field is a `nullable.Nullable[string]` —
+ * yaml.v3 renders it as a `map[bool]string`, and BurntSushi refuses it
+ * whenever present (CLI-1975).
  */
 const LEGACY_GO_SNIPPET_LIST = legacyGoStruct([
   ["cursor", legacyGoPtr(legacyGoString)],
@@ -130,11 +132,11 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
-  // Mirror Go's lifecycle (apps/cli-go/cmd/root.go:93-167 + 175-183):
-  //   PersistentPreRunE → resolve project ref
-  //   Run               → reject --output env / call API / render
-  //   PersistentPostRun → write linked-project cache (needs `ref`)
-  //   Execute           → flush telemetry (no `ref` required)
+  // Fixed lifecycle every command must preserve:
+  //   resolve project ref
+  //   reject --output env / call API / render
+  //   write linked-project cache (needs `ref`)
+  //   flush telemetry (no `ref` required)
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -185,6 +187,9 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
           (cause) =>
             new LegacySnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,
+              // 200-response body decode failure — an API-response problem, not
+              // a transport/network failure.
+              decode: true,
             }),
         ),
       );

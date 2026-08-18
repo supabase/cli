@@ -1,13 +1,10 @@
 /**
- * Transcribed verbatim from
- * `apps/cli-go/internal/start/templates/custom_nginx.template` (Go
- * `//go:embed templates/custom_nginx.template`,
- * `apps/cli-go/internal/start/start.go:111-115`). Unlike `kong.yml`, this file
- * is NOT parsed as a Go `text/template` — it's passed through unmodified into
- * the Kong container, where Kong's own openresty templating substitutes the
+ * The canonical custom_nginx.template body — this is the sole source of
+ * truth; do not hand-edit it. Unlike `kong.yml`, this file is NOT parsed as
+ * a `text/template` — it's passed through unmodified into the Kong
+ * container, where Kong's own openresty templating substitutes the
  * `${{VAR}}` placeholders (`LOG_LEVEL`, `NGINX_DAEMON`,
- * `NGINX_WORKER_PROCESSES`) from its own container env at boot. Do not
- * hand-edit the body — re-transcribe from the Go source if it changes.
+ * `NGINX_WORKER_PROCESSES`) from its own container env at boot.
  *
  * The `\${{...}}` sequences below are literal Kong template syntax, not a JS
  * template-literal interpolation — the backslash escapes are required so this

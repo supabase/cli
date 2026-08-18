@@ -1,12 +1,9 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/start/templates/pooler.exs`
- * (Go `//go:embed templates/pooler.exs`, parsed as a `text/template` named
- * `poolerTenant`, `apps/cli-go/internal/start/start.go:155-158`). Do not
- * hand-edit the Elixir body — re-transcribe from the Go source if it changes.
+ * The canonical `pooler.exs` template — this is the sole source of truth; do
+ * not hand-edit the Elixir body.
  *
- * Placeholders (`{{ .Field }}`) are Go's `poolerTenant` struct fields
- * (`start.go:144-153`): DbHost, DbPort, DbDatabase, DbPassword, ExternalId,
- * ModeType, DefaultMaxClients, DefaultPoolSize. Rendered by
+ * Placeholders (`{{ .Field }}`): DbHost, DbPort, DbDatabase, DbPassword,
+ * ExternalId, ModeType, DefaultMaxClients, DefaultPoolSize. Rendered by
  * `lib/template-render.ts`.
  */
 export const LEGACY_START_POOLER_EXS_TEMPLATE = `{:ok, _} = Application.ensure_all_started(:supavisor)

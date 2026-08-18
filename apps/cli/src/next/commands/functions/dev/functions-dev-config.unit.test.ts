@@ -7,11 +7,7 @@ import { join } from "node:path";
 import { Effect, Exit, Layer, Option } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import {
-  functionsDevWatchPaths,
-  toStackFunctionsConfig,
-  type FunctionsDevConfigOptions,
-} from "./functions-dev-config.ts";
+import { functionsDevWatchPaths, resolveFunctionsBundle } from "./functions-dev-config.ts";
 import {
   FunctionsDevEdgeRuntimeDisabledError,
   resolveFunctionsDevEdgeRuntimeConfig,
@@ -46,11 +42,6 @@ function projectLayer(cwd: string) {
         projectLinkPath: join(projectHomeDir, "project.json"),
         projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
         ensureProjectHomeDir: Effect.void,
-        stackDir: (name) => join(projectHomeDir, "stacks", name),
-        stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-        stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-        stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-        stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
       }),
     ),
   );
@@ -61,16 +52,60 @@ describe("functions dev config", () => {
     expect(connectOrStartFunctionsDevStack).toBeTypeOf("function");
   });
 
-  it("converts CLI options to stack Functions config", () => {
-    const opts: FunctionsDevConfigOptions = {
-      envFile: Option.some("./custom.env"),
-      noVerifyJwt: true,
-    };
+  it.live("resolves project functions, environment and absolute paths before stack handoff", () => {
+    const cwd = makeTempProject();
 
-    expect(toStackFunctionsConfig(opts)).toEqual({
-      envFile: "./custom.env",
-      noVerifyJwt: true,
-    });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        mkdir(join(cwd, "supabase", "functions", "hello", "assets"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(cwd, "supabase", "functions", "hello", "index.ts"), "export {};\n"),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(cwd, "supabase", "functions", "hello", "deno.json"), "{}\n"),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(cwd, "supabase", ".env"), "FUNCTION_VALUE=resolved-secret\n"),
+      );
+      yield* Effect.tryPromise(() => writeFile(join(cwd, "custom.env"), "SHARED=custom\n"));
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(cwd, "supabase", "config.toml"),
+          `[functions.hello]
+verify_jwt = true
+entrypoint = "./functions/hello/index.ts"
+import_map = "./functions/hello/deno.json"
+static_files = ["./functions/hello/assets/*"]
+
+[functions.hello.env]
+FUNCTION_VALUE = "env(FUNCTION_VALUE)"
+`,
+        ),
+      );
+
+      const bundle = yield* resolveFunctionsBundle({
+        envFile: Option.some("./custom.env"),
+        noVerifyJwt: true,
+      });
+
+      expect(bundle).toEqual({
+        env: { SHARED: "custom" },
+        functions: [
+          {
+            name: "hello",
+            verifyJWT: false,
+            entrypointPath: join(cwd, "supabase", "functions", "hello", "index.ts"),
+            importMapPath: join(cwd, "supabase", "functions", "hello", "deno.json"),
+            staticFiles: [join(cwd, "supabase", "functions", "hello", "assets", "*")],
+            env: { FUNCTION_VALUE: "resolved-secret" },
+          },
+        ],
+      });
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
+      Effect.provide(projectLayer(cwd)),
+    );
   });
 
   it.live("selects supabase and explicit env directory watch paths", () => {

@@ -4,7 +4,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/replication_slots/replication_slots.sql`.
 const SQL = `SELECT
   s.slot_name,
   s.active,
@@ -17,10 +16,7 @@ const SQL = `SELECT
 FROM pg_control_checkpoint(), pg_replication_slots s
 LEFT JOIN pg_stat_replication r ON (r.pid = s.active_pid)`;
 
-/**
- * `inspect db replication-slots` — replication slot status.
- * Port of `apps/cli-go/internal/inspect/replication_slots/replication_slots.go`.
- */
+/** `inspect db replication-slots` — replication slot status. */
 export const legacyReplicationSlotsSpec: LegacyInspectQuerySpec = {
   name: "replication-slots",
   sql: SQL,

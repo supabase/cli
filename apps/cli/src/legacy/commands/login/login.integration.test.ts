@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -13,6 +13,7 @@ import {
   mockStdin,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
 import {
   LEGACY_VALID_TOKEN,
@@ -52,6 +53,8 @@ interface SetupOpts {
   readonly promptTextFail?: boolean;
   readonly profileFlag?: string;
   readonly homeDir?: string;
+  /** Raw argv for explicit `--profile` detection. */
+  readonly argv?: ReadonlyArray<string>;
 }
 
 function flags(overrides: Partial<LegacyLoginFlags> = {}): LegacyLoginFlags {
@@ -108,6 +111,7 @@ function setupLegacyLogin(opts: SetupOpts = {}) {
     mockStdin(isTTY, opts.pipedStdin),
     mockBrowser(),
     Layer.succeed(LegacyProfileFlag, opts.profileFlag ?? "supabase"),
+    ...(opts.argv !== undefined ? [Layer.succeed(CliArgs, { args: opts.argv })] : []),
   );
   return { layer, out, credentials, crypto, loginApi, telemetry, analytics };
 }
@@ -338,6 +342,43 @@ describe("legacy login integration", () => {
       const profilePath = join(tempRoot.current, ".supabase", "profile");
       expect(existsSync(profilePath)).toBe(true);
       expect(readFileSync(profilePath, "utf8")).toBe("supabase-staging");
+    }).pipe(Effect.provide(layer));
+  });
+
+  // The shadowed env value must never be re-persisted (Go: pflag `Changed`).
+  it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
+    const prev = process.env["SUPABASE_PROFILE"];
+    process.env["SUPABASE_PROFILE"] = "rogue-profile";
+    const { layer } = setupLegacyLogin({
+      argv: ["login", "--profile", "supabase", "--token", LEGACY_VALID_TOKEN],
+      homeDir: tempRoot.current,
+    });
+    return Effect.gen(function* () {
+      yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
+      const profilePath = join(tempRoot.current, ".supabase", "profile");
+      expect(readFileSync(profilePath, "utf8")).toBe("supabase");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_PROFILE"];
+          else process.env["SUPABASE_PROFILE"] = prev;
+        }),
+      ),
+    );
+  });
+
+  // Permanently heals a file persisted by an older lenient version (#6091).
+  it.live("explicit --profile supabase heals a stale persisted profile file", () => {
+    mkdirSync(join(tempRoot.current, ".supabase"), { recursive: true });
+    writeFileSync(join(tempRoot.current, ".supabase", "profile"), "resms");
+    const { layer } = setupLegacyLogin({
+      argv: ["login", "--profile=supabase"],
+      homeDir: tempRoot.current,
+    });
+    return Effect.gen(function* () {
+      yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
+      expect(readFileSync(join(tempRoot.current, ".supabase", "profile"), "utf8")).toBe("supabase");
     }).pipe(Effect.provide(layer));
   });
 

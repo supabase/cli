@@ -30,6 +30,7 @@ import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.t
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { legacyGenCommand } from "../gen.command.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-gen-signing-key-int-");
 
@@ -201,18 +202,27 @@ describe("legacy gen signing-key integration", () => {
     }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
   });
 
-  it.live("uses the project-relative config file path in the local setup hint", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
-      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+  it.live(
+    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        // Config loading has no concept of a JSON project config file — a
+        // stray `supabase/config.json` with no `config.toml` present must be
+        // treated exactly like no config at all, never as a substitute config source
+        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`).
+        // The CWD-relative `supabase/config.toml` is printed in this
+        // "absent config" case; the hint must stay relative and must never leak the absolute
+        // temp-dir path either.
+        yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      // Go prints the CWD-relative `supabase/config.toml`; the hint must stay relative and must
-      // never leak the absolute temp-dir path.
-      expect(out.stderrText).toContain(join("supabase", "config.json"));
-      expect(out.stderrText).not.toContain(join(tempRoot.current, "supabase", "config.json"));
-    }).pipe(Effect.provide(layer));
-  });
+        expect(out.stderrText).toContain(join("supabase", "config.toml"));
+        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).not.toContain(tempRoot.current);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "overwrites the configured signing keys file and defaults to yes on non-tty when stdin has no piped answer",
@@ -241,7 +251,7 @@ describe("legacy gen signing-key integration", () => {
     },
   );
 
-  // CLI-1865: Go's overwrite prompt reads piped stdin even in non-TTY mode and honors an
+  // The overwrite prompt reads piped stdin even in non-TTY mode and honors an
   // explicit "n" — before this fix, TS returned `true` unconditionally without reading stdin at
   // all, so `echo n | supabase gen signing-key` silently overwrote instead of canceling.
   it.live("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
@@ -266,7 +276,7 @@ describe("legacy gen signing-key integration", () => {
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
       expect(JSON.parse(saved)).toEqual([]);
-      // Go's non-TTY prompt echoes the piped answer back to stderr after the label.
+      // The non-TTY prompt echoes the piped answer back to stderr after the label.
       expect(out.stderrText).toContain("[Y/n] n\n");
     }).pipe(Effect.provide(layer));
   });
@@ -338,6 +348,62 @@ describe("legacy gen signing-key integration", () => {
       expect(parsed[1]?.alg).toBe("ES256");
     }).pipe(Effect.provide(layer));
   });
+
+  // The configured `signing_keys_path` file is only read/decoded when auth
+  // is enabled — `gen signing-key` goes through the exact same config load
+  // pipeline as `gen bearer-jwt` (both call it), so it is subject to the
+  // same gate: with `auth.enabled = false`, a malformed signing-keys file is
+  // never read at all, so the command succeeds instead of failing on a
+  // decode error.
+  it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "not valid json {\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: true }));
+      expect(Exit.isFailure(exit)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Same finding, the more surprising half: the signing keys never advance
+  // past the default single-key array when auth is disabled, so `--append`
+  // appends to (and the resulting write clobbers) that phantom default set,
+  // NOT the file's real content: appending under `auth.enabled = false`
+  // against a file containing a genuine custom key overwrote it with the
+  // default ES256 key plus the newly generated one, discarding the original
+  // entry entirely.
+  it.live(
+    "appends to (and overwrites with) the built-in default key, ignoring the real file content, when [auth] enabled is false",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(tempRoot.current, "supabase", "signing_keys.json"),
+            `${JSON.stringify([{ kty: "EC", kid: "existing-key", x: "existing-x" }])}\n`,
+          ),
+        );
+
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: true });
+
+        const saved = yield* Effect.tryPromise(() =>
+          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+        );
+        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        expect(parsed).toHaveLength(2);
+        expect(parsed[0]?.kid).toBe(LEGACY_DEFAULT_SIGNING_KEY.kid);
+        expect(parsed.some((key) => key["kid"] === "existing-key")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails when the configured signing keys file is not a JSON array of objects", () => {
     const { layer } = setup();
@@ -621,10 +687,10 @@ describe("legacy gen signing-key integration", () => {
   it.live(
     "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
     () => {
-      // SUPABASE_YES lives only in supabase/.env, not the shell. Go's `flags.LoadConfig`
-      // (`signingkeys.go:99`) loads the project `.env` files before the overwrite prompt reads
-      // `viper.GetBool("YES")` (`signingkeys.go:130`), so the overwrite auto-confirms and the
-      // piped `n` is never consumed — same precedence as the shell-env case above.
+      // SUPABASE_YES lives only in supabase/.env, not the shell. The project
+      // `.env` files load before the overwrite prompt reads the yes flag, so
+      // the overwrite auto-confirms and the piped `n` is never consumed —
+      // same precedence as the shell-env case above.
       //
       // Defensively clear a shell SUPABASE_YES: this test must prove the project-.env source
       // specifically, not accidentally pass because a prior test in this file left the shell

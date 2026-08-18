@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -46,10 +46,32 @@ if (!binPath) {
   );
 }
 
-try {
-  execFileSync(binPath, process.argv.slice(2), { stdio: "inherit" });
-} catch (e) {
-  if (e && typeof e === "object" && "status" in e && typeof e.status === "number")
-    process.exit(e.status);
-  throw e;
+// The compiled binary owns signal semantics, so the shim never dies to a
+// signal's default action while the child runs: a group signal (terminal
+// Ctrl-C) already reaches the child directly, and a signal sent to the shim
+// PID alone (a supervisor's kill) is forwarded so cancellation still lands.
+// Either way the shim just waits and mirrors the child's exit.
+const child = spawn(binPath, process.argv.slice(2), { stdio: "inherit" });
+const forwardedSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+const forwarders = new Map<NodeJS.Signals, () => void>();
+for (const signal of forwardedSignals) {
+  const forward = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+  };
+  process.on(signal, forward);
+  forwarders.set(signal, forward);
 }
+child.on("error", (error) => {
+  for (const [signal, forward] of forwarders) process.removeListener(signal, forward);
+  throw error;
+});
+child.on("exit", (code, signal) => {
+  for (const [sig, forward] of forwarders) process.removeListener(sig, forward);
+  if (signal !== null) {
+    // Mirror a signal death so the parent shell sees the conventional 128+n.
+    process.kill(process.pid, signal);
+    setInterval(() => {}, 1_000); // keep the loop alive until it lands
+    return;
+  }
+  process.exit(code ?? 1);
+});

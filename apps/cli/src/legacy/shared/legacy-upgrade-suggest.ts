@@ -59,26 +59,28 @@ export function legacyGateResponse(
 export const legacyGateMapError =
   <E, R2>(
     opts: { readonly projectRef: string; readonly featureKey?: string },
-    mapError: (cause: SupabaseApiError) => Effect.Effect<never, E, R2>,
+    mapError: (cause: SupabaseApiError, upgradeSuggested: boolean) => Effect.Effect<never, E, R2>,
   ) =>
   (cause: SupabaseApiError) =>
     Effect.gen(function* () {
       const response = legacyGateResponse(cause);
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: opts.projectRef,
         featureKey: opts.featureKey,
         statusCode: response?.status ?? 0,
         response,
       });
-      return yield* mapError(cause);
+      return yield* mapError(cause, upgradeSuggested);
     });
 
 /**
- * Ports Go's `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
+ * Ports `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
  *
  * The fallback bypasses the typed API client: its strict response schemas
  * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
  * `legacy-linked-project-cache.layer.ts`).
+ * Returns whether the feature was confirmed plan-gated so callers can carry
+ * that typed result into their error classification.
  */
 export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
@@ -92,7 +94,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
    * Overrides the API base URL of the fallback project + entitlement GETs.
-   * Go's `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
+   * `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
    * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
    * profile differing from the config layer's (sso add/update, PR #5974
    * round 7) pass that profile's URL so the gate requests hit the same host
@@ -101,8 +103,8 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly apiUrl?: string;
   /**
    * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
-   * Go resolves credentials for the process-wide reconciled `CurrentProfile`
-   * (`access_token.go:43`), so callers that pass a reconciled `apiUrl` must
+   * Go resolves credentials for the process-wide reconciled `CurrentProfile`,
+   * so callers that pass a reconciled `apiUrl` must
    * pass the reconciled profile's token too — otherwise the stale profile's
    * bearer token would be sent to the reconciled host (review r3684524241).
    * `Some` uses that token, `None` sends unauthenticated (the reconciled
@@ -117,7 +119,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {
-    return;
+    return false;
   }
 
   const output = yield* Output;
@@ -143,7 +145,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
 
   if (gate === undefined) {
     if (opts.featureKey === undefined || opts.featureKey === "") {
-      return;
+      return false;
     }
 
     const tokenOpt = opts.accessToken ?? (yield* resolveLegacyAccessToken);
@@ -160,15 +162,15 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
     );
     const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
     if (projectResp._tag === "None" || projectResp.value.status !== 200) {
-      return;
+      return false;
     }
     const projectBody = yield* projectResp.value.json.pipe(Effect.option);
     if (projectBody._tag === "None") {
-      return;
+      return false;
     }
     const orgSlug = readString(projectBody.value, "organization_slug");
     if (orgSlug.length === 0) {
-      return;
+      return false;
     }
 
     const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
@@ -177,15 +179,15 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
     );
     const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
     if (entResp._tag === "None" || entResp.value.status !== 200) {
-      return;
+      return false;
     }
     const entBody = yield* entResp.value.json.pipe(Effect.option);
     if (entBody._tag === "None") {
-      return;
+      return false;
     }
     const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
     if (!Array.isArray(entitlements)) {
-      return;
+      return false;
     }
 
     const gated = entitlements.some((entry: unknown) => {
@@ -197,7 +199,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       return key === opts.featureKey && hasAccess === false;
     });
     if (!gated) {
-      return;
+      return false;
     }
 
     gate = {
@@ -219,4 +221,6 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       [PropOrgSlug]: gate.orgSlug,
     });
   }
+
+  return true;
 });

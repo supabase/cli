@@ -7,8 +7,7 @@ import {
 } from "./report.csvq.ts";
 
 /**
- * One report validation rule, 1:1 with Go's `config.rule`
- * (`apps/cli-go/pkg/config/config.go:236-241`): the csvq `query` over the written
+ * One report validation rule: the csvq `query` over the written
  * CSVs, the `name` shown in the summary, and the `pass`/`fail` STATUS strings.
  */
 export interface LegacyInspectRule {
@@ -19,8 +18,7 @@ export interface LegacyInspectRule {
 }
 
 /**
- * The default rules, ported verbatim from
- * `apps/cli-go/internal/inspect/templates/rules.toml`. Used when
+ * The default rules. Used when
  * `[experimental.inspect.rules]` is absent or empty in `config.toml`.
  */
 export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
@@ -119,8 +117,7 @@ export interface LegacyInspectRuleResult {
 }
 
 /**
- * Evaluate one rule against the written CSVs and map it to its summary cells,
- * reproducing Go's status logic (`report.go:107-120`):
+ * Evaluate one rule against the written CSVs and map it to its summary cells:
  *
  * - aggregate over zero rows / non-aggregate with no rows (csvq NULL / ErrNoRows)
  *   → STATUS = `pass`, MATCHES = `-`;
@@ -159,12 +156,12 @@ function legacySummarizeInspectRuleMatch(match: string): string {
 
 /**
  * Build the `[RULE, STATUS, MATCHES]` summary rows in rule order, for
- * `renderGlamourTable`. Go wraps each cell in backticks inside its markdown
- * (`report.go:121`): Glamour strips a non-empty inline code span (so a populated
+ * `renderGlamourTable`. Each cell wraps in backticks inside its markdown:
+ * Glamour strips a non-empty inline code span (so a populated
  * cell renders bare), but an EMPTY code span (`` `` ``) is passed through as the
  * two literal backtick characters — the same rule `legacyInspectText` encodes for
  * the `inspect db` tables. A valid empty `matches` cell therefore renders as `` ``
- * (width 2), byte-matching Go; `name`/`status` are never empty.
+ * (width 2); `name`/`status` are never empty.
  */
 export function legacyBuildRuleSummaryRows(
   results: ReadonlyArray<LegacyInspectRuleResult>,

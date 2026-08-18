@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
@@ -41,7 +44,48 @@ const OTHER_PROJECT: Projects[number] = {
   region: "eu-west-1",
 };
 
+// A project whose `id` is the parent-fallback ref used below (CLI-2167
+// follow-up) — distinct from `SAMPLE_PROJECT`/`OTHER_PROJECT`.
+const PARENT_PROJECT: Projects[number] = {
+  ...SAMPLE_PROJECT,
+  id: "parentprojectrefxxxx",
+  ref: "parentprojectrefxxxx",
+  name: "parent",
+  region: "us-west-1",
+};
+
 const tempRoot = useLegacyTempWorkdir("supabase-projects-list-int-");
+
+// Distinct 20-lowercase-letter refs for the parent-fallback marker tests
+// below (CLI-2167 follow-up).
+const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
+const OTHER_CACHE_REF = "othercacherefzzzzzzz";
+
+function tempFile(workdir: string, name: string): string {
+  return join(workdir, "supabase", ".temp", name);
+}
+
+function writeTempContent(workdir: string, name: string, content: string): void {
+  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+  writeFileSync(tempFile(workdir, name), content);
+}
+
+function writeProjectRefFile(workdir: string, ref: string): void {
+  writeTempContent(workdir, "project-ref", ref);
+}
+
+function writeLinkedProjectCacheFile(workdir: string, ref: string): void {
+  writeTempContent(
+    workdir,
+    "linked-project.json",
+    JSON.stringify({
+      ref,
+      name: "Parent Project",
+      organization_id: "org_1",
+      organization_slug: "acme",
+    }),
+  );
+}
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -51,6 +95,10 @@ interface SetupOpts {
   readonly network?: "fail";
   // When `false`, the linked project ref is unset so no bullet renders.
   readonly linked?: boolean;
+  // Explicit override — takes precedence over `linked` when provided, for
+  // tests that need to seed `SUPABASE_PROJECT_ID` to something other than
+  // the `linked: true` default (CLI-2167 follow-up parent-fallback tests).
+  readonly projectId?: Option.Option<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -61,7 +109,8 @@ function setup(opts: SetupOpts = {}) {
   });
   const cliConfig = mockLegacyCliConfig({
     workdir: tempRoot.current,
-    projectId: opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF),
+    projectId:
+      opts.projectId ?? (opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF)),
   });
   const layer = buildLegacyTestRuntime({
     out,
@@ -69,7 +118,7 @@ function setup(opts: SetupOpts = {}) {
     cliConfig,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
-  return { layer, out, api };
+  return { layer, out, api, workdir: tempRoot.current };
 }
 
 function setupTracked(opts: SetupOpts = {}) {
@@ -143,6 +192,81 @@ describe("legacy projects list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  describe("parent-fallback marker after linking a branch (CLI-2167 follow-up)", () => {
+    it.live(
+      "marks the parent's row (via linked-project.json) when the linked ref is a branch not in the list, asserting both the bullet and json linked:true",
+      () => {
+        const { layer, out, workdir } = setup({
+          projectId: Option.none(),
+          response: [SAMPLE_PROJECT, PARENT_PROJECT],
+        });
+        writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
+        return Effect.gen(function* () {
+          yield* legacyProjectsList({});
+          expect(out.stdoutText).toContain("●");
+          expect(out.stdoutText).toContain("parent");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("marks the parent row with linked:true in the json payload (structured output)", () => {
+      const { layer, out, workdir } = setup({
+        format: "json",
+        projectId: Option.none(),
+        response: [SAMPLE_PROJECT, PARENT_PROJECT],
+      });
+      writeProjectRefFile(workdir, BRANCH_OWN_REF);
+      writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
+      return Effect.gen(function* () {
+        yield* legacyProjectsList({});
+        const success = out.messages.find((m) => m.type === "success");
+        const projects = success?.data?.projects as ReadonlyArray<{
+          id: string;
+          linked: boolean;
+        }>;
+        expect(projects.find((p) => p.id === PARENT_PROJECT.id)?.linked).toBe(true);
+        expect(projects.find((p) => p.id === SAMPLE_PROJECT.id)?.linked).toBe(false);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "an exact match wins outright — a cache pointing at a different project must not steal the marker",
+      () => {
+        const { layer, out, workdir } = setup({
+          projectId: Option.none(),
+          response: [SAMPLE_PROJECT, PARENT_PROJECT],
+        });
+        // Directly linked to SAMPLE_PROJECT (a real row) — the cache pointing
+        // elsewhere must be irrelevant since the exact match short-circuits.
+        writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
+        writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
+        return Effect.gen(function* () {
+          yield* legacyProjectsList({});
+          expect(out.stdoutText).toContain("●");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "no marker when the linked ref matches no row and the parent chain yields nothing usable",
+      () => {
+        const { layer, out } = setup({
+          // Present but not ref-shaped: `resolveOptional` returns it unvalidated
+          // (so `linkedRef` is Some, matching no row), while the parent chain's
+          // only candidate is this same invalid value — kind "invalid", not
+          // "resolved" — so the fallback also yields nothing.
+          projectId: Option.some("not-a-valid-ref"),
+          response: [SAMPLE_PROJECT, PARENT_PROJECT],
+        });
+        return Effect.gen(function* () {
+          yield* legacyProjectsList({});
+          expect(out.stdoutText).not.toContain("●");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
   it.live("emits a success event with { projects } for --output-format json", () => {
     const { layer, out } = setup({ format: "json", response: [SAMPLE_PROJECT], linked: true });
     return Effect.gen(function* () {
@@ -185,8 +309,8 @@ describe("legacy projects list integration", () => {
     return Effect.gen(function* () {
       yield* legacyProjectsList({});
       expect(out.stdoutText).toContain("[[projects]]");
-      // Go field names (PascalCase), embedded fields first, `Linked` last,
-      // and the Database sub-table after the primitives (CLI-1975).
+      // PascalCase field names, embedded fields first, `Linked` last, and
+      // the Database sub-table after the primitives.
       expect(out.stdoutText).toContain('  Name = "alpha"');
       expect(out.stdoutText).toContain("  Linked = true");
       expect(out.stdoutText).toContain("  [projects.Database]");

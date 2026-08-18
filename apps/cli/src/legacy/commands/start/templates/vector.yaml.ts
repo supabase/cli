@@ -1,12 +1,9 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/start/templates/vector.yaml`
- * (Go `//go:embed templates/vector.yaml`, parsed as a `text/template` named
- * `vectorConfig`, `apps/cli-go/internal/start/start.go:138-141`). Do not
- * hand-edit the YAML body — re-transcribe from the Go source if it changes.
+ * The canonical `vector.yaml` template — this is the sole source of truth;
+ * do not hand-edit the YAML body.
  *
- * Placeholders (`{{ .Field }}`) are Go's `vectorConfig` struct fields
- * (`start.go:118-129`): ApiKey, VectorId, LogflareId, KongId, GotrueId,
- * RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
+ * Placeholders (`{{ .Field }}`): ApiKey, VectorId, LogflareId, KongId,
+ * GotrueId, RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
  * `lib/template-render.ts`.
  */
 export const LEGACY_START_VECTOR_YAML_TEMPLATE = `api:

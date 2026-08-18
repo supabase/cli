@@ -27,7 +27,7 @@ describe("renderSnippetsTable", () => {
     expect(out).toContain("name|here");
     expect(out).toContain("user|public");
     expect(out).toContain("user|name");
-    // No `\|` escape — Go's `strings.ReplaceAll` is a markdown intermediate
+    // No `\|` escape — `strings.ReplaceAll` is a markdown intermediate
     // that glamour decodes; the final bytes carry the raw `|`.
     expect(out).not.toContain("\\|");
   });

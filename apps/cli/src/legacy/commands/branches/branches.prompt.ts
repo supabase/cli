@@ -22,7 +22,8 @@ const mapListError = mapLegacyHttpError({
 });
 
 /**
- * Reproduces Go's `promptBranchId` (`apps/cli-go/cmd/branches.go:230-269`).
+ * Prompts for a branch identifier when the positional `[name]` argument is
+ * omitted:
  *
  *   - Non-TTY: read from stdin via `Output.promptText`. The prompt label
  *     includes the current git branch as a default when one is detected.
@@ -30,7 +31,7 @@ const mapListError = mapLegacyHttpError({
  *     fail with "branch name cannot be empty".
  *   - TTY: call the list endpoint; if empty, fail with "branching is disabled".
  *     Otherwise present a `promptSelect` and write `"Selected branch ID: <ref>"`
- *     to stderr (text mode only — Go writes via `fmt.Fprintln(os.Stderr, ...)`).
+ *     to stderr (text mode only).
  *
  * Used by `get`, `update`, `pause`, `unpause`, `delete` whenever the positional
  * `[name]` argument is omitted.
@@ -50,9 +51,8 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
     // Non-TTY path: read once from stdin, optionally with a git-branch default.
     const gitBranch = yield* detectGitBranch();
     const defaultBranch = Option.getOrElse(gitBranch, () => "");
-    // Go applies `utils.Aqua(branchId)` to the default in the prompt label
-    // (`apps/cli-go/cmd/branches.go:235`). lipgloss color "14" maps to ANSI
-    // bright cyan; `styleText("cyan", ...)` is the closest faithful match.
+    // Established styling: the default is colorized (lipgloss color "14" maps
+    // to ANSI bright cyan; `styleText("cyan", ...)` is the closest faithful match).
     const label =
       defaultBranch.length > 0
         ? `Enter the name of your branch (or leave blank to use ${styleText("cyan", defaultBranch)}): `
@@ -78,7 +78,6 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
   if (branches.length === 0) {
     return yield* new LegacyBranchesBranchingDisabledError({
       message: "branching is disabled",
-      // Go's `utils.CmdSuggestion` (`apps/cli-go/cmd/branches.go:252`).
       // The command name is wrapped in lipgloss color "14" (ANSI cyan).
       suggestion: `Create your first branch with: ${styleText("cyan", "supabase branches create")}`,
     });

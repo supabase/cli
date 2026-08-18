@@ -1,71 +1,34 @@
 import {
+  DEFAULT_VERSIONS,
+  SERVICE_NAMES,
   dockerImageCandidatesForArtifact,
   dockerImageForArtifact,
   imageTagPrefixForService,
-} from "./ServiceArtifacts.ts";
+} from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
-export type ServiceName =
-  | "postgres"
-  | "postgrest"
-  | "auth"
-  | "edge-runtime"
-  | "realtime"
-  | "storage"
-  | "imgproxy"
-  | "mailpit"
-  | "pgmeta"
-  | "studio"
-  | "analytics"
-  | "vector"
-  | "pooler";
+export { DEFAULT_VERSIONS, SERVICE_NAMES } from "./ServiceCatalog.ts";
+export type { ServiceName } from "./ServiceName.ts";
 
-export const SERVICE_NAMES = [
-  "postgres",
-  "postgrest",
-  "auth",
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-] as const satisfies ReadonlyArray<ServiceName>;
+export type VersionManifest = Readonly<Record<ServiceName, string>>;
 
-export interface VersionManifest {
-  readonly postgres: string;
-  readonly postgrest: string;
-  readonly auth: string;
-  readonly "edge-runtime": string;
-  readonly realtime: string;
-  readonly storage: string;
-  readonly imgproxy: string;
-  readonly mailpit: string;
-  readonly pgmeta: string;
-  readonly studio: string;
-  readonly analytics: string;
-  readonly vector: string;
-  readonly pooler: string;
-}
+export const PartialVersionManifestSchema = Schema.Struct({
+  postgres: Schema.optionalKey(Schema.String),
+  postgrest: Schema.optionalKey(Schema.String),
+  auth: Schema.optionalKey(Schema.String),
+  "edge-runtime": Schema.optionalKey(Schema.String),
+  realtime: Schema.optionalKey(Schema.String),
+  storage: Schema.optionalKey(Schema.String),
+  imgproxy: Schema.optionalKey(Schema.String),
+  mailpit: Schema.optionalKey(Schema.String),
+  pgmeta: Schema.optionalKey(Schema.String),
+  studio: Schema.optionalKey(Schema.String),
+  analytics: Schema.optionalKey(Schema.String),
+  vector: Schema.optionalKey(Schema.String),
+  pooler: Schema.optionalKey(Schema.String),
+});
 
-export const DEFAULT_VERSIONS: VersionManifest = {
-  postgres: "17.6.1.159",
-  postgrest: "14.16",
-  auth: "2.195.0",
-  "edge-runtime": "1.74.3",
-  realtime: "2.123.1",
-  storage: "1.68.1",
-  imgproxy: "v3.8.0",
-  mailpit: "v1.30.2",
-  pgmeta: "0.96.6",
-  studio: "2026.08.03-sha-022b374",
-  analytics: "1.49.2",
-  vector: "0.53.0-alpine",
-  pooler: "2.9.7",
-} as const;
+export type PartialVersionManifest = Schema.Schema.Type<typeof PartialVersionManifestSchema>;
 
 export const IMAGE_TAG_PREFIX: Partial<Record<ServiceName, string>> = Object.fromEntries(
   SERVICE_NAMES.flatMap((service) => {
@@ -173,3 +136,4 @@ export function diffPinnedAndAvailableVersions(
     return [{ service, pinnedVersion, availableVersion }];
   });
 }
+import { Schema } from "effect";

@@ -77,34 +77,10 @@ export const ApiKeyResponse = Schema.Struct({
     ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
 }).annotate({ identifier: "ApiKeyResponse" });
 export const V1ServiceHealthResponse = Schema.Struct({
@@ -194,52 +170,12 @@ export const BranchResponse = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  review_requested_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
+  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -1109,52 +1045,12 @@ export const V1CreateABranchOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  review_requested_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
+  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -1368,8 +1264,16 @@ export const V1CreateAProjectInput = Schema.Struct({
       format: "uri",
     }),
   ),
-  release_channel: Schema.optionalKey(Schema.Null),
-  postgres_engine: Schema.optionalKey(Schema.Null),
+  release_channel: Schema.optionalKey(
+    Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]).annotate({
+      description: "Release channel. If not provided, GA will be used.",
+    }),
+  ),
+  postgres_engine: Schema.optionalKey(
+    Schema.Literals(["15", "17", "17-oriole"]).annotate({
+      description: "Postgres engine version. If not provided, the latest version will be used.",
+    }),
+  ),
   high_availability: Schema.optionalKey(
     Schema.Boolean.annotate({
       description: "[Experimental] Whether to enable high availability for the project.",
@@ -1550,26 +1454,8 @@ export const V1CreateLegacySigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1CreateLoginRoleInput = Schema.Struct({
   ref: Schema.String.check(
@@ -1660,34 +1546,10 @@ export const V1CreateProjectApiKeyOutput = Schema.Struct({
     ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
 });
 export const V1CreateProjectClaimTokenInput = Schema.Struct({
@@ -1877,26 +1739,8 @@ export const V1CreateProjectSigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1CreateProjectTpaIntegrationInput = Schema.Struct({
   ref: Schema.String.check(
@@ -1953,19 +1797,7 @@ export const V1CreateRestorePointInput = Schema.Struct({
 export const V1CreateRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
-  completed_on: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-    Schema.Null,
-  ]),
+  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
 });
 export const V1DeactivateVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -2254,34 +2086,10 @@ export const V1DeleteProjectApiKeyOutput = Schema.Struct({
     ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
 });
 export const V1DeleteProjectClaimTokenInput = Schema.Struct({
@@ -2610,52 +2418,12 @@ export const V1GetABranchOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  review_requested_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
+  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -3677,16 +3445,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp_valid_until: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-      }),
-    ),
+    Schema.String.annotate({ format: "date-time" }),
     Schema.Null,
   ]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
@@ -3878,16 +3637,7 @@ export const V1GetBackupScheduleOutput = Schema.Struct({
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
-  }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-    }),
-  ),
+  }),
 });
 export const V1GetDatabaseDiskInput = Schema.Struct({
   ref: Schema.String.check(
@@ -4180,26 +3930,8 @@ export const V1GetLegacySigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1GetNetworkRestrictionsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -4231,30 +3963,8 @@ export const V1GetNetworkRestrictionsOutput = Schema.Struct({
     }),
   ),
   status: Schema.Literals(["stored", "applied"]),
-  updated_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
-  applied_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1GetOrganizationEntitlementsInput = Schema.Struct({
   slug: Schema.String.check(
@@ -5016,34 +4726,10 @@ export const V1GetProjectApiKeyOutput = Schema.Struct({
     ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
 });
 export const V1GetProjectApiKeysInput = Schema.Struct({
@@ -5189,30 +4875,8 @@ export const V1GetProjectLogsInput = Schema.Struct({
       }),
     ),
   sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
-  iso_timestamp_end: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1GetProjectLogsOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
@@ -5247,30 +4911,8 @@ export const V1GetProjectLogsAllInput = Schema.Struct({
       }),
     ),
   sql: Schema.optionalKey(Schema.String),
-  iso_timestamp_start: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
-  iso_timestamp_end: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1GetProjectLogsAllOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Json.annotate({ expected: "JSON value" }))),
@@ -5423,26 +5065,8 @@ export const V1GetProjectSigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1GetProjectSigningKeysInput = Schema.Struct({
   ref: Schema.String.check(
@@ -5471,26 +5095,8 @@ export const V1GetProjectSigningKeysOutput = Schema.Struct({
       algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
       status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
       public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-      created_at: Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      updated_at: Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
+      created_at: Schema.String.annotate({ format: "date-time" }),
+      updated_at: Schema.String.annotate({ format: "date-time" }),
     }),
   ),
 });
@@ -5557,16 +5163,7 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
   result: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        timestamp: Schema.String.annotate({ format: "date-time" }).check(
-          Schema.isPattern(
-            new RegExp(
-              "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|))$",
-            ),
-          ).annotate({
-            expected:
-              "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|))$",
-          }),
-        ),
+        timestamp: Schema.String.annotate({ format: "date-time" }),
         total_auth_requests: Schema.Number.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
         ),
@@ -5825,19 +5422,7 @@ export const V1GetRestorePointInput = Schema.Struct({
 export const V1GetRestorePointOutput = Schema.Struct({
   name: Schema.String,
   status: Schema.Literals(["AVAILABLE", "PENDING", "REMOVED", "FAILED"]),
-  completed_on: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-    Schema.Null,
-  ]),
+  completed_on: Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
 });
 export const V1GetSecurityAdvisorsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -7053,30 +6638,8 @@ export const V1PatchNetworkRestrictionsOutput = Schema.Struct({
         "Populated when a new config has been received, but not registered as successfully applied to a project.",
     }),
   ),
-  updated_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
-  applied_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   status: Schema.Literals(["stored", "applied"]),
 });
 export const V1PauseAProjectInput = Schema.Struct({
@@ -7215,26 +6778,8 @@ export const V1RemoveProjectSigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1ResetABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union([
@@ -7561,52 +7106,12 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   ]).annotate({
     description: "This field is deprecated. List action runs to get branch status instead.",
   }),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  review_requested_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
+  review_requested_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   with_data: Schema.Boolean,
   notify_url: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
-  deletion_scheduled_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  deletion_scheduled_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
   preview_project_status: Schema.optionalKey(
     Schema.Literals([
       "INACTIVE",
@@ -8094,8 +7599,11 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   sessions_tags: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$")).annotate({
-          expected: "a string matching the RegExp ^\\s*([a-zA-Z0-9_-]+(\\s*,+\\s*)?)*\\s*$",
+        Schema.isPattern(
+          new RegExp("^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$"),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$",
         }),
       ),
       Schema.Null,
@@ -8353,27 +7861,18 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   sms_test_otp: Schema.optionalKey(
     Schema.Union([
       Schema.String.check(
-        Schema.isPattern(new RegExp("^([0-9]{1,15}=[0-9]+,?)*$")).annotate({
-          expected: "a string matching the RegExp ^([0-9]{1,15}=[0-9]+,?)*$",
+        Schema.isPattern(
+          new RegExp("^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$"),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$",
         }),
       ),
       Schema.Null,
     ]),
   ),
   sms_test_otp_valid_until: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   sms_textlocal_api_key: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sms_textlocal_sender: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
@@ -9115,16 +8614,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_template: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp: Schema.Union([Schema.String, Schema.Null]),
   sms_test_otp_valid_until: Schema.Union([
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-      }),
-    ),
+    Schema.String.annotate({ format: "date-time" }),
     Schema.Null,
   ]),
   sms_textlocal_api_key: Schema.Union([Schema.String, Schema.Null]),
@@ -9225,16 +8715,7 @@ export const V1UpdateBackupScheduleOutput = Schema.Struct({
   updated_at: Schema.String.annotate({
     description: "Timestamp of when the backup schedule was last updated.",
     format: "date-time",
-  }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
-    }),
-  ),
+  }),
 });
 export const V1UpdateDatabasePasswordInput = Schema.Struct({
   ref: Schema.String.check(
@@ -9493,30 +8974,8 @@ export const V1UpdateNetworkRestrictionsOutput = Schema.Struct({
     }),
   ),
   status: Schema.Literals(["stored", "applied"]),
-  updated_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
-  applied_at: Schema.optionalKey(
-    Schema.String.annotate({ format: "date-time" }).check(
-      Schema.isPattern(
-        new RegExp(
-          "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        ),
-      ).annotate({
-        expected:
-          "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      }),
-    ),
-  ),
+  updated_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  applied_at: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1UpdatePgsodiumConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -10145,34 +9604,10 @@ export const V1UpdateProjectApiKeyOutput = Schema.Struct({
     ]),
   ),
   inserted_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Union([
-      Schema.String.annotate({ format: "date-time" }).check(
-        Schema.isPattern(
-          new RegExp(
-            "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-          ),
-        ).annotate({
-          expected:
-            "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-        }),
-      ),
-      Schema.Null,
-    ]),
+    Schema.Union([Schema.String.annotate({ format: "date-time" }), Schema.Null]),
   ),
 });
 export const V1UpdateProjectLegacyApiKeysInput = Schema.Struct({
@@ -10224,26 +9659,8 @@ export const V1UpdateProjectSigningKeyOutput = Schema.Struct({
   algorithm: Schema.Literals(["EdDSA", "ES256", "RS256", "HS256"]),
   status: Schema.Literals(["in_use", "previously_used", "revoked", "standby"]),
   public_jwk: Schema.Union([Schema.Json.annotate({ expected: "JSON value" }), Schema.Null]),
-  created_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
-  updated_at: Schema.String.annotate({ format: "date-time" }).check(
-    Schema.isPattern(
-      new RegExp(
-        "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-      ),
-    ).annotate({
-      expected:
-        "a string matching the RegExp ^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$",
-    }),
-  ),
+  created_at: Schema.String.annotate({ format: "date-time" }),
+  updated_at: Schema.String.annotate({ format: "date-time" }),
 });
 export const V1UpdateRealtimeConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -10580,6 +9997,2005 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
     }),
   }),
 });
+export const V2AssignOrganizationMemberRoleInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  user_id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("organization_member_role").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+        description:
+          "Role name to assign. Must be one of: owner, administrator, developer, read-only. Must be on a Team or Enterprise plan to use the read-only role.",
+      }),
+      projects: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ ref: Schema.String.annotate({ description: "Project ref" }) }))
+          .annotate({
+            description:
+              "The projects to assign a project-scoped role for. If omitted, assigns an org-wide role.",
+          })
+          .check(
+            Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+          ),
+      ),
+    }),
+  }),
+});
+export const V2AssignOrganizationMemberRoleOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("organization_member_role").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String.annotate({
+        description: "Role name. For project-scoped assignments this is the base role name.",
+      }),
+      scope: Schema.Literals(["organization", "project"]).annotate({
+        description:
+          "Whether this role applies org-wide or is scoped to specific projects for the user.",
+      }),
+      projects: Schema.Array(Schema.Struct({ ref: Schema.String, name: Schema.String })).annotate({
+        description: "Project refs this role is scoped to. Empty array for org-level roles.",
+      }),
+    }),
+  }),
+});
+export const V2CreateLogDrainInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.optionalKey(Schema.String),
+      config: Schema.Union([
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          schema: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          port: Schema.optionalKey(
+            Schema.Union([
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Null,
+            ]),
+          ),
+          hostname: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "postgres" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "webhook" }),
+        Schema.Struct({
+          project_id: Schema.optionalKey(Schema.String),
+          dataset_id: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "bigquery" }),
+        Schema.Struct({
+          api_key: Schema.optionalKey(Schema.String),
+          region: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "datadog" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "loki" }),
+        Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+        Schema.Struct({
+          domain: Schema.optionalKey(Schema.String),
+          api_token: Schema.optionalKey(Schema.String),
+          dataset_name: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "axiom" }),
+        Schema.Struct({
+          host: Schema.optionalKey(Schema.String),
+          port: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(65535).annotate({
+                  expected: "a value less than or equal to 65535",
+                }),
+              ),
+          ),
+          tls: Schema.optionalKey(Schema.Boolean),
+          structured_data: Schema.optionalKey(Schema.String),
+          cipher_key: Schema.optionalKey(Schema.String),
+          ca_cert: Schema.optionalKey(Schema.String),
+          client_cert: Schema.optionalKey(Schema.String),
+          client_key: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "syslog" }),
+      ]),
+      backend_type: Schema.Literals([
+        "postgres",
+        "bigquery",
+        "clickhouse",
+        "webhook",
+        "datadog",
+        "loki",
+        "sentry",
+        "s3",
+        "axiom",
+        "last9",
+        "otlp",
+        "syslog",
+      ]),
+    }),
+  }),
+});
+export const V2CreateLogDrainOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.optionalKey(Schema.String),
+      config: Schema.Union([
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          schema: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          port: Schema.optionalKey(
+            Schema.Union([
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Null,
+            ]),
+          ),
+          hostname: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "postgres" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "webhook" }),
+        Schema.Struct({
+          project_id: Schema.optionalKey(Schema.String),
+          dataset_id: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "bigquery" }),
+        Schema.Struct({
+          api_key: Schema.optionalKey(Schema.String),
+          region: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "datadog" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "loki" }),
+        Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+        Schema.Struct({
+          domain: Schema.optionalKey(Schema.String),
+          api_token: Schema.optionalKey(Schema.String),
+          dataset_name: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "axiom" }),
+        Schema.Struct({
+          host: Schema.optionalKey(Schema.String),
+          port: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(65535).annotate({
+                  expected: "a value less than or equal to 65535",
+                }),
+              ),
+          ),
+          tls: Schema.optionalKey(Schema.Boolean),
+          structured_data: Schema.optionalKey(Schema.String),
+          cipher_key: Schema.optionalKey(Schema.String),
+          ca_cert: Schema.optionalKey(Schema.String),
+          client_cert: Schema.optionalKey(Schema.String),
+          client_key: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "syslog" }),
+      ]),
+      backend_type: Schema.Literals([
+        "postgres",
+        "bigquery",
+        "clickhouse",
+        "webhook",
+        "datadog",
+        "loki",
+        "sentry",
+        "s3",
+        "axiom",
+        "last9",
+        "otlp",
+        "syslog",
+      ]),
+    }),
+  }),
+});
+export const V2CreateOrganizationInvitationsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        email: Schema.String.annotate({ format: "email" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          }),
+        ),
+        role: Schema.Literals(["owner", "administrator", "developer", "read-only"]).annotate({
+          description:
+            "Role name to assign. Must be on a Team or Enterprise plan to use the read-only role.",
+        }),
+        projects: Schema.optionalKey(
+          Schema.Array(
+            Schema.Struct({ ref: Schema.String.annotate({ description: "Project ref" }) }),
+          )
+            .annotate({
+              description:
+                "The projects to limit a user to. If omitted, user will have org-wide access with the provided role.",
+            })
+            .check(
+              Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+            ),
+        ),
+        require_sso: Schema.optionalKey(Schema.Boolean),
+      }),
+    }),
+  )
+    .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+    .check(Schema.isMaxLength(50).annotate({ expected: "a value with a length of at most 50" })),
+});
+export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
+  error: Schema.optionalKey(
+    Schema.Struct({
+      id: Schema.optionalKey(Schema.String),
+      code: Schema.String,
+      message: Schema.String,
+      description: Schema.optionalKey(Schema.String),
+      links: Schema.optionalKey(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            href: Schema.String,
+            rel: Schema.optionalKey(Schema.String),
+            title: Schema.optionalKey(Schema.String),
+            type: Schema.optionalKey(Schema.String),
+            describedby: Schema.optionalKey(Schema.String),
+            meta: Schema.optionalKey(
+              Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
+            ),
+          }),
+        ),
+      ),
+      meta: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
+      ),
+      issues: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            id: Schema.optionalKey(Schema.String),
+            code: Schema.String,
+            message: Schema.String,
+            description: Schema.optionalKey(Schema.String),
+            links: Schema.optionalKey(
+              Schema.Record(
+                Schema.String,
+                Schema.Struct({
+                  href: Schema.String,
+                  rel: Schema.optionalKey(Schema.String),
+                  title: Schema.optionalKey(Schema.String),
+                  type: Schema.optionalKey(Schema.String),
+                  describedby: Schema.optionalKey(Schema.String),
+                  meta: Schema.optionalKey(
+                    Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })),
+                  ),
+                }),
+              ),
+            ),
+            meta: Schema.Struct({
+              email: Schema.String.annotate({ format: "email" }).check(
+                Schema.isPattern(
+                  new RegExp(
+                    "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                  ),
+                ).annotate({
+                  expected:
+                    "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                }),
+              ),
+            }),
+          }),
+        ),
+      ),
+    }),
+  ),
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        email: Schema.String.annotate({ format: "email" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          }),
+        ),
+      }),
+    }),
+  ),
+});
+export const V2CreatePrivateLinkAssociationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("private_link_association").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      aws_account_id: Schema.String.annotate({
+        description: "The AWS account ID to add to the project PrivateLink share.",
+      })
+        .check(
+          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+        )
+        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+            expected: "a string matching the RegExp ^\\d{12}$",
+          }),
+        ),
+      account_name: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Optional human-readable name for the AWS account.",
+        }).check(
+          Schema.isMaxLength(128).annotate({ expected: "a value with a length of at most 128" }),
+        ),
+      ),
+      database_identifier: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Identifier of the read replica this PrivateLink share should target. Omit to target the primary database.",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("private_link_association").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      aws_account_id: Schema.String.annotate({
+        description: "The AWS account ID this PrivateLink share is associated with.",
+      })
+        .check(
+          Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+        )
+        .check(Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }))
+        .check(
+          Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+            expected: "a string matching the RegExp ^\\d{12}$",
+          }),
+        ),
+      account_name: Schema.optionalKey(
+        Schema.String.annotate({ description: "Human-readable name for the AWS account." }),
+      ),
+      status: Schema.Literals([
+        "CREATING",
+        "READY",
+        "ASSOCIATION_REQUEST_EXPIRED",
+        "ASSOCIATION_ACCEPTED",
+        "CREATION_FAILED",
+        "DELETING",
+      ]).annotate({
+        description:
+          "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
+      }),
+      shared_at: Schema.Union([
+        Schema.String.annotate({
+          description:
+            "The time and date at which the AWS Resource Share Association was requested from Supabase. `null` means that the association was not yet requested while the PrivateLink Association is pending.",
+          format: "date-time",
+        }),
+        Schema.Null,
+      ]),
+      database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
+        description:
+          "Whether this PrivateLink share targets the primary database or a read replica.",
+      }),
+      database_identifier: Schema.String.annotate({
+        description:
+          "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
+      }),
+    }),
+  }),
+});
+export const V2DeleteLogDrainInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+});
+export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        email: Schema.String.annotate({ format: "email" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          }),
+        ),
+      }),
+    }),
+  )
+    .check(Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }))
+    .check(Schema.isMaxLength(100).annotate({ expected: "a value with a length of at most 100" })),
+});
+export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({
+        email: Schema.String.annotate({ format: "email" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          }),
+        ),
+      }),
+    }),
+  ),
+});
+export const V2DeletePrivateLinkAssociationInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  aws_account_id: Schema.String,
+});
+export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  aws_account_id: Schema.String,
+  database_identifier: Schema.String,
+});
+export const V2GetProjectConfigInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2GetProjectConfigOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_config").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Project ref." }),
+    attributes: Schema.Struct({
+      database: Schema.Struct({
+        ssl_enforced: Schema.Boolean.annotate({
+          description: "Whether the database rejects plaintext connections",
+        }),
+        network_restrictions: Schema.Struct({
+          entitlement: Schema.Literals(["disallowed", "allowed"]),
+          status: Schema.Literals(["stored", "applied"]).annotate({
+            description: "Whether the allowlist below is applied to the project or only stored.",
+          }),
+          allowed_cidrs: Schema.Array(
+            Schema.Struct({ address: Schema.String, type: Schema.Literals(["v4", "v6"]) }),
+          ),
+          updated_at: Schema.optionalKey(Schema.String),
+          applied_at: Schema.optionalKey(Schema.String),
+        }),
+        postgres_settings: Schema.Struct({
+          effective_cache_size: Schema.optionalKey(Schema.String),
+          logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+          log_autovacuum_min_duration: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          log_checkpoints: Schema.optionalKey(Schema.Boolean),
+          log_connections: Schema.optionalKey(Schema.Boolean),
+          log_disconnections: Schema.optionalKey(Schema.Boolean),
+          log_duration: Schema.optionalKey(Schema.Boolean),
+          log_lock_waits: Schema.optionalKey(Schema.Boolean),
+          log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+          log_replication_commands: Schema.optionalKey(Schema.Boolean),
+          log_startup_progress_interval: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          log_temp_files: Schema.optionalKey(Schema.String),
+          maintenance_work_mem: Schema.optionalKey(Schema.String),
+          track_activity_query_size: Schema.optionalKey(Schema.String),
+          max_connections: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(1).annotate({
+                  expected: "a value greater than or equal to 1",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_locks_per_transaction: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(10).annotate({
+                  expected: "a value greater than or equal to 10",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(2147483640).annotate({
+                  expected: "a value less than or equal to 2147483640",
+                }),
+              ),
+          ),
+          max_logical_replication_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_parallel_maintenance_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_parallel_workers: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_parallel_workers_per_gather: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(1024).annotate({
+                  expected: "a value less than or equal to 1024",
+                }),
+              ),
+          ),
+          max_replication_slots: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
+          max_standby_archive_delay: Schema.optionalKey(Schema.String),
+          max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+          max_sync_workers_per_subscription: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          max_wal_size: Schema.optionalKey(Schema.String),
+          max_wal_senders: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          ),
+          max_worker_processes: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(262143).annotate({
+                  expected: "a value less than or equal to 262143",
+                }),
+              ),
+          ),
+          session_replication_role: Schema.optionalKey(
+            Schema.Literals(["origin", "replica", "local"]),
+          ),
+          shared_buffers: Schema.optionalKey(Schema.String),
+          statement_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          track_commit_timestamp: Schema.optionalKey(Schema.Boolean),
+          wal_keep_size: Schema.optionalKey(Schema.String),
+          wal_sender_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: ms" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          work_mem: Schema.optionalKey(Schema.String),
+          checkpoint_timeout: Schema.optionalKey(
+            Schema.String.annotate({ description: "Default unit: s" }).check(
+              Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")).annotate(
+                {
+                  expected:
+                    "a string matching the RegExp ^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$",
+                },
+              ),
+            ),
+          ),
+          hot_standby_feedback: Schema.optionalKey(Schema.Boolean),
+          cron_log_statement: Schema.optionalKey(Schema.Boolean),
+        }).annotate({
+          description:
+            "Postgres parameter overrides. Empty when the project runs entirely on defaults.",
+        }),
+      }),
+      pooler: Schema.Struct({
+        pool_mode: Schema.Literals(["transaction", "session", "statement"]),
+        ignore_startup_parameters: Schema.String,
+        server_idle_timeout: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        server_lifetime: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        query_wait_timeout: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        reserve_pool_size: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        default_pool_size: Schema.Number.annotate({
+          description:
+            "Defaults to the pooler's size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_client_conn: Schema.Number.annotate({
+          description:
+            "Defaults to the pooler's size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+      }),
+      auth: Schema.Record(Schema.String, Schema.Json.annotate({ expected: "JSON value" })).annotate(
+        {
+          description:
+            "Effective Auth config, keyed by lowercased GoTrue setting name and resolved through the `gotrue_config` view, so a setting the project has never overridden is reported at its platform default. Secrets are returned as an HMAC of their value, never in plaintext.",
+        },
+      ),
+      api: Schema.Struct({
+        db_schema: Schema.String.annotate({ description: "Schemas exposed through the Data API" }),
+        db_extra_search_path: Schema.String,
+        max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool_acquisition_timeout: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        db_pool: Schema.Union([
+          Schema.Number.annotate({
+            description:
+              "If `null`, no pool size is written to the project's PostgREST config and PostgREST's own default applies. The platform does not pick a value here.",
+          })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          Schema.Null,
+        ]),
+      }),
+      realtime: Schema.Struct({
+        private_only: Schema.Boolean,
+        max_concurrent_users: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_events_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_bytes_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_channels_per_client: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_joins_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_presence_events_per_second: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        max_payload_size_in_kb: Schema.Number.check(
+          Schema.isInt().annotate({ expected: "an integer" }),
+        )
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        presence_enabled: Schema.Boolean,
+        suspend: Schema.Boolean,
+        connection_pool: Schema.Number.annotate({
+          description:
+            "Defaults to Realtime's pool size for the project's compute when not overridden.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        postgres_changes_pool: Schema.Union([
+          Schema.Number.annotate({
+            description: "If `null`, no override is stored and Realtime applies its own default.",
+          })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          Schema.Null,
+        ]),
+      }),
+      storage: Schema.Struct({
+        file_size_limit: Schema.Number.annotate({ format: "int64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        features: Schema.Struct({
+          image_transformation: Schema.Struct({ enabled: Schema.Boolean }),
+          s3_protocol: Schema.Struct({ enabled: Schema.Boolean }),
+          purge_cache: Schema.Struct({ enabled: Schema.Boolean }),
+          iceberg_catalog: Schema.Struct({
+            enabled: Schema.Boolean,
+            max_namespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_tables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_catalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }),
+          vector_buckets: Schema.Struct({
+            enabled: Schema.Boolean,
+            max_buckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            max_indexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }),
+        }),
+        capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
+        upstream_target: Schema.Literals(["main", "canary"]),
+        migration_version: Schema.String,
+        database_pool_mode: Schema.String,
+      }).annotate({
+        description:
+          "Read from the storage service's admin API rather than the middleware DB, so unlike the rest of this resource it reflects the tenant's live config.",
+      }),
+    }),
+  }),
+});
+export const V2ListLogDrainsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ListLogDrainsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
+      id: Schema.String,
+      attributes: Schema.Struct({
+        name: Schema.String,
+        description: Schema.optionalKey(Schema.String),
+        config: Schema.Union([
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            schema: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            port: Schema.optionalKey(
+              Schema.Union([
+                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                Schema.Null,
+              ]),
+            ),
+            hostname: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "postgres" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "webhook" }),
+          Schema.Struct({
+            project_id: Schema.optionalKey(Schema.String),
+            dataset_id: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "bigquery" }),
+          Schema.Struct({
+            api_key: Schema.optionalKey(Schema.String),
+            region: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "datadog" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "loki" }),
+          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            api_token: Schema.optionalKey(Schema.String),
+            dataset_name: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "axiom" }),
+          Schema.Struct({
+            host: Schema.optionalKey(Schema.String),
+            port: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(65535).annotate({
+                    expected: "a value less than or equal to 65535",
+                  }),
+                ),
+            ),
+            tls: Schema.optionalKey(Schema.Boolean),
+            structured_data: Schema.optionalKey(Schema.String),
+            cipher_key: Schema.optionalKey(Schema.String),
+            ca_cert: Schema.optionalKey(Schema.String),
+            client_cert: Schema.optionalKey(Schema.String),
+            client_key: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "syslog" }),
+        ]),
+        backend_type: Schema.Literals([
+          "postgres",
+          "bigquery",
+          "clickhouse",
+          "webhook",
+          "datadog",
+          "loki",
+          "sentry",
+          "s3",
+          "axiom",
+          "last9",
+          "otlp",
+          "syslog",
+        ]),
+      }),
+    }),
+  ),
+});
+export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+      after: Schema.optionalKey(
+        Schema.String.annotate({ description: "Project ref" })
+          .check(
+            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+          )
+          .check(
+            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
+            }),
+          ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.annotate({ description: "Project ref" })
+          .check(
+            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+          )
+          .check(
+            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
+            }),
+          ),
+      ),
+    }),
+  ),
+  filter: Schema.optionalKey(
+    Schema.Struct({
+      project_ref: Schema.optionalKey(
+        Schema.String.annotate({ description: "Project ref" })
+          .check(
+            Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+          )
+          .check(
+            Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+              expected: "a string matching the RegExp ^[a-z]+$",
+            }),
+          ),
+      ),
+    }),
+  ),
+});
+export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("github_connection").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Connection id." }),
+      attributes: Schema.Struct({
+        inserted_at: Schema.String.annotate({ description: "When the connection was created" }),
+        updated_at: Schema.String.annotate({ description: "When the connection was last updated" }),
+        installation_id: Schema.Number.annotate({
+          description: "GitHub App installation id",
+        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        workdir: Schema.String.annotate({
+          description: "Directory within the repository the project lives in",
+        }),
+        supabase_changes_only: Schema.Boolean.annotate({
+          description: "Whether branches are only created for changes under `supabase/`",
+        }),
+        branch_limit: Schema.Number.annotate({
+          description: "Maximum number of preview branches",
+        }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        new_branch_per_pr: Schema.Boolean.annotate({
+          description: "Whether a preview branch is created for every pull request",
+        }),
+        project: Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          ref: Schema.String.annotate({ description: "Project ref" })
+            .check(
+              Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+            )
+            .check(
+              Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }),
+            )
+            .check(
+              Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+                expected: "a string matching the RegExp ^[a-z]+$",
+              }),
+            ),
+          name: Schema.String,
+        }).annotate({ description: "The connected Supabase project" }),
+        repository: Schema.Struct({
+          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          name: Schema.String,
+        }).annotate({ description: "The connected GitHub repository" }),
+        user: Schema.Union([
+          Schema.Struct({
+            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            username: Schema.String,
+            primary_email: Schema.Union([Schema.String, Schema.Null]),
+          }).annotate({ description: "The user who created the connection, if still known" }),
+          Schema.Null,
+        ]),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+  }),
+});
+export const V2ListOrganizationMembersInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+      after: Schema.optionalKey(
+        Schema.String.annotate({ format: "uuid" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.annotate({ format: "uuid" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+          }),
+        ),
+      ),
+    }),
+  ),
+  filter: Schema.optionalKey(
+    Schema.Struct({
+      username: Schema.optionalKey(Schema.String),
+      primary_email: Schema.optionalKey(
+        Schema.String.annotate({ format: "email" }).check(
+          Schema.isPattern(
+            new RegExp(
+              "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+            ),
+          ).annotate({
+            expected:
+              "a string matching the RegExp ^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+          }),
+        ),
+      ),
+    }),
+  ),
+});
+export const V2ListOrganizationMembersOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_member").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ format: "uuid" }).check(
+        Schema.isPattern(
+          new RegExp(
+            "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+          ),
+        ).annotate({
+          expected:
+            "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        }),
+      ),
+      attributes: Schema.Struct({
+        username: Schema.Union([
+          Schema.String.annotate({ description: "Member's username" }),
+          Schema.Null,
+        ]),
+        primary_email: Schema.Union([
+          Schema.String.annotate({ description: "Member's primary email" }),
+          Schema.Null,
+        ]),
+        mfa_enabled: Schema.Boolean.annotate({
+          description: "Whether Multi-Factor Authentication is enabled for this member",
+        }),
+        is_sso_user: Schema.Boolean.annotate({
+          description: "Whether this member is a Single Sign-On user",
+        }),
+        avatar_url: Schema.Union([
+          Schema.String.annotate({ description: "Member's avatar URL" }),
+          Schema.Null,
+        ]),
+        roles: Schema.Array(
+          Schema.Struct({
+            name: Schema.String.annotate({
+              description: "Role name. For project-scoped roles this is the base role name.",
+            }),
+            scope: Schema.Literals(["organization", "project"]).annotate({
+              description:
+                "Whether this role applies org-wide or is scoped to specific projects for the user.",
+            }),
+            projects: Schema.Array(
+              Schema.Struct({ ref: Schema.String, name: Schema.String }),
+            ).annotate({
+              description: "Project refs this role is scoped to. Empty array for org-level roles.",
+            }),
+          }),
+        ).annotate({
+          description:
+            "Roles assigned to this member. Includes both org-level and project-scoped roles.",
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+  }),
+});
+export const V2ListOrganizationProjectsInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+  page: Schema.optionalKey(
+    Schema.Struct({
+      size: Schema.optionalKey(
+        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(1).annotate({
+              expected: "a value greater than or equal to 1",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(100).annotate({
+              expected: "a value less than or equal to 100",
+            }),
+          ),
+      ),
+      after: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+      before: Schema.optionalKey(
+        Schema.String.check(
+          Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+        ),
+      ),
+    }),
+  ),
+  sort: Schema.optionalKey(Schema.Literals(["inserted_at", "-inserted_at"])),
+  search: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
+    ),
+  ),
+});
+export const V2ListOrganizationProjectsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("project").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Project ref" })
+        .check(
+          Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+        )
+        .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+        .check(
+          Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+            expected: "a string matching the RegExp ^[a-z]+$",
+          }),
+        ),
+      attributes: Schema.Struct({
+        name: Schema.String.annotate({ description: "Project name" }),
+        status: Schema.Literals([
+          "INACTIVE",
+          "ACTIVE_HEALTHY",
+          "ACTIVE_UNHEALTHY",
+          "COMING_UP",
+          "UNKNOWN",
+          "GOING_DOWN",
+          "INIT_FAILED",
+          "REMOVED",
+          "RESTORING",
+          "UPGRADING",
+          "PAUSING",
+          "RESTORE_FAILED",
+          "RESTARTING",
+          "PAUSE_FAILED",
+          "RESIZING",
+        ]).annotate({ description: "Project status" }),
+        cloud_provider: Schema.String.annotate({
+          description: "Cloud provider hosting the project",
+        }),
+        region: Schema.String.annotate({ description: "Region the project is hosted in" }),
+        inserted_at: Schema.String.annotate({ description: "When the project was created" }),
+        databases: Schema.Array(
+          Schema.Struct({
+            cloud_provider: Schema.String,
+            identifier: Schema.String,
+            region: Schema.Union([Schema.String, Schema.Null]),
+            status: Schema.Literals([
+              "ACTIVE_HEALTHY",
+              "ACTIVE_UNHEALTHY",
+              "COMING_UP",
+              "GOING_DOWN",
+              "INIT_FAILED",
+              "REMOVED",
+              "RESTORING",
+              "UNKNOWN",
+              "INIT_READ_REPLICA",
+              "INIT_READ_REPLICA_FAILED",
+              "RESTARTING",
+              "RESIZING",
+            ]),
+            type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
+            infra_compute_size: Schema.optionalKey(
+              Schema.Literals([
+                "pico",
+                "nano",
+                "micro",
+                "small",
+                "medium",
+                "large",
+                "xlarge",
+                "2xlarge",
+                "4xlarge",
+                "8xlarge",
+                "12xlarge",
+                "16xlarge",
+                "24xlarge",
+                "24xlarge_optimized_memory",
+                "24xlarge_optimized_cpu",
+                "24xlarge_high_memory",
+                "48xlarge",
+                "48xlarge_optimized_memory",
+                "48xlarge_optimized_cpu",
+                "48xlarge_high_memory",
+              ]),
+            ),
+            disk_volume_size_gb: Schema.optionalKey(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+            disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
+            disk_throughput_mbps: Schema.optionalKey(
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            ),
+            disk_last_modified_at: Schema.optionalKey(Schema.String),
+          }),
+        ).annotate({
+          description: "The project's databases including compute and disk attributes.",
+        }),
+      }),
+    }),
+  ),
+  links: Schema.Struct({
+    first: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the first page if available." }),
+        Schema.Null,
+      ]),
+    ),
+    prev: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the previous page." }),
+      Schema.Null,
+    ]),
+    next: Schema.Union([
+      Schema.String.annotate({ description: "URL path to the next page." }),
+      Schema.Null,
+    ]),
+    last: Schema.optionalKey(
+      Schema.Union([
+        Schema.String.annotate({ description: "URL path to the last page if available." }),
+        Schema.Null,
+      ]),
+    ),
+  }),
+});
+export const V2ListOrganizationRolesInput = Schema.Struct({
+  slug: Schema.String.check(
+    Schema.isPattern(new RegExp("^[\\w-]+$")).annotate({
+      expected: "a string matching the RegExp ^[\\w-]+$",
+    }),
+  ),
+});
+export const V2ListOrganizationRolesOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("organization_role").annotate({ description: "Resource type." }),
+      attributes: Schema.Struct({ name: Schema.String.annotate({ description: "Role name." }) }),
+    }),
+  ),
+});
+export const V2ListPrivateLinkAssociationsInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("private_link_association").annotate({ description: "Resource type." }),
+      id: Schema.String,
+      attributes: Schema.Struct({
+        aws_account_id: Schema.String.annotate({
+          description: "The AWS account ID this PrivateLink share is associated with.",
+        })
+          .check(
+            Schema.isMinLength(12).annotate({ expected: "a value with a length of at least 12" }),
+          )
+          .check(
+            Schema.isMaxLength(12).annotate({ expected: "a value with a length of at most 12" }),
+          )
+          .check(
+            Schema.isPattern(new RegExp("^\\d{12}$")).annotate({
+              expected: "a string matching the RegExp ^\\d{12}$",
+            }),
+          ),
+        account_name: Schema.optionalKey(
+          Schema.String.annotate({ description: "Human-readable name for the AWS account." }),
+        ),
+        status: Schema.Literals([
+          "CREATING",
+          "READY",
+          "ASSOCIATION_REQUEST_EXPIRED",
+          "ASSOCIATION_ACCEPTED",
+          "CREATION_FAILED",
+          "DELETING",
+        ]).annotate({
+          description:
+            "\n  - `CREATING`: The PrivateLink resources and the Association are in the process of being created. The PrivateLink Share cannot be accepted yet.\n  - `READY`: The PrivateLink resources have been created and the PrivateLink Share can be accepted for the duration of 12h after sharing. See `shared_at`.\n  - `ASSOCIATION_REQUEST_EXPIRED`: The PrivateLink Share has not been accepted within the 12h time limit. This association can now be deleted.\n  - `ASSOCIATION_ACCEPTED`: The PrivateLink Share was successfully accepted.\n  - `CREATION_FAILED`: The PrivateLink resources failed to create. This likely means something went wrong on Supabase's and and support should be contacted.\n  - `DELETING`: The PrivateLink resources and the Association are in the process of being deleted. The PrivateLink Share cannot be accepted yet.\n",
+        }),
+        shared_at: Schema.Union([
+          Schema.String.annotate({
+            description:
+              "The time and date at which the AWS Resource Share Association was requested from Supabase. `null` means that the association was not yet requested while the PrivateLink Association is pending.",
+            format: "date-time",
+          }),
+          Schema.Null,
+        ]),
+        database_type: Schema.Literals(["PRIMARY", "READ_REPLICA"]).annotate({
+          description:
+            "Whether this PrivateLink share targets the primary database or a read replica.",
+        }),
+        database_identifier: Schema.String.annotate({
+          description:
+            "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
+        }),
+      }),
+    }),
+  ),
+});
+export const V2PreviewAProjectTransferInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_transfer_input").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({ target_organization_slug: Schema.String }),
+  }),
+});
+export const V2PreviewAProjectTransferOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_transfer_result").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      valid: Schema.Boolean,
+      warnings: Schema.Array(Schema.Struct({ key: Schema.String, message: Schema.String })),
+      errors: Schema.Array(Schema.Struct({ key: Schema.String, message: Schema.String })),
+      info: Schema.Array(Schema.Struct({ key: Schema.String, message: Schema.String })),
+    }),
+  }),
+});
+export const V2TransferAProjectInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_transfer_input").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({ target_organization_slug: Schema.String }),
+  }),
+});
+export const V2UpdateLogDrainInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  id: Schema.String.annotate({ format: "uuid" }).check(
+    Schema.isPattern(
+      new RegExp(
+        "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+      ),
+    ).annotate({
+      expected:
+        "a string matching the RegExp ^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      name: Schema.optionalKey(Schema.String),
+      description: Schema.optionalKey(Schema.String),
+      config: Schema.optionalKey(
+        Schema.Union([
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            schema: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            port: Schema.optionalKey(
+              Schema.Union([
+                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                Schema.Null,
+              ]),
+            ),
+            hostname: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "postgres" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+            gzip: Schema.optionalKey(Schema.Boolean),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "webhook" }),
+          Schema.Struct({
+            project_id: Schema.optionalKey(Schema.String),
+            dataset_id: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "bigquery" }),
+          Schema.Struct({
+            api_key: Schema.optionalKey(Schema.String),
+            region: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "datadog" }),
+          Schema.Struct({
+            url: Schema.optionalKey(Schema.String),
+            username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+            headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+          }).annotate({ title: "loki" }),
+          Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+          Schema.Struct({
+            domain: Schema.optionalKey(Schema.String),
+            api_token: Schema.optionalKey(Schema.String),
+            dataset_name: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "axiom" }),
+          Schema.Struct({
+            host: Schema.optionalKey(Schema.String),
+            port: Schema.optionalKey(
+              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+                .check(
+                  Schema.isGreaterThanOrEqualTo(0).annotate({
+                    expected: "a value greater than or equal to 0",
+                  }),
+                )
+                .check(
+                  Schema.isLessThanOrEqualTo(65535).annotate({
+                    expected: "a value less than or equal to 65535",
+                  }),
+                ),
+            ),
+            tls: Schema.optionalKey(Schema.Boolean),
+            structured_data: Schema.optionalKey(Schema.String),
+            cipher_key: Schema.optionalKey(Schema.String),
+            ca_cert: Schema.optionalKey(Schema.String),
+            client_cert: Schema.optionalKey(Schema.String),
+            client_key: Schema.optionalKey(Schema.String),
+          }).annotate({ title: "syslog" }),
+        ]),
+      ),
+      backend_type: Schema.Literals([
+        "postgres",
+        "bigquery",
+        "clickhouse",
+        "webhook",
+        "datadog",
+        "loki",
+        "sentry",
+        "s3",
+        "axiom",
+        "last9",
+        "otlp",
+        "syslog",
+      ]),
+    }),
+  }),
+});
+export const V2UpdateLogDrainOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("log_drain").annotate({ description: "Resource type." }),
+    id: Schema.String,
+    attributes: Schema.Struct({
+      name: Schema.String,
+      description: Schema.optionalKey(Schema.String),
+      config: Schema.Union([
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          schema: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          port: Schema.optionalKey(
+            Schema.Union([
+              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Null,
+            ]),
+          ),
+          hostname: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "postgres" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          http: Schema.optionalKey(Schema.Literals(["http1", "http2"])),
+          gzip: Schema.optionalKey(Schema.Boolean),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "webhook" }),
+        Schema.Struct({
+          project_id: Schema.optionalKey(Schema.String),
+          dataset_id: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "bigquery" }),
+        Schema.Struct({
+          api_key: Schema.optionalKey(Schema.String),
+          region: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "datadog" }),
+        Schema.Struct({
+          url: Schema.optionalKey(Schema.String),
+          username: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+          headers: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+        }).annotate({ title: "loki" }),
+        Schema.Struct({ dsn: Schema.optionalKey(Schema.String) }).annotate({ title: "sentry" }),
+        Schema.Struct({
+          domain: Schema.optionalKey(Schema.String),
+          api_token: Schema.optionalKey(Schema.String),
+          dataset_name: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "axiom" }),
+        Schema.Struct({
+          host: Schema.optionalKey(Schema.String),
+          port: Schema.optionalKey(
+            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(0).annotate({
+                  expected: "a value greater than or equal to 0",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(65535).annotate({
+                  expected: "a value less than or equal to 65535",
+                }),
+              ),
+          ),
+          tls: Schema.optionalKey(Schema.Boolean),
+          structured_data: Schema.optionalKey(Schema.String),
+          cipher_key: Schema.optionalKey(Schema.String),
+          ca_cert: Schema.optionalKey(Schema.String),
+          client_cert: Schema.optionalKey(Schema.String),
+          client_key: Schema.optionalKey(Schema.String),
+        }).annotate({ title: "syslog" }),
+      ]),
+      backend_type: Schema.Literals([
+        "postgres",
+        "bigquery",
+        "clickhouse",
+        "webhook",
+        "datadog",
+        "loki",
+        "sentry",
+        "s3",
+        "axiom",
+        "last9",
+        "otlp",
+        "syslog",
+      ]),
+    }),
+  }),
+});
 export const V1ApplyAMigrationOutput = Schema.Void;
 export const V1ApplyProjectAddonOutput = Schema.Void;
 export const V1AuthorizeUserOutput = Schema.Void;
@@ -10618,6 +12034,10 @@ export const V1UndoOutput = Schema.Void;
 export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
+export const V2DeleteLogDrainOutput = Schema.Void;
+export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
+export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
+export const V2TransferAProjectOutput = Schema.Void;
 
 export const openApiOperationIdMap = {
   "v1-accept-invite-external-jit-access": "v1AcceptInviteExternalJitAccess",
@@ -10790,6 +12210,24 @@ export const openApiOperationIdMap = {
   "v1-upgrade-postgres-version": "v1UpgradePostgresVersion",
   "v1-upsert-a-migration": "v1UpsertAMigration",
   "v1-verify-dns-config": "v1VerifyDnsConfig",
+  "v2-assign-organization-member-role": "v2AssignOrganizationMemberRole",
+  "v2-create-log-drain": "v2CreateLogDrain",
+  "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
+  "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
+  "v2-delete-log-drain": "v2DeleteLogDrain",
+  "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
+  "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
+  "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
+  "v2-get-project-config": "v2GetProjectConfig",
+  "v2-list-log-drains": "v2ListLogDrains",
+  "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
+  "v2-list-organization-members": "v2ListOrganizationMembers",
+  "v2-list-organization-projects": "v2ListOrganizationProjects",
+  "v2-list-organization-roles": "v2ListOrganizationRoles",
+  "v2-list-private-link-associations": "v2ListPrivateLinkAssociations",
+  "v2-preview-a-project-transfer": "v2PreviewAProjectTransfer",
+  "v2-transfer-a-project": "v2TransferAProject",
+  "v2-update-log-drain": "v2UpdateLogDrain",
 } as const;
 
 export const operationDefinitions = {
@@ -13500,6 +14938,250 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1VerifyDnsConfigInput,
     outputSchema: V1VerifyDnsConfigOutput,
+  },
+  v2AssignOrganizationMemberRole: {
+    id: "v2AssignOrganizationMemberRole",
+    description:
+      "Assigns an org-wide role when projects is omitted, or creates a project-scoped assignment when projects is provided. Uses an org-level role template id from GET /v2/organizations/{slug}/roles. Stale role assignments are automatically cleaned up: if a role no longer has any projects, it is deleted; overlapping project assignments in other roles are automatically removed to avoid duplication.",
+    method: "PATCH",
+    path: "/v2/organizations/{slug}/members/{user_id}/roles",
+    pathParams: ["slug", "user_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2AssignOrganizationMemberRoleInput,
+    outputSchema: V2AssignOrganizationMemberRoleOutput,
+  },
+  v2CreateLogDrain: {
+    id: "v2CreateLogDrain",
+    description: "Create a log drain for a project",
+    method: "POST",
+    path: "/v2/projects/{ref}/analytics/log-drains",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateLogDrainInput,
+    outputSchema: V2CreateLogDrainOutput,
+  },
+  v2CreateOrganizationInvitations: {
+    id: "v2CreateOrganizationInvitations",
+    description:
+      "Creates member invitations for an organization. Each invitation can have different role and project scope settings.",
+    method: "POST",
+    path: "/v2/organizations/{slug}/members/invitations",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreateOrganizationInvitationsInput,
+    outputSchema: V2CreateOrganizationInvitationsOutput,
+  },
+  v2CreatePrivateLinkAssociation: {
+    id: "v2CreatePrivateLinkAssociation",
+    description:
+      "Adds an AWS account to the project's PrivateLink configuration and schedules the AWS resources to be created.",
+    method: "POST",
+    path: "/v2/projects/{ref}/private-link/associations",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2CreatePrivateLinkAssociationInput,
+    outputSchema: V2CreatePrivateLinkAssociationOutput,
+  },
+  v2DeleteLogDrain: {
+    id: "v2DeleteLogDrain",
+    description: "Delete a project log drain",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/analytics/log-drains/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteLogDrainInput,
+    outputSchema: V2DeleteLogDrainOutput,
+  },
+  v2DeleteOrganizationInvitations: {
+    id: "v2DeleteOrganizationInvitations",
+    description: "Bulk delete member invitations for an organization by email address.",
+    method: "DELETE",
+    path: "/v2/organizations/{slug}/members/invitations",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2DeleteOrganizationInvitationsInput,
+    outputSchema: V2DeleteOrganizationInvitationsOutput,
+  },
+  v2DeletePrivateLinkAssociation: {
+    id: "v2DeletePrivateLinkAssociation",
+    description:
+      "Removes an AWS account from the project's PrivateLink configuration (targeting the primary database). Cleans up the associated AWS resources.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/private-link/associations/aws-account/{aws_account_id}",
+    pathParams: ["ref", "aws_account_id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeletePrivateLinkAssociationInput,
+    outputSchema: V2DeletePrivateLinkAssociationOutput,
+  },
+  v2DeletePrivateLinkAssociationForDatabase: {
+    id: "v2DeletePrivateLinkAssociationForDatabase",
+    description:
+      "Removes an AWS account from the project's PrivateLink configuration for the given read replica. Cleans up the associated AWS resources.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/private-link/associations/aws-account/{aws_account_id}/database/{database_identifier}",
+    pathParams: ["ref", "aws_account_id", "database_identifier"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
+    outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
+  },
+  v2GetProjectConfig: {
+    id: "v2GetProjectConfig",
+    description:
+      "Returns the project's database, pooler, Auth, Data API, Realtime and Storage configuration — the same configuration a branch inherits from its base project. Each is the effective config, so a setting the project has never overridden is reported at its platform default rather than as null. Auth secrets are returned as an HMAC of their value. `storage` is read live from the storage service; the rest come from this platform's own records.",
+    method: "GET",
+    path: "/v2/projects/{ref}/config",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetProjectConfigInput,
+    outputSchema: V2GetProjectConfigOutput,
+  },
+  v2ListLogDrains: {
+    id: "v2ListLogDrains",
+    description: "List project log drains",
+    method: "GET",
+    path: "/v2/projects/{ref}/analytics/log-drains",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListLogDrainsInput,
+    outputSchema: V2ListLogDrainsOutput,
+  },
+  v2ListOrganizationGithubConnections: {
+    id: "v2ListOrganizationGithubConnections",
+    description:
+      "Returns a cursor-paginated list of the GitHub connections of the organization's projects.\n\nUse `page[after]` and `page[before]` to navigate pages and `page[size]` to control the page size.\nPaging walks the organization projects, so a page holds at most `page[size]` connections and can hold fewer (or none) when some of its projects are not connected.\nFollow `links.next` until it is `null` rather than stopping on a short page.\n\nUse `filter[project_ref]` to narrow the list down to a single project.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/integrations/github/connections",
+    pathParams: ["slug"],
+    queryParams: ["page", "filter"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationGithubConnectionsInput,
+    outputSchema: V2ListOrganizationGithubConnectionsOutput,
+  },
+  v2ListOrganizationMembers: {
+    id: "v2ListOrganizationMembers",
+    description:
+      "Returns a cursor-paginated list of organization members including their roles and project-scoped permissions.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/members",
+    pathParams: ["slug"],
+    queryParams: ["page", "filter"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationMembersInput,
+    outputSchema: V2ListOrganizationMembersOutput,
+  },
+  v2ListOrganizationProjects: {
+    id: "v2ListOrganizationProjects",
+    description:
+      "Returns a cursor-paginated list of projects for the specified organization, including their databases.\n\nUse `page[after]` and `page[before]` to navigate pages and `page[size]` to control the number of projects returned per page.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/projects",
+    pathParams: ["slug"],
+    queryParams: ["page", "sort", "search"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationProjectsInput,
+    outputSchema: V2ListOrganizationProjectsOutput,
+  },
+  v2ListOrganizationRoles: {
+    id: "v2ListOrganizationRoles",
+    description: "Returns a list of org-level roles for the organization.",
+    method: "GET",
+    path: "/v2/organizations/{slug}/roles",
+    pathParams: ["slug"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListOrganizationRolesInput,
+    outputSchema: V2ListOrganizationRolesOutput,
+  },
+  v2ListPrivateLinkAssociations: {
+    id: "v2ListPrivateLinkAssociations",
+    description: "List AWS accounts attached to the project PrivateLink share",
+    method: "GET",
+    path: "/v2/projects/{ref}/private-link/associations",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListPrivateLinkAssociationsInput,
+    outputSchema: V2ListPrivateLinkAssociationsOutput,
+  },
+  v2PreviewAProjectTransfer: {
+    id: "v2PreviewAProjectTransfer",
+    description:
+      "Previews transferring a project to a different organizations, shows eligibility and impact",
+    method: "POST",
+    path: "/v2/projects/{ref}/transfers/previews",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2PreviewAProjectTransferInput,
+    outputSchema: V2PreviewAProjectTransferOutput,
+  },
+  v2TransferAProject: {
+    id: "v2TransferAProject",
+    description: "Transfers a project to a different organization",
+    method: "POST",
+    path: "/v2/projects/{ref}/transfers",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "void" },
+    inputSchema: V2TransferAProjectInput,
+    outputSchema: V2TransferAProjectOutput,
+  },
+  v2UpdateLogDrain: {
+    id: "v2UpdateLogDrain",
+    description: "Update a project log drain",
+    method: "PUT",
+    path: "/v2/projects/{ref}/analytics/log-drains/{id}",
+    pathParams: ["ref", "id"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2UpdateLogDrainInput,
+    outputSchema: V2UpdateLogDrainOutput,
   },
 } as const;
 

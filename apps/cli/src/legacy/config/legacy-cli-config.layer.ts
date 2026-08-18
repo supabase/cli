@@ -1,113 +1,61 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
-import { parse as parseYaml } from "yaml";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import {
-  legacyApiUrl,
-  legacyDashboardUrl,
-  legacyIsBuiltinProfileName,
-  legacyPoolerHost,
-  legacyProjectHost,
-} from "../shared/legacy-profile.ts";
+  legacyLoadProfile,
+  type LegacyLoadedProfile,
+  type LegacyProfileLoadError,
+} from "../shared/legacy-profile-load.ts";
 import {
   LegacyDebugLogger,
   type LegacyDebugLoggerShape,
 } from "../shared/legacy-debug-logger.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
+import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { legacyProfileFilePath } from "./legacy-profile-file.ts";
-
-interface ResolvedProfile {
-  readonly name: string;
-  readonly apiUrl: string;
-  readonly projectHost: string;
-  readonly poolerHost: string;
-  readonly dashboardUrl: string;
-}
-
-// All per-profile endpoints are sourced from `legacy-profile.ts` (the single
-// source of truth that mirrors Go's `allProfiles` table and is also consumed
-// by `branches get` and the sso pflag-profile reconciliation), so no mapping
-// is duplicated here.
-function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
-  return {
-    name,
-    apiUrl: legacyApiUrl(name),
-    projectHost: legacyProjectHost(name),
-    poolerHost: legacyPoolerHost(name),
-    dashboardUrl: legacyDashboardUrl(name),
-  };
-}
-
-function safeParseYaml(text: string):
-  | {
-      name?: unknown;
-      api_url?: unknown;
-      project_host?: unknown;
-      pooler_host?: unknown;
-      dashboard_url?: unknown;
-    }
-  | undefined {
-  try {
-    const value = parseYaml(text);
-    return value !== null && typeof value === "object"
-      ? (value as {
-          name?: unknown;
-          api_url?: unknown;
-          project_host?: unknown;
-          pooler_host?: unknown;
-          dashboard_url?: unknown;
-        })
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function unknownMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
- * (`apps/cli-go/internal/utils/profile.go:96-118`):
+ * Profile resolution precedence: explicit `--profile` flag →
+ * `SUPABASE_PROFILE` env → persisted `~/.supabase/profile` file →
+ * `supabase` — then loads the token via `legacyLoadProfile`, failing instead
+ * of falling back to the built-in `supabase` profile, which silently
+ * targeted the wrong keyring token and API (supabase/cli#6091).
  *
- * Profile-name precedence mirrors Go's `getProfileName` (`profile.go:121-136`):
- * `--profile` flag (when not the default) → `SUPABASE_PROFILE` env → the
- * persisted `~/.supabase/profile` file → `supabase`. The resolved token is then:
- *
- * 1. If the token matches a built-in profile name, use that.
- * 2. Otherwise treat the token as a path to a YAML config file with `api_url:`.
- * 3. Fall back to the `supabase` built-in if the file is missing or malformed.
- *
- * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
- * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
- * route requests to the local replay server. YAML profiles may also carry a
- * `project_host:` key (Go's `Profile.ProjectHost`; defaults to `supabase.co`) and
- * a `pooler_host:` key (Go's `Profile.PoolerHost`; `omitempty`, defaults to empty
- * which disables the linked pooler MITM domain assertion).
+ * `explicitFlagValue` mirrors pflag: the LAST explicit `--profile` occurrence
+ * wins (the Effect parser is first-wins), and an explicit `--profile supabase`
+ * shadows env and file even at the default value, which the parsed value
+ * alone cannot detect. The persisted file's content is trimmed — a deliberate
+ * divergence from the raw file bytes, compensated by the sso pflag
+ * reconciliation (`legacy-pflag-reconcile.ts`).
  */
 function resolveProfile(
   flagValue: string,
+  explicitFlagValue: string | undefined,
   envValue: string | undefined,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   homeDir: string,
   debugLogger: LegacyDebugLoggerShape,
-): Effect.Effect<ResolvedProfile> {
+): Effect.Effect<LegacyLoadedProfile, LegacyProfileLoadError> {
   return Effect.gen(function* () {
     let token: string;
-    if (flagValue !== "supabase") {
-      yield* debugLogger.debug(`Loading profile from flag: ${flagValue}`);
-      token = flagValue;
+    if (explicitFlagValue !== undefined || flagValue !== "supabase") {
+      const flag = explicitFlagValue ?? flagValue;
+      yield* debugLogger.debug(`Loading profile from flag: ${flag}`);
+      token = flag;
     } else if (envValue !== undefined && envValue.length > 0) {
       // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
       // cannot distinguish env from an explicitly changed flag.
       yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
       token = envValue;
     } else {
-      // Lowest precedence: the persisted `~/.supabase/profile` file (Go's
-      // `getProfileName` file fallback, `profile.go:129-131`).
+      // Lowest precedence: the persisted `~/.supabase/profile` file.
       const filePath = legacyProfileFilePath(path, homeDir);
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
@@ -125,54 +73,21 @@ function resolveProfile(
       });
     }
 
-    if (legacyIsBuiltinProfileName(token)) {
-      return resolvedBuiltin(token);
-    }
-
-    const content = yield* fs.readFileString(token).pipe(Effect.option);
-    if (Option.isNone(content)) return resolvedBuiltin("supabase");
-
-    const parsed = safeParseYaml(content.value);
-    if (parsed === undefined || typeof parsed.api_url !== "string") {
-      return resolvedBuiltin("supabase");
-    }
-    return {
-      name: typeof parsed.name === "string" ? parsed.name : "supabase",
-      apiUrl: parsed.api_url,
-      projectHost:
-        typeof parsed.project_host === "string"
-          ? parsed.project_host
-          : legacyProjectHost("supabase"),
-      // Go's `Profile.PoolerHost` is `omitempty` (`profile.go:23`): a YAML profile
-      // that omits `pooler_host:` yields an empty host, which disables the MITM
-      // domain assertion — it must NOT fall back to the production `supabase.com`.
-      poolerHost: typeof parsed.pooler_host === "string" ? parsed.pooler_host : "",
-      // Go's `Profile.DashboardURL` is `required` (`profile.go:20`); a YAML profile
-      // that omits it falls back to the built-in `supabase` dashboard here rather
-      // than erroring, since it only feeds the connect-failure suggestion text.
-      dashboardUrl:
-        typeof parsed.dashboard_url === "string"
-          ? parsed.dashboard_url
-          : legacyDashboardUrl("supabase"),
-    };
+    return yield* legacyLoadProfile(token, fs);
   });
 }
 
 /**
- * Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) always
- * `os.Chdir(workdir)`s using the raw `--workdir`/`SUPABASE_WORKDIR` string,
- * which can be relative (e.g. `.`) — but every later reader of the resolved
- * workdir (including the `Config.ProjectId` cwd-basename default, `Eject`,
- * `pkg/config/config.go:561-570`, run on every `Config.Load()` via
- * `mergeDefaultValues`, `config.go:690-699`) reads `os.Getwd()`, the real
- * ABSOLUTE directory, never the raw configured string. `os.Chdir(".")` is a
- * no-op syscall-wise, so Go's `cwd` is unaffected by the flag/env value being
- * relative. This resolves the flag/env value against the real process `cwd`
- * the same way, so `LegacyCliConfig.workdir` is always absolute — matching
- * Go's invariant that basename-ing it (e.g. `legacyResolveLocalProjectId`'s
- * workdir-basename fallback) operates on a real directory name, not a
- * relative-path fragment like `.` (which would sanitize to an empty project
- * id and build a bare, all-projects-matching Docker label filter).
+ * `--workdir`/`SUPABASE_WORKDIR` can be a relative string (e.g. `.`), but
+ * every later reader of the resolved workdir (including the
+ * `Config.ProjectId` cwd-basename default, run on every config load) must
+ * see the real ABSOLUTE directory, never the raw configured string. This
+ * resolves the flag/env value against the real process `cwd`, so
+ * `LegacyCliConfig.workdir` is always absolute — the invariant that
+ * basename-ing it (e.g. `legacyResolveLocalProjectId`'s workdir-basename
+ * fallback) operates on a real directory name, not a relative-path fragment
+ * like `.` (which would sanitize to an empty project id and build a bare,
+ * all-projects-matching Docker label filter).
  */
 function resolveWorkdir(
   flagValue: Option.Option<string>,
@@ -218,6 +133,14 @@ export const legacyCliConfigLayer = Layer.unwrap(
         const runtimeInfo = yield* RuntimeInfo;
         const env = process.env;
 
+        // `serviceOption`: tests without argv default to "not explicit". The
+        // empty command path scans all of argv up to `--`, like pflag.
+        const cliArgs = yield* Effect.serviceOption(CliArgs);
+        const explicitProfileFlag = Option.match(cliArgs, {
+          onNone: () => undefined,
+          onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
+        });
+
         const {
           name: profile,
           apiUrl,
@@ -226,6 +149,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           dashboardUrl,
         } = yield* resolveProfile(
           profileFlag,
+          explicitProfileFlag,
           env["SUPABASE_PROFILE"],
           fs,
           path,

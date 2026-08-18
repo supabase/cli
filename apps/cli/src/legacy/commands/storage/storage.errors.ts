@@ -1,12 +1,16 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import { legacyGoQuote } from "../../shared/legacy-go-quote.ts";
 
 /**
- * Domain errors for `supabase storage ls/cp/mv/rm`, mirroring the Go error paths
- * in `internal/storage/{client,ls,cp,mv,rm}`. Each `message` byte-matches the Go
- * CLI's stderr text.
+ * Domain errors for `supabase storage ls/cp/mv/rm`. Each `message` is an
+ * established stderr text.
  *
  * The Storage gateway errors (`LegacyStorageGateway{Network,Status}Error`) and
  * credential-derivation errors live in the shared modules
@@ -22,6 +26,10 @@ export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorag
   constructor() {
     super({ message: "URL must match pattern ss:///bucket/[prefix]" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /**
@@ -31,7 +39,11 @@ export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorag
  */
 export class LegacyStorageUrlParseError extends Data.TaggedError("LegacyStorageUrlParseError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `cp`'s local→local branch (`internal/storage/cp/cp.go:59-60`). Go sets
@@ -50,23 +62,25 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
       suggestion: `Run ${legacyAqua("cp -r <src> <dst>")} to copy between local directories.`,
     });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /**
- * `cp`'s `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`): a
- * non-uint token fails `strconv.ParseUint(s, 0, 64)` at flag-parse time.
- * Byte-matches pflag's `invalid argument %q for %q flag: %v` template with
- * the shorthand-prefixed flag name (`pflag/errors.go:108-116`), carrying the
- * RAW token (so `--jobs=-01` reports `"-01"`, not a normalized `"-1"`) and
- * strconv's cause (`invalid syntax` / `value out of range`). Both token
- * occurrences are `%q`-quoted like Go's — pflag applies `%q` to the value
- * and strconv's `NumError.Error()` wraps `e.Num` in `strconv.Quote`
- * (`strconv/number.go:258-260`) — so an escapable token stays one escaped
- * line (go1.26: `--jobs 'a"b'` → `… "a\"b" …`, not a raw quote/newline).
+ * `cp`'s `--jobs` is a pflag uint: a non-uint token fails
+ * `strconv.ParseUint(s, 0, 64)` at flag-parse time. Established message
+ * format `invalid argument %q for %q flag: %v` with the shorthand-prefixed
+ * flag name, carrying the RAW token (so `--jobs=-01` reports `"-01"`, not a
+ * normalized `"-1"`) and strconv's cause (`invalid syntax` / `value out of
+ * range`). Both token occurrences are `%q`-quoted — pflag applies `%q` to
+ * the value and strconv's `NumError.Error()` wraps `e.Num` in
+ * `strconv.Quote` — so an escapable token stays one escaped line (go1.26:
+ * `--jobs 'a"b'` → `… "a\"b" …`, not a raw quote/newline).
  * Thrown from the flag's own `Flag.mapTryCatch` in `cp.command.ts` so the
- * rejection happens during command parsing, like Go's —
- * `formatInvalidValueMessage` surfaces the resulting
- * `CliError.InvalidValue`'s message verbatim.
+ * rejection happens during command parsing — `formatInvalidValueMessage`
+ * surfaces the resulting `CliError.InvalidValue`'s message verbatim.
  */
 export function legacyStorageInvalidJobsMessage(token: string, cause: string): string {
   const quoted = legacyGoQuote(new TextEncoder().encode(token));
@@ -82,6 +96,10 @@ export class LegacyStorageCopyBetweenBucketsError extends Data.TaggedError(
   constructor() {
     super({ message: "Copying between buckets is not supported" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `mv`'s cross-bucket branch (`internal/storage/mv/mv.go:19,38`). */
@@ -92,6 +110,10 @@ export class LegacyStorageUnsupportedMoveError extends Data.TaggedError(
 }> {
   constructor() {
     super({ message: "Moving between buckets is unsupported" });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -104,6 +126,10 @@ export class LegacyStorageMissingPathError extends Data.TaggedError(
   constructor() {
     super({ message: "You must specify an object path" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `rm`'s root-arg branch (`internal/storage/rm/rm.go:21,41`). */
@@ -115,6 +141,10 @@ export class LegacyStorageMissingBucketError extends Data.TaggedError(
   constructor() {
     super({ message: "You must specify a bucket to delete." });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `rm`'s directory-without-`-r` branch (`internal/storage/rm/rm.go:22,44,53`). */
@@ -125,6 +155,10 @@ export class LegacyStorageMissingFlagError extends Data.TaggedError(
 }> {
   constructor() {
     super({ message: "You must specify -r flag to delete directories." });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -141,19 +175,30 @@ export class LegacyStorageObjectNotFoundError extends Data.TaggedError(
   constructor(path: string) {
     super({ message: `Object not found: ${path}` });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
 }
 
 /** `failed to read file:` / `failed to create file:` (`pkg/storage/objects.go`). */
 export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
- * Both `--linked` and `--local` set, reproducing cobra's
- * `MarkFlagsMutuallyExclusive("linked", "local")` (`apps/cli-go/cmd/storage.go:99`).
+ * Both `--linked` and `--local` set — mutually exclusive.
  */
 export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyStorageMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

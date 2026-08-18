@@ -34,6 +34,7 @@ function cpFlags(opts: {
     jobs: opts.jobs === undefined ? Option.none() : Option.some(opts.jobs),
     linked: true,
     local: opts.local ?? true,
+    projectRef: Option.none(),
   };
 }
 
@@ -62,7 +63,7 @@ describe("legacy storage cp", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
       expect(upload?.method).toBe("POST");
-      // Single upload does NOT set x-upsert (Go's Overwrite stays false).
+      // Single upload does NOT set x-upsert (Overwrite stays false).
       expect(upload?.headers["x-upsert"]).toBeUndefined();
       expect(upload?.headers["cache-control"]).toBe("max-age=3600");
       expect(upload?.headers["content-type"]).toContain("text/plain");
@@ -342,8 +343,8 @@ describe("legacy storage cp", () => {
       const exit = yield* legacyStorageCp(
         cpFlags({ src: "ss:///private/", dst, recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
-      // Go's errors.Join(walkErr, jq.Collect()) runs the queued a.txt download
-      // (file written) before the walk error surfaces — the command still fails.
+      // The queued a.txt download runs (file written) before the walk error
+      // surfaces — the command still fails.
       expect(Exit.isFailure(exit)).toBe(true);
       expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
     });
@@ -453,6 +454,50 @@ describe("legacy storage cp", () => {
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("uploads to the project given via --project-ref, overriding LEGACY_VALID_REF", () => {
+    // `opts.projectRef` (the fake's own fallback) is left at its default
+    // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
+    const FLAG_REF = "flagflagflagflagflag";
+    writeFileSync(join(tmp.current, "readme.md"), "hello world");
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageCp({
+        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        local: false,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
+      expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_REF);
+    });
+  });
+
+  it.live("rejects --project-ref combined with --local", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    writeFileSync(join(tmp.current, "readme.md"), "hello world");
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageCp({
+        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        local: true,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      );
+      expect(requests).toHaveLength(0);
+      expect(linkedCache.cached).toBe(false);
     });
   });
 

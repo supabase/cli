@@ -1,4 +1,18 @@
 import { Effect, FileSystem } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+
+export type LegacySsoFileErrorReason =
+  | "not_found"
+  | "permission"
+  | "invalid_content"
+  | "invalid_url"
+  | "other";
+
+function fileErrorReason(cause: PlatformError): LegacySsoFileErrorReason {
+  if (cause.reason._tag === "NotFound") return "not_found";
+  if (cause.reason._tag === "PermissionDenied") return "permission";
+  return "other";
+}
 
 /**
  * The `--name-id-format` value set, shared by `sso add` and `sso update`
@@ -15,10 +29,9 @@ export const LEGACY_SSO_NAME_ID_FORMATS = [
 ] as const;
 
 /**
- * Validates that raw bytes decode as strict UTF-8. Mirrors Go's
- * `unicode/utf8.Valid(data)` check inside `saml.ValidateMetadata`. Using
+ * Validates that raw bytes decode as strict UTF-8. Using
  * `TextDecoder("utf-8", { fatal: true })` makes any malformed surrogate or
- * unexpected continuation byte throw, matching Go's strict semantics.
+ * unexpected continuation byte throw.
  *
  * The `source` argument is the path or URL the bytes came from; it's
  * embedded in the rendered error message so users can locate the bad file.
@@ -51,7 +64,10 @@ export function validateMetadataXmlBytes<E>(
  */
 export const readMetadataFile =
   <Eopen, Eutf>(factory: {
-    readonly openError: (args: { readonly message: string }) => Eopen;
+    readonly openError: (args: {
+      readonly message: string;
+      readonly reason: LegacySsoFileErrorReason;
+    }) => Eopen;
     readonly nonUtf8Error: (args: { readonly source: string; readonly message: string }) => Eutf;
   }) =>
   (path: string): Effect.Effect<string, Eopen | Eutf, FileSystem.FileSystem> =>
@@ -61,13 +77,14 @@ export const readMetadataFile =
       // single error branch here (any open / read failure surfaces as
       // `failed to open metadata file:` to match the externally observable
       // string for the common case — missing file).
-      const bytes = yield* fs
-        .readFile(path)
-        .pipe(
-          Effect.mapError((cause) =>
-            factory.openError({ message: `failed to open metadata file: ${String(cause)}` }),
-          ),
-        );
+      const bytes = yield* fs.readFile(path).pipe(
+        Effect.mapError((cause) =>
+          factory.openError({
+            message: `failed to open metadata file: ${String(cause)}`,
+            reason: fileErrorReason(cause),
+          }),
+        ),
+      );
       yield* validateMetadataXmlBytes(bytes, path, factory.nonUtf8Error);
       return new TextDecoder("utf-8").decode(bytes);
     });
@@ -78,21 +95,30 @@ export const readMetadataFile =
  * `default` that aren't in the generated `attribute_mapping` schema.
  */
 export const readAttributeMappingFile =
-  <E>(factory: { readonly openError: (args: { readonly message: string }) => E }) =>
+  <E>(factory: {
+    readonly openError: (args: {
+      readonly message: string;
+      readonly reason: LegacySsoFileErrorReason;
+    }) => E;
+  }) =>
   (path: string): Effect.Effect<unknown, E, FileSystem.FileSystem> =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const content = yield* fs
-        .readFileString(path)
-        .pipe(
-          Effect.mapError((cause) =>
-            factory.openError({ message: `failed to open attribute mapping: ${String(cause)}` }),
-          ),
-        );
+      const content = yield* fs.readFileString(path).pipe(
+        Effect.mapError((cause) =>
+          factory.openError({
+            message: `failed to open attribute mapping: ${String(cause)}`,
+            reason: fileErrorReason(cause),
+          }),
+        ),
+      );
       const parsed = yield* Effect.try({
         try: () => JSON.parse(content) as unknown,
         catch: (cause) =>
-          factory.openError({ message: `failed to parse attribute mapping: ${String(cause)}` }),
+          factory.openError({
+            message: `failed to parse attribute mapping: ${String(cause)}`,
+            reason: "invalid_content",
+          }),
       });
       return parsed;
     });

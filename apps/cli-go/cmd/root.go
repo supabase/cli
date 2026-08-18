@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,14 +55,7 @@ func promptLogin(fsys afero.Fs) error {
 }
 
 var experimental = []*cobra.Command{
-	bansCmd,
-	restrictionsCmd,
-	vanityCmd,
-	sslEnforcementCmd,
 	genKeysCmd,
-	postgresCmd,
-	storageCmd,
-	dbDeclarativeCmd,
 }
 
 func IsExperimental(cmd *cobra.Command) bool {
@@ -188,15 +182,17 @@ func Execute() {
 	if executedCmd != nil {
 		ctx = executedCmd.Context()
 	}
-	version, err := checkUpgrade(ctx, afero.NewOsFs())
-	if err != nil {
-		fmt.Fprintln(utils.GetDebugLogger(), err)
-	}
 	if hint := utils.SuggestClaudePlugin(); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
 	}
-	if semver.Compare(version, "v"+utils.Version) > 0 {
-		fmt.Fprintln(os.Stderr, suggestUpgrade(version))
+	if updateNotifierEnabled() {
+		version, err := checkUpgrade(ctx, afero.NewOsFs())
+		if err != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+		}
+		if semver.Compare(version, "v"+utils.Version) > 0 {
+			fmt.Fprintln(os.Stderr, suggestUpgrade(version))
+		}
 	}
 	if len(utils.CmdSuggestion) > 0 {
 		fmt.Fprintln(os.Stderr, utils.CmdSuggestion)
@@ -237,6 +233,13 @@ func exitCode(err error) int {
 		return 1
 	}
 	return 0
+}
+
+func updateNotifierEnabled() bool {
+	// Read the env directly instead of viper: the upgrade check also runs for
+	// --help and --version, which skip the cobra initializer that binds env vars.
+	disabled, _ := strconv.ParseBool(os.Getenv("SUPABASE_NO_UPDATE_NOTIFIER"))
+	return !disabled
 }
 
 func checkUpgrade(ctx context.Context, fsys afero.Fs) (string, error) {
@@ -319,6 +322,17 @@ func init() {
 		viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 		viper.AutomaticEnv()
 	})
+
+	// Shell tab-completion is fully native in the TS shim now (CLI-1965); the
+	// TS entrypoint intercepts completion/__complete/__completeNoDesc before
+	// ever delegating to this binary, so cobra's own completion command is
+	// unreachable dead weight here. This only removes the visible
+	// `completion <shell>` command — cobra's ExecuteC() unconditionally
+	// (re-)registers the hidden __complete/__completeNoDesc responder on
+	// every run with no opt-out (command.go's initCompleteCmd), so that
+	// protocol handler stays present but, same as above, unreachable through
+	// the shipped CLI.
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
 	flags := rootCmd.PersistentFlags()
 	flags.Bool("yes", false, "answer yes to all prompts")

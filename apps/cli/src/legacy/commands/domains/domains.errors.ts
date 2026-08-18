@@ -1,44 +1,76 @@
 import { Data } from "effect";
 
 import { mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Transport-level failure talking to the Management API custom-hostname
- * endpoints. Mirrors Go's `errors.Errorf("failed to <verb> custom hostname: %w", err)`
- * (`apps/cli-go/internal/hostnames/*`).
+ * endpoints. Message format: `failed to <verb> custom hostname: <err>`.
  */
-class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
+export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 /**
- * The custom-hostname endpoint returned a status the Go CLI does not treat as
- * success (201 for create/reverify/activate, 200 for get/delete). Mirrors Go's
- * `errors.Errorf("unexpected <verb> hostname status %d: %s", code, body)`.
+ * The custom-hostname endpoint returned a status that is not treated as
+ * success (201 for create/reverify/activate, 200 for get/delete). Message
+ * format: `unexpected <verb> hostname status <code>: <body>`.
  */
-class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
+export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
   "LegacyDomainsUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The gated create/get/activate/reverify wrappers currently do not retain
+    // the entitlement check's boolean on this shared error. Keep 404 on the
+    // conservative API-status policy until that typed signal is threaded.
+    return statusCodeActionability(this.status);
+  }
+}
 
 /**
  * The CNAME pre-check in `domains create` failed — either the DNS lookup did
  * not resolve to a CNAME, or it resolved to a host other than the expected
- * Supabase subdomain. Mirrors `apps/cli-go/internal/hostnames/common.go:14-22`.
+ * Supabase subdomain.
  */
 export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnameError")<{
   readonly message: string;
-}> {}
+  /**
+   * Set when the DNS-over-HTTPS resolver call itself failed (timeout,
+   * non-200, or fetch failure against the 1.1.1.1 resolver) rather than the
+   * CNAME being missing or pointing at the wrong host.
+   */
+  readonly transport?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.transport === true) {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
+    }
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Build the network/status error mapper for a custom-hostname subcommand. The
- * Go error strings differ only by verb, so each handler supplies its verb and
+ * error strings differ only by verb, so each handler supplies its verb and
  * shares the dispatch + body-truncation policy from `mapLegacyHttpError`.
  *
- * @param verb - the Go phrasing, e.g. `"create"`, `"get"`, `"re-verify"`.
+ * @param verb - the established phrasing, e.g. `"create"`, `"get"`, `"re-verify"`.
  */
 export function mapLegacyDomainsHttpError(verb: string) {
   return mapLegacyHttpError({

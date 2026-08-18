@@ -15,6 +15,37 @@ const platformLayer = BunChildProcessSpawnerLayer.pipe(
   Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer)),
 );
 
+const sequenceProbeLayer = (results: ReadonlyArray<boolean>) => {
+  let calls = 0;
+  return {
+    layer: Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() =>
+        Effect.sync(() => {
+          const result = results[calls] ?? results.at(-1) ?? false;
+          calls++;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(2000 + calls),
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result ? 0 : 1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      ),
+    ),
+    get calls() {
+      return calls;
+    },
+  };
+};
+
 const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) =>
   Effect.gen(function* () {
     let healthy = false;
@@ -189,6 +220,103 @@ describe("HealthProbe", () => {
       yield* Fiber.interrupt(fiber);
     }).pipe(Effect.provide(platformLayer)),
   );
+
+  it.live("uses failureThreshold for startup when no startup threshold is configured", () => {
+    const probe = sequenceProbeLayer([false]);
+    return Effect.gen(function* () {
+      const { unhealthySignal, config } = yield* setupProbe(
+        { _tag: "Exec", command: "check", args: [] },
+        { failureThreshold: 2 },
+      );
+      const fiber = yield* Effect.forkChild(runHealthProbe(config));
+      yield* Deferred.await(unhealthySignal).pipe(Effect.timeout(Duration.seconds(1)));
+      expect(probe.calls).toBe(2);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(probe.layer));
+  });
+
+  it.live("allows a larger startup threshold than the liveness threshold", () => {
+    const probe = sequenceProbeLayer([false]);
+    return Effect.gen(function* () {
+      const { unhealthySignal, config } = yield* setupProbe(
+        { _tag: "Exec", command: "check", args: [] },
+        { startupFailureThreshold: 4, failureThreshold: 2 },
+      );
+      const fiber = yield* Effect.forkChild(runHealthProbe(config));
+      yield* Deferred.await(unhealthySignal).pipe(Effect.timeout(Duration.seconds(1)));
+      expect(probe.calls).toBe(4);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(probe.layer));
+  });
+
+  it.live("recovers on the final startup probe without becoming unhealthy", () => {
+    const probe = sequenceProbeLayer([false, false, true]);
+    return Effect.gen(function* () {
+      const { healthySignal, unhealthySignal, config } = yield* setupProbe(
+        { _tag: "Exec", command: "check", args: [] },
+        { startupFailureThreshold: 3, failureThreshold: 1 },
+      );
+      const fiber = yield* Effect.forkChild(runHealthProbe(config));
+      yield* Deferred.await(healthySignal).pipe(Effect.timeout(Duration.seconds(1)));
+      expect(probe.calls).toBe(3);
+      expect(yield* Deferred.isDone(unhealthySignal)).toBe(false);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(probe.layer));
+  });
+
+  it.live("uses the liveness threshold after the first healthy transition", () => {
+    const probe = sequenceProbeLayer([true, false, false]);
+    return Effect.gen(function* () {
+      const { healthySignal, unhealthySignal, config } = yield* setupProbe(
+        { _tag: "Exec", command: "check", args: [] },
+        { startupFailureThreshold: 5, failureThreshold: 2 },
+      );
+      const fiber = yield* Effect.forkChild(runHealthProbe(config));
+      yield* Deferred.await(healthySignal).pipe(Effect.timeout(Duration.seconds(1)));
+      yield* Deferred.await(unhealthySignal).pipe(Effect.timeout(Duration.seconds(1)));
+      expect(probe.calls).toBe(3);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(probe.layer));
+  });
+
+  it.live("does not re-enable startup tolerance after an unhealthy recovery", () => {
+    const probe = sequenceProbeLayer([true, false, false, true, false, false]);
+    return Effect.gen(function* () {
+      let healthyTransitions = 0;
+      let unhealthyTransitions = 0;
+      const secondUnhealthy = yield* Deferred.make<void>();
+      const fiber = yield* Effect.forkChild(
+        runHealthProbe({
+          name: "test",
+          healthCheck: {
+            probe: { _tag: "Exec", command: "check", args: [] },
+            periodSeconds: 0.01,
+            startupFailureThreshold: 5,
+            failureThreshold: 2,
+          },
+          callbacks: {
+            onHealthy: () =>
+              Effect.sync(() => {
+                healthyTransitions++;
+              }),
+            onUnhealthy: () =>
+              Effect.gen(function* () {
+                unhealthyTransitions++;
+                if (unhealthyTransitions === 2) {
+                  yield* Deferred.succeed(secondUnhealthy, void 0);
+                }
+              }),
+          },
+        }),
+      );
+
+      yield* Deferred.await(secondUnhealthy).pipe(Effect.timeout(Duration.seconds(1)));
+      expect(probe.calls).toBe(6);
+      expect(healthyTransitions).toBe(2);
+      expect(unhealthyTransitions).toBe(2);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(probe.layer));
+  });
 
   it.live("respects initialDelaySeconds before first probe", () =>
     Effect.gen(function* () {

@@ -1,26 +1,27 @@
 /**
- * Built-in profile → environment endpoints. Mirrors the `allProfiles` table
- * in `apps/cli-go/internal/utils/profile.go:30-91`. Both `project_host` (used
+ * Built-in profile → environment endpoints. Mirrors the `allProfiles` table.
+ * Both `project_host` (used
  * to build `SUPABASE_URL = https://<ref>.<host>` for `branches get`) and
  * `dashboard_url` (used by `legacySuggestUpgrade` to build the billing URL)
  * live here so we have a single source of truth.
  *
- * YAML-mode profiles do not currently carry `project_host` or `dashboard_url`
- * in the TS port; they fall back to the production endpoints, matching Go's
- * behavior when an external profile YAML omits those keys.
+ * YAML-mode profiles carry their own `project_host` and `dashboard_url`
+ * (both `required`, loaded by `legacyLoadProfile`). The `?? DEFAULT_ENDPOINTS`
+ * fallbacks below only serve callers that key a lookup on an already-resolved
+ * profile NAME, which for a YAML profile is its `name:` field, not a table key.
  */
 
 import type { LegacyProfileName } from "../config/legacy-cli-config.service.ts";
 
 interface LegacyProfileEndpoints {
-  /** Management API base URL (Go's `Profile.APIURL`, `profile.go:19`). */
+  /** Management API base URL (`Profile.APIURL`). */
   readonly apiUrl: string;
   readonly projectHost: string;
   readonly dashboardUrl: string;
   /**
-   * eTLD+1 the connection pooler hostname must belong to (Go's
-   * `Profile.PoolerHost`, `profile.go:24`). Empty string means "no pooler-domain
-   * assertion" (Go's `supabase-local`). Used by the linked db-config resolver's
+   * eTLD+1 the connection pooler hostname must belong to
+   * (`Profile.PoolerHost`). Empty string means "no pooler-domain
+   * assertion" (`supabase-local`). Used by the linked db-config resolver's
    * MITM domain check.
    */
   readonly poolerHost: string;
@@ -55,7 +56,7 @@ const BUILT_IN: Readonly<Record<string, LegacyProfileEndpoints>> = {
 
 /**
  * Exact-match (case-sensitive) built-in profile-name guard. Go matches
- * built-in names with `strings.EqualFold` (`profile.go:96-99`); callers that
+ * built-in names with `strings.EqualFold`; callers that
  * need Go's fold semantics lower-case the candidate first (all four built-in
  * names are already lower-case).
  */

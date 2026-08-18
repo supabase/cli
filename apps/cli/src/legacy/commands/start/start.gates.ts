@@ -1,41 +1,41 @@
 import type { ProjectConfig } from "@supabase/config";
 
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import {
-  replaceImageTag,
-  type LocalServiceVersionName,
-  type LocalServiceVersionOverrides,
+import type {
+  LocalServiceVersionName,
+  LocalServiceVersionOverrides,
 } from "../../../shared/services/services.shared.ts";
+import { legacyResolvePinnedImage } from "../../shared/db-bootstrap/pinned-image.ts";
 import { legacyEnvOverrideBool } from "../../shared/legacy-local-config-values.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 
 /**
- * Pure port of every per-service `if` guard in Go's `run()`
- * (`apps/cli-go/internal/start/start.go:293-1268`), minus Postgres (`enabledGate:
- * "always"`, unconditional — handled directly by the caller, before any other
- * service). Each boolean is `<section>.enabled` (resolved through
- * {@link legacyEnvOverrideBool}, matching Go's generic Viper `SUPABASE_<SECTION>_
- * ENABLED` binding — the same mechanism `legacy-status-values.ts`'s
- * `legacyResolveStatusLocalState` already uses for its own overlapping subset of
- * these fields) AND-ed with "not excluded" (the service's `--exclude` key absent
- * from `excludedKeys`, per `legacyPartitionStartExcludeFlags`'s `valid` set).
+ * Every per-service "should this container actually start" boolean, minus
+ * Postgres (always-on, unconditional — handled directly by the caller,
+ * before any other service). Each boolean is `<section>.enabled` (resolved
+ * through {@link legacyEnvOverrideBool}'s `SUPABASE_<SECTION>_ENABLED`
+ * override — the same mechanism `legacy-status-values.ts`'s
+ * `legacyResolveStatusLocalState` already uses for its own overlapping subset
+ * of these fields) AND-ed with "not excluded" (the service's `--exclude` key
+ * absent from `excludedKeys`, per `legacyPartitionStartExcludeFlags`'s
+ * `valid` set).
  *
  * `storage-api`'s exclude key backs BOTH `storage` and (compounded further)
  * `imgproxy` — `imgproxy` is additionally gated on `storage` already being
- * enabled (ImgProxy mounts Storage's own volumes, `start.go:1060`) and on
- * `storage.image_transformation.enabled`, mirroring Go's shared `isImgProxyEnabled`
- * local (`start.go:302-303`) — the SAME boolean feeds both the actual container
- * gate here and `storage.service.ts`'s `LegacyStorageEnvInput.
- * imageTransformationEnabled` (`ENABLE_IMAGE_TRANSFORMATION`), so callers must
- * reuse `gates.imgproxy`, not recompute a second, possibly-diverging boolean.
+ * enabled (ImgProxy mounts Storage's own volumes) and on
+ * `storage.image_transformation.enabled` — the SAME boolean feeds both the
+ * actual container gate here and `storage.service.ts`'s
+ * `LegacyStorageEnvInput.imageTransformationEnabled`
+ * (`ENABLE_IMAGE_TRANSFORMATION`), so callers must reuse `gates.imgproxy`,
+ * not recompute a second, possibly-diverging boolean.
  *
  * `edgeRuntime` is deliberately excluded from `GATE_KEY_BY_SERVICE`/
- * `DOCKERFILE_ALIAS_BY_SERVICE`/{@link legacyResolveStartImagePlan} below — Edge
- * Runtime doesn't go through the generic `LegacyStartContainerSpec` bring-up path
- * (`services/edge-runtime.service.ts`'s header explains why it doesn't map
- * cleanly), so `start.handler.ts` reads this boolean directly and calls
- * `legacyStartEdgeRuntimeContainer` itself, in Go's real container-start position
- * (between ImgProxy and pg-meta).
+ * `DOCKERFILE_ALIAS_BY_SERVICE`/{@link legacyResolveStartImagePlan} below —
+ * Edge Runtime doesn't go through the generic `LegacyStartContainerSpec`
+ * bring-up path (`services/edge-runtime.service.ts`'s header explains why it
+ * doesn't map cleanly), so `start.handler.ts` reads this boolean directly and
+ * calls `legacyStartEdgeRuntimeContainer` itself, in its real
+ * container-start position (between ImgProxy and pg-meta).
  */
 export interface LegacyStartGates {
   readonly kong: boolean;
@@ -113,18 +113,16 @@ export function legacyResolveStartGates(inputs: LegacyStartGateInputs): LegacySt
     "storage.enabled",
     projectEnvValues,
   );
-  // Go's `Storage.ImageTransformation` is a nil-unless-declared pointer
-  // (`pkg/config/storage.go:16`) — with no `[storage.image_transformation]`
-  // table in config.toml, that field never becomes a resolvable Viper key at
-  // all, so `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED` alone can never
-  // flip it on (`start.go:302-303`'s `ImageTransformation != nil && .Enabled`
-  // gate short-circuits on the nil check first). `@supabase/config`'s decoded
+  // With no `[storage.image_transformation]` table in config.toml, the field
+  // never becomes an overridable key at all, so
+  // `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED` alone can never flip it
+  // on — the section must be present first. `@supabase/config`'s decoded
   // `config.storage.image_transformation` can't be used as a presence proxy
   // either — it always decodes to a defaulted `{enabled: false}`, never
   // `undefined` — so presence must come from the raw document, same
   // `asRecord(document?.[...])` gate `legacyResolveAuthEmailSmtp`/
-  // `resolveGotruePasskeyWebauthn`/`legacyResolveAuthSms` already use for the
-  // identical Go-pointer-section shape.
+  // `legacyResolveGotruePasskeyWebauthn`/`legacyResolveAuthSms` already use for the
+  // identical optional-section shape.
   const imageTransformationSectionPresent =
     asRecord(asRecord(document?.["storage"])?.["image_transformation"]) !== undefined;
   const configuredImageTransformationEnabled =
@@ -209,9 +207,8 @@ const DOCKERFILE_ALIAS_BY_SERVICE: Readonly<Record<string, string>> = {
 /**
  * `LEGACY_START_SERVICES`' `service` key -> `services.shared.ts`'s
  * `LocalServiceVersionName`, for the subset of start's services that have a
- * `supabase/.temp/*-version` linked-project pin (Go's `pkg/config/config.go:
- * 827-863`). Kong and ImgProxy have no such pin in Go and are deliberately
- * absent here.
+ * `supabase/.temp/*-version` linked-project pin. Kong and ImgProxy have no
+ * such pin and are deliberately absent here.
  */
 const START_SERVICE_TO_LOCAL_VERSION_NAME: Readonly<Record<string, LocalServiceVersionName>> = {
   gotrue: "auth",
@@ -224,26 +221,6 @@ const START_SERVICE_TO_LOCAL_VERSION_NAME: Readonly<Record<string, LocalServiceV
   supavisor: "pooler",
 };
 
-/**
- * The embedded Dockerfile default image for `alias`, with its tag replaced by
- * `serviceVersions`' pin for `localServiceName` when one is present — Go's
- * `Config.Load` rewriting `c.Auth.Image`/etc. from `supabase/.temp/*-version`
- * (`pkg/config/config.go:827-863`) before `start`/`db start` ever read them.
- * Exported so `start.handler.ts` can resolve the SAME pinned image for the
- * one-shot fresh-DB setup jobs (`realtime`/`storage`/`auth`), which Go runs
- * regardless of `--exclude` and therefore can't go through
- * {@link legacyResolveStartImagePlan}'s gate-filtered plan.
- */
-export function legacyResolvePinnedImage(
-  alias: string,
-  localServiceName: LocalServiceVersionName,
-  serviceVersions: LocalServiceVersionOverrides,
-): string {
-  const baseImage = dockerfileServiceImage(alias);
-  const pinnedVersion = serviceVersions[localServiceName];
-  return pinnedVersion === undefined ? baseImage : replaceImageTag(baseImage, pinnedVersion);
-}
-
 export interface LegacyStartImagePlanEntry {
   /** `LEGACY_SERVICE_CATALOG`'s `service` key. */
   readonly service: string;
@@ -253,22 +230,17 @@ export interface LegacyStartImagePlanEntry {
 
 /**
  * The ordered list of non-Postgres, non-EdgeRuntime services that will
- * actually start this run, each paired with its default image reference —
- * Go's `ensureImagesCached`/ `pullImagesUsingCompose` input (`start.go:264-291`),
- * built from `utils.GetServices()`'s own per-section `.Enabled` gates
- * (`internal/utils/config.go:102-193`). Iterates `LEGACY_START_SERVICES` (already
- * in Go's real container-start order) so the returned order IS the order the
- * caller should both pre-pull images in and create+start containers in.
+ * actually start this run, each paired with its default image reference.
+ * Iterates `LEGACY_START_SERVICES` (already in the real container-start
+ * order) so the returned order IS the order the caller should both pre-pull
+ * images in and create+start containers in.
  *
- * Deliberately gates `imgproxy`'s image on the SAME compound `gates.imgproxy`
- * boolean the actual container-start gate uses, rather than Go's slightly
- * looser `Config.Storage.Enabled` pre-pull scope (`utils.GetServices`,
- * `config.go:143-153`, which pre-pulls the ImgProxy image whenever Storage is
- * enabled, even with image transformation disabled) — a deliberate, documented
- * simplification: pre-pulling an image for a container that will never be
- * created has no user-visible benefit and this port has no compose-based
- * best-effort pre-pull pass to mirror in the first place (see
- * `lib/image-prepull.ts`'s header).
+ * Deliberately gates `imgproxy`'s image on the SAME compound
+ * `gates.imgproxy` boolean the actual container-start gate uses, rather than
+ * pre-pulling it whenever Storage alone is enabled: pre-pulling an image for
+ * a container that will never be created has no user-visible benefit, and
+ * this port has no compose-based best-effort pre-pull pass to mirror in the
+ * first place (see `lib/image-prepull.ts`'s header).
  */
 export function legacyResolveStartImagePlan(
   gates: LegacyStartGates,

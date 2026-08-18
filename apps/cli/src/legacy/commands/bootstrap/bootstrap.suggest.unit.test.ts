@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { suggestAppStart } from "./bootstrap.suggest.ts";
 
-// Ports Go's `bootstrap_test.go::TestSuggestAppStart`. Colour is identity here so
-// the assertions match Go's non-TTY (uncoloured) output byte-for-byte.
+// Colour is identity here so the assertions match the established non-TTY
+// (uncoloured) output byte-for-byte.
 describe("suggestAppStart", () => {
   it("suggests the start command when the workdir is the current directory", () => {
     expect(suggestAppStart("/home/me/app", "/home/me/app", "npm ci && npm run dev")).toBe(

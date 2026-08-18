@@ -1,17 +1,18 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerPortMapArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerAnalyticsOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly hostPort: number;
-  readonly listenPort: number;
-  readonly nodeHost: string;
+  readonly platformOs: string;
   readonly dbHost: string;
   readonly dbPort: number;
   readonly apiKey: string;
   readonly backend: "postgres" | "bigquery";
-  readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -34,15 +35,14 @@ const analyticsHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/health",
     scheme: "http",
   },
-  initialDelaySeconds: 10,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.analytics,
 });
 
 export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): ServiceDef => {
+  const runtimeNetwork = analyticsDockerRuntimeNetwork(opts.platformOs, opts.hostPort, opts.dbHost);
   const env: Record<string, string> = {
-    PORT: String(opts.listenPort),
-    PHX_HTTP_PORT: String(opts.listenPort),
+    PORT: String(runtimeNetwork.listenPort),
+    PHX_HTTP_PORT: String(runtimeNetwork.listenPort),
     DB_DATABASE: "_supabase",
     DB_HOSTNAME: opts.dbHost,
     DB_PORT: String(opts.dbPort),
@@ -54,7 +54,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_PRIVATE_ACCESS_TOKEN: opts.apiKey,
     LOGFLARE_LOG_LEVEL: "warn",
-    LOGFLARE_NODE_HOST: opts.nodeHost,
+    LOGFLARE_NODE_HOST: runtimeNetwork.nodeHost,
     LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     RELEASE_COOKIE: "cookie",
   };
@@ -70,20 +70,24 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
 
   return dockerRunService({
     name: "analytics",
-    containerName: `supabase-analytics-${opts.apiPort}`,
+    identity: opts.identity,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerPortMapArgs(opts.platformOs, [
+      { host: opts.hostPort, container: ANALYTICS_CONTAINER_PORT },
+    ]),
     entrypoint: "sh",
     cmd: [
       "-c",
+      // migrate && start: a failed migrate exits the container and the
+      // unless-stopped restart retries until the db is ready (supabase/cli#6088).
       `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh
-./logflare eval Logflare.Release.migrate
+./logflare eval Logflare.Release.migrate &&
 ./logflare start --sname logflare
 EOF
 `,
     ],
     env,
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: analyticsHealthCheck(opts.hostPort),
   });
 };

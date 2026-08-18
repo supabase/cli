@@ -1,10 +1,11 @@
 import { execSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { LEGACY_START_KONG_YML_TEMPLATE } from "../../legacy/commands/start/templates/kong.yml.ts";
 import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runtime-image.ts";
 import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
@@ -58,11 +59,19 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
     importMapPath: "",
     staticFiles: [],
     verifyJWT: false,
+    env: {
+      SHARED: "function",
+      FUNCTION_ONLY: "function",
+      FUNCTION_SECRET: "must-not-appear-in-debug-logs",
+    },
   },
 });
 const CUSTOM_FUNCTION = `Deno.serve(() => new Response("ok", {
   headers: {
     "X-Custom-Id": "abc123",
+    "X-Shared": Deno.env.get("SHARED") ?? "",
+    "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
+    "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
     "Access-Control-Expose-Headers": "X-Custom-Id",
   },
 }));`;
@@ -117,12 +126,14 @@ function containerLogs(container: string): string {
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  const template = await readFile(
-    new URL("../../../../cli-go/internal/start/templates/kong.yml", import.meta.url),
-    "utf8",
-  );
-  const config = template
-    .replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
+  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
+  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
+  // or indirectly), so this now uses the TS transcription of the same template
+  // that legacy `start`'s Kong service already ports byte-for-byte.
+  const config = LEGACY_START_KONG_YML_TEMPLATE.replaceAll(
+    "{{ .EdgeRuntimeId }}",
+    edgeRuntimeContainer,
+  )
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
     .replace(/{{ \.[A-Za-z]+ }}/g, "unused");
@@ -277,7 +288,7 @@ describe("functions serve runtime template (offline)", () => {
   );
 
   test.skipIf(!dockerAvailable)(
-    "preserves function CORS headers and exposes JWT errors through Kong",
+    "preserves function env and CORS headers and exposes JWT errors through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
       const imageDeadline = resolveDeadline();
@@ -317,6 +328,12 @@ describe("functions serve runtime template (offline)", () => {
             `SUPABASE_URL=http://${kongContainer}:8000`,
             "-e",
             `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${KONG_FUNCTIONS_CONFIG}`,
+            "-e",
+            "SUPABASE_INTERNAL_DEBUG=true",
+            "-e",
+            "SHARED=shared",
+            "-e",
+            "GLOBAL_ONLY=global",
             "-e",
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
@@ -393,9 +410,17 @@ describe("functions serve runtime template (offline)", () => {
         });
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
+        expect(customResponse.headers.get("x-shared")).toBe("function");
+        expect(customResponse.headers.get("x-function-only")).toBe("function");
+        expect(customResponse.headers.get("x-global-only")).toBe("global");
         expect(customResponse.headers.get("access-control-expose-headers")?.toLowerCase()).toBe(
           "x-custom-id",
         );
+        const runtimeLogs = containerLogs(runtimeContainer);
+        expect(runtimeLogs).toContain("Functions config:");
+        expect(runtimeLogs).toContain('"custom"');
+        expect(runtimeLogs).not.toContain('"env"');
+        expect(runtimeLogs).not.toContain("must-not-appear-in-debug-logs");
 
         const authResponse = await fetch(authUrl, {
           headers: { Origin: "http://localhost:3000" },

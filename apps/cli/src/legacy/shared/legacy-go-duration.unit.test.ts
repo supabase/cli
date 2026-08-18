@@ -34,12 +34,20 @@ describe("legacyParseGoDuration", () => {
   // digits, skip the "missing unit" guard (since `s` was still non-empty),
   // and silently match the unit anyway — returning 0 instead of erroring like
   // Go's real `time.ParseDuration`.
-  it.each(["s", "m", "h", "ms", "us", "µs", "ns"])(
+  it.each(["s", "m", "h", "ms", "us", "µs", "μs", "ns"])(
     'rejects a bare unit with no preceding digit ("%s")',
     (input) => {
       expect(() => legacyParseGoDuration(input)).toThrow(`time: invalid duration "${input}"`);
     },
   );
+
+  // `unitMap` has THREE microsecond spellings:
+  // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
+  // directly against the Go standard library. The Greek-mu spelling was previously
+  // missing here (CLI-1961 Codex review finding).
+  it.each(["us", "µs", "μs"])('accepts every microsecond unit spelling ("1%s")', (unit) => {
+    expect(legacyParseGoDuration(`1${unit}`)).toBe(1_000);
+  });
 
   it('rejects a bare unit following a valid unit ("1hs")', () => {
     expect(() => legacyParseGoDuration("1hs")).toThrow('time: invalid duration "1hs"');
@@ -49,7 +57,7 @@ describe("legacyParseGoDuration", () => {
     expect(() => legacyParseGoDuration("-s")).toThrow('time: invalid duration "-s"');
   });
 
-  // Go's `pre`/`post` guard: a lone "." with no digits on either side is
+  // `pre`/`post` guard: a lone "." with no digits on either side is
   // still invalid, even though "." alone passes the leading `[0-9.]` check
   // (it's the first character of a valid fraction like ".5s").
   it.each([".s", ".", "-.", "+.", ".h"])('rejects a lone "." with no digits ("%s")', (input) => {
@@ -79,7 +87,18 @@ describe("legacyParseGoDuration", () => {
     expect(legacyParseGoDuration("1.9ns")).toBe(1);
   });
 
-  // Go's `time.Duration` is bounded by `math.MaxInt64` nanoseconds
+  // Go converts the fractional remainder through an intermediate float64 multiplication
+  // (`uint64(float64(f) * (float64(unit)/scale))`) BEFORE truncating to `uint64` — not an
+  // exact-precision division. Once the fraction has enough digits to exceed float64's 53-bit
+  // integer precision, rounding the fraction itself up can push the float64 product past the
+  // next integer, so Go's real result rounds UP to a full second here — verified against the
+  // real `time` package (CLI-1961 Codex review finding): an exact BigInt division would instead
+  // truncate DOWN to `999_999_999`.
+  it('rounds a long fractional remainder up like Go\'s float64 conversion ("0.999999999999999999s")', () => {
+    expect(legacyParseGoDuration("0.999999999999999999s")).toBe(1_000_000_000);
+  });
+
+  // `time.Duration` is bounded by `math.MaxInt64` nanoseconds
   // (~292.47 years); `time.ParseDuration` rejects any value whose
   // accumulated nanosecond count would exceed it.
   it('rejects a duration that overflows math.MaxInt64 nanoseconds ("2562048h")', () => {
@@ -102,6 +121,27 @@ describe("legacyParseGoDuration", () => {
 
   it("accepts a duration exactly at Go's true math.MaxInt64 ceiling in nanoseconds", () => {
     expect(() => legacyParseGoDuration("9223372036854775807ns")).not.toThrow();
+  });
+
+  // `time.ParseDuration` accumulates into a `uint64` and only rejects `d > 1<<63`
+  // (NOT `1<<63-1`) during parsing — a magnitude of exactly `1<<63` (one MORE than
+  // `math.MaxInt64`) survives the loop and, once negated, lands exactly on
+  // `math.MinInt64`. Verified against the real `time` package (CLI-1961 Codex review
+  // finding): `time.ParseDuration("-9223372036854775808ns")` succeeds.
+  it("accepts Go's exact minimum representable negative duration (math.MinInt64 ns)", () => {
+    expect(legacyParseGoDuration("-9223372036854775808ns")).toBe(-9223372036854775808);
+  });
+
+  it("accepts the equivalent hours/minutes/seconds form of math.MinInt64 ns", () => {
+    expect(legacyParseGoDuration("-2562047h47m16.854775808s")).toBe(-9223372036854775808);
+  });
+
+  // One nanosecond further negative than `math.MinInt64` has no valid `int64`
+  // representation at all — Go rejects this too, not just the positive overflow.
+  it("rejects a duration 1ns past math.MinInt64", () => {
+    expect(() => legacyParseGoDuration("-9223372036854775809ns")).toThrow(
+      'time: invalid duration "-9223372036854775809ns"',
+    );
   });
 });
 
@@ -128,7 +168,7 @@ describe("legacyFormatGoDuration", () => {
   });
 
   // A sub-second remainder must still be included when minutes/hours are
-  // present, matching Go's `Duration.String()`, which computes the
+  // present, matching `Duration.String()`, which computes the
   // fractional-seconds string from the FULL nanosecond count before peeling
   // off minutes/hours — not just when seconds is the only component.
   it("includes a sub-second fraction alongside minutes", () => {

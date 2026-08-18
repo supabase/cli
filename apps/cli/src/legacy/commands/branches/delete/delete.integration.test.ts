@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
@@ -140,4 +143,73 @@ describe("legacy branches delete integration", () => {
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "resolves a branch NAME against the linked PARENT (not the branch's own ref) after `supabase link <branch>` (CLI-2167 follow-up)",
+    () => {
+      const PARENT_REF = "parentprojectrefxxxx";
+      const BRANCH_OWN_REF = "branchownrefyyyyyyyy";
+      const RESOLVED_BRANCH_UUID = "22222222-2222-4222-8222-222222222222";
+      // `V1GetABranchOutput` body for the name lookup — its own `project_ref`
+      // becomes `branch_id_or_ref` for the subsequent DELETE call, so it must
+      // be UUID-shaped (see the oneOf note on `BRANCH_UUID` above).
+      const NAME_LOOKUP_BRANCH = {
+        id: "33333333-3333-4333-8333-333333333333",
+        name: "my-feature",
+        project_ref: RESOLVED_BRANCH_UUID,
+        parent_project_ref: PARENT_REF,
+        is_default: false,
+        persistent: false,
+        status: "MIGRATIONS_PASSED",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+        with_data: false,
+      };
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) =>
+          Effect.sync(() => {
+            if (request.method === "GET" && request.url.includes("/branches/my-feature")) {
+              return legacyJsonResponse(request, 200, NAME_LOOKUP_BRANCH);
+            }
+            if (request.method === "DELETE" && request.url.includes("/v1/branches/")) {
+              return legacyJsonResponse(request, 200, { message: "ok" });
+            }
+            return legacyJsonResponse(request, 200, null);
+          }),
+      });
+      const cliConfig = mockLegacyCliConfig({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+      // Simulate the state left by `supabase link <branch>`: project-ref holds
+      // the branch's OWN ref, but linked-project.json still holds the real
+      // parent — `branches delete` must resolve the parent for the name
+      // lookup, not the branch ref sitting in project-ref.
+      mkdirSync(join(tempRoot.current, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), BRANCH_OWN_REF);
+      writeFileSync(
+        join(tempRoot.current, "supabase", ".temp", "linked-project.json"),
+        JSON.stringify({
+          ref: PARENT_REF,
+          name: "Parent Project",
+          organization_id: "org_1",
+          organization_slug: "acme",
+        }),
+      );
+      return Effect.gen(function* () {
+        yield* legacyBranchesDelete({ ...baseFlags, name: Option.some("my-feature") });
+        const lookup = api.requests.find(
+          (r) => r.method === "GET" && r.url.includes("/branches/my-feature"),
+        );
+        expect(lookup?.url).toContain(`/v1/projects/${PARENT_REF}/branches/my-feature`);
+        // The subsequent branch-scoped DELETE is unaffected — it uses whatever
+        // ref the name lookup resolved to, not the parent and not the stale
+        // branch-own ref from project-ref.
+        const del = api.requests.find((r) => r.method === "DELETE");
+        expect(del?.url).toContain(`/v1/branches/${RESOLVED_BRANCH_UUID}`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

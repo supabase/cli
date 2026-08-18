@@ -496,9 +496,9 @@ describe("legacyStatusValues", () => {
   });
 
   describe("SUPABASE_*_ENABLED env overrides", () => {
-    // Go's `status.toValues()` (`status.go:55-61`) reads `utils.Config.*.Enabled`
+    // `status.toValues()` reads `utils.Config.*.Enabled`
     // AFTER Viper's `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` binding
-    // (`pkg/config/config.go:580-586`) has already applied any
+    // has already applied any
     // `SUPABASE_<SECTION>_ENABLED` override — generically, not just for auth.
     // `legacyResolveStatusLocalState` must read the same post-override value
     // for every gate, not the raw decoded `config.<section>.enabled`.

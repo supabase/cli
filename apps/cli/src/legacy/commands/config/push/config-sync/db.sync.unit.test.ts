@@ -13,12 +13,6 @@ import {
 
 const lines = (...l: Array<string>) => l.join("\n") + "\n";
 
-/**
- * Golden parity with Go `pkg/config/db_test.go`. Settings diffs are the exact
- * bytes of `pkg/config/testdata/TestDbSettingsDiff/*.diff`; network restrictions
- * and ssl diffs were captured from the Go functions directly (no committed
- * snapshot).
- */
 describe("diffDbSettingsWithRemote", () => {
   const local = { effective_cache_size: "4GB", max_connections: 100, shared_buffers: "1GB" };
 

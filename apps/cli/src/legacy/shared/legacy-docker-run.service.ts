@@ -30,6 +30,19 @@ export interface LegacyDockerRunOpts {
   readonly extraHosts: ReadonlyArray<string>;
   readonly network: LegacyDockerNetwork;
   /**
+   * Docker labels (`--label k=v`) applied to the container. `DockerStart`
+   * unconditionally sets `com.supabase.cli.project`/`com.docker.compose.project`
+   * on every container it starts,
+   * including one-shot jobs — omitted here (defaults to none) for callers whose
+   * container is always synchronously reaped by the SAME process before it could
+   * ever need project-label-based discovery (e.g. `db dump`/`pg_prove`/edge-runtime
+   * one-shot runs); set by callers whose container can outlive an interrupted
+   * process (e.g. `start`'s fresh-volume PG15+ realtime/storage/auth migrate jobs)
+   * so `supabase stop`/rollback's project-label filter
+   * (`legacy-docker-remove-all.ts`) can still find and remove it if orphaned.
+   */
+  readonly labels?: Readonly<Record<string, string>>;
+  /**
    * Skips this layer's own image resolution (`legacyMakeDockerImageResolver`) when the
    * caller already resolved `image` itself through a `projectEnvValues`-aware path (e.g.
    * `start`'s one-shot fresh-DB setup jobs, resolved via `legacyEnsureImagesCached` before
@@ -47,9 +60,8 @@ export interface LegacyDockerRunOpts {
 /**
  * The result of a captured `docker run`: the container's exit code, its full
  * stdout as raw bytes (so binary-safe SQL dumps survive intact), and its stderr
- * decoded as text for failure classification. Mirrors Go's `dockerExec`, which
- * streams stdout to the caller's writer and tees stderr into a buffer
- * (`apps/cli-go/internal/db/dump/dump.go:50-90`).
+ * decoded as text for failure classification. Mirrors `dockerExec`, which
+ * streams stdout to the caller's writer and tees stderr into a buffer.
  */
 interface LegacyDockerRunCaptureResult {
   readonly exitCode: number;
@@ -78,8 +90,8 @@ interface LegacyDockerRunShape {
   /**
    * Runs `docker run --rm ...` streaming container stdout to `onStdout` chunk-by-chunk
    * as it arrives (instead of buffering), while collecting stderr for classification.
-   * Mirrors Go's `DockerStreamLogs` → `stdcopy.StdCopy(stdout, stderr, logs)` with
-   * `Follow:true` (`apps/cli-go/internal/utils/docker.go:374,394`): the destination is
+   * Mirrors `DockerStreamLogs` → `stdcopy.StdCopy(stdout, stderr, logs)` with
+   * `Follow:true`: the destination is
    * the real sink, so a large `db dump` streams to `--file`/stdout at constant memory
    * and a piped consumer sees output incrementally.
    *
@@ -87,12 +99,18 @@ interface LegacyDockerRunShape {
    * propagates as `E`. `teeStderr` mirrors `runCapture` (Go's
    * `io.MultiWriter(os.Stderr, errBuf)`). Returns the exit code + captured stderr; the
    * stdout bytes are not retained.
+   *
+   * `captureStderr` (default `true`) buffers stderr for that returned string. Callers
+   * that only tee it and never read the result should pass `false` — retaining it
+   * grows with the container's total stderr, which the inherited-stdio `run` never did
+   * (`test db`, whose pgTAP suites can emit unbounded psql notices).
    */
   readonly runStream: <E>(
     opts: LegacyDockerRunOpts,
     streamOpts: {
       readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
       readonly teeStderr?: boolean;
+      readonly captureStderr?: boolean;
     },
   ) => Effect.Effect<
     { readonly exitCode: number; readonly stderr: string },

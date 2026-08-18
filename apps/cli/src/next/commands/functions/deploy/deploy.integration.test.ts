@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { BunServices } from "@effect/platform-bun";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -148,11 +149,6 @@ function mockProjectHome(projectRoot: string) {
       projectLinkPath: join(projectHomeDir, "project.json"),
       projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
       ensureProjectHomeDir: Effect.void,
-      stackDir: (name) => join(projectHomeDir, "stacks", name),
-      stackStatePath: (name) => join(projectHomeDir, "stacks", name, "state.json"),
-      stackMetadataPath: (name) => join(projectHomeDir, "stacks", name, "stack.json"),
-      stackDataDir: (name) => join(projectHomeDir, "stacks", name, "data"),
-      stackLogsDir: (name) => join(projectHomeDir, "stacks", name, "logs"),
     }),
   );
 }
@@ -1332,6 +1328,49 @@ describe("functions deploy", () => {
   });
 
   it.live(
+    "skips an unreferenced `/`-suffixed import-map target that resolves through a file, on the default API deploy path",
+    () => {
+      // Regression: a spec-valid `/`-suffixed import-map value (which SHOULD
+      // end in "/") pointing at a real FILE used to crash `uploadScopeTarget`
+      // with a raw, unhandled ENOTDIR — independent of whether the
+      // entrypoint even references the key, since `forEachLocalImportMapTarget`
+      // walks every import-map value unconditionally.
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "vendor.mjs"),
+            "export const x = 1;\n",
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+            JSON.stringify({ imports: { "@x/": "./vendor.mjs/" } }),
+          ),
+        );
+
+        const { out, api, layer } = setup(tempDir, {
+          rawArgs: ["functions", "deploy", "hello-world"],
+        });
+
+        yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+        }).pipe(Effect.provide(layer));
+
+        expect(api.multiparts).toHaveLength(1);
+        expect(out.stderrText).toContain(
+          "WARN: Skipping import map target that is not a directory:",
+        );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    },
+  );
+
+  it.live(
     "rejects a git-root workspace import that escapes the workdir with a `..` segment",
     () => {
       // Go parity (CLI-1985): names are anchored at the workdir like Go's
@@ -1669,16 +1708,23 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(4);
+      expect(child.spawned).toHaveLength(5);
       expect(child.spawned[0]).toEqual({
         command: "docker",
         args: ["info"],
       });
+      // Go: `DockerStart` -> `DockerResolveImageIfNotCached` — resolved
+      // before the network/volume ensure; `deno_version = 1` pins
+      // `DENO1_EDGE_RUNTIME_VERSION` ("1.68.4").
       expect(child.spawned[1]).toEqual({
+        command: "docker",
+        args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.68.4"],
+      });
+      expect(child.spawned[2]).toEqual({
         command: "docker",
         args: ["network", "inspect", "supabase_network_test-project"],
       });
-      expect(child.spawned[2]).toEqual({
+      expect(child.spawned[3]).toEqual({
         command: "docker",
         args: [
           "volume",
@@ -1957,7 +2003,7 @@ describe("functions deploy", () => {
           path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
         });
         expect(api.requests[1]?.urlParams).not.toContain("name=");
-        expect(child.spawned).toHaveLength(4);
+        expect(child.spawned).toHaveLength(5);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -2128,7 +2174,10 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+      // The pin's content is applied VERBATIM as the tag (Go's
+      // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare `9.9.9` pin
+      // stays bare, with no `v` synthesized.
+      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:9.9.9");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -2174,7 +2223,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(4);
+      expect(child.spawned).toHaveLength(5);
       expect(child.spawned.at(-1)?.args).toContain(
         yield* Effect.promise(() => expectedDockerBind(staticFile)),
       );
@@ -2568,5 +2617,117 @@ describe("functions deploy", () => {
         expect(api.requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     });
+  });
+
+  describe("Go's Config.Validate/env-override parity is legacy-only (CLI-1963)", () => {
+    it.live(
+      "does not fail on an explicit empty project_id, unlike the legacy shell's Config.Validate",
+      () => {
+        const tempDir = makeTempDir();
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => writeProjectConfig(tempDir, 'project_id = ""\n'));
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { out, layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world"],
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toContain(
+            `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
+          );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+      },
+    );
+
+    it.live(
+      "does not fail on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        const tempDir = makeTempDir();
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            writeProjectConfig(
+              tempDir,
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { out, layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world"],
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toContain(
+            `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
+          );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+      },
+    );
+
+    it.live(
+      "ignores SUPABASE_EDGE_RUNTIME_DENO_VERSION and resolves the default edge-runtime image tag",
+      () => {
+        const tempDir = makeTempDir();
+        const child = mockChildProcessSpawner({
+          exitCode: 0,
+          onSpawn: (record) => {
+            if (record.command !== "docker" || record.args[0] !== "run") {
+              return;
+            }
+            const outputPath = resolveDockerOutputPath(record.args);
+            mkdirSync(dirname(outputPath), { recursive: true });
+            writeFileSync(outputPath, "eszip-test-output");
+          },
+        });
+
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => writeProjectConfig(tempDir));
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+            childLayer: child.layer,
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+            useDocker: true,
+          }).pipe(Effect.provide(layer));
+
+          // `docker info` is spawned[0]; the bundler's first image-inspect
+          // candidate (a cache hit here) is spawned[1].
+          expect(child.spawned[1]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`],
+          });
+        }).pipe(
+          Effect.ensuring(cleanupTempDir(tempDir)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+              } else {
+                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
   });
 });

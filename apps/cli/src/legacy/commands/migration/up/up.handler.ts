@@ -31,7 +31,6 @@ import {
   LegacyMigrationMissingRemoteError,
 } from "./up.errors.ts";
 
-/** Go's `suggestIgnoreFlag` (`internal/migration/up/up.go:63`). */
 const suggestIgnoreFlag = (paths: ReadonlyArray<string>): string =>
   "\nRerun the command with --include-all flag to apply these migrations:\n" +
   `${legacyBold(paths.join("\n"))}\n`;
@@ -56,22 +55,35 @@ const runUp = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
-    // up defaults to `--local` (Go: `Bool("local", true)`).
+    // up defaults to `--local`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
+      linkedProjectRef: flags.projectRef,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -106,8 +118,8 @@ const runUp = Effect.fnUntraced(function* (
               }),
             );
           }
-          // Go's `--include-all`: the out-of-order set + everything after the
-          // applied prefix (`up.go:47`). Slices the same version-ordered list
+          // `--include-all`: the out-of-order set + everything after the
+          // applied prefix. Slices the same version-ordered list
           // `result.paths` was taken from — indexing a name-ordered list with a
           // version-ordered offset would skip a pending migration and re-apply
           // an already-applied one.
@@ -144,7 +156,7 @@ const runUp = Effect.fnUntraced(function* (
   if ((target.connType ?? "local") === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+    const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
   }
   return yield* upBody;

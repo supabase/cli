@@ -59,6 +59,14 @@ Key references:
 - `.repos/effect/packages/vitest/` — `@effect/vitest` test helpers
 - `.repos/effect/MIGRATION.md` — V3 to V4 migration guide
 
+### Effect-native by default
+
+Write new runtime code Effect-native from the start; do not build a sync or Promise-based core and wrap it in Effect afterwards. Retrofitting Effect onto a Promise core is expensive and error-prone: it resurfaces as blocking waits where a `Schedule` belongs, interruption gaps around resource acquisition, and untyped failures leaking through `Effect.tryPromise`.
+
+- Model failures as `Data.TaggedError` classes with typed error channels, dependencies as services provided through `Layer`, retries/polling as `Schedule`s, and resource lifecycles with scopes and interruption-safe masks — never `Atomics.wait`, ad-hoc `setTimeout` loops, or manual try/finally resource juggling in core code.
+- Expose Promise-based facades only at the outermost package edge (public entrypoints for non-Effect consumers), acquired asynchronously — never inside the core.
+- A small leaf primitive with no Effect semantics of its own (a pure function, a single-syscall fs helper) may stay plain async and be wrapped at its call boundary; everything with failure modes, retries, resources, or concurrency belongs in Effect.
+
 ## Code Quality
 
 Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.

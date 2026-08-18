@@ -7,12 +7,12 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 /**
  * Assemble the `docker run` argv from run options. Pure (no Effect) so the
- * argument ordering — Go parity with `apps/cli-go/internal/db/test/test.go` +
- * `utils.DockerRunOnceWithConfig` — is unit-testable in isolation.
+ * argument ordering is unit-testable in isolation.
  */
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {
   const { network, binds, env, securityOpt, extraHosts, workingDir, image, cmd } = opts;
   const entrypoint = opts.entrypoint ?? Option.none<string>();
+  const labels = opts.labels ?? {};
   const networkArgs: ReadonlyArray<string> =
     network._tag === "host"
       ? ["--network", "host"]
@@ -23,7 +23,7 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     "run",
     "--rm",
     ...networkArgs,
-    // Go's `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
+    // `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
     ...extraHosts.flatMap((h) => ["--add-host", h]),
     ...binds.flatMap((b) => ["-v", b]),
     // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear
@@ -35,6 +35,14 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
+    // `DockerStart` unconditionally sets `com.supabase.cli.project` and
+    // `com.docker.compose.project` on `config.Labels` for EVERY container it
+    // starts, one-shot jobs included — `supabase stop` and this shell's own rollback both discover
+    // orphaned containers by that project-label filter
+    // (`legacy-docker-remove-all.ts`), so a one-shot job left running after a
+    // client interruption/daemon disconnect must carry the same labels to be
+    // found. Empty unless the caller opts in (review: Codex, PR #6022).
+    ...Object.entries(labels).flatMap(([k, v]) => ["--label", `${k}=${v}`]),
     // `--entrypoint` must precede the image (it is a `docker run` flag); the
     // remaining `cmd` tokens become the entrypoint's args, mirroring Go's
     // `Entrypoint: [value, ...cmd]`.
@@ -45,8 +53,8 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
 }
 
 /**
- * Mirror Go's `DockerStart` Bitbucket Pipelines handling
- * (`apps/cli-go/internal/utils/docker.go:275-304`): when `BITBUCKET_CLONE_DIR` is set,
+ * Mirror `DockerStart` Bitbucket Pipelines handling:
+ * when `BITBUCKET_CLONE_DIR` is set,
  * that runner disallows named volumes and `--security-opt`, so Go drops named-volume
  * binds and clears `SecurityOpt` before starting any container. Applied globally to
  * every legacy docker run (matching Go's placement) — e.g. the pg-delta Deno-cache

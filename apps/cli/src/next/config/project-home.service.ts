@@ -1,5 +1,18 @@
 import type { Effect } from "effect";
-import { Context } from "effect";
+import { Context, Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
+export class ProjectHomeNotDirectoryError extends Data.TaggedError("ProjectHomeNotDirectoryError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 interface ProjectHomeShape {
   readonly projectRoot: string;
@@ -8,11 +21,6 @@ interface ProjectHomeShape {
   readonly projectLinkPath: string;
   readonly projectLocalVersionsPath: string;
   readonly ensureProjectHomeDir: Effect.Effect<void>;
-  readonly stackDir: (name: string) => string;
-  readonly stackStatePath: (name: string) => string;
-  readonly stackMetadataPath: (name: string) => string;
-  readonly stackDataDir: (name: string) => string;
-  readonly stackLogsDir: (name: string) => string;
 }
 
 export class ProjectHome extends Context.Service<ProjectHome, ProjectHomeShape>()(

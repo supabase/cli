@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDockerLifecycleInspectError,
   LegacyDockerLifecycleListError,
@@ -260,7 +261,7 @@ describe("legacyInspectContainerState", () => {
   it.live(
     "treats a paused/restarting container as running, matching Go's boolean-based gate",
     () => {
-      // Go's `assertContainerHealthy` (`status.go:150`) checks `resp.State.Running`,
+      // `assertContainerHealthy` checks `resp.State.Running`,
       // not `resp.State.Status` — a paused or restarting container reports
       // `Running: true` alongside a non-"running" status string, and Go
       // continues past the not-running branch in that case.
@@ -276,8 +277,8 @@ describe("legacyInspectContainerState", () => {
   it.live(
     "fails with LegacyDockerLifecycleInspectError, preserving the real stderr, when the container does not exist",
     () => {
-      // Go's `assertContainerHealthy` never special-cases "not found" — it
-      // wraps whatever `ContainerInspect` returns (`status.go:148-149`), so a
+      // `assertContainerHealthy` never special-cases "not found" — it
+      // wraps whatever `ContainerInspect` returns, so a
       // missing container is just another non-zero exit here too.
       const mock = mockSpawner({
         exitCode: 1,
@@ -290,6 +291,10 @@ describe("legacyInspectContainerState", () => {
           expect(error.message).toBe(
             "failed to inspect container health: Error response from daemon: No such container: supabase_db_my-app",
           );
+          // The dominant "stack isn't running yet" case: not daemon-down, so it
+          // keeps the start-stack classification.
+          expect(error.daemonDown).toBeFalsy();
+          expect(classifyCliErrorActionability(error).error_category).toBe("invalid_config");
         }),
       );
     },
@@ -303,6 +308,14 @@ describe("legacyInspectContainerState", () => {
         expect(error).toBeInstanceOf(LegacyDockerLifecycleInspectError);
         expect(error.message).toBe(
           "failed to inspect container health: Cannot connect to the Docker daemon",
+        );
+        // A daemon-down stderr flips the discriminant so the failure classifies
+        // as docker-not-running instead of a broken running stack.
+        expect(error.daemonDown).toBe(true);
+        const result = classifyCliErrorActionability(error);
+        expect(result.error_category).toBe("docker_not_running");
+        expect(result.error_fingerprint).toBe(
+          "tag:LegacyDockerLifecycleInspectError:docker_not_running",
         );
       }),
     );

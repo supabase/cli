@@ -2,6 +2,11 @@ import { Data, Effect, Result } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+import {
   containerCliExitCode,
   legacyContainerCliExitCodeAndStdout,
   legacyDescribeContainerCliFailure,
@@ -18,35 +23,59 @@ type Spawner = ChildProcessSpawner["Service"];
  * Failure taxonomy for {@link legacyDockerRemoveAll}. Each variant is a neutral, stage-tagged
  * cause carrying only a `.message` — same generalization pattern as `legacy-docker-lifecycle.ts`'s
  * `LegacyDockerLifecycleListError`/`LegacyDockerLifecycleInspectError`. Callers (`stop.handler.ts`
- * via `Effect.catchTags`; `start.rollback.ts` via a blanket swallow) discriminate/consume these by
- * their string `_tag`, never by importing the classes themselves, so only the union below is
- * exported — matching every constructor's actual usage (confirmed via `knip`).
+ * via `Effect.catchTags`; `legacy/shared/db-bootstrap/rollback.ts` via a blanket swallow) discriminate/consume these by
+ * their string `_tag`, never by importing the classes themselves. The classes
+ * are exported so the exhaustive telemetry guard can verify their declarations.
  */
-class LegacyDockerRemoveAllListError extends Data.TaggedError("LegacyDockerRemoveAllListError")<{
+export class LegacyDockerRemoveAllListError extends Data.TaggedError(
+  "LegacyDockerRemoveAllListError",
+)<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllStopError extends Data.TaggedError("LegacyDockerRemoveAllStopError")<{
+export class LegacyDockerRemoveAllStopError extends Data.TaggedError(
+  "LegacyDockerRemoveAllStopError",
+)<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllContainerPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllContainerPruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllVolumePruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllVolumePruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
+export class LegacyDockerRemoveAllNetworkPruneError extends Data.TaggedError(
   "LegacyDockerRemoveAllNetworkPruneError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /**
  * Extracts the deleted-object IDs/names from `docker`/`podman` `… prune`
@@ -65,7 +94,7 @@ function parsePrunedNames(stdout: string): ReadonlyArray<string> {
 }
 
 /**
- * Go's `--debug` prune reports (`docker.go:123,136,143`): `fmt.Fprintln(os.Stderr,
+ * `--debug` prune reports: `fmt.Fprintln(os.Stderr,
  * "Pruned containers:", report.ContainersDeleted)` and siblings — the `[]string`
  * renders as `[a b c]` (empty: `[]`), always on stderr regardless of the writer
  * the caller passed, and only when `viper.GetBool("DEBUG")` is set.
@@ -85,9 +114,9 @@ export type LegacyDockerRemoveAllError =
   | LegacyDockerRemoveAllNetworkPruneError;
 
 /**
- * Port of Go's `DockerRemoveAll` (`apps/cli-go/internal/utils/docker.go:96-146`): list every
+ * Port of `DockerRemoveAll`: list every
  * container matching `filterValue` regardless of state -> stop them all concurrently, joining
- * every failure rather than short-circuiting on the first one (Go's `WaitAll`) -> `container
+ * every failure rather than short-circuiting on the first one (`WaitAll`) -> `container
  * prune --force --filter label=<filterValue>` -> when `deleteVolumes`, `volume prune --force
  * [--all] --filter label=<filterValue>` (the `--all` flag itself gated on
  * {@link legacyDockerSupportsVolumePruneAllFlag}, Docker API >= 1.42) -> `network prune --force
@@ -97,7 +126,7 @@ export type LegacyDockerRemoveAllError =
  * removal step below) has EXITED SUCCESSFULLY — not at the initial listing, and not before
  * containers are even stopped — with the exact containers that listing found, id/name/workdir
  * together. A TS-port-only hook with no Go equivalent, for callers (`stop.handler.ts`,
- * `start.rollback.ts`) that need those same containers for {@link legacyCleanupStartSecrets}
+ * `legacy/shared/db-bootstrap/rollback.ts`) that need those same containers for {@link legacyCleanupStartSecrets}
  * (Go itself doesn't stage host-disk secrets, so it has no reason to know them). It exists so
  * those callers get this data from THIS function's own single `docker ps` listing instead of
  * issuing a second, separately-formatted `docker ps` call, which would double the real Docker
@@ -129,7 +158,7 @@ export const legacyDockerRemoveAll = (
     const containerIds = containers.map((container) => container.id);
 
     // Go stops containers concurrently via `WaitAll`, joining every failure rather than
-    // short-circuiting on the first one (`docker.go:96-146`).
+    // short-circuiting on the first one.
     //
     // `stdout`/`stderr: "ignore"` on the exit-code-only `stop` calls below: they never read the
     // child's own output, and the default `"pipe"` stdio otherwise leaves an OS pipe unread —
@@ -137,7 +166,7 @@ export const legacyDockerRemoveAll = (
     // Matches the existing `stdio: "ignore"` precedent for the same "exit-code-only" shape in
     // `legacy-pgdelta.seam.layer.ts`. The prune calls further down instead COLLECT stdout (via
     // `legacyContainerCliExitCodeAndStdout`, which reads the pipe, equally avoiding the hang)
-    // because their deleted-ID reports back Go's `--debug` `Pruned …:` stderr lines.
+    // because their deleted-ID reports back `--debug` `Pruned …:` stderr lines.
     const stopResults = yield* Effect.all(
       containerIds.map((id) =>
         containerCliExitCode(spawner, ["stop", id], {
@@ -166,7 +195,7 @@ export const legacyDockerRemoveAll = (
     // The prune calls collect stdout (the CLI's deleted-ID report) instead of
     // ignoring it — reading the pipe equally avoids the unread-pipe hang the
     // exit-code-only calls above dodge with `stdout: "ignore"`, and the report
-    // backs Go's `--debug` `Pruned …:` stderr lines (`docker.go:123-143`).
+    // backs `--debug` `Pruned …:` stderr lines.
     const containerPrune = yield* legacyContainerCliExitCodeAndStdout(spawner, [
       "container",
       "prune",
@@ -193,19 +222,16 @@ export const legacyDockerRemoveAll = (
     onContainersRemoved?.(containers);
 
     if (deleteVolumes) {
-      // Go gates the `--all` filter arg on Docker API >= 1.42 (`docker.go:126-133`,
-      // `Docker.ClientVersion() >= "1.42"`): Docker CLI's own `volume prune --all` flag is
-      // annotated `version: "1.42"` (`docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and
-      // enforced by Cobra's `Args` validator *before* `RunE` runs
-      // (`cmd/docker/docker.go:659-660`) — on an older daemon, passing `--all` unconditionally
+      // The `--all` filter arg is gated on Docker API >= 1.42: Docker CLI's own `volume
+      // prune --all` flag is annotated `version: "1.42"` and enforced by
+      // its own arg validator before the command runs —
+      // on an older daemon, passing `--all` unconditionally
       // would hard-fail this whole call and prune nothing, not just prune a narrower set. There's
-      // no persistent Engine API client here to ask the negotiated version directly (Go talks to
-      // the Docker Engine API, never a `docker` binary), so
+      // no persistent Engine API client here to ask the negotiated version directly, so
       // {@link legacyDockerSupportsVolumePruneAllFlag} asks the `docker` CLI itself via `docker
-      // version` and mirrors Go's gate exactly.
+      // version` and applies the same gate.
       //
-      // Podman is a Docker-CLI-compatible fallback this port adds, not something Go itself has,
-      // so there's no Go behavior to match on that path — but `--all` isn't a real flag on any
+      // Podman is a Docker-CLI-compatible fallback — but `--all` isn't a real flag on any
       // released Podman `volume prune` (only `--filter`/`--force`/`--help`, checked v4.3 through
       // the current v5.7; `--all` only exists in unreleased dev docs), so it hard-fails on a real
       // Podman-only host. Podman already prunes every unused volume by default, so omitting
@@ -236,7 +262,7 @@ export const legacyDockerRemoveAll = (
         );
       }
       // Inside the `deleteVolumes` branch, like Go's report inside the
-      // `NoBackupVolume` block (`docker.go:126-138`).
+      // `NoBackupVolume` block.
       yield* reportPruned(debug, "Pruned volumes:", volumePrune.stdout);
     }
 
@@ -259,6 +285,6 @@ export const legacyDockerRemoveAll = (
         new LegacyDockerRemoveAllNetworkPruneError({ message: "failed to prune networks" }),
       );
     }
-    // Go: singular "network" (`docker.go:143`), unlike the other two reports.
+    // Go: singular "network", unlike the other two reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);
   });

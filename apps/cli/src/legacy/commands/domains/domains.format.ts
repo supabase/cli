@@ -28,9 +28,8 @@ function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStat
 }
 
 /**
- * Byte-for-byte port of Go's `hostnames.PrintStatus`
- * (`apps/cli-go/internal/hostnames/common.go:24-59`). Returns the exact string
- * the Go CLI writes to stderr — mind the trailing-newline difference between
+ * Byte-for-byte port of `hostnames.PrintStatus`. Returns the exact string
+ * written to stderr — mind the trailing-newline difference between
  * `Fprintln` (adds `\n`) and `Fprintf` (does not).
  */
 export function formatHostnameStatus(response: LegacyHostnameResponse): string {
@@ -83,16 +82,17 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
       // Fprintln — trailing newline.
       return "Custom hostname configuration not started.\n";
     default:
-      // Go's switch has no default arm — nothing is written.
+      // No default arm — nothing is written.
       return "";
   }
 }
 
 /**
- * Approximates Go's `fmt.Sprintf("%+v", ssl)` for the degenerate
- * "validation_records != 1" branch. The Go output embeds a pointer address for
- * the `ValidationErrors` field and is therefore not byte-reproducible; this
- * dump is deterministic and documented as a divergence in SIDE_EFFECTS.md.
+ * Approximates `fmt.Sprintf("%+v", ssl)` for the degenerate
+ * "validation_records != 1" branch. The reference output embeds a pointer
+ * address for the `ValidationErrors` field and is therefore not
+ * byte-reproducible; this dump is deterministic and documented as a
+ * divergence in SIDE_EFFECTS.md.
  */
 export function formatSslStructDump(ssl: LegacyHostnameSsl): string {
   const validationErrors =

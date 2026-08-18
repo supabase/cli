@@ -1,14 +1,20 @@
-import { StateManager, daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
-import { daemonEntryPoint } from "@supabase/stack";
+import { daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
+import { loadProjectConfig } from "@supabase/config";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
+import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
   ProjectLinkState,
   ProjectNotLinkedError,
 } from "../../../config/project-link-state.service.ts";
-import { toStartStackConfig, withServiceVersions } from "../../../config/stack-config.ts";
+import {
+  excludedStackServices,
+  toStartStackConfig,
+  withServiceVersions,
+  type ExcludedStackService,
+} from "../../../config/stack-config.ts";
 import { NonInteractiveError } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -24,7 +30,6 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const stateManager = yield* StateManager;
 
   yield* output.intro("Switch branch");
 
@@ -115,56 +120,55 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
   }).pipe(
     Effect.map(Option.some),
     Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
-    Effect.catchTag("InvalidStackStateError", () => Effect.succeed(Option.none())),
+    // Branch switching is also valid outside a local project checkout. In
+    // that case managed discovery cannot canonicalize the synthetic/nonexistent
+    // project root supplied by the command context, which is equivalent to no
+    // local stack being present for this lifecycle check.
+    Effect.catchTag("InvalidManagedIdentityError", () => Effect.succeed(Option.none())),
   );
 
-  if (Option.isSome(stackCheck) && stackCheck.value.alive) {
-    const { state: stackState } = stackCheck.value;
-
-    const maybeMetadata = yield* stateManager.readMetadata(stackState.name).pipe(
-      Effect.map(Option.some),
-      Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
-    );
+  if (Option.isSome(stackCheck) && stackCheck.value.lifecycle === "running") {
+    const stackName = stackCheck.value.identity.name;
 
     const stopping = yield* output.task("Stopping local stack...");
     yield* stopDaemon({
       cwd: runtimeInfo.cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
-      projectStateRoot: projectHome.projectHomeDir,
-      name: stackState.name,
+      name: stackName,
     }).pipe(Effect.tapError(() => stopping.fail()));
     yield* stopping.clear();
 
     // TODO: run `supabase pull` against the new branch before restarting the stack
     // so the local config reflects the branch's migrations and seed state.
     // `pull` does not exist yet.
-    const launchConfig = Option.match(maybeMetadata, {
-      onNone: () => toStartStackConfig([], "auto"),
-      onSome: (metadata) => {
-        const base =
-          metadata.launch !== undefined
-            ? toStartStackConfig(metadata.launch.excludedServices, metadata.launch.mode)
-            : toStartStackConfig([], "auto");
-        return withServiceVersions(base, metadata.services);
-      },
-    });
+    const launchConfig =
+      stackCheck.value.launch === undefined
+        ? toStartStackConfig([], "auto")
+        : withServiceVersions(
+            toStartStackConfig(
+              stackCheck.value.launch.excludedServices?.filter(
+                (service): service is ExcludedStackService =>
+                  excludedStackServices.some((candidate) => candidate === service),
+              ) ?? [],
+              stackCheck.value.launch.mode,
+            ),
+            stackCheck.value.launch.versions,
+          );
+    const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
-    const stackLayer = yield* daemonLayer(
-      {
-        cacheRoot: cliConfig.supabaseHome,
-        cwd: runtimeInfo.cwd,
-        projectDir: projectHome.projectRoot,
-        projectStateRoot: projectHome.projectHomeDir,
-        name: stackState.name,
-        ...launchConfig,
-      },
-      daemonEntryPoint,
-    );
+    const stackLayer = yield* daemonLayer({
+      cacheRoot: cliConfig.supabaseHome,
+      cwd: runtimeInfo.cwd,
+      projectDir: projectHome.projectRoot,
+      name: stackName,
+      portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
+      ...(stackCheck.value.launch !== undefined && { launch: stackCheck.value.launch }),
+      ...launchConfig,
+    });
 
     yield* Effect.scoped(
       Effect.gen(function* () {

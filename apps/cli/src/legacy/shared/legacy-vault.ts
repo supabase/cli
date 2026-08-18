@@ -1,14 +1,23 @@
 import { Data, Effect } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
-/** Reading or updating `vault.secrets` failed (Go's `UpsertVaultSecrets` errors). */
+/** Reading or updating `vault.secrets` failed (`UpsertVaultSecrets` errors). */
 export class LegacyMigrationVaultError extends Data.TaggedError("LegacyMigrationVaultError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
-/** A resolved `[db.vault]` secret. `resolved` mirrors Go's `len(SHA256) > 0` gate. */
+/** A resolved `[db.vault]` secret. `resolved` mirrors `len(SHA256) > 0` gate. */
 export interface LegacyVaultSecret {
   readonly name: string;
   readonly value: string;
@@ -21,7 +30,7 @@ const CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)";
 
 /**
  * Upserts `[db.vault]` secrets into `vault.secrets`. Port of Go's
- * `vault.UpsertVaultSecrets` (`pkg/vault/batch.go:25`): only resolved secrets
+ * `vault.UpsertVaultSecrets`: only resolved secrets
  * (Go gates on a non-empty SHA256) are processed; existing names are updated by
  * id, the rest are created. No resolved secrets → no-op (no DB round-trip).
  */

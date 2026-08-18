@@ -252,7 +252,7 @@ otp_expiry = 3600
 # [auth.email.notification.password_changed]
 # enabled = true
 # subject = "Your password has been changed"
-# content_path = "./templates/password_changed_notification.html"
+# content_path = "./supabase/templates/password_changed_notification.html"
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
@@ -409,7 +409,7 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 [experimental.pgdelta]
 enabled = true
 # Directory under \`supabase/\` where declarative files are written.
-# declarative_schema_path = "./database"
+# declarative_schema_path = "./schemas"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2,\\"maxWidth\\":80,\\"commaStyle\\":\\"trailing\\"}"
 `;

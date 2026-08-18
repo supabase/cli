@@ -1,19 +1,25 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
-import { loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
+import {
+  legacyReadSigningKeysFile,
+  legacyResolveSigningKeysConfigPaths,
+  type LegacyStoredSigningKeyJwk,
+} from "../gen.signing-keys-config.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
 import {
   LegacyGenSigningKeyCancelledError,
@@ -46,14 +52,12 @@ interface SigningKeyJwk {
   readonly qi?: string;
 }
 
-type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
-
 interface ResolvedSigningKeysConfig {
   readonly configDisplayPath: string;
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
-    existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
+    existingKeys: ReadonlyArray<LegacyStoredSigningKeyJwk>;
   }>;
 }
 
@@ -73,28 +77,6 @@ function readStringField(
           message: `failed to generate signing key: missing jwk field ${field}`,
         }),
       );
-}
-
-function readJwkArray(
-  value: unknown,
-): Effect.Effect<ReadonlyArray<StoredSigningKeyJwk>, LegacyGenSigningKeyDecodeError> {
-  if (!Array.isArray(value)) {
-    return Effect.fail(
-      new LegacyGenSigningKeyDecodeError({
-        message: "failed to decode signing keys: expected a JSON array",
-      }),
-    );
-  }
-  for (const item of value) {
-    if (!isRecord(item)) {
-      return Effect.fail(
-        new LegacyGenSigningKeyDecodeError({
-          message: "failed to decode signing keys: expected a JSON array of objects",
-        }),
-      );
-    }
-  }
-  return Effect.succeed(value);
 }
 
 function styleIfTty(
@@ -162,64 +144,42 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   } satisfies SigningKeyJwk;
 });
 
+// `gen signing-key` goes through the exact same config load and validation
+// pipeline as `gen bearer-jwt` — there is no separate, ungated code path for
+// this command. The `[auth].signing_keys_path` file is only read when auth
+// is enabled, so with auth disabled the signing keys never advance past the
+// default single-key array — meaning `--append` appends to (and a
+// subsequent overwrite clobbers) that phantom default set, NOT the file's
+// real content: with `auth.enabled = false` and a configured
+// `signing_keys_path` pointing at a file containing a real custom key, `gen signing-key
+// --append` overwrote the file with the default ES256 key plus the newly generated one,
+// discarding the original entry entirely — surprising, but this is the
+// established behavior, so this must gate the read on `paths.authEnabled`
+// exactly like `gen bearer-jwt`'s own `legacyResolveBearerJwtSigningKey`
+// already does.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
-  const path = yield* Path.Path;
-  const loaded = yield* loadProjectConfig(cwd, { goViperCompat: true }).pipe(
-    Effect.catchTag("ProjectConfigParseError", (cause) =>
-      Effect.fail(
-        new LegacyGenSigningKeyConfigParseError({
-          message: `failed to parse ${cause.path}: ${String(cause.cause)}`,
-        }),
-      ),
-    ),
+  const paths = yield* legacyResolveSigningKeysConfigPaths(
+    cwd,
+    (message) => new LegacyGenSigningKeyConfigParseError({ message }),
   );
-  if (loaded === null) {
+  if (Option.isNone(paths.signingKeysPath)) {
     return {
-      configDisplayPath: path.join("supabase", "config.toml"),
+      configDisplayPath: paths.configDisplayPath,
       configured: Option.none(),
     } satisfies ResolvedSigningKeysConfig;
   }
 
-  // Go displays the CWD-relative `supabase/config.toml` (utils.ConfigPath), never an absolute
-  // path. `@supabase/config` always resolves `loaded.path` to an absolute path, so relativize it
-  // back against the project root to match Go's output.
-  const projectRoot = path.dirname(path.dirname(loaded.path));
-  const configDisplayPath = path.relative(projectRoot, loaded.path);
-
-  const configuredPath = loaded.config.auth.signing_keys_path;
-  if (configuredPath === undefined || configuredPath.length === 0) {
-    return {
-      configDisplayPath,
-      configured: Option.none(),
-    } satisfies ResolvedSigningKeysConfig;
-  }
-
-  const resolvedPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.join(path.dirname(loaded.path), configuredPath);
-  const displayPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.relative(projectRoot, resolvedPath);
-  const fs = yield* FileSystem.FileSystem;
-  const raw = yield* fs.readFileString(resolvedPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LegacyGenSigningKeyReadError({
-          message: `failed to read signing keys: ${String(cause)}`,
-        }),
-    ),
-  );
-  const decoded = yield* Effect.try({
-    try: () => JSON.parse(raw),
-    catch: (cause) =>
-      new LegacyGenSigningKeyDecodeError({
-        message: `failed to decode signing keys: ${String(cause)}`,
-      }),
-  });
-  const existingKeys = yield* readJwkArray(decoded);
+  const { actualPath, displayPath } = paths.signingKeysPath.value;
+  const existingKeys = paths.authEnabled
+    ? yield* legacyReadSigningKeysFile(
+        actualPath,
+        (message) => new LegacyGenSigningKeyReadError({ message }),
+        (message) => new LegacyGenSigningKeyDecodeError({ message }),
+      )
+    : [{ ...LEGACY_DEFAULT_SIGNING_KEY }];
   return {
-    configDisplayPath,
-    configured: Option.some({ actualPath: resolvedPath, displayPath, existingKeys }),
+    configDisplayPath: paths.configDisplayPath,
+    configured: Option.some({ actualPath, displayPath, existingKeys }),
   } satisfies ResolvedSigningKeysConfig;
 });
 
@@ -263,16 +223,15 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 
   return yield* Effect.gen(function* () {
-    // Go's `flags.LoadConfig` (`signingkeys.go:99`) loads the project `.env` files before the
-    // overwrite prompt reads `viper.GetBool("YES")` (`console.PromptYesNo`, `signingkeys.go:130`),
-    // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too. Resolved inside
-    // this block (not above it) so a malformed/unreadable `.env` still flushes telemetry below,
-    // matching Go: telemetry attaches in root's `PersistentPreRunE` (`cmd/root.go:131-155`)
-    // before this command's own `RunE` runs `flags.LoadConfig`, so `service.Capture` still fires
-    // in Go even when that load fails.
+    // The project `.env` files are loaded before the overwrite prompt reads
+    // the yes flag, so a `SUPABASE_YES` set only in `supabase/.env` must
+    // auto-confirm here too. Resolved inside this block (not above it) so a
+    // malformed/unreadable `.env` still flushes telemetry below — telemetry
+    // must attach before the config load runs, so the capture still fires
+    // even when that load fails.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    // Match Go's order: LoadConfig validates the configured signing-keys file before any key is
+    // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
     const key = yield* generatePrivateKey(flags.algorithm);
@@ -281,9 +240,8 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     if (Option.isNone(configured)) {
       yield* output.raw(`${JSON.stringify(key)}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
-      yield* output.raw(
+      yield* emitSuccessTrailer(
         `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
-        "stderr",
       );
       return;
     }
@@ -303,8 +261,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
                   // `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it checks
                   // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
                   // would otherwise hit that check first and return the default without
-                  // ever reading stdin. Go's `console.PromptYesNo`
-                  // (apps/cli-go/internal/utils/console.go:64-82) has no concept of output
+                  // ever reading stdin. The confirmation prompt has no concept of output
                   // format at all — it always reads piped stdin — so a piped `y`/`n` answer
                   // must be honored here the same as in text mode. Present a text-shaped
                   // view of `output` to reach that read; `raw`/`promptConfirm` write the

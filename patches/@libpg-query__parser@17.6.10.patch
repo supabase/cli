@@ -1,0 +1,17 @@
+diff --git a/wasm/index.js b/wasm/index.js
+index 00caf4f1591549e445b97c5deeed95a9d8dabd8b..ce4a88226d12687644ca76805e08d11a6696b00e 100644
+--- a/wasm/index.js
++++ b/wasm/index.js
+@@ -65,10 +65,11 @@ export function formatSqlError(error, query, options = {}) {
+ }
+ // @ts-ignore
+ import PgQueryModule from './libpg-query.js';
++import libPgQueryWasmPath from './libpg-query.wasm' with { type: 'file' };
+ // @ts-ignore
+ import { pg_query } from '../proto.js';
+ let wasmModule;
+-const initPromise = PgQueryModule().then((module) => {
++const initPromise = PgQueryModule({ locateFile: () => libPgQueryWasmPath }).then((module) => {
+     wasmModule = module;
+ });
+ function ensureLoaded() {

@@ -1,11 +1,17 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
 
 /**
  * Byte-for-byte render of Go's `context.Canceled` sentinel.
  *
  * Every declined confirmation prompt in the Go CLI surfaces as a bare
  * `context.Canceled` (e.g. `errors.New(context.Canceled)` in
- * `apps/cli-go/internal/logout/logout.go:19`), and `recoverAndExit`
+ * `apps/cli-go/internal/logout/logout.go:19`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3), and `recoverAndExit`
  * (`apps/cli-go/cmd/root.go:287-303`) deliberately skips the
  * `SuggestDebugFlag` hint for it — declining a prompt is a user decision,
  * not an error worth troubleshooting. Handlers that port those decline
@@ -32,5 +38,9 @@ export class NonInteractiveError extends Data.TaggedError("NonInteractiveError")
 }> {
   override get message() {
     return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }

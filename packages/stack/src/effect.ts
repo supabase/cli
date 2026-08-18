@@ -1,5 +1,4 @@
-// @supabase/stack/effect — advanced Effect and low-level APIs.
-// Platform-agnostic: pass platformFactory/daemonEntryPoint from @supabase/stack.
+// Platform-agnostic Effect contracts re-exported by the conditional @supabase/stack/effect entry.
 
 export type { LogEntry } from "@supabase/process-compose";
 export type { StackServiceStatus } from "./StackServiceState.ts";
@@ -10,9 +9,11 @@ export {
   ChecksumMismatchError,
   DockerPullError,
   DownloadError,
+  isDockerDaemonDownMessage,
   PortConflictError,
   StackBuildError,
   StackError,
+  StackReadinessError,
   toStackError,
 } from "./errors.ts";
 
@@ -24,11 +25,7 @@ export {
   postgrestAssetName,
 } from "./Platform.ts";
 
-export type { BinarySpec } from "./BinaryResolver.ts";
-export { BinaryResolver } from "./BinaryResolver.ts";
-
-export type { ServiceResolution } from "./resolve.ts";
-export { resolveService } from "./resolve.ts";
+export type { ServiceResolution } from "./StackPreparation.ts";
 
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
@@ -38,27 +35,37 @@ export {
   defaultPublishableKey,
   defaultSecretKey,
   generateJwt,
-  JwtGenerator,
 } from "./JwtGenerator.ts";
 
 export type {
   AllocatedPorts,
+  ConfigPortKey,
+  PortCatalogEntry,
   PortField,
-  PortInput,
+  PortSet,
+  ResolvedPorts,
+} from "./PortCatalog.ts";
+export type {
   PortLease,
+  PortReservationRequest,
+  PortSelection,
   PortSelectionOptions,
 } from "./PortAllocator.ts";
+export { allocatePortSet, PortAllocationError, reservePortSet } from "./PortAllocator.ts";
 export {
-  allocatePorts,
+  AllocatedPortsSchema,
   DEFAULT_API_PORT,
   DEFAULT_DB_PORT,
-  PortAllocationError,
-  reserveAllocatedPorts,
-  reservePorts,
-} from "./PortAllocator.ts";
+  DEFAULT_PORTS,
+  PORT_CATALOG,
+  PORT_FIELDS,
+  PortSetSchema,
+  ResolvedPortsSchema,
+  runtimeOnlyPortFields,
+  stickyPortFields,
+} from "./PortCatalog.ts";
+export { portFieldsForConfigInput, portFieldsForService } from "./ServicePorts.ts";
 
-export type { ProxyConfig } from "./ApiProxy.ts";
-export { ApiProxy } from "./ApiProxy.ts";
 export type {
   AnalyticsConfig,
   AuthConfig,
@@ -84,24 +91,31 @@ export type {
   ResolvedStorageConfig,
   ResolvedStudioConfig,
   ResolvedVectorConfig,
+  ReadinessPolicy,
+  ReadyOptions,
   StackConfig,
   StorageConfig,
   StudioConfig,
   VectorConfig,
-} from "./StackBuilder.ts";
-export { StackBuilder } from "./StackBuilder.ts";
+} from "./StackConfig.ts";
+export { DEFAULT_STACK_READINESS_POLICY, resolveReadinessPolicy } from "./StackConfig.ts";
 
 export type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
 export { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 export type {
-  FunctionsConfig,
+  FunctionsReloadConfig,
   FunctionsRuntimeConfig,
-  ResolvedFunctionsConfig,
+  ResolvedFunction,
+  ResolvedFunctionsBundle,
 } from "./functions.ts";
 export {
+  clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
+  FunctionsReloadConfigSchema,
   functionsRuntimeConfigFileName,
   functionsRuntimeConfigPath,
+  ResolvedFunctionSchema,
+  ResolvedFunctionsBundleSchema,
   resolveFunctionsRuntimeConfig,
 } from "./functions.ts";
 
@@ -124,75 +138,14 @@ export type {
 } from "./version-plan.ts";
 export { planStackVersions } from "./version-plan.ts";
 
-export {
-  DEFAULT_MANAGED_STACK_NAME,
-  defaultManagedProjectStacksRoot,
-  defaultManagedStackRoot,
-  defaultManagedProjectsRoot,
-  displayNameForProjectDir,
-  projectKeyForProjectDir,
-} from "./paths.ts";
+export { DEFAULT_MANAGED_STACK_NAME } from "./paths.ts";
 
-export type { StackState } from "./StateManager.ts";
-export {
-  InvalidStackMetadataError,
-  InvalidStackStateError,
-  NoRunningStackError,
-  StackAlreadyRunningError,
-  StackMetadataNotFoundError,
-  UnsupportedStackMetadataVersionError,
-  projectStateManagerPathsFromRoot,
-  StateManager,
-  StateNotFoundError,
-} from "./StateManager.ts";
+export { NoRunningStackError } from "./managed/model.ts";
 
-export type { PartialVersionManifest, StackMetadata } from "./StackMetadata.ts";
-export {
-  PartialVersionManifestSchema,
-  StackMetadataSchema,
-  STACK_METADATA_SCHEMA_VERSION,
-  runningServiceVersionsForConfig,
-  stackMetadata,
-} from "./StackMetadata.ts";
+export type { PartialVersionManifest } from "./versions.ts";
+export { PartialVersionManifestSchema } from "./versions.ts";
+export { resolveConfig } from "./StackConfigResolver.ts";
 
-export { DaemonServer } from "./DaemonServer.ts";
-export { RemoteStack } from "./RemoteStack.ts";
-export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
-
-export type {
-  PlatformFactory,
-  PlatformFactoryOptions,
-  PlatformLayer,
-  PlatformServices,
-  ReadyOptions,
-  StackHandle,
-} from "./createStack.ts";
-export {
-  createStack,
-  defaultManagedStackName,
-  projectDaemonLayer,
-  resolveConfig,
-  resolveDaemonConfig,
-} from "./createStack.ts";
-
-export type { DaemonConfig } from "./layers.ts";
-export { connectLayer, DaemonStartError, daemonLayer, foregroundLayer } from "./layers.ts";
-export type { ManagedStack } from "./managed-stack.ts";
-export { resolveManagedStack } from "./managed-stack.ts";
-
+export { DaemonStartError } from "./layers.ts";
+export type { ManagedDaemonConfigInput } from "./layers.ts";
 export type { StackSummary } from "./discovery.ts";
-export {
-  DaemonStillRunningError,
-  deleteManagedStackPersistence,
-  listStacks,
-  resolveStackSummary,
-  stopDaemon,
-} from "./discovery.ts";
-
-export type {
-  DaemonErrorMessage,
-  DaemonHttpServerFactory,
-  DaemonMessage,
-  DaemonStartedMessage,
-  DaemonStartMessage,
-} from "./daemon.ts";

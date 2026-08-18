@@ -18,6 +18,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
 const RESPONSE_PROVIDER = {
@@ -257,9 +258,8 @@ describe("legacy sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("LegacySsoMutexFlagError");
-          // Byte-matches cobra's `validateExclusiveFlagGroups` template
-          // (`flag_groups.go:204`): group in Go's registration order
-          // (`cmd/sso.go:164`), changed flags sorted alphabetically.
+          // Established mutual-exclusion error template: group in
+          // declaration order, changed flags sorted alphabetically.
           expect(dump).toContain(
             "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
           );
@@ -343,10 +343,9 @@ describe("legacy sso add integration", () => {
       // `metadata-url` is set — no mutex violation. The Effect parser instead
       // drops the bare `--project-ref` and parses both metadata options, so
       // without reconciliation the handler would read `file.xml` and POST
-      // `metadata_xml` — an API call Go never makes: Go fails
-      // `AssertProjectRefIsValid` on the value `--metadata-file`
-      // (`internal/utils/flags/project_ref.go:57-59`) before touching
-      // metadata. The reconciled handler must fail with Go's exact
+      // `metadata_xml` — an API call that should never happen: ref
+      // validation must fail on the value `--metadata-file` before touching
+      // metadata. The reconciled handler must fail with the established
       // invalid-ref error and make no API request.
       const { layer, api } = setup({
         cliArgs: [
@@ -447,12 +446,11 @@ describe("legacy sso add integration", () => {
     () => {
       // `sso add --type saml --project-ref <ref> --workdir --metadata-file
       // missing.xml`: pflag binds `"--metadata-file"` to the persistent
-      // `--workdir` and Go's `ChangeWorkDir` (`cmd/root.go:104`,
-      // `misc.go:238-257`) exits before `RunE` with zero HTTP traffic. The
-      // Effect parser refused the flag-shaped value (workdir stayed unset)
-      // and read `missing.xml` as metadata — without the workdir emulation
-      // the reconciliation discarded that metadata and POSTed a provider Go
-      // never creates (binary-verified, PR #5974 review round 6).
+      // `--workdir` and the workdir change exits before the handler runs
+      // with zero HTTP traffic. The Effect parser refused the flag-shaped
+      // value (workdir stayed unset) and read `missing.xml` as metadata —
+      // without the workdir emulation the reconciliation discarded that
+      // metadata and POSTed a provider that should never be created.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -490,11 +488,9 @@ describe("legacy sso add integration", () => {
   it.live(
     "workdir emulation: the chdir failure wins over required-type and mutex violations",
     () => {
-      // Go's `ChangeWorkDir` runs from `PersistentPreRunE` (`command.go:986`)
-      // — before `ValidateRequiredFlags` (`command.go:1007`) and
-      // `ValidateFlagGroups` (`command.go:1010`) — so a missing workdir beats
-      // both the missing required `--type` and the metadata mutex
-      // (binary-verified against apps/cli-go, PR #5974 review round 6).
+      // The workdir change runs before required-flag and flag-group
+      // validation, so a missing workdir beats both the missing required
+      // `--type` and the metadata mutex.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -580,13 +576,13 @@ describe("legacy sso add integration", () => {
   it.live(
     "required emulation: a bare --domains consuming -t fails the required-flag check, no POST",
     () => {
-      // Binary-verified: `sso add --domains -t saml` (and `-t=saml`) fails
-      // Go's required-flag check — pflag hands the `-t` token to `--domains`
-      // as its value, so `type` is never marked changed and `saml` becomes a
-      // positional (Go's add command has no Args validation and accepts it).
-      // The Effect parser read `-t saml` as a normal flag, so without the
-      // scan's consumed-shorthand tracking the handler would POST
-      // `type: "saml"`, `domains: ["-t"]` (PR #5974 review round 3).
+      // `sso add --domains -t saml` (and `-t=saml`) fails the required-flag
+      // check — pflag hands the `-t` token to `--domains` as its value, so
+      // `type` is never marked changed and `saml` becomes a positional (the
+      // `add` command has no arity validation and accepts it). The Effect
+      // parser read `-t saml` as a normal flag, so without the scan's
+      // consumed-shorthand tracking the handler would POST `type: "saml"`,
+      // `domains: ["-t"]`.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--domains", "-t", "saml"],
       });
@@ -764,7 +760,7 @@ describe("legacy sso add integration", () => {
       // positional — `metadata-file` is never set. The Effect parser drops
       // the bare `--domains` and parses `--metadata-file x.xml` instead, so
       // without reconciliation the request body would carry `metadata_xml`
-      // and no domains — the opposite of Go's body.
+      // and no domains — the opposite of the established body.
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--metadata-file", "x.xml"],
       });
@@ -921,6 +917,11 @@ describe("legacy sso add integration", () => {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("only HTTPS Metadata URLs are supported");
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+          error_fingerprint: "tag:LegacySsoAddMetadataFileError:invalid_url",
+        });
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1069,7 +1070,7 @@ describe("legacy sso add integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoAddMetadataFileError");
-        // Per Go's `create.go:47`: error tail is `… Use --skip-url-validation to suppress this error`
+        // Error tail is `… Use --skip-url-validation to suppress this error`
         // (no trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
       }
@@ -1127,11 +1128,10 @@ describe("legacy sso add integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Profile emulation (PR #5974 review round 7): Go's `LoadProfile` runs from
-  // the root `PersistentPreRunE` (`cmd/root.go:98-102`) on the pflag/viper-
-  // effective `--profile`/`SUPABASE_PROFILE`, immediately before
-  // `ChangeWorkDir` — it decides which API host receives the POST and aborts
-  // the command when the profile cannot be loaded.
+  // Profile emulation: the effective `--profile`/`SUPABASE_PROFILE` is
+  // resolved immediately before the workdir change — it decides which API
+  // host receives the POST and aborts the command when the profile cannot
+  // be loaded.
   // -------------------------------------------------------------------------
 
   const writeProfileYaml = (name: string, apiUrl: string): string => {
@@ -1191,8 +1191,8 @@ describe("legacy sso add integration", () => {
         expect((posts[0]?.body as { domains?: ReadonlyArray<string> })?.domains).toEqual([
           "--profile",
         ]);
-        // The linked-project cache fill targets the reconciled host too
-        // (Go's ensureProjectGroupsCached uses the process-wide profile).
+        // The linked-project cache fill targets the reconciled host too —
+        // it uses the process-wide profile.
         expect(cache.cachedApiUrl).toBe("http://reconciled.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },

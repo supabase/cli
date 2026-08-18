@@ -35,7 +35,7 @@ describe("supabase unlink (legacy)", () => {
     },
   );
 
-  // The not-linked path exits non-zero with Go's `ErrNotLinked` message.
+  // The not-linked path exits non-zero with the `ErrNotLinked` message.
   test(
     "without a linked project exits 1 with the not-linked message",
     { timeout: E2E_TIMEOUT_MS },

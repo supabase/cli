@@ -34,7 +34,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints a confirmation message to stdout on success.
 
@@ -48,6 +48,6 @@ Not applicable.
 
 ## Notes
 
-- Deprecated in the Go CLI: use `branches create <name>` instead.
+- Deprecated: use `branches create <name>` instead.
 - Requires exactly one positional argument: the branch name.
 - This is a local-only operation (forking remote databases is not supported).

@@ -68,3 +68,20 @@ export const legacyParseMigrationVersion = (value: string): bigint | undefined =
     ? undefined
     : parsed;
 };
+
+/** Lexical version order, shared by every version sorter so the walks cannot drift apart. */
+export const legacyCompareMigrationVersions = (a: string, b: string): number =>
+  a < b ? -1 : a > b ? 1 : 0;
+
+/**
+ * Orders bare version strings the way `ORDER BY version` returns them, for the
+ * walks that compare version lists rather than paths. `version` is a `text`
+ * column, so Postgres orders it lexically and a prefix always precedes its
+ * extension — exactly what `legacySortMigrationPathsByVersion`
+ * (`legacy-migration-history.ts`) reproduces for the path-shaped walks.
+ */
+export function legacySortMigrationVersions(
+  versions: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return [...versions].sort(legacyCompareMigrationVersions);
+}

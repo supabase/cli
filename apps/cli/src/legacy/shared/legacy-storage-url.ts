@@ -1,49 +1,65 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
- * Storage URL parsing, ported 1:1 from Go's `internal/storage/client/scheme.go`
- * plus the slices of `net/url` that `url.Parse` exercises for the `ss://` scheme.
+ * Storage URL parsing, matching `url.Parse` semantics for the `ss://` scheme.
  *
  * Two layers:
- *  - `legacyGoUrlParse` reproduces Go's `url.Parse` for the fields the storage
- *    commands read (`Scheme`, `Host`, `Path`) and the parse errors they surface
- *    (`missing protocol scheme`, malformed `%` escape, control byte). `cp` parses
- *    `src`/`dst` with this directly (Go uses `url.Parse`, not `ParseStorageURL`).
- *  - `legacyParseStorageUrl` is Go's `ParseStorageURL`: parse, then require
- *    scheme `ss` (case-insensitive), a non-empty path, and no host.
+ * - `legacyGoUrlParse` reproduces `url.Parse` for the fields the storage
+ * commands read (`Scheme`, `Host`, `Path`) and the parse errors they surface
+ * (`missing protocol scheme`, malformed `%` escape, control byte). `cp` parses
+ * `src`/`dst` with this directly (Go uses `url.Parse`, not `ParseStorageURL`).
+ * - `legacyParseStorageUrl` is `ParseStorageURL`: parse, then require
+ * scheme `ss` (case-insensitive), a non-empty path, and no host.
  *
  * Kept pure (no Effect, no command-specific tagged errors) so the handlers map
  * the thrown errors to their own `Legacy*` tagged errors and the parser stays
  * unit-testable against `scheme_test.go`.
  */
 
-/** Go `client.STORAGE_SCHEME` (`scheme.go:10`). */
+/** Go `client.STORAGE_SCHEME`. */
 export const LEGACY_STORAGE_SCHEME = "ss";
 
-/** Go `client.ErrInvalidURL` message (`scheme.go:12`). */
+/** Go `client.ErrInvalidURL` message. */
 const LEGACY_STORAGE_INVALID_URL_MESSAGE = "URL must match pattern ss:///bucket/[prefix]";
 
 /**
- * Thrown when `legacyGoUrlParse` fails, mirroring Go's `*url.Error`:
+ * Thrown when `legacyGoUrlParse` fails, mirroring `*url.Error`:
  * `parse "<url>": <inner>` (`net/url.Error.Error`). Callers wrap `.message` in
  * their own `failed to parse … url: <message>` text, matching Go's
  * `errors.Errorf("failed to parse … url: %w", err)`.
  */
 export class LegacyGoUrlParseError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyGoUrlParseError";
   constructor(rawURL: string, inner: string) {
     super(`parse "${rawURL}": ${inner}`);
     this.name = "LegacyGoUrlParseError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
 /**
  * Thrown when a URL parses but does not match the `ss:///bucket/[prefix]`
- * pattern (Go's `ErrInvalidURL`). Distinct from `LegacyGoUrlParseError` so the
+ * pattern (`ErrInvalidURL`). Distinct from `LegacyGoUrlParseError` so the
  * handler can map it to `LegacyStorageUrlPatternError` rather than the
  * parse-error tagged error.
  */
 export class LegacyStorageUrlPatternError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyStorageUrlPatternError";
   constructor() {
     super(LEGACY_STORAGE_INVALID_URL_MESSAGE);
     this.name = "LegacyStorageUrlPatternError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -85,7 +101,7 @@ function getScheme(rawURL: string): { scheme: string; rest: string } {
     if (isAlpha(c)) {
       continue;
     }
-    if (isDigit(c) || c === 0x2b /* + */ || c === 0x2d /* - */ || c === 0x2e /* . */) {
+    if (isDigit(c) || c === 0x2b /* + */ || c === 0x2d /* - */ || c === 0x2e /*. */) {
       if (i === 0) return { scheme: "", rest: rawURL };
       continue;
     }
@@ -155,7 +171,7 @@ function hostFromAuthority(authority: string): string {
   return at === -1 ? authority : authority.slice(at + 1);
 }
 
-/** Go `net/url.validOptionalPort` (`url.go:761-774`): `""`, or `:` followed by only digits. */
+/** Go `net/url.validOptionalPort`: `""`, or `:` followed by only digits. */
 function isValidOptionalPort(port: string): boolean {
   if (port.length === 0) return true;
   if (port.charCodeAt(0) !== 0x3a /* : */) return false;
@@ -167,8 +183,7 @@ function isValidOptionalPort(port: string): boolean {
 
 /**
  * Go `net/url.parseHost`, restricted to the branches this module's callers
- * can actually hit (`net/url/url.go:544-608` in the Go stdlib `apps/cli-go`
- * builds against): IP-literal (`[...]`) bracket/port validation, and the bare
+ * can actually hit: IP-literal (`[...]`) bracket/port validation, and the bare
  * `host[:port]` port-digit check. Deliberately does NOT implement IPv6
  * zone-identifier percent-decoding or `netip.ParseAddr` address validation
  * (Go additionally requires a bracketed literal to parse as a valid,
@@ -178,7 +193,7 @@ function isValidOptionalPort(port: string): boolean {
  * worth the added surface; the common bracket-mismatch/invalid-port mistakes
  * Go actually raises for realistic input (e.g. `http://[::1`, a truncated
  * IPv6 literal) are still reproduced byte-for-byte. Also skips Go's
- * `GODEBUG=urlstrictcolons=0` legacy multi-colon opt-out (`url.go:596-604`) —
+ * `GODEBUG=urlstrictcolons=0` legacy multi-colon opt-out —
  * an explicit, non-default env var this codebase's bundled Go binary doesn't
  * set, so the http/https "first colon is the port separator" behavior always
  * applies for those schemes; other schemes use the last colon, matching Go's
@@ -212,8 +227,8 @@ function validateGoUrlHost(scheme: string, host: string): void {
 }
 
 /**
- * Port of Go's `url.Parse` restricted to `Scheme`/`Host`/`Path`. Throws
- * `LegacyGoUrlParseError` (Go's `*url.Error`) on the failures the storage
+ * Port of `url.Parse` restricted to `Scheme`/`Host`/`Path`. Throws
+ * `LegacyGoUrlParseError` (`*url.Error`) on the failures the storage
  * commands can hit. Query (`?…`) and fragment (`#…`) are stripped exactly as Go
  * splits them, though storage URLs never use them.
  */
@@ -281,7 +296,7 @@ export function legacyGoUrlParse(rawURL: string): LegacyGoUrl {
 }
 
 /**
- * Go `client.ParseStorageURL` (`scheme.go:14-23`): parse, then require scheme
+ * Go `client.ParseStorageURL`: parse, then require scheme
  * `ss` (case-insensitive), a non-empty path, and no host. Returns the path.
  * Throws `LegacyGoUrlParseError` on a url-parse failure (wrapped by the caller
  * as `failed to parse storage url: …`) or `LegacyStorageUrlPatternError` when
@@ -300,7 +315,7 @@ export function legacyParseStorageUrl(objectURL: string): string {
 }
 
 /**
- * Go `client.SplitBucketPrefix` (`scheme.go:25-38`): `/bucket/folder/x` →
+ * Go `client.SplitBucketPrefix`: `/bucket/folder/x` →
  * `["bucket", "folder/x"]`; `/bucket/` / `/bucket` / `bucket` → `["bucket", ""]`;
  * `""` / `"/"` → `["", ""]`.
  */
@@ -327,7 +342,7 @@ export function legacyDetectScheme(rawURL: string): string {
 }
 
 /**
- * Go `cp.IsDir` (`cp.go:174-176`): an object prefix is a directory when it is
+ * Go `cp.IsDir`: an object prefix is a directory when it is
  * empty or ends with `/`.
  */
 export function legacyStorageIsDir(objectPrefix: string): boolean {
@@ -338,8 +353,8 @@ export function legacyStorageIsDir(objectPrefix: string): boolean {
  * Go `path.Split`: split after the final slash into `[dir, file]`, where `dir`
  * keeps its trailing slash. `folder/name.png` → `["folder/", "name.png"]`;
  * `dir` → `["", "dir"]`; `tmp/` → `["tmp/", ""]`; `""` → `["", ""]`. Used by the
- * gateway's `listObjects` query (`pkg/storage/objects.go:46`) and the recursive
- * walk's base-path computation (`internal/storage/ls/ls.go:97`).
+ * gateway's `listObjects` query and the recursive
+ * walk's base-path computation.
  */
 export function legacyGoPathSplit(p: string): readonly [string, string] {
   const i = p.lastIndexOf("/");

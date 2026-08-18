@@ -14,12 +14,11 @@ import { legacyTrafficProfileSpec } from "../db/traffic-profile/traffic-profile.
 import { legacyVacuumStatsSpec } from "../db/vacuum-stats/vacuum-stats.query.ts";
 
 /**
- * The `unused_indexes` query, verbatim from
- * `apps/cli-go/internal/inspect/unused_indexes/unused_indexes.sql`. The `inspect db`
+ * The `unused_indexes` query. The `inspect db`
  * tree folds `unused-indexes` into a deprecated alias of `index-stats`, so this
  * distinct query (columns: `name`, `index`, `index_size`, `index_scans`) has no
- * existing `LegacyInspectQuerySpec`; the report still emits its own `unused_indexes.csv`
- * (report.go embeds every nested `.sql`, so it walks all 14 files).
+ * existing `LegacyInspectQuerySpec`; the report still emits its own `unused_indexes.csv`,
+ * walking all 14 query files.
  */
 const LEGACY_UNUSED_INDEXES_REPORT_SQL = `SELECT
   FORMAT('%I.%I', schemaname, relname) AS name,
@@ -36,8 +35,8 @@ ORDER BY
   pg_relation_size(i.indexrelid) DESC`;
 
 /**
- * One report query: the basename Go derives from the embedded SQL filename
- * (`strings.Split(d.Name(), ".")[0]`, `report.go:52`) and the SQL it runs.
+ * One report query: the basename derived from the embedded SQL filename and
+ * the SQL it runs.
  *
  * The `fileName` is the **SQL basename with underscores** (`db_stats`), which is
  * also the CSV name (`<fileName>.csv`) — NOT the `inspect db` spec `name`
@@ -51,8 +50,7 @@ export interface LegacyReportQuery {
 }
 
 /**
- * The 14 report queries, 1:1 with the SQL files Go embeds under
- * `internal/inspect`. Reuses the 13 `inspect db` specs' `.sql` verbatim
+ * The 14 report queries. Reuses the 13 `inspect db` specs' `.sql` verbatim
  * (byte-identical COPY input → byte-identical CSVs) plus the standalone
  * `unused_indexes` query.
  */
@@ -75,18 +73,16 @@ export const LEGACY_REPORT_QUERIES: ReadonlyArray<LegacyReportQuery> = [
 
 /**
  * The `$1` substitution value: the internal schemas escaped into `LIKE` patterns
- * and rendered as a Postgres `text[]` literal. 1:1 with Go's package-level
- * `ignoreSchemas` (`report.go:62`):
- * `fmt.Sprintf("'{%s}'::text[]", strings.Join(reset.LikeEscapeSchema(utils.InternalSchemas), ","))`.
+ * and rendered as a Postgres `text[]` literal.
  */
 export function legacyReportIgnoreSchemas(): string {
   return `'{${legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS).join(",")}}'::text[]`;
 }
 
 /**
- * Port of Go's `wrapQuery` (`report.go:79-84`): substitute each positional
- * placeholder (`$1`, `$2`, …) with the corresponding `arg` via `ReplaceAll`
- * (every occurrence — `$1` appears 3× in `index_stats.sql`), in order, then wrap
+ * Substitutes each positional placeholder (`$1`, `$2`, …) with the
+ * corresponding `arg`, replacing every occurrence (`$1` appears 3× in
+ * `index_stats.sql`), in order, then wraps
  * the result in `COPY (...) TO STDOUT WITH CSV HEADER`. With no args it is a pure
  * wrap.
  */

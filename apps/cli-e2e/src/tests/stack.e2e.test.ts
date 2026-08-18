@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
-import { createHarness, exec, runParity, type CLIResult } from "@supabase/cli-test-helpers";
-import { testBehaviour, testParity } from "./test-context.ts";
-import { ACCESS_TOKEN, isRecording, TARGET } from "./env.ts";
+import { createHarness, exec, type CLIResult } from "@supabase/cli-test-helpers";
+import { testBehaviour } from "./test-context.ts";
+import { ACCESS_TOKEN, TARGET } from "./env.ts";
 
 // A guaranteed-unreachable TCP address — connection is refused immediately.
 // Used to simulate Docker being unavailable without relying on any external state.
@@ -40,23 +40,6 @@ const testStack = testBehaviour.extend<StackFixtures>({
   },
 });
 
-function testParityStack(cmd: string[], opts?: { workspaceSetup?: (dir: string) => void }): void {
-  const label = `parity: ${cmd.join(" ")}`;
-  test.skipIf(isRecording)(label, async () => {
-    const serverUrl = inject("replayServerUrl") as string;
-    const dockerHostUrl = inject("dockerHostUrl") as string;
-    await runParity(
-      {
-        apiUrl: serverUrl,
-        accessToken: ACCESS_TOKEN,
-        workspaceSetup: opts?.workspaceSetup,
-        extraEnv: { DOCKER_HOST: dockerHostUrl },
-      },
-      cmd,
-    );
-  });
-}
-
 // ---------------------------------------------------------------------------
 // services
 // ---------------------------------------------------------------------------
@@ -72,14 +55,16 @@ describe("services", () => {
     expect(result.stdout).toContain("gotrue");
     expect(result.stdout).toContain("storage");
   });
-
-  testParity(["services"], { normalizeVersions: false });
 });
 
 // ---------------------------------------------------------------------------
 // status
 // ---------------------------------------------------------------------------
 
+// CLI-2167: `status` (ts-legacy only) resolves and prints the current linked
+// project/branch on stdout, before any Docker/daemon work runs, in every
+// output mode — an adjudicated, deliberate TS-only extension with no Go
+// counterpart (Go's `status` never had a link-state concept). Go's stdout for
 describe("status", () => {
   testStack("exits 1 when stack is not running", async ({ workspace, stackRun }) => {
     setupStackWorkspace(workspace.path);
@@ -87,8 +72,6 @@ describe("status", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/no such container/i);
   });
-
-  testParityStack(["status"], { workspaceSetup: setupStackWorkspace });
 });
 
 // ---------------------------------------------------------------------------
@@ -113,8 +96,6 @@ describe("stop", () => {
       expect(result.stderr).toMatch(/mutually exclusive|if any flags in the group.*are set/i);
     },
   );
-
-  testParityStack(["stop"], { workspaceSetup: setupStackWorkspace });
 });
 
 // ---------------------------------------------------------------------------
@@ -141,8 +122,6 @@ describe("start", () => {
   // cleanly through the TCP relay proxy (vector health check fails on this machine).
   test.todo("start → status → stop lifecycle");
   test.todo("starts with --exclude studio and stops cleanly");
-
-  test.todo("parity: start");
 });
 
 // ---------------------------------------------------------------------------
@@ -177,6 +156,4 @@ describe("seed buckets", () => {
       true,
     );
   });
-
-  testParity(["seed", "buckets"], { workspaceSetup: setupStackWorkspace });
 });

@@ -2,18 +2,19 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Duration, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
-// `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly only
-// for the COPY protocol (which `@effect/sql-pg` does not expose). Keep the direct
-// `pg` version constraint in package.json aligned with the one `@effect/sql-pg`
-// resolves, so the COPY path and the pooled path use the same driver.
+// `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly for
+// COPY and extended-protocol migration batches, which `@effect/sql-pg` does not
+// expose. Keep the direct `pg` version constraint in package.json aligned with the
+// one `@effect/sql-pg` resolves so every path uses the same driver.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
+  legacyIsDialFailure,
   legacyIsSqlState,
 } from "./legacy-connect-errors.ts";
 import {
@@ -22,6 +23,8 @@ import {
   LegacyDbExecError,
 } from "./legacy-db-connection.errors.ts";
 import {
+  type LegacyDbBatchStatement,
+  type LegacyDbBatchValue,
   type LegacyDbConnectOptions,
   LegacyDbConnection,
   type LegacyDbSession,
@@ -35,6 +38,8 @@ import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 // pg-pool likewise honors a `verify(client, callback)` option — run for every
 // brand-new physical connection before it is handed to a waiting checkout
 // (`pg-pool/index.js` `_acquireClient`) — that `@types/pg` doesn't declare either.
+// The batch path also needs the real PoolClient `connection` and Connection
+// `sendCopyFail` members, which are absent from the public driver types.
 declare module "pg" {
   interface QueryConfig {
     queryMode?: "extended" | "simple";
@@ -42,10 +47,15 @@ declare module "pg" {
   interface PoolConfig {
     verify?: (client: import("pg").PoolClient, callback: (err?: Error) => void) => void;
   }
+  interface PoolClient {
+    readonly connection: import("pg").Client["connection"];
+  }
+  interface Connection {
+    sendCopyFail(message: string): void;
+  }
 }
 
-// Go's role step-down (`apps/cli-go/internal/utils/connect.go:200-220`,
-// `ConnectByConfigStream`): after connecting to a remote database as a
+// Role step-down (`ConnectByConfigStream`): after connecting to a remote database as a
 // platform-provisioned login role (`cli_login_*`) or a privileged role
 // (`supabase_admin`), run `SET SESSION ROLE postgres` so subsequent statements
 // (e.g. `CREATE EXTENSION`) execute as `postgres` rather than the temp role.
@@ -57,7 +67,7 @@ const SET_SESSION_ROLE = "SET SESSION ROLE postgres";
 // decode these into a JS `Date`, which is millisecond-resolution and applies the
 // local timezone — losing the microseconds that Go's pgx `time.Time` keeps (and
 // risking a date shift for `date`). For `db query` we keep the raw Postgres text so
-// the formatter can render Go's `time.Time` layout faithfully (microseconds intact).
+// the formatter can render `time.Time` layout faithfully (microseconds intact).
 const PG_DATE_OID = 1082;
 const PG_TIMESTAMP_OID = 1114;
 const PG_TIMESTAMPTZ_OID = 1184;
@@ -78,9 +88,9 @@ const legacyQueryRawTypes = {
 
 /**
  * Whether the connecting user requires the `SET SESSION ROLE postgres` step-down.
- * Go strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
- * before comparing. Go installs the step-down `AfterConnect` hook **only on the
- * remote path** (`ConnectByConfigStream`, `connect.go:211-222`); the local path
+ * Strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
+ * before comparing. The step-down `AfterConnect` hook installs **only on the
+ * remote path** (`ConnectByConfigStream`); the local path
  * (`ConnectLocalPostgres`) never installs it, regardless of the configured user — so
  * the caller must also gate on `!isLocal` (a local `--db-url` can set any user).
  */
@@ -91,10 +101,10 @@ function needsRoleStepDown(user: string): boolean {
 
 // pgconn terminates the multi-host fallback chain (rather than trying the next
 // host) when the server returns an authentication/authorization/catalog/privilege
-// error, surfacing it instead of masking it behind a later host (jackc/pgconn
-// `pgconn.go:159-192`, documented at `:127-130`). These are the SQLSTATEs pgconn
-// breaks on; `28000` is gated on the failed attempt having used TLS (`pgconn.go:182`,
-// `fc.TLSConfig != nil`).
+// error, surfacing it instead of masking it behind a later host. These are the
+// SQLSTATEs pgconn
+// breaks on; `28000` is gated on the failed attempt having used TLS
+// (`fc.TLSConfig != nil`).
 const LEGACY_TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
 const LEGACY_TLS_GATED_SQLSTATE = "28000";
 
@@ -142,10 +152,10 @@ interface LegacyPgServerError {
  * `@effect/sql` `SqlError` wraps its reason on `cause`, and the reason wraps the
  * node-postgres `DatabaseError` the same way; a `DatabaseError` is identified by
  * its string `severity` plus a SQLSTATE-shaped `code` (never a node system error).
- * `detail` and `position` mirror Go's `pgErr.Detail`/`pgErr.Position`
+ * `detail` and `position` mirror `pgErr.Detail`/`pgErr.Position`
  * (node-postgres carries `position` as a decimal string): `detail` only when
- * non-empty, `position` only when > 0, matching Go's gates in `ExecBatch`
- * (`pkg/migration/file.go:98-101` — `markError` no-ops on 0 anyway).
+ * non-empty, `position` only when > 0, matching `ExecBatch`'s own gates
+ * (`markError` no-ops on 0 anyway).
  */
 function legacyExtractPgServerError(error: unknown): LegacyPgServerError | undefined {
   let current: unknown = error;
@@ -173,10 +183,10 @@ function legacyExtractPgServerError(error: unknown): LegacyPgServerError | undef
 /**
  * Maps a failed statement to `LegacyDbExecError`. A server ErrorResponse renders
  * pgconn's `PgError.Error()` byte-for-byte — `<Severity>: <Message> (SQLSTATE
- * <Code>)` (pgconn `errors.go:51`) — which is the head line Go prints when a
- * migration statement fails (`pkg/migration/file.go:112`, `%w`), and carries the
- * structured `detail`/`position` fields the migration-apply error context renders
- * (Go `file.go:96-110`). Non-server failures (socket drops, driver errors) keep
+ * <Code>)` — which is the head line printed when a
+ * migration statement fails, and carries the
+ * structured `detail`/`position` fields the migration-apply error context renders.
+ * Non-server failures (socket drops, driver errors) keep
  * the driver's own text.
  */
 export function legacyToExecError(error: unknown): LegacyDbExecError {
@@ -192,11 +202,89 @@ export function legacyToExecError(error: unknown): LegacyDbExecError {
   return new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) });
 }
 
+const legacyEncodeTextArray = (values: ReadonlyArray<string>): string =>
+  `{${values
+    .map((value) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+    .join(",")}}`;
+
+const legacyEncodeBatchValue = (value: LegacyDbBatchValue): string | null =>
+  value === null ? null : typeof value === "string" ? value : legacyEncodeTextArray(value);
+
+class LegacyPgBatchQuery implements Pg.Submittable {
+  readonly statements: ReadonlyArray<{
+    readonly sql: string;
+    readonly params: ReadonlyArray<string | null>;
+  }>;
+  callback: (error: Error | undefined) => void;
+  completed = 0;
+  poisoned = false;
+
+  constructor(
+    statements: ReadonlyArray<LegacyDbBatchStatement>,
+    callback: (error: Error | undefined) => void,
+  ) {
+    this.statements = statements.map(({ sql, params }) => ({
+      sql,
+      params: (params ?? []).map(legacyEncodeBatchValue),
+    }));
+    this.callback = callback;
+  }
+
+  submit(connection: Pg.Connection): Error | null {
+    let started = false;
+    connection.stream.cork?.();
+    try {
+      for (const { sql, params } of this.statements) {
+        started = true;
+        connection.parse({ name: "", text: sql, types: [] }, true);
+        connection.bind({ portal: "", statement: "", values: [...params] }, true);
+        connection.describe({ type: "P", name: "" }, true);
+        connection.execute({ portal: "" }, true);
+      }
+      connection.sync();
+      return null;
+    } catch (error) {
+      this.poisoned = started;
+      return error instanceof Error ? error : new Error(String(error));
+    } finally {
+      connection.stream.uncork?.();
+    }
+  }
+
+  handleRowDescription(): void {}
+
+  handleDataRow(): void {}
+
+  handlePortalSuspended(): void {}
+
+  handleCommandComplete(): void {
+    this.completed += 1;
+  }
+
+  handleEmptyQuery(): void {
+    this.completed += 1;
+  }
+
+  handleCopyInResponse(connection: Pg.Connection): void {
+    connection.sendCopyFail("COPY FROM STDIN is not supported in migration batches");
+  }
+
+  handleCopyData(): void {}
+
+  handleError(error: Error): void {
+    this.callback(error);
+  }
+
+  handleReadyForQuery(): void {
+    this.callback(undefined);
+  }
+}
+
 /**
  * Whether a dial host is a libpq unix-socket path. pgconn skips TLS/DNS entirely for
  * a unix `NetworkAddress` regardless of `sslmode` (jackc/pgconn `configTLS`), so a
  * socket DSN connects in plaintext — mirrored here. Matches pgconn v1.14.3
- * `isAbsolutePath` (`config.go:112-129`): a forward-slash prefix (POSIX) OR a Windows
+ * `isAbsolutePath`: a forward-slash prefix (POSIX) OR a Windows
  * absolute path — an **uppercase** drive letter `A`-`Z`, then `:`, then `\`
  * (lowercase `c:\…` is NOT a socket in pgconn, so it stays TCP here too).
  */
@@ -218,7 +306,7 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  * The URL carries no `sslmode`, so the explicit `ssl` config wins.
  *
  * An IPv6 literal host is wrapped in brackets so `new URL()` accepts it, matching
- * Go's `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
+ * `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
  * covers a direct IPv6 `--db-url` carrying `?options=…` and the DoH path when a
  * Supavisor URL resolves to an AAAA address.
  *
@@ -230,9 +318,9 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  */
 /**
  * Merge the libpq `options` startup param with the parsed `runtimeParams`, encoding
- * each runtime param as a `-c <key>=<value>` flag. Go sends every
- * `pgconn.Config.RuntimeParams` entry as a discrete StartupMessage parameter
- * (`ToPostgresURL`, `apps/cli-go/internal/utils/connect.go:31-33`), so the live
+ * each runtime param as a `-c <key>=<value>` flag. Every
+ * `pgconn.Config.RuntimeParams` entry is sent as a discrete StartupMessage parameter
+ * (`ToPostgresURL`), so the live
  * query/COPY connection applies `search_path`, `statement_timeout`, etc.
  * node-postgres has no discrete startup-param API, but Postgres applies the
  * `-c key=value` flags carried in the `options` startup param to the same session
@@ -270,26 +358,25 @@ export function legacyBuildConnectionUrl(
 }
 
 /**
- * Map Go's TLS behavior to the `pg` driver's `ssl` option. Parity with
- * `apps/cli-go/internal/utils/connect.go`:
+ * Map the established TLS behavior to the `pg` driver's `ssl` option:
  *
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
- *   return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
- *   in the environment. `sslmode` is ignored, matching Go, which overwrites the
- *   local config unconditionally.
+ * return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
+ * in the environment. `sslmode` is ignored — the
+ * local config overwrites it unconditionally.
  * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
- *   (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
- *   `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
- *   - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
- *     `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
- *     `allow` DSN to a plaintext endpoint must connect without TLS.
- *   - `verify-ca` / `verify-full` → TLS **with** certificate verification;
- *   - `prefer` (and pgconn's default) / `require` / unset → TLS **without**
- *     verification (their primary is the TLS config).
+ * (its fallback list), since the `pg` driver carries a single
+ * `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
+ * - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
+ * `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
+ * `allow` DSN to a plaintext endpoint must connect without TLS.
+ * - `verify-ca` / `verify-full` → TLS **with** certificate verification;
+ * - `prefer` (and pgconn's default) / `require` / unset → TLS **without**
+ * verification (their primary is the TLS config).
  *
  * `servername` (the original hostname) is carried for **every** TLS mode, not
- * just the verifying ones. Go enables `sslsni` by default (`pgconn`'s
- * `config.go:768` sets `tlsConfig.ServerName = host` for all TLS sslmodes when
+ * just the verifying ones. `sslsni` is enabled by default (pgconn's `config.go`
+ * sets `tlsConfig.ServerName = host` for all TLS sslmodes when
  * the host is not a literal IP) and keeps the original hostname in the
  * connection config even when `--dns-resolver https` swaps the dial target for a
  * DoH-resolved IP (via `FallbackLookupIP`). Dropping the SNI on `require`/
@@ -315,8 +402,8 @@ export function legacySslOptionFor(
   // it only affects the verifying modes.
   const ca = caCert !== undefined ? { ca: caCert } : {};
   // pgconn attaches the client `sslcert`/`sslkey` (and optional `sslpassword`) to the
-  // single shared `tlsConfig.Certificates` regardless of verification mode
-  // (`config.go:710-762`), so carry it on every TLS config.
+  // single shared `tlsConfig.Certificates` regardless of verification mode,
+  // so carry it on every TLS config.
   const clientCertOpts: ConnectionOptions =
     clientCert !== undefined
       ? {
@@ -349,8 +436,8 @@ export function legacySslOptionFor(
 
 /**
  * The ordered list of `ssl` configs to try for a connection. pgconn's raw
- * `configTLS` fallback list (`config.go:772-780`) is **post-processed** by Go's
- * `ConnectByUrl` (`apps/cli-go/internal/utils/connect.go:156-168`), which strips
+ * `configTLS` fallback list is **post-processed** by Go's
+ * `ConnectByUrl`, which strips
  * every non-TLS fallback whenever the primary config uses TLS ("No fallback from
  * TLS to unsecure connection"). The `pg` driver carries a single `ssl` option and
  * cannot replay pgconn's internal fallback, so `connect` retries across the
@@ -358,11 +445,11 @@ export function legacySslOptionFor(
  *
  * - `disable` → `[plaintext]` (primary is plaintext; nothing stripped)
  * - `allow` → `[plaintext, TLS]` (`{nil, tlsConfig}` — non-TLS primary, so the
- *   TLS fallback survives the strip)
+ * TLS fallback survives the strip)
  * - `prefer` / unset (pgconn's default) → `[TLS]`. pgconn's raw list is
- *   `{tlsConfig, nil}`, but the primary is TLS, so `ConnectByUrl` drops the
- *   plaintext fallback. Go therefore **fails** rather than downgrading a default
- *   remote connection to plaintext, and so must this port.
+ * `{tlsConfig, nil}`, but the primary is TLS, so `ConnectByUrl` drops the
+ * plaintext fallback. Go therefore **fails** rather than downgrading a default
+ * remote connection to plaintext, and so must this port.
  * - `require` / `verify-ca` / `verify-full` → `[TLS]` (TLS only)
  *
  * `servername` (the original hostname) is per dial host — set when a DoH-resolved
@@ -432,15 +519,15 @@ export function legacyBuildRawPgConfig(
  * config with the two pool controls this layer depends on:
  *
  * - `max: 1` — a single physical connection, so a session-scoped `SET SESSION ROLE`
- *   (the remote step-down) and any session GUCs persist across `exec`/`query` calls.
+ * (the remote step-down) and any session GUCs persist across `exec`/`query` calls.
  * - `idleTimeoutMillis: 0` — node-postgres documents `0` as disabling auto-reaping of
- *   idle connections. `PgClient.make` leaves this unset (→ node-postgres default
- *   10_000ms), which during a long-idle `db pull` (shadow-DB provisioning + diff +
- *   interactive confirm prompt) reaps the stepped-down connection after 10s idle and
- *   transparently redials a fresh one for the final migration-table write; that fresh
- *   connection never ran the step-down, so the DDL executes as the bare `cli_login_*`
- *   role and fails with `permission denied` (42501). Disabling the reaper keeps the
- *   single stepped-down connection alive for the whole session.
+ * idle connections. `PgClient.make` leaves this unset (→ node-postgres default
+ * 10_000ms), which during a long-idle `db pull` (shadow-DB provisioning + diff +
+ * interactive confirm prompt) reaps the stepped-down connection after 10s idle and
+ * transparently redials a fresh one for the final migration-table write; that fresh
+ * connection never ran the step-down, so the DDL executes as the bare `cli_login_*`
+ * role and fails with `permission denied` (42501). Disabling the reaper keeps the
+ * single stepped-down connection alive for the whole session.
  *
  * `application_name` mirrors `PgClient.make`'s default so the server-side session name
  * is unchanged from the previous `PgClient.make` path.
@@ -479,7 +566,7 @@ interface LegacyPoolErrorSource {
 
 /**
  * pg-pool `verify` hook that re-runs the remote role step-down on EVERY new
- * physical connection, matching Go's `AfterConnect` (`connect.go:355-361`) —
+ * physical connection, matching `AfterConnect` —
  * including the silent redial after a dropped connection, which the post-connect
  * one-shot in `connect` can't reach. pg-pool invokes `verify` for a brand-new
  * client BEFORE resolving the pending checkout (`pg-pool/index.js`
@@ -488,7 +575,7 @@ interface LegacyPoolErrorSource {
  * pg-pool's own synchronous dispatch of the checked-out query — node-postgres'
  * "Calling client.query() when the client is already executing a query"
  * deprecation, whose internal queueing pg@9 removes.) A failure propagates to
- * the checkout and fails the caller's query, like Go's `AfterConnect` failing
+ * the checkout and fails the caller's query, like `AfterConnect` failing
  * the connect.
  */
 export function legacyPoolStepDownVerify(
@@ -574,21 +661,39 @@ export const legacyAcquireProbedPool = <P extends LegacyProbePool>(
     return pool;
   });
 
+/** Map a driver connect failure to the credential-free Go-compatible error. */
+const legacyToConnectError = (
+  cfg: LegacyPgConnInput,
+  isLocal: boolean,
+  error: unknown,
+): LegacyDbConnectError => {
+  const suggestion =
+    cfg.suggestionContext === undefined
+      ? undefined
+      : legacyConnectSuggestion(error, { ...cfg.suggestionContext, isLocal });
+  return new LegacyDbConnectError({
+    message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
+    ...(suggestion === undefined ? {} : { suggestion }),
+    ...(legacyIsDialFailure(error) ? { retryable: true } : {}),
+  });
+};
+
 /**
- * Default `LegacyDbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg`
- * driver, no native addon — bundles under `bun build --compile`). Each
- * `connect` builds a scoped single-client connection that closes on scope exit.
+ * Acquire the winning raw pool through the full Go-compatible connection attempt
+ * chain. The pool finalizer is owned by the caller's scope; both the legacy session
+ * adapter and direct-pool consumers use this one acquisition core so their DNS,
+ * TLS, fallback, and role behavior cannot drift apart.
  */
-const connect = (
+const acquirePgPoolConnection = (
   cfg: LegacyPgConnInput,
   { isLocal, dnsResolver }: LegacyDbConnectOptions,
-): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
+) =>
   Effect.gen(function* () {
-    // pgconn dials the primary host then each HA fallback in order
-    // (`config.go:326-362`); `cfg.fallbacks` carries the extras parsed from a
+    // pgconn dials the primary host then each HA fallback in order;
+    // `cfg.fallbacks` carries the extras parsed from a
     // libpq multi-host connection string. Go installs the Cloudflare DoH resolver
-    // for remote connections when `--dns-resolver https` is set
-    // (`connect.go:211-213`): it resolves each host to **all** its IPs
+    // for remote connections when `--dns-resolver https` is set:
+    // it resolves each host to **all** its IPs
     // (`FallbackLookupIP`) and dials them in order, so we resolve every config host
     // up front and retry each. We dial a resolved IP but keep the original hostname
     // for the TLS `servername` (carried in the `ssl` option) so verification still
@@ -607,17 +712,17 @@ const connect = (
         dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
       }
     }
-    // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
-    // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
-    // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
+    // Connect timeout parity: `ToPostgresURL` always sets `connect_timeout`,
+    // defaulting to 10s; `ConnectLocalPostgres` uses 2s for
+    // local. A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
     // both. Without this a black-holed host would hang to the OS/driver default.
     const connectTimeoutSeconds = cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10);
-    // Whether the remote step-down runs on this connection. Go installs the
-    // `AfterConnect` hook only on the remote path (`ConnectByConfigStream`,
-    // `connect.go:342-362`), not `ConnectLocalPostgres`, so gate on `!isLocal`.
+    // Whether the remote step-down runs on this connection. The
+    // `AfterConnect` hook installs only on the remote path (`ConnectByConfigStream`),
+    // not `ConnectLocalPostgres`, so gate on `!isLocal`.
     const stepDownRequired = !isLocal && needsRoleStepDown(cfg.user);
-    // Build the primary connection over a self-managed `pg.Pool` (via
-    // `PgClient.fromPool`) rather than `PgClient.make`, so we control two pool
+    // Build the primary connection over a self-managed `pg.Pool` rather than
+    // `PgClient.make`, so we control two pool
     // behaviors `PgClient.make` does not expose: `idleTimeoutMillis: 0` (never reap
     // the single pooled connection — see `legacyBuildPoolConfig`; the fix for the
     // `db pull` step-down loss) and the per-connection role step-down `verify` hook
@@ -626,12 +731,12 @@ const connect = (
     // the pool on scope exit AND on every failure/timeout (the leak `PgClient.make`
     // has). `probe` (below) runs each attempt in a forked scope so a failed fallback
     // attempt's pool closes immediately, before the next host is dialed.
-    const makeClient = (
+    const makePool = (
       dialHost: string,
       port: number,
       sslOption: boolean | ConnectionOptions | undefined,
-    ) => {
-      const acquire = legacyAcquireProbedPool(
+    ) =>
+      legacyAcquireProbedPool(
         () =>
           new Pg.Pool(
             legacyBuildPoolConfig(
@@ -645,29 +750,15 @@ const connect = (
           ),
         connectTimeoutSeconds,
       );
-      return PgClient.fromPool({ acquire }).pipe(Effect.provide(Reactivity.layer));
-    };
 
-    // Go's `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure
-    // (`connect.go:187`), mapping the driver error to an actionable hint that replaces
+    // `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure,
+    // mapping the driver error to an actionable hint that replaces
     // the generic "--debug" suggestion. The resolver attaches the profile context to
     // `cfg.suggestionContext`; map it here so the suggestion travels on the error.
-    // The message mirrors Go's `pgxv5.Connect` wrap of pgconn's `connectError`
-    // (`pkg/pgxv5/connect.go:33`, pgconn `errors.go:66-72`): the `failed to connect
+    // The message mirrors `pgxv5.Connect` wrap of pgconn's `connectError`: the `failed to connect
     // to postgres:` prefix plus the `host=… user=… database=…` identity and the
     // underlying driver cause — not the bare `SqlError` toString, which drops all
     // of that detail.
-    const toConnectError = (error: unknown) => {
-      const suggestion =
-        cfg.suggestionContext === undefined
-          ? undefined
-          : legacyConnectSuggestion(error, { ...cfg.suggestionContext, isLocal });
-      return new LegacyDbConnectError({
-        message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
-        ...(suggestion === undefined ? {} : { suggestion }),
-      });
-    };
-
     // Load the `sslrootcert` CA bundle (pgconn reads it into `RootCAs` at parse
     // time; a missing/unreadable file aborts). Skipped for local connections, which
     // never use TLS. pgconn builds TLS per fallback host, so the CA must be loaded
@@ -723,9 +814,9 @@ const connect = (
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
       legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost, clientCert).map(
         (ssl) => ({
-          client: makeClient(dialHost, port, ssl),
+          pool: makePool(dialHost, port, ssl),
           // pgconn only short-circuits the fallback chain on an auth error when the
-          // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
+          // failed attempt used TLS (gated on `fc.TLSConfig != nil`);
           // a TLS config is any non-plaintext `ssl` value.
           usedTls: ssl !== undefined && ssl !== false,
           rawConfig: legacyBuildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),
@@ -737,10 +828,10 @@ const connect = (
     // every attempt with `select 1` to force the connection, falling through to the
     // next on failure. pgconn retries fallbacks only for connection-establishment
     // errors; a server-side auth/authorization/catalog/privilege error terminates the
-    // chain (`pgconn.go:159-192`), so a terminal SQLSTATE re-raises instead of masking
+    // chain, so a terminal SQLSTATE re-raises instead of masking
     // the primary's failure behind a later host. The final attempt is probed too (not
     // left lazy): Go always dials eagerly — the main path via `pgx.ConnectConfig` and
-    // the temp-role wait via `pgconn.ConnectConfig` (`db_url.go:192`) — so `connect`
+    // the temp-role wait via `pgconn.ConnectConfig` — so `connect`
     // must return a live session for callers like `waitForTempRole` that don't run a
     // follow-up query. The winning attempt's `rawConfig` is carried out so `copyToCsv`
     // can reuse the exact dial target the primary connection succeeded against.
@@ -756,9 +847,8 @@ const connect = (
         // session and closes with it.
         const sessionScope = yield* Scope.Scope;
         const attemptScope = yield* Scope.fork(sessionScope);
-        return yield* attempt.client.pipe(
-          Effect.tap((candidate) => candidate`select 1`),
-          Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
+        return yield* attempt.pool.pipe(
+          Effect.map((pool) => ({ pool, rawConfig: attempt.rawConfig })),
           Scope.provide(attemptScope),
           Effect.onExit((exit) =>
             Exit.isSuccess(exit) ? Effect.void : Scope.close(attemptScope, exit),
@@ -766,7 +856,7 @@ const connect = (
         );
       });
     const lastIndex = attempts.length - 1;
-    const { candidate: client, rawConfig: winningRawConfig } = yield* attempts
+    const { pool, rawConfig: winningRawConfig } = yield* attempts
       .slice(0, lastIndex)
       .reduceRight(
         (next, attempt) =>
@@ -777,31 +867,63 @@ const connect = (
           ),
         probe(attempts[lastIndex]!),
       )
-      .pipe(Effect.mapError(toConnectError));
+      .pipe(Effect.mapError((error) => legacyToConnectError(cfg, isLocal, error)));
 
     // Step down from the temp/privileged login role before any further SQL — but
     // only for remote connections: Go installs this hook in `ConnectByConfigStream`,
     // not `ConnectLocalPostgres`, so a local `--db-url` using `supabase_admin`/
-    // `cli_login_*` must not run it. The pool's `"connect"` hook already ran this on
-    // the physical connection (and on any silent redial); this explicit one-shot is
-    // the fail-fast path — the hook swallows errors, so a real role-privilege problem
-    // only surfaces here, as `LegacyDbConnectError: failed to set session role: ...`
-    // (Go parity). `max: 1` + `idleTimeoutMillis: 0` keep the stepped-down connection
+    // `cli_login_*` must not run it. The pool's `verify` hook already ran this on
+    // the physical connection (and runs it on any silent redial); this explicit
+    // one-shot preserves the fail-fast `LegacyDbConnectError: failed to set session
+    // role: ...` path. `max: 1` + `idleTimeoutMillis: 0` keep the stepped-down connection
     // alive so the session-scoped role persists for every later `exec`/`query`.
     if (stepDownRequired) {
-      yield* client.unsafe(SET_SESSION_ROLE).pipe(
-        Effect.asVoid,
-        Effect.mapError(
-          (error) => new LegacyDbConnectError({ message: `failed to set session role: ${error}` }),
-        ),
-      );
+      yield* Effect.tryPromise({
+        try: () => pool.query(SET_SESSION_ROLE),
+        catch: (error) =>
+          new LegacyDbConnectError({ message: `failed to set session role: ${error}` }),
+      });
     }
+
+    return { pool, winningRawConfig, stepDownRequired };
+  });
+
+/**
+ * Acquire a live `pg.Pool` using the same scoped lifecycle and connection parity
+ * as `LegacyDbConnection.connect`. The caller owns the surrounding scope; closing
+ * it ends the winning pool, while every losing fallback attempt is closed before
+ * the next target is tried.
+ */
+export const legacyAcquirePgPool = (
+  cfg: LegacyPgConnInput,
+  options: LegacyDbConnectOptions,
+): Effect.Effect<Pg.Pool, LegacyDbConnectError, Scope.Scope> =>
+  acquirePgPoolConnection(cfg, options).pipe(Effect.map(({ pool }) => pool));
+
+/**
+ * Default `LegacyDbConnection` layer, backed by `@effect/sql-pg` (pure-JS `pg`
+ * driver, no native addon — bundles under `bun build --compile`). Each
+ * `connect` builds a scoped single-client connection that closes on scope exit.
+ */
+const connect = (
+  cfg: LegacyPgConnInput,
+  options: LegacyDbConnectOptions,
+): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const { pool, winningRawConfig, stepDownRequired } = yield* acquirePgPoolConnection(
+      cfg,
+      options,
+    );
+    const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+      Effect.provide(Reactivity.layer),
+      Effect.mapError((error) => legacyToConnectError(cfg, options.isLocal, error)),
+    );
 
     // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres'
     // COPY protocol needs the raw client (which `@effect/sql-pg` does not surface),
     // so the session opens ONE dedicated raw connection against the winning dial
     // target and reuses it for every copy — matching Go, which runs all copies on a
-    // single `pgconn` (`report.go:35-59`). It is created lazily on first copy (so
+    // single `pgconn`. It is created lazily on first copy (so
     // `test db` / `inspect db`, which never copy, never open it) and closed by a
     // scope finalizer when the session's scope closes. The step-down runs once, here,
     // so every COPY executes with the same privileges as the primary session.
@@ -826,7 +948,7 @@ const connect = (
       const fresh = new Pg.Client(winningRawConfig);
       yield* Effect.tryPromise({
         try: () => fresh.connect(),
-        catch: toConnectError,
+        catch: (error) => legacyToConnectError(cfg, options.isLocal, error),
       });
       if (stepDownRequired) {
         yield* Effect.tryPromise({
@@ -839,8 +961,93 @@ const connect = (
       return fresh;
     });
 
+    const acquireBatchClient = Effect.callback<Pg.PoolClient, LegacyDbExecError>((resume) => {
+      let done = false;
+      try {
+        pool.connect((error, activeClient) => {
+          if (done) {
+            activeClient?.release();
+            return;
+          }
+          done = true;
+          if (error !== undefined) {
+            resume(Effect.fail(legacyToExecError(error)));
+          } else if (activeClient === undefined) {
+            resume(
+              Effect.fail(new LegacyDbExecError({ message: "failed to acquire batch connection" })),
+            );
+          } else {
+            resume(Effect.succeed(activeClient));
+          }
+        });
+      } catch (error) {
+        done = true;
+        resume(Effect.fail(legacyToExecError(error)));
+      }
+      return Effect.sync(() => {
+        done = true;
+      });
+    });
+
+    const execBatch = (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+      if (statements.length === 0) return Effect.void;
+      let batchQuery: LegacyPgBatchQuery | undefined;
+      return Effect.acquireUseRelease(
+        Effect.interruptible(acquireBatchClient),
+        (activeClient) => {
+          const onConnectionError = () => {};
+          activeClient.on("error", onConnectionError);
+          return Effect.callback<void, LegacyDbExecError>((resume) => {
+            let done = false;
+            const finish = (error: Error | undefined) => {
+              if (done) return;
+              done = true;
+              if (error === undefined) {
+                resume(Effect.void);
+                return;
+              }
+              const mapped = legacyToExecError(error);
+              resume(
+                Effect.fail(
+                  new LegacyDbExecError({
+                    message: mapped.message,
+                    code: mapped.code,
+                    detail: mapped.detail,
+                    position: mapped.position,
+                    statementIndex: batchQuery?.completed ?? 0,
+                  }),
+                ),
+              );
+            };
+            batchQuery = new LegacyPgBatchQuery(statements, finish);
+            try {
+              activeClient.query(batchQuery);
+            } catch (error) {
+              finish(error instanceof Error ? error : new Error(String(error)));
+            }
+            return Effect.sync(() => {
+              done = true;
+            });
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => activeClient.removeListener("error", onConnectionError)),
+            ),
+          );
+        },
+        (activeClient, exit) =>
+          Effect.sync(() => {
+            const discard =
+              batchQuery?.poisoned === true ||
+              (Exit.isFailure(exit) &&
+                (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)));
+            activeClient.release(discard ? new Error("batch execution interrupted") : undefined);
+          }),
+      );
+    };
+
     const session: LegacyDbSession = {
       exec: (sql) => client.unsafe(sql).pipe(Effect.asVoid, Effect.mapError(legacyToExecError)),
+      execBatch,
       query: (sql, params) =>
         client
           .unsafe<Record<string, unknown>>(sql, params)

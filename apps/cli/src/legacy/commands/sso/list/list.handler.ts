@@ -41,7 +41,7 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoListUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
@@ -49,9 +49,17 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
         );
       }
+      return yield* Effect.fail(
+        new LegacySsoListUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
     }
     return yield* Effect.fail(mapped);
   });
@@ -88,9 +96,8 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (e.g. a nil element in an attribute-mapping
-        // `default` array).
+        // TOML encode failure wrapping (e.g. a nil element in an
+        // attribute-mapping `default` array).
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER),
           catch: (cause) =>

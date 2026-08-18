@@ -184,9 +184,9 @@ describe("resolvePgmetaImage", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    // Go's pflag StringSlice parses each value via encoding/csv with NO
-    // trimming (spf13/pflag readAsCSV → csv.Reader), and an empty value yields
-    // no field. Whitespace is preserved verbatim, matching Go.
+    // pflag's StringSlice parses each value via encoding/csv with NO
+    // trimming, and an empty value yields no field. Whitespace is preserved
+    // verbatim.
     expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
       " auth",

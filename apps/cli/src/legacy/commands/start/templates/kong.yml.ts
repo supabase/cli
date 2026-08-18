@@ -1,13 +1,11 @@
 /**
- * Transcribed verbatim from `apps/cli-go/internal/start/templates/kong.yml`
- * (Go `//go:embed templates/kong.yml`, parsed as a `text/template` named
- * `kongConfig`, `apps/cli-go/internal/start/start.go:106-109`). Do not hand-edit
- * the YAML body — re-transcribe from the Go source if it changes.
+ * The canonical `kong.yml` template — this is the sole source of truth; do
+ * not hand-edit the YAML body. Also reused directly (not re-transcribed) by
+ * `shared/functions/serve-main-offline.e2e.test.ts`'s offline Kong fixture.
  *
- * Placeholders (`{{ .Field }}`) are Go's `kongConfig` struct fields
- * (`start.go:90-104`): GotrueId, RestId, RealtimeId, StorageId, StudioId,
- * PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort, BearerToken,
- * QueryToken. Rendered by `lib/template-render.ts`.
+ * Placeholders (`{{ .Field }}`): GotrueId, RestId, RealtimeId, StorageId,
+ * StudioId, PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort,
+ * BearerToken, QueryToken. Rendered by `lib/template-render.ts`.
  */
 export const LEGACY_START_KONG_YML_TEMPLATE = `_format_version: "1.1"
 services:

@@ -807,14 +807,20 @@ describe("legacy gen types", () => {
   });
 
   it.live("does not misdetect a mutex flag consumed as -s's value (pflag consumption)", () => {
-    // Go's `StringSliceVarP(&schema, "schema", "s", ...)` (cmd/gen.go:155) makes
-    // a bare `-s` consume the very next argv token unconditionally, even a
-    // flag-shaped one — pflag hands `-s` the (oddly named, but valid) value
-    // `"--linked"`, leaving only `--local` Changed. Simulates what the real
-    // Effect parser produces for this argv (both `local` and `linked` parse as
-    // independently true, since its tokenizer is unaware of pflag's value
-    // consumption — CLI-1982); only the pflag-faithful scan can tell them apart.
-    const { layer } = setup({ args: ["gen", "types", "-s", "--linked", "--local"] });
+    // `-s` is a pflag string-slice shorthand: a bare `-s` consumes the very
+    // next argv token unconditionally, even a flag-shaped one — pflag hands
+    // `-s` the (oddly named, but valid) value `"--linked"`, leaving only
+    // `--local` Changed. Simulates what the real Effect parser produces for
+    // this argv (both `local` and `linked` parse as independently true,
+    // since its tokenizer is unaware of pflag's value consumption); only the
+    // pflag-faithful scan can tell them apart.
+    // `childExitCode: 1` fails the local target's `container inspect`, keeping the
+    // downstream failure deterministic before the real SSL probe can reach whatever
+    // is listening on the local db port.
+    const { layer } = setup({
+      args: ["gen", "types", "-s", "--linked", "--local"],
+      childExitCode: 1,
+    });
 
     return Effect.gen(function* () {
       const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
@@ -824,6 +830,7 @@ describe("legacy gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to inspect service");
         expect(String(exit.cause)).not.toContain("if any flags in the group");
       }
     });
@@ -892,7 +899,7 @@ describe("legacy gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Go's PreRunE guard, including its "must used" typo (cmd/gen.go:81).
+        // Established guard, including its "must used" typo — do not "fix" the grammar.
         expect(String(exit.cause)).toContain(
           "--postgrest-v9-compat must used together with --db-url",
         );
@@ -916,9 +923,8 @@ describe("legacy gen types", () => {
           "--postgrest-v9-compat must used together with --db-url",
         );
       }
-      // Go's PreRunE runs after the root's `PersistentPreRunE` has already
-      // installed the telemetry context (`cmd/root.go:93-163`), so this
-      // restored guard must still flush telemetry on rejection.
+      // The guard runs after the telemetry context is already installed, so
+      // this restored guard must still flush telemetry on rejection.
       expect(telemetry.flushed).toBe(true);
     });
   });
@@ -2365,8 +2371,8 @@ describe("legacy gen types", () => {
             true,
           );
           expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
-          // The local/db-url paths have no project ref, so they must not populate the
-          // linked-project cache (matches Go's ensureProjectGroupsCached early return).
+          // The local/db-url paths have no project ref, so they must not
+          // populate the linked-project cache.
           expect(linkedProjectCache.cached).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -3126,9 +3132,9 @@ describe("legacy gen types", () => {
     }),
   );
 
-  // Go's `GetRootCA` no longer special-cases `--debug`: `isRequireSSL` returns true
-  // on any successful probe (`types.go:194-195`), so the bundle is passed to pgmeta
-  // regardless of the flag.
+  // The SSL probe does not special-case `--debug`: a successful probe
+  // returns true regardless, so the bundle is passed to pgmeta regardless of
+  // the flag.
   it.live("passes the CA bundle env var in --debug mode when TLS is supported", () =>
     Effect.tryPromise({
       try: () =>

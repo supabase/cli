@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ProjectContext } from "./project-context.service.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 
 const PROJECT_HOME_DIR_NAME = ".supabase";
@@ -19,7 +19,9 @@ const findProjectRootFromRepoState = (
 
     while (true) {
       const projectLinkPath = path.join(current, PROJECT_HOME_DIR_NAME, PROJECT_LINK_FILE_NAME);
-      if (yield* fs.exists(projectLinkPath).pipe(Effect.orDie)) {
+      // A FILE named `.supabase` along the ancestor walk reads as "no link
+      // here" rather than crashing the boot (fs.exists only maps NotFound).
+      if (yield* fs.exists(projectLinkPath).pipe(Effect.orElseSucceed(() => false))) {
         return current;
       }
       if (current === root) {
@@ -43,11 +45,19 @@ const makeProjectHome = Effect.gen(function* () {
   const projectLinkPath = path.join(projectHomeDir, "project.json");
   const projectLocalVersionsPath = path.join(projectHomeDir, "local-versions.json");
 
-  const ensureProjectHomeDir = Effect.gen(function* () {
-    yield* fs.makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 });
-  }).pipe(Effect.orDie);
-
-  const stackDir = (name: string) => path.join(projectHomeDir, "stacks", name);
+  const ensureProjectHomeDir = fs
+    .makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 })
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "AlreadyExists" || error.reason._tag === "BadResource"
+          ? Effect.die(
+              new ProjectHomeNotDirectoryError({
+                message: `${projectHomeDir} could not be created: a file (or a symlink loop) exists at that path or on one of its parent directories. Remove or rename it so the Supabase CLI can store project state there.`,
+              }),
+            )
+          : Effect.die(error),
+      ),
+    );
 
   return ProjectHome.of({
     projectRoot,
@@ -56,11 +66,6 @@ const makeProjectHome = Effect.gen(function* () {
     projectLinkPath,
     projectLocalVersionsPath,
     ensureProjectHomeDir,
-    stackDir,
-    stackStatePath: (name: string) => path.join(stackDir(name), "state.json"),
-    stackMetadataPath: (name: string) => path.join(stackDir(name), "stack.json"),
-    stackDataDir: (name: string) => path.join(stackDir(name), "data"),
-    stackLogsDir: (name: string) => path.join(stackDir(name), "logs"),
   });
 });
 

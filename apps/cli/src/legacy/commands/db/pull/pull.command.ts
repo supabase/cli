@@ -18,7 +18,7 @@ const config = {
   // pflag `Changed`.
   declarative: Flag.boolean("declarative").pipe(
     Flag.withDescription(
-      "Pull schema as declarative files using pg-delta instead of creating a migration.",
+      "Replace the declarative schema tree from the selected database instead of creating a migration; migration history is not updated.",
     ),
     Flag.optional,
   ),
@@ -33,6 +33,11 @@ const config = {
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
+  ),
+  strictCoverage: Flag.boolean("strict-coverage").pipe(
+    Flag.withDescription(
+      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+    ),
   ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
@@ -57,6 +62,11 @@ const config = {
     Flag.withDescription("Pulls from the local database."),
     Flag.optional,
   ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
@@ -67,7 +77,9 @@ const config = {
 export type LegacyDbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbPullCommand = Command.make("pull", config).pipe(
-  Command.withDescription("Pull schema from the remote database."),
+  Command.withDescription(
+    "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+  ),
   Command.withShortDescription("Pull schema from the remote database"),
   Command.withHandler((flags) =>
     legacyDbPull(flags).pipe(
@@ -76,13 +88,18 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
           declarative: flags.declarative,
           "use-pg-delta": flags.usePgDelta,
           "diff-engine": flags.diffEngine,
+          "strict-coverage": flags.strictCoverage,
           schema: flags.schema,
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         aliases: { s: "schema", p: "password" },
         config,
       }),

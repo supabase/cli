@@ -1,13 +1,12 @@
-import { Effect, Layer, Option, Context } from "effect";
+import { Effect, Layer, Context } from "effect";
 import { loadProjectConfig } from "@supabase/config";
 import {
   DEFAULT_MANAGED_STACK_NAME,
-  StateManager,
   daemonLayer,
-  stackMetadata,
-  type StackMetadata,
+  fillServiceVersionManifest,
+  resolveStackSummary,
+  type StackSummary,
 } from "@supabase/stack/effect";
-import { daemonEntryPoint } from "@supabase/stack";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
@@ -28,7 +27,7 @@ import {
   toStartStackConfig,
   withServiceVersions,
 } from "../../config/stack-config.ts";
-import { projectStackStateManagerLayer } from "../../config/project-stack-state-manager.layer.ts";
+import { managedPortIntents } from "../../config/managed-port-intents.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -86,8 +85,20 @@ const modeFlag = Flag.choice("mode", startModes).pipe(
 );
 
 interface StartVersionStateShape {
-  readonly metadata: StackMetadata;
+  readonly launch: {
+    readonly mode: StartMode;
+    readonly versions: Readonly<Record<string, string>>;
+    readonly excludedServices: ReadonlyArray<ExcludedStackService>;
+  };
+  readonly previousUpdateFingerprint?: string;
+  readonly drift?: NonNullable<StackSummary["drift"]>;
   readonly serviceVersionContext: ResolvedServiceVersionContext;
+  readonly lifecycleInput: {
+    readonly cacheRoot: string;
+    readonly workspacePath: string;
+    readonly stackName: string;
+    readonly cwd: string;
+  };
 }
 
 export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
@@ -114,7 +125,7 @@ export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
       "Starts the full local Supabase stack. Use --mode auto (default) to prefer native binaries and fall back to Docker, --mode native to require native-compatible services, or --mode docker to force Docker-backed startup.\n\n" +
-      "Named CLI stacks persist their service data under .supabase/stacks/<name>/data in the project root. Use --exclude to skip optional services. Use --detach to run in the background.",
+      "Named CLI stacks persist managed runtime state under the Supabase home directory. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),
   Command.withExamples([
@@ -153,7 +164,6 @@ export const startCommand = Command.make("start", flags).pipe(
       Layer.mergeAll(
         projectLinkStateLayer,
         projectLocalServiceVersionsLayer,
-        projectStackStateManagerLayer,
         commandRuntimeLayer(["start"]),
       ),
     );
@@ -163,17 +173,17 @@ export const startCommand = Command.make("start", flags).pipe(
       const cliConfig = yield* CliConfig;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
-      const stateManager = yield* StateManager;
-      const existingMetadata = yield* stateManager.readMetadata(flags.stack).pipe(
-        Effect.map(Option.some),
-        Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
-      );
+      const existingSummary = yield* resolveStackSummary({
+        cacheRoot: cliConfig.supabaseHome,
+        projectDir: projectHome.projectRoot,
+        cwd: runtimeInfo.cwd,
+        name: flags.stack,
+      }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.succeed(undefined)));
       const serviceVersionContext = yield* resolveServiceVersionContext(
         flags.serviceVersion,
-        Option.match(existingMetadata, {
-          onNone: () => undefined,
-          onSome: (metadata) => metadata.services,
-        }),
+        existingSummary === undefined
+          ? undefined
+          : fillServiceVersionManifest(existingSummary.versions),
       );
       // The flag is tri-state in config.toml: unset / true / false. As of the 2026-05-30 flip,
       // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
@@ -197,38 +207,63 @@ export const startCommand = Command.make("start", flags).pipe(
       yield* output.intro("Start local Supabase stack");
       yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
-      const stackLayer = yield* daemonLayer(
-        {
-          cacheRoot: cliConfig.supabaseHome,
-          cwd: runtimeInfo.cwd,
-          projectDir: projectHome.projectRoot,
-          projectStateRoot: projectHome.projectHomeDir,
-          name: flags.stack,
-          ...stackConfig,
-        },
-        daemonEntryPoint,
-      );
-      const daemonState = yield* stateManager.read(flags.stack);
+      const portIntents = managedPortIntents(stackConfig, loadedProjectConfig ?? undefined);
+      const configuredSummary =
+        existingSummary === undefined
+          ? undefined
+          : yield* resolveStackSummary({
+              cacheRoot: cliConfig.supabaseHome,
+              projectDir: projectHome.projectRoot,
+              cwd: runtimeInfo.cwd,
+              name: flags.stack,
+              portDocument: portIntents,
+            });
+      const launch = {
+        mode: flags.mode,
+        versions: serviceVersionContext.pinnedBaseline,
+        excludedServices: flags.exclude,
+        ...(existingSummary?.lastNotifiedUpdateFingerprint === undefined
+          ? {}
+          : { lastNotifiedUpdateFingerprint: existingSummary.lastNotifiedUpdateFingerprint }),
+      };
 
-      const metadata = stackMetadata({
-        ports: daemonState.ports,
-        services: serviceVersionContext.pinnedBaseline,
-        launch: { mode: flags.mode, excludedServices: flags.exclude },
-        lastNotifiedUpdateFingerprint:
-          serviceVersionContext.updateFingerprint === undefined
-            ? undefined
-            : Option.match(existingMetadata, {
-                onNone: () => undefined,
-                onSome: (value) => value.lastNotifiedUpdateFingerprint,
-              }),
+      const stackLayer = yield* daemonLayer({
+        cacheRoot: cliConfig.supabaseHome,
+        cwd: runtimeInfo.cwd,
+        projectDir: projectHome.projectRoot,
+        name: flags.stack,
+        portIntents,
+        launch,
+        ...stackConfig,
       });
-      yield* stateManager.writeMetadata(flags.stack, metadata);
+      const summary = yield* resolveStackSummary({
+        cacheRoot: cliConfig.supabaseHome,
+        projectDir: projectHome.projectRoot,
+        cwd: runtimeInfo.cwd,
+        name: flags.stack,
+      });
 
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
-          metadata,
+          launch: {
+            mode: flags.mode,
+            versions: serviceVersionContext.pinnedBaseline,
+            excludedServices: flags.exclude,
+          },
+          ...(summary.lastNotifiedUpdateFingerprint === undefined
+            ? {}
+            : { previousUpdateFingerprint: summary.lastNotifiedUpdateFingerprint }),
+          ...(configuredSummary?.running !== true || configuredSummary.drift === undefined
+            ? {}
+            : { drift: configuredSummary.drift }),
           serviceVersionContext,
+          lifecycleInput: {
+            cacheRoot: cliConfig.supabaseHome,
+            workspacePath: projectHome.projectRoot,
+            stackName: flags.stack,
+            cwd: runtimeInfo.cwd,
+          },
         }),
       };
     });

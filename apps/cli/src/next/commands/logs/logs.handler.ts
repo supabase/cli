@@ -68,7 +68,6 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
         cwd: runtimeInfo.cwd,
         cacheRoot: cliConfig.supabaseHome,
         projectDir: projectHome.projectRoot,
-        projectStateRoot: projectHome.projectHomeDir,
         name: flags.stack,
       });
       const stack = yield* Effect.provide(Stack, layer);

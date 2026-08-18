@@ -18,7 +18,8 @@ const mapApiKeysError = mapLegacyHttpError({
 });
 
 /**
- * Ports Go's `apiKeys.RunGetApiKeys` (`apps/cli-go/internal/projects/apiKeys/api_keys.go:41-49`):
+ * Ports Go's `apiKeys.RunGetApiKeys` (`apps/cli-go/internal/projects/apiKeys/api_keys.go:41-49`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * `GET /v1/projects/{ref}/api-keys`, mapping transport / non-200 failures to the same
  * `failed to get api keys` / `unexpected get api keys status` errors Go raises. Shared by
  * `projects api-keys` (display) and `bootstrap` (which derives the `.env` keys).

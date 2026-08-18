@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Domain errors specific to `supabase seed buckets`.
@@ -18,14 +23,22 @@ import { Data } from "effect";
  */
 export class LegacySeedConfigLoadError extends Data.TaggedError("LegacySeedConfigLoadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Raised when `--local` and `--linked` are both passed, reproducing cobra's
- * `MarkFlagsMutuallyExclusive("local", "linked")` (`apps/cli-go/cmd/seed.go:32`).
+ * `MarkFlagsMutuallyExclusive("local", "linked")`.
  */
 export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacySeedMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

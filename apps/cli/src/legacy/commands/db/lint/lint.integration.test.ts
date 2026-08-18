@@ -139,18 +139,23 @@ function mockConnection(opts: {
 }
 
 /** Project-ref resolver mock. `db lint --linked` resolves the ref via the
- *  non-prompting `loadProjectRef` (Go's `flags.LoadProjectRef`) to write the
- *  linked-project cache; the other methods are unused by lint. */
+ *  non-prompting `loadProjectRef` to write the linked-project cache; the
+ *  other methods are unused by lint. */
 function mockProjectRef() {
   const calls: Array<string> = [];
   const layer = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () =>
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
+    // flag (not just the hardcoded fallback) drives the linked ref.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
-        return LEGACY_VALID_REF;
+        return Option.isSome(flagValue) && flagValue.value.length > 0
+          ? flagValue.value
+          : LEGACY_VALID_REF;
       }),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
@@ -208,6 +213,7 @@ const flags = (over: Partial<LegacyDbLintFlags> = {}): LegacyDbLintFlags => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   schema: over.schema ?? [],
   level: over.level ?? Option.none<"warning" | "error">(),
   failOn: over.failOn ?? Option.none<"none" | "warning" | "error">(),
@@ -352,8 +358,8 @@ describe("legacy db lint", () => {
   });
 
   it.live("does not trigger --fail-on warning when --level error filters the warning out", () => {
-    // Go filters by --level before the fail-on check (lint.go:62-76), so a
-    // warning removed by --level error cannot trigger --fail-on warning.
+    // The --level filter runs before the fail-on check, so a warning removed
+    // by --level error cannot trigger --fail-on warning.
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -481,11 +487,49 @@ describe("legacy db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("lints the project given via --project-ref, overriding the workdir's own ref", () => {
+    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+    // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
+    // the flag must win over it and drive the cached ref.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, cache } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["--linked"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) }));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("does not write the linked-project cache for a local run", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
-      // Go's ensureProjectGroupsCached no-ops when flags.ProjectRef is empty.
+      // The cache is only written when a ref is known.
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // lint defaults to local when no target flag is set — the guard must fire
+    // from the flag alone, with no explicit --local/--db-url needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, connection, cache } = setup({ checkRows: { public: [] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbLint(flags({ schema: ["public"], projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      expect(connection.execs).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -503,11 +547,11 @@ describe("legacy db lint", () => {
     });
   });
 
-  // ── Changed-based routing parity (Go pflag.Changed semantics) ────────────
+  // ── Changed-based routing (explicitly-set flag, not its value) ───────────
 
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // cobra's Changed fires when the flag appears on the command line regardless
-    // of its value: `--linked=false` is still "explicitly set" → linked branch.
+    // "Changed" fires when the flag appears on the command line regardless of
+    // its value: `--linked=false` is still "explicitly set" → linked branch.
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -534,7 +578,7 @@ describe("legacy db lint", () => {
   });
 
   it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
+    // Both flags are explicitly set → mutual exclusion fires with the sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
@@ -552,9 +596,7 @@ describe("legacy db lint", () => {
     const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
-      // Routes to local → "Connecting to local database..."
       expect(out.stderrText).toContain("Connecting to local database...");
-      // No linked-project cache for local runs.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });

@@ -9,6 +9,8 @@ import {
   legacyBrowserLogin,
   legacyPostLoginTelemetry,
 } from "../../shared/legacy-ensure-login.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { lastExplicitLongFlagValue } from "../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -34,19 +36,28 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
 
   const claudeHint = legacySuggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
-  // Mirrors Go's login `PostRunE` (`cmd/login.go:42-48`): when a profile was
-  // explicitly chosen (`--profile` over its default, else `SUPABASE_PROFILE`),
-  // persist it to `<SUPABASE_HOME or ~/.supabase>/profile` on success so later commands resolve the
-  // same profile. The raw token is written (Go's `viper.GetString("PROFILE")`),
-  // so a YAML-path profile round-trips. A write failure is fatal (Go: "Failure
-  // to save should block subsequent commands on CI").
+  // Mirrors login's `PostRunE` (`cmd/login.go:42-48`): persist the chosen
+  // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
+  // token is written so a YAML-path profile round-trips; a write failure is
+  // fatal. An explicitly passed flag counts even at its default value, and the
+  // LAST occurrence wins (pflag `Changed` + last-wins, same argv scan as the
+  // config layer), so `login --profile supabase` persists "supabase" —
+  // shadowing SUPABASE_PROFILE and healing a stale profile file like Go, never
+  // re-persisting the shadowed env value.
+  const cliArgs = yield* Effect.serviceOption(CliArgs);
+  const explicitProfileFlag = Option.match(cliArgs, {
+    onNone: () => undefined,
+    onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
+  });
   const envProfile = process.env["SUPABASE_PROFILE"];
   const profileToken =
-    profileFlag !== "supabase"
-      ? profileFlag
-      : envProfile !== undefined && envProfile.length > 0
-        ? envProfile
-        : undefined;
+    explicitProfileFlag !== undefined
+      ? explicitProfileFlag
+      : profileFlag !== "supabase"
+        ? profileFlag
+        : envProfile !== undefined && envProfile.length > 0
+          ? envProfile
+          : undefined;
   const saveProfileName =
     profileToken === undefined
       ? Effect.void
@@ -83,9 +94,9 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
     return yield* legacyBrowserLogin({ openBrowser: !flags.noBrowser, tokenName: flags.name });
   });
 
-  // `Effect.tap` runs the profile save only on success (Go's `PostRunE`);
+  // `Effect.tap` runs the profile save only on success (`PostRunE`);
   // `Effect.ensuring` persists telemetry state on success and failure alike
-  // (PersistentPostRun parity, `cmd/root.go:176`).
+  // (`PersistentPostRun`, `cmd/root.go:176`).
   return yield* body.pipe(
     Effect.tap(() => saveProfileName),
     Effect.ensuring(telemetryState.flush),

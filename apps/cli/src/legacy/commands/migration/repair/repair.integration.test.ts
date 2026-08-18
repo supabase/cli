@@ -94,11 +94,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
   const projectRef = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed(
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+      ),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
 
@@ -116,7 +122,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly (Go's PromptYesNo), so a confirm answer is
+      // Migration prompts read stdin directly, so a confirm answer is
       // supplied via piped stdin rather than the Output prompt mock.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
@@ -131,6 +137,7 @@ const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationR
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? true,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
 });
 
@@ -148,7 +155,7 @@ describe("legacy migration repair", () => {
     const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* legacyMigrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
-      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
       // One transaction: BEGIN ... COMMIT, no ROLLBACK.
       expect(execs).toContain("BEGIN");
@@ -160,8 +167,8 @@ describe("legacy migration repair", () => {
   });
 
   it.live("resolves the DB target before parsing positional versions", () => {
-    // Go's cobra order runs ParseDatabaseConfig (PersistentPreRunE, root.go:118) before
-    // repair.Run's strconv.Atoi loop, so an unlinked target error wins over a bad version.
+    // The DB config resolves before
+    // version parsing, so an unlinked target error wins over a bad version.
     const { layer } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
       const exit = yield* legacyMigrationRepair(
@@ -177,8 +184,8 @@ describe("legacy migration repair", () => {
   });
 
   it.live("caches the linked project even when the repair-all prompt is declined", () => {
-    // Go calls ensureProjectGroupsCached from Execute() (root.go:174) regardless of the
-    // RunE error, so a declined repair-all (context.Canceled) still caches the ref.
+    // The project cache runs regardless of the
+    // handler's own failure, so a declined repair-all (cancellation) still caches the ref.
     const { layer, cache } = setup(tmp.current, { confirm: false });
     return Effect.gen(function* () {
       const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -217,8 +224,8 @@ describe("legacy migration repair", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe(
           "LegacyMigrationInvalidVersionError",
         );
-        // Guard: unlike `db reset` (bare `invalid version number`, reset.go:35-36),
-        // `migration repair` keeps Go's `failed to parse <v>:` wrapper (repair.go:29).
+        // Guard: unlike `db reset` (bare `invalid version number`),
+        // `migration repair` keeps the established `failed to parse <v>:` wrapper.
         expect(Option.isSome(failure) && failure.value.message).toBe(
           "failed to parse not-a-number: invalid version number",
         );
@@ -229,7 +236,7 @@ describe("legacy migration repair", () => {
   it.live("rejects a version outside Go's int range before any DB mutation", () => {
     const { layer, execs, queries } = setup(tmp.current);
     return Effect.gen(function* () {
-      // Go validates explicit versions with strconv.Atoi (repair.go:27-31), which
+      // Explicit versions validate with a strict integer parse, which
       // rejects values above the int64 range; a 20-digit version must fail
       // `invalid version number` before any glob/upsert/delete.
       const exit = yield* legacyMigrationRepair(
@@ -261,9 +268,9 @@ describe("legacy migration repair", () => {
   it.live(
     "repair-all with --status reverted wipes the whole history (no upserts, no deletes)",
     () => {
-      // Go's repair-all + reverted queues ONLY TRUNCATE: the per-version DELETE is
+      // repair-all + reverted queues ONLY TRUNCATE: the per-version DELETE is
       // the non-repair-all path and the UPSERT is the applied path, so the net
-      // effect is wiping the entire history table (`repair.go:64-79`).
+      // effect is wiping the entire history table.
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       const { layer, execs, queries } = setup(tmp.current, { confirm: true });
       return Effect.gen(function* () {
@@ -292,7 +299,7 @@ describe("legacy migration repair", () => {
   });
 
   it.live("repair-all without a TTY and no piped answer falls back to NO (cancel)", () => {
-    // Go reads stdin regardless of TTY (IsTTY only changes the timeout, console.go:38-61);
+    // Stdin is read regardless of TTY (isTTY only changes the timeout);
     // with no piped answer the empty read falls back to the default (NO) → cancel.
     const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
@@ -309,8 +316,8 @@ describe("legacy migration repair", () => {
   });
 
   it.live("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
-    // Go's PromptYesNo reads piped stdin even when non-interactive; a piped `y` overrides
-    // the default NO, so repair-all truncates and reapplies (console.go:64-82).
+    // Piped stdin is read even when non-interactive; a piped `y` overrides
+    // the default NO, so repair-all truncates and reapplies.
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
     return Effect.gen(function* () {
@@ -322,8 +329,7 @@ describe("legacy migration repair", () => {
   });
 
   it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
-    // Go binds --yes to viper AutomaticEnv, so SUPABASE_YES=1 auto-confirms without --yes
-    // (root.go:318-334 → console.go PromptYesNo viper.GetBool("YES")).
+    // SUPABASE_YES=1 auto-confirms without --yes.
     const previous = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -346,7 +352,7 @@ describe("legacy migration repair", () => {
   it.live(
     "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
-      // SUPABASE_YES set only in supabase/.env (not the shell) — Go's loadNestedEnv loads it
+      // SUPABASE_YES set only in supabase/.env (not the shell) — the project env loads it
       // before the repair-all prompt, so it auto-confirms with no --yes flag and no stdin answer.
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
       writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
@@ -370,7 +376,7 @@ describe("legacy migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
       }
-      // Go resolves the DB config in PersistentPreRunE before repair.Run prompts, so the
+      // The DB config resolves before any prompt, so the
       // config error surfaces immediately and the repair-all confirmation is never shown.
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
@@ -392,7 +398,7 @@ describe("legacy migration repair", () => {
   });
 
   it.live("prints multiple repaired versions using Go's %v slice format", () => {
-    // Go prints the []string via `fmt.Fprintf(..., "%v", version)` (`repair.go:85`):
+    // The established slice format prints
     // space-separated, bracketed, NO commas. A `.join(", ")` "cleanup" reads more
     // natural in TS but would silently break byte parity, so lock the format here.
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
@@ -458,6 +464,56 @@ describe("legacy migration repair", () => {
           "LegacyMigrationTargetFlagsError",
         );
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
+    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+    // the workdir would resolve to absent the flag — the flag must win over it
+    // and drive the cached ref.
+    const FLAG_REF = "flagflagflagflagflag";
+    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+    const { layer, cache } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyMigrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          projectRef: Option.some(FLAG_REF),
+        }),
+      );
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, execs, queries, cache } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          linked: false,
+          local: true,
+          projectRef: Option.some(FLAG_REF),
+        }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyMigrationTargetFlagsError",
+        );
+        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      expect(execs).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

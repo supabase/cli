@@ -48,31 +48,27 @@ The Management API exposes this read operation as `POST .../network-bans/retriev
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/bans/get/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-A `DB banned IPs:` heading is written to stderr unconditionally before any stdout output (mirrors Go's `fmt.Fprintln(os.Stderr, "DB banned IPs:")`). Exception: `--output-format json` / `--output-format stream-json` (with no Go `--output` flag set) emit a structured success event and skip the stderr heading to keep machine-readable output clean.
+A `DB banned IPs:` heading is written to stderr unconditionally before any stdout output. Exception: `--output-format json` / `--output-format stream-json` (with no `--output` flag set) emit a structured success event and skip the stderr heading to keep machine-readable output clean.
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
-Stderr heading followed by the banned IP array rendered as Go-compatible JSON (alphabetical key order, two-space indent, trailing newline).
+Stderr heading followed by the banned IP array rendered as JSON (alphabetical key order, two-space indent, trailing newline).
 
-### Go `--output {json,pretty,yaml,toml}`
+### `--output {json,pretty,yaml,toml}`
 
-Byte-identical to the Go CLI's encoders.
-
-- `json` and `pretty` — Go-compatible JSON of the IP array (`pretty` aliases to `json` per `apps/cli-go/internal/bans/get/get.go:21-23`).
+- `json` and `pretty` — JSON of the IP array (`pretty` aliases to `json`).
 - `yaml` — `stringifyYaml(ipArray)`.
-- `toml` — `banned_ips = ["…", "…"]\n` (matches the Go struct tag `toml:"banned_ips"`).
+- `toml` — `banned_ips = ["…", "…"]\n`.
 
-### Go `--output env`
+### `--output env`
 
-Fails with `LegacyNetworkBansEnvNotSupportedError`, matching Go's `utils.ErrEnvNotSupported`.
+Fails with `LegacyNetworkBansEnvNotSupportedError`.
 
 ### `--output-format json`
 
-The full `V1ListAllNetworkBansOutput` response object (`{ banned_ipv4_addresses: string[] }`) emitted as the `success` event payload. Note: the Go `--output json` mode emits only the bare array — the TS-native `--output-format json` mode wraps it in the response object for consistency with other TS-native commands.
+The full `V1ListAllNetworkBansOutput` response object (`{ banned_ipv4_addresses: string[] }`) emitted as the `success` event payload. Note: the `--output json` mode emits only the bare array — the TS-native `--output-format json` mode wraps it in the response object for consistency with other TS-native commands.
 
 ### `--output-format stream-json`
 
@@ -80,12 +76,11 @@ One `result` event whose `data` is the full response object.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
-- `linked-project.json` is written **after** the project ref is resolved, regardless of whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
+- The `--output` flag wins over `--output-format` when both are provided.
+- `linked-project.json` is written **after** the project ref is resolved, regardless of whether the subsequent API call succeeds.
 - `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
 - Network bans are temporary blocks on IPs with abusive traffic patterns (e.g. multiple failed auth attempts).
-- `network-bans` is an experimental command (Go `root.go:63`, `bansCmd`): `get` requires
-  `--experimental` (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE`
-  gate (`root.go:91-96`), which runs before the `IsManagementAPI` login check (`root.go:105-109`).
+- `network-bans` is an experimental command: `get` requires `--experimental` (or
+  `SUPABASE_EXPERIMENTAL`), checked before the login check.
   A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
   write, the `telemetry.json` write, and the `cli_command_executed` event.

@@ -22,6 +22,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBranchesCreateCommand, type LegacyBranchesCreateFlags } from "./create.command.ts";
 import { legacyBranchesCreate } from "./create.handler.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -219,6 +220,33 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("reports a missing name before contacting the API outside a git repository", () => {
+    const previousHead = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* legacyBranchesCreate(baseFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyBranchesBranchNameEmptyError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHead === undefined) delete process.env["GITHUB_HEAD_REF"];
+          else process.env["GITHUB_HEAD_REF"] = previousHead;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // Git-branch auto-name confirmation — Go `create.go:17-28` routes it through
   // `PromptYesNo(title, true)` (`console.go:64-82`). `GITHUB_HEAD_REF` drives
@@ -243,8 +271,8 @@ describe("legacy branches create integration", () => {
     return withGitBranch(
       Effect.gen(function* () {
         yield* legacyBranchesCreate(baseFlags);
-        // Go's `viper.GetBool("YES")` branch echoes `<title> [Y/n] y` to stderr
-        // (`console.go:70-72`) instead of blocking the TTY prompt.
+        // Established behavior: the `--yes` branch echoes `<title> [Y/n] y`
+        // to stderr instead of blocking the TTY prompt.
         expect(out.stderrText).toContain("Do you want to create a branch named ");
         expect(out.stderrText).toContain("? [Y/n] y\n");
         expect(api.requests[0]?.body).toMatchObject({
@@ -285,7 +313,7 @@ describe("legacy branches create integration", () => {
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("LegacyBranchesCreateCancelledError");
         }
-        // The piped answer is echoed to stderr like Go's non-TTY PromptText.
+        // The piped answer is echoed to stderr, matching the non-TTY prompt.
         expect(out.stderrText).toContain("? [Y/n] n\n");
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer)),
@@ -435,11 +463,10 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go parity (`apps/cli-go/cmd/projects.go:34-55`, reused by `branches create`
-  // at `apps/cli-go/cmd/branches.go:212`): Go's --size EnumFlag is an 18-value
-  // list that does not include "nano" (or "pico") and rejects any other value
-  // at flag-parse time. TS previously listed "nano" as a valid choice, silently
-  // succeeding where Go errors.
+  // The established --size enum is an 18-value list that does not include
+  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
+  // previously listed "nano" as a valid choice, silently succeeding where
+  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([legacyBranchesCreateCommand]),

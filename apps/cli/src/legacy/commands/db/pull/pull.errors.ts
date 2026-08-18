@@ -1,63 +1,105 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
- * Conflicting database-target flags. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` error byte-for-byte
- * (`apps/cli-go/cmd/db.go:472`).
+ * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
+ * is an established output contract.
  */
 export class LegacyDbPullTargetFlagsError extends Data.TaggedError("LegacyDbPullTargetFlagsError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
- * `--declarative` / `--use-pg-delta` combined with `--diff-engine`. Reproduces
- * cobra's `MarkFlagsMutuallyExclusive` for `[declarative diff-engine]` and
- * `[use-pg-delta diff-engine]` (`apps/cli-go/cmd/db.go:473-474`).
+ * `--declarative` / `--use-pg-delta` combined with `--diff-engine`; message
+ * text is an established output contract.
  */
 export class LegacyDbPullEngineConflictError extends Data.TaggedError(
   "LegacyDbPullEngineConflictError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
- * The remote migration history does not match local files. Byte-matches Go's
- * `errConflict` (`internal/db/pull/pull.go:35`); the actionable
- * `supabase migration repair` suggestion is attached separately.
+ * The remote migration history does not match local files; message text is
+ * an established output contract. The actionable `supabase migration repair`
+ * suggestion is attached separately.
  */
 export class LegacyDbPullMigrationConflictError extends Data.TaggedError(
   "LegacyDbPullMigrationConflictError",
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
 
 /**
- * The diff produced no schema changes. Byte-matches Go's `errInSync`
- * (`internal/db/pull/pull.go:34`). Like Go, this surfaces as a (non-zero exit)
- * error rather than a success — `db pull` returns it from `Run`, unlike `db diff`
- * which prints it and exits 0.
+ * The diff produced no schema changes; message text is an established output
+ * contract. This surfaces as a (non-zero exit) error rather than a success,
+ * unlike `db diff` which prints it and exits 0.
  */
 export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyncError")<{
   readonly message: string;
-}> {}
+  /**
+   * Explains the non-zero exit instead of letting `Output.fail` append the
+   * generic "Try rerunning the command with --debug" footer — an in-sync
+   * database is a finding, not a failure to troubleshoot. The message and exit
+   * code stay Go-identical; only the footer diverges (see
+   * `docs/go-cli-divergences.md`).
+   */
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Writing the migration file / updating the remote migration-history table failed.
- * Wraps Go's `failed to write migration file` / `failed to update migration table`.
  */
 export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
- * The initial-pull pg_dump container exited non-zero. Go's `dumpRemoteSchema`
- * (`internal/db/pull/pull.go:144-158`) propagates the `dump.RunWithPoolerFallback`
- * error; byte-matches the dump's `"error running container: exit " + code`. Carries
- * the same optional IPv6 transaction-pooler hint the dump path attaches, which
- * `Output.fail` prints bare on stderr after the message.
+ * The initial-pull pg_dump container exited non-zero; message text is an
+ * established output contract (`"error running container: exit " + code`).
+ * Carries the same optional IPv6 transaction-pooler hint the dump path
+ * attaches, which `Output.fail` prints bare on stderr after the message.
  */
 export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpError")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+  /**
+   * Set when the failure is opening/truncating the local migration file before
+   * any pg_dump attempt — a filesystem permission problem, not a database
+   * connection failure. The actual pg_dump-run failures leave it unset and keep
+   * the `dbConnection` classification.
+   */
+  readonly fileOpen?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.fileOpen === true
+      ? { ...actionability.permission, fingerprint_suffix: "filesystem" }
+      : { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+  }
+}

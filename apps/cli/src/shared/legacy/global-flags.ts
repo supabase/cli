@@ -17,6 +17,15 @@ import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./leg
 // only the values its Go counterpart does (e.g. `db query` reads `table`/`csv`,
 // resource commands ignore them and fall through to text). `table`/`csv` are
 // only meaningful to `db query`.
+//
+// Every description string below is copied VERBATIM (including Go's own
+// lowercase, no-trailing-period house style for root persistent flags) from
+// `apps/cli-go/cmd/root.go:324-333` — this text is directly user-visible now
+// that native shell completion (CLI-1965) surfaces it in `__complete`
+// candidate descriptions, where a prior Go-binary passthrough used to emit
+// Go's own text byte-for-byte; before that, this only reached the TS-native
+// `--help` renderer, whose overall layout already diverges from cobra's, so
+// the mismatch was harder to notice (CLI-1965 review finding).
 export const LegacyOutputFlag = GlobalFlag.setting("output")({
   flag: Flag.choice("output", [
     "env",
@@ -28,64 +37,82 @@ export const LegacyOutputFlag = GlobalFlag.setting("output")({
     "csv",
   ] as const).pipe(
     Flag.withAlias("o"),
-    Flag.withDescription("Output format of status variables."),
+    Flag.withDescription("output format of status variables"),
     Flag.optional,
   ),
 });
 
 export const LegacyProfileFlag = GlobalFlag.setting("profile")({
   flag: Flag.string("profile").pipe(
-    Flag.withDescription("Use a specific profile for connecting to Supabase API."),
+    Flag.withDescription("use a specific profile for connecting to Supabase API"),
     Flag.withDefault("supabase"),
   ),
 });
 
 export const LegacyDebugFlag = GlobalFlag.setting("debug")({
-  flag: Flag.boolean("debug").pipe(Flag.withDescription("Output debug logs to stderr.")),
+  flag: Flag.boolean("debug").pipe(Flag.withDescription("output debug logs to stderr")),
 });
 
 export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
   flag: Flag.string("workdir").pipe(
-    Flag.withDescription("Path to a Supabase project directory."),
+    Flag.withDescription("path to a Supabase project directory"),
     Flag.optional,
   ),
 });
 
 export const LegacyExperimentalFlag = GlobalFlag.setting("experimental")({
-  flag: Flag.boolean("experimental").pipe(Flag.withDescription("Enable experimental features.")),
+  flag: Flag.boolean("experimental").pipe(Flag.withDescription("enable experimental features")),
 });
 
 export const LegacyNetworkIdFlag = GlobalFlag.setting("network-id")({
   flag: Flag.string("network-id").pipe(
-    Flag.withDescription("Use the specified Docker network instead of a generated one."),
+    Flag.withDescription("use the specified docker network instead of a generated one"),
     Flag.optional,
   ),
 });
 
 export const LegacyYesFlag = GlobalFlag.setting("yes")({
-  flag: Flag.boolean("yes").pipe(Flag.withDescription("Answer yes to all prompts.")),
+  flag: Flag.boolean("yes").pipe(Flag.withDescription("answer yes to all prompts")),
 });
 
 export const LegacyDnsResolverFlag = GlobalFlag.setting("dns-resolver")({
   flag: Flag.choice("dns-resolver", ["native", "https"] as const).pipe(
-    Flag.withDescription("Look up domain names using the specified resolver."),
+    Flag.withDescription("lookup domain names using the specified resolver"),
     Flag.withDefault("native" as const),
   ),
 });
 
 export const LegacyCreateTicketFlag = GlobalFlag.setting("create-ticket")({
   flag: Flag.boolean("create-ticket").pipe(
-    Flag.withDescription("Create a support ticket for any CLI error."),
+    Flag.withDescription("create a support ticket for any CLI error"),
   ),
 });
 
 export const LegacyAgentFlag = GlobalFlag.setting("agent")({
   flag: Flag.choice("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)."),
+    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
     Flag.withDefault("auto" as const),
   ),
 });
 
+/**
+ * Every global/persistent flag declared above, mirroring the set Go registers on
+ * the root command (`apps/cli-go/cmd/root.go:344-354`).
+ *
+ * Adding a VALUE-taking flag here also means registering its token in
+ * `globalFlagsWithValues` (`shared/cli/run.ts`) and its name in
+ * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). Those two
+ * registries feed raw-argv pflag scanners that must run for `--help`/`--version`
+ * /bare-group invocations, which cobra serves before `PersistentPreRunE` and so
+ * never expose parsed flag values to read instead. Neither registry is derived
+ * from this list, and drift fails silently rather than loudly: an unregistered
+ * value flag does not consume its following token, so `supabase --new-flag
+ * --workdir other <cmd>` makes the upgrade notice read/write
+ * `other/supabase/.temp/cli-latest`, where Go — which lets `--new-flag` eat
+ * `--workdir` — resolves against the cwd. Only the bare space-separated spelling
+ * diverges (`--new-flag=x --workdir other` agrees), which is what makes it easy
+ * to miss.
+ */
 export const LEGACY_GLOBAL_FLAGS = [
   LegacyOutputFlag,
   LegacyProfileFlag,
@@ -328,4 +355,68 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
       return explicit;
     }
     return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+  });
+
+/**
+ * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to a pflag `false`
+ * (`PFLAG_FALSE_VALUES`, matching `ParseBool`'s false set). pflag's `Value.Set` runs for every
+ * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
+ * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
+ * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
+ * `apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
+ * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
+ * {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse} above have
+ * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —
+ * left as-is here as a pre-existing, cross-cutting fix spanning those two flags too, not folded
+ * into this port (same scoping precedent as this file's own {@link legacyResolveDebugWithProjectEnv}
+ * doc comment for existing `LegacyDebugFlag` call sites). Like those siblings, this scans only the
+ * flag-parsing region (see {@link argsBeforeOperandTerminator}) and skips tokens pflag would
+ * consume as another flag's value (see {@link nonValueConsumedTokens}) — `db pull -- --debug=false`
+ * and `db pull --password --debug=false` leave `--debug` unchanged to pflag, so `SUPABASE_DEBUG`
+ * must still win.
+ */
+const legacyDebugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
+  let lastExplicitlyFalse = false;
+  for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
+    if (arg === "--debug") {
+      lastExplicitlyFalse = false;
+    } else if (arg.startsWith("--debug=")) {
+      lastExplicitlyFalse = PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length));
+    }
+  }
+  return lastExplicitlyFalse;
+};
+
+/**
+ * `--debug` resolved with Go's viper `AutomaticEnv` fallback (EVERY Go debug read goes through
+ * `viper.GetBool("DEBUG")` — never the bare pflag — across the whole Go CLI, `apps/cli-go/cmd/
+ * root.go:122,289`, `internal/utils/{connect,docker,edgeruntime,logger}.go`,
+ * `internal/pgdelta/apply.go:332,342`, …) AND the project `.env` consulted too, for debug-gated
+ * behavior that runs downstream of a command that has already loaded the nested project env
+ * (e.g. `legacyApplyDeclarativePgDelta`, reached by `db diff`/`db pull` after
+ * `ParseDatabaseConfig`; `legacyBuildShadowCatalogInputs`, reached by `db diff --from/--to
+ * migrations` and `db schema declarative sync`). Go's `Config.Load` -> `loadNestedEnv` calls
+ * `godotenv.Load`, which `os.Setenv`s every project `.env` key not already present in the shell
+ * env (`godotenv@v1.5.1/godotenv.go:184-200`) — a REAL process-wide mutation that persists for
+ * the rest of that Go process, so a later `viper.GetBool("DEBUG")` (e.g.
+ * `pgdelta.ApplyDeclarative`, `apply.go:332,342`) sees a `SUPABASE_DEBUG` set only in
+ * `supabase/.env`. This port's own `legacyLoadProjectEnv` is deliberately pure (no
+ * `process.env` side effect, see its doc comment), so callers that need that same env-file
+ * value for a `viper.GetBool`-shaped read must pass the loaded map through explicitly instead
+ * — same shape as {@link legacyResolveYesWithProjectEnv}/
+ * {@link legacyResolveExperimentalWithProjectEnv} above (review: PRRT_kwDOErm0O86XL_oz).
+ * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
+ * value entirely; an explicit `--debug` — including `--debug=false` — wins over both, matching
+ * viper's bound-pflag precedence. `projectEnv` is the loaded map from `legacyLoadProjectEnv`
+ * (or `legacyReadDbToml`'s re-export of it). Existing bare {@link LegacyDebugFlag} call sites
+ * are unaffected — this is additive, for call sites that opt in.
+ */
+export const legacyResolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
+  Effect.gen(function* () {
+    const flag = yield* LegacyDebugFlag;
+    const cliArgs = yield* CliArgs;
+    if (legacyDebugFlagExplicitlyFalse(cliArgs.args)) {
+      return false;
+    }
+    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
   });

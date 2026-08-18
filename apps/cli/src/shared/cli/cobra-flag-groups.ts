@@ -28,6 +28,77 @@ export function hasExplicitLongFlag(
   return false;
 }
 
+const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
+  "0",
+  "f",
+  "F",
+  "false",
+  "FALSE",
+  "False",
+]);
+
+/**
+ * Last explicit `--<flagName>`/`--<flagName>=<value>` boolean occurrence in
+ * argv, or `undefined` when the flag never appears — matching pflag/viper's
+ * shared-variable last-`Set()`-wins semantics (mirrors
+ * `legacyExperimentalFlagFromArgs`, `shared/legacy/global-flags.ts`). A bare
+ * `--<flagName>` records pflag's bool `NoOptDefVal` (`true`); an inline value
+ * is parsed through pflag's `strconv.ParseBool` false set — anything else
+ * (including garbage) is truthy, same as `cast.ToBool`'s permissive default.
+ * Unlike a bare presence scan, this distinguishes `--<flagName>=false`
+ * from presence alone, which matters for Go call sites gated on
+ * `viper.GetBool` rather than "was the flag passed at all".
+ */
+export function explicitBooleanLongFlag(
+  rawArgs: ReadonlyArray<string>,
+  flagName: string,
+): boolean | undefined {
+  let result: boolean | undefined;
+  for (const token of rawArgs) {
+    if (token === `--${flagName}`) {
+      result = true;
+    } else if (token.startsWith(`--${flagName}=`)) {
+      result = !PFLAG_BOOLEAN_FALSE_VALUES.has(token.slice(flagName.length + 3));
+    }
+  }
+  return result;
+}
+
+/**
+ * The LAST explicit `--<flagName>` occurrence's value in raw argv, matching
+ * pflag's last-wins resolution (`--profile a --profile b` → `b`), or
+ * `undefined` when the flag never appears. Like pflag, `--<flagName> <next>`
+ * consumes the following token verbatim; a trailing valueless occurrence is
+ * ignored (pflag would have aborted the parse before any resolution).
+ */
+export function lastExplicitLongFlagValue(
+  rawArgs: ReadonlyArray<string>,
+  commandPath: ReadonlyArray<string>,
+  flagName: string,
+): string | undefined {
+  const commandIndex = rawArgs.findIndex((_, index) =>
+    commandPath.every((segment, offset) => rawArgs[index + offset] === segment),
+  );
+  const start = commandIndex === -1 ? 0 : commandIndex + commandPath.length;
+  let value: string | undefined;
+  for (let index = start; index < rawArgs.length; index += 1) {
+    const token = rawArgs[index];
+    if (token === undefined || token === "--") {
+      break;
+    }
+    if (token === `--${flagName}`) {
+      const next = rawArgs[index + 1];
+      if (next !== undefined && next !== "--") {
+        value = next;
+        index += 1;
+      }
+    } else if (token.startsWith(`--${flagName}=`)) {
+      value = token.slice(flagName.length + 3);
+    }
+  }
+  return value;
+}
+
 /**
  * Value-taking long flags registered persistently on the Go root command
  * (`apps/cli-go/cmd/root.go:324-333`: `--workdir`, `--network-id`,

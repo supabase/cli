@@ -3,14 +3,20 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
-import { StackBuilder } from "./StackBuilder.ts";
+import { candidateCleanupTargets } from "./cleanup.ts";
+import { StackBuilder, validateResolvedConfig } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
+import { STACK_ID_LABEL } from "./StackIdentity.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
 import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts } from "./PortCatalog.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
+import {
+  dependencyTimeoutSecondsForServices,
+  POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
+} from "./services/health-budgets.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters";
@@ -43,6 +49,8 @@ const baseConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "auto",
   startupMode: "eager",
+  readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,
@@ -89,6 +97,24 @@ const baseConfig: ResolvedStackConfig = {
 const dockerConfig: ResolvedStackConfig = {
   ...baseConfig,
   mode: "docker",
+};
+
+/**
+ * Two stacks that were handed their own identities while sharing every port,
+ * which is what sibling worktrees of one project look like when a crashed stack
+ * left its containers behind and its ports free.
+ */
+const firstManagedId = "3f1a2b4c-5d6e-4f70-8192-a3b4c5d6e7f8";
+const secondManagedId = "9e8d7c6b-5a49-4382-9170-f6e5d4c3b2a1";
+
+const managedConfig: ResolvedStackConfig = {
+  ...dockerConfig,
+  instanceId: firstManagedId,
+};
+
+const siblingManagedConfig: ResolvedStackConfig = {
+  ...dockerConfig,
+  instanceId: secondManagedId,
 };
 
 const edgeRuntimeConfig: ResolvedStackConfig = {
@@ -192,6 +218,11 @@ describe("StackBuilder", () => {
 
       expect(graph.startOrder.length).toBe(4);
       expect(cleanupTargets.dockerContainerNames).toEqual([]);
+      expect(candidateCleanupTargets(baseConfig).dockerContainerNames).toEqual([
+        `supabase-postgres-${baseConfig.apiPort}`,
+        `supabase-postgrest-${baseConfig.apiPort}`,
+        `supabase-auth-${baseConfig.apiPort}`,
+      ]);
 
       const names = graph.startOrder.map((s) => s.name);
       expect(names).toContain("postgres");
@@ -203,6 +234,17 @@ describe("StackBuilder", () => {
       expect(names.indexOf("postgres")).toBeLessThan(names.indexOf("postgres-init"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("auth"));
+
+      const postgresDependencyTimeout = dependencyTimeoutSecondsForServices(["postgres"]);
+      expect(
+        graph.startOrder.find((service) => service.name === "postgres-init")
+          ?.dependencyTimeoutSeconds,
+      ).toBe(postgresDependencyTimeout);
+      for (const name of ["postgrest", "auth"]) {
+        expect(
+          graph.startOrder.find((service) => service.name === name)?.dependencyTimeoutSeconds,
+        ).toBe(postgresDependencyTimeout + POSTGRES_INIT_COMPLETION_BUDGET_SECONDS);
+      }
 
       expect(serviceProjection.get("postgres")).toEqual({ visibility: "public" });
       expect(serviceProjection.get("postgres-init")).toEqual({
@@ -334,6 +376,94 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("names and labels a stack's containers by the identity it was given", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, managedConfig);
+
+      expect(cleanupTargets.dockerContainerNames).toEqual([
+        `supabase-postgres-id-${firstManagedId}`,
+        `supabase-postgrest-id-${firstManagedId}`,
+        `supabase-auth-id-${firstManagedId}`,
+      ]);
+      expect(candidateCleanupTargets(managedConfig).dockerContainerNames).toEqual(
+        cleanupTargets.dockerContainerNames,
+      );
+      // Nothing about the stack's Docker resources is keyed by a port any more,
+      // so a stack that reuses this one's ports cannot collide with it.
+      for (const name of cleanupTargets.dockerContainerNames) {
+        expect(name).not.toContain(String(managedConfig.apiPort));
+      }
+
+      for (const def of graph.startOrder) {
+        expect(def.args).toContain(`supabase-${def.name}-id-${firstManagedId}`);
+        // The label carries the whole identity, so the containers stay findable
+        // by it even if the names are ever built differently.
+        expect(def.args?.join(" ")).toContain(`--label ${STACK_ID_LABEL}=${firstManagedId}`);
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an invalid instanceId supplied to the builder directly", () => {
+    return Effect.gen(function* () {
+      const error = yield* validateResolvedConfig({
+        ...dockerConfig,
+        instanceId: "../bad:id",
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("StackBuildError");
+      expect(error.reason).toBe("invalid_config");
+    });
+  });
+
+  it.effect("keeps sibling stacks sharing every port on separate containers", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const first = yield* prepareAndBuild(builder, preparation, managedConfig);
+      const sibling = yield* prepareAndBuild(builder, preparation, siblingManagedConfig);
+
+      expect(siblingManagedConfig.apiPort).toBe(managedConfig.apiPort);
+      const shared = first.cleanupTargets.dockerContainerNames.filter((name) =>
+        sibling.cleanupTargets.dockerContainerNames.includes(name),
+      );
+      expect(shared).toEqual([]);
+      expect(sibling.cleanupTargets.dockerContainerNames).toEqual([
+        `supabase-postgres-id-${secondManagedId}`,
+        `supabase-postgrest-id-${secondManagedId}`,
+        `supabase-auth-id-${secondManagedId}`,
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("leaves a stack without an identity on its port-derived names", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, dockerConfig);
+
+      expect(cleanupTargets.dockerContainerNames).toEqual([
+        `supabase-postgres-${dockerConfig.apiPort}`,
+        `supabase-postgrest-${dockerConfig.apiPort}`,
+        `supabase-auth-${dockerConfig.apiPort}`,
+      ]);
+      for (const def of graph.startOrder) {
+        expect(def.args).toContain(`supabase-${def.name}-${dockerConfig.apiPort}`);
+        expect(def.args?.join(" ")).not.toContain(STACK_ID_LABEL);
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("docker mode wires auth directly to postgres readiness", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
@@ -345,6 +475,9 @@ describe("StackBuilder", () => {
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
       expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencyTimeoutSeconds).toBe(
+        dependencyTimeoutSecondsForServices(["postgres"]),
+      );
     }).pipe(Effect.provide(layer));
   });
 
