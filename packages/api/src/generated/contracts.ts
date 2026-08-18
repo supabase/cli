@@ -5283,6 +5283,21 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
+  postgres_changes_pool: Schema.Union([
+    Schema.Number.annotate({
+      description: "Sets connection pool size used to create Postgres Changes subscriptions",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
+      ),
+    Schema.Null,
+  ]),
   max_concurrent_users: Schema.Union([
     Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9687,6 +9702,20 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
         Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
       ),
   ),
+  postgres_changes_pool: Schema.optionalKey(
+    Schema.Number.annotate({
+      description: "Sets connection pool size used to create Postgres Changes subscriptions",
+    })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(1).annotate({
+          expected: "a value greater than or equal to 1",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(100).annotate({ expected: "a value less than or equal to 100" }),
+      ),
+  ),
   max_concurrent_users: Schema.optionalKey(
     Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -10445,8 +10474,75 @@ export const V2CreatePrivateLinkAssociationOutput = Schema.Struct({
         description:
           "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
       }),
+      resource_access_manager_resource_config_id: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "ID of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
+        }),
+      ),
+      resource_access_manager_resource_config_arn: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "ARN of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
+        }),
+      ),
+      resource_access_manager_share_arn: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "ARN of the AWS Resource Access Manager resource share for this association.",
+        }),
+      ),
     }),
   }),
+});
+export const V2CreateWorkerUploadInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2CreateWorkerUploadOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_worker_upload").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({
+      description: "Upload id to pass to the deploy endpoint as `context_upload_id`.",
+    }),
+    attributes: Schema.Struct({
+      url: Schema.String.annotate({
+        description: "Presigned destination for the `.tar.gz` build context.",
+      }),
+      method: Schema.String,
+      expires_at: Schema.String.annotate({
+        description: "When the slot stops accepting the upload.",
+      }),
+    }),
+  }),
+});
+export const V2DeleteAWorkerInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
 });
 export const V2DeleteLogDrainInput = Schema.Struct({
   ref: Schema.String.check(
@@ -10538,6 +10634,224 @@ export const V2DeletePrivateLinkAssociationForDatabaseInput = Schema.Struct({
     ),
   aws_account_id: Schema.String,
   database_identifier: Schema.String,
+});
+export const V2DeployAWorkerInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+  data: Schema.Struct({
+    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    attributes: Schema.Struct({
+      spec: Schema.Struct({
+        runtime: Schema.optionalKey(Schema.String),
+        size: Schema.String,
+        exposure: Schema.String,
+        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        backend: Schema.optionalKey(Schema.String),
+      }),
+      context_upload_id: Schema.optionalKey(
+        Schema.String.annotate({
+          description:
+            "Id of a build context staged through the uploads endpoint. Required unless `runtime` is set.",
+        }),
+      ),
+    }),
+  }),
+});
+export const V2DeployAWorkerOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Worker name." }),
+    attributes: Schema.Struct({
+      spec: Schema.Struct({
+        runtime: Schema.optionalKey(Schema.String),
+        size: Schema.String,
+        exposure: Schema.String,
+        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        backend: Schema.optionalKey(Schema.String),
+      }),
+      build_state: Schema.Literals(["building", "active", "failed"]),
+      secret_generation: Schema.String,
+      state_reason: Schema.optionalKey(Schema.String),
+      image_version: Schema.optionalKey(Schema.String),
+      deleting: Schema.optionalKey(Schema.Boolean),
+      instances: Schema.optionalKey(
+        Schema.Struct({
+          declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+        }),
+      ),
+      instances_error: Schema.optionalKey(Schema.String),
+    }),
+  }),
+});
+export const V2GetAWorkerInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+  name: Schema.String.check(
+    Schema.isPattern(new RegExp("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")).annotate({
+      expected: "a string matching the RegExp ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$",
+    }),
+  ),
+});
+export const V2GetAWorkerOutput = Schema.Struct({
+  data: Schema.Struct({
+    type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+    id: Schema.String.annotate({ description: "Worker name." }),
+    attributes: Schema.Struct({
+      spec: Schema.Struct({
+        runtime: Schema.optionalKey(Schema.String),
+        size: Schema.String,
+        exposure: Schema.String,
+        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
+        backend: Schema.optionalKey(Schema.String),
+      }),
+      build_state: Schema.Literals(["building", "active", "failed"]),
+      secret_generation: Schema.String,
+      state_reason: Schema.optionalKey(Schema.String),
+      image_version: Schema.optionalKey(Schema.String),
+      deleting: Schema.optionalKey(Schema.Boolean),
+      instances: Schema.optionalKey(
+        Schema.Struct({
+          declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+        }),
+      ),
+      instances_error: Schema.optionalKey(Schema.String),
+    }),
+  }),
 });
 export const V2GetProjectConfigInput = Schema.Struct({
   ref: Schema.String.check(
@@ -11130,6 +11444,98 @@ export const V2GetProjectConfigOutput = Schema.Struct({
       }),
     }),
   }),
+});
+export const V2ListAllWorkersInput = Schema.Struct({
+  ref: Schema.String.check(
+    Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
+  )
+    .check(Schema.isMaxLength(20).annotate({ expected: "a value with a length of at most 20" }))
+    .check(
+      Schema.isPattern(new RegExp("^[a-z]+$")).annotate({
+        expected: "a string matching the RegExp ^[a-z]+$",
+      }),
+    ),
+});
+export const V2ListAllWorkersOutput = Schema.Struct({
+  data: Schema.Array(
+    Schema.Struct({
+      type: Schema.Literal("project_worker").annotate({ description: "Resource type." }),
+      id: Schema.String.annotate({ description: "Worker name." }),
+      attributes: Schema.Struct({
+        spec: Schema.Struct({
+          runtime: Schema.optionalKey(Schema.String),
+          size: Schema.String,
+          exposure: Schema.String,
+          instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                expected: "a value greater than or equal to -9007199254740991",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                expected: "a value less than or equal to 9007199254740991",
+              }),
+            ),
+          backend: Schema.optionalKey(Schema.String),
+        }),
+        build_state: Schema.Literals(["building", "active", "failed"]),
+        secret_generation: Schema.String,
+        state_reason: Schema.optionalKey(Schema.String),
+        image_version: Schema.optionalKey(Schema.String),
+        deleting: Schema.optionalKey(Schema.Boolean),
+        instances: Schema.optionalKey(
+          Schema.Struct({
+            declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+            stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              .check(
+                Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+                  expected: "a value greater than or equal to -9007199254740991",
+                }),
+              )
+              .check(
+                Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+                  expected: "a value less than or equal to 9007199254740991",
+                }),
+              ),
+          }),
+        ),
+        instances_error: Schema.optionalKey(Schema.String),
+      }),
+    }),
+  ),
 });
 export const V2ListLogDrainsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -11757,6 +12163,24 @@ export const V2ListPrivateLinkAssociationsOutput = Schema.Struct({
           description:
             "Identifier of the database this PrivateLink share targets - the project ref for the primary, or the read replica identifier.",
         }),
+        resource_access_manager_resource_config_id: Schema.optionalKey(
+          Schema.String.annotate({
+            description:
+              "ID of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
+          }),
+        ),
+        resource_access_manager_resource_config_arn: Schema.optionalKey(
+          Schema.String.annotate({
+            description:
+              "ARN of the AWS VPC Lattice resource configuration backing this PrivateLink share.",
+          }),
+        ),
+        resource_access_manager_share_arn: Schema.optionalKey(
+          Schema.String.annotate({
+            description:
+              "ARN of the AWS Resource Access Manager resource share for this association.",
+          }),
+        ),
       }),
     }),
   ),
@@ -12034,6 +12458,7 @@ export const V1UndoOutput = Schema.Void;
 export const V1UpdateRealtimeConfigOutput = Schema.Void;
 export const V1UpdateStorageConfigOutput = Schema.Void;
 export const V1UpsertAMigrationOutput = Schema.Void;
+export const V2DeleteAWorkerOutput = Schema.Void;
 export const V2DeleteLogDrainOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationOutput = Schema.Void;
 export const V2DeletePrivateLinkAssociationForDatabaseOutput = Schema.Void;
@@ -12214,11 +12639,16 @@ export const openApiOperationIdMap = {
   "v2-create-log-drain": "v2CreateLogDrain",
   "v2-create-organization-invitations": "v2CreateOrganizationInvitations",
   "v2-create-private-link-association": "v2CreatePrivateLinkAssociation",
+  "v2-create-worker-upload": "v2CreateWorkerUpload",
+  "v2-delete-a-worker": "v2DeleteAWorker",
   "v2-delete-log-drain": "v2DeleteLogDrain",
   "v2-delete-organization-invitations": "v2DeleteOrganizationInvitations",
   "v2-delete-private-link-association": "v2DeletePrivateLinkAssociation",
   "v2-delete-private-link-association-for-database": "v2DeletePrivateLinkAssociationForDatabase",
+  "v2-deploy-a-worker": "v2DeployAWorker",
+  "v2-get-a-worker": "v2GetAWorker",
   "v2-get-project-config": "v2GetProjectConfig",
+  "v2-list-all-workers": "v2ListAllWorkers",
   "v2-list-log-drains": "v2ListLogDrains",
   "v2-list-organization-github-connections": "v2ListOrganizationGithubConnections",
   "v2-list-organization-members": "v2ListOrganizationMembers",
@@ -14846,6 +15276,7 @@ export const operationDefinitions = {
       fields: [
         "private_only",
         "connection_pool",
+        "postgres_changes_pool",
         "max_concurrent_users",
         "max_events_per_second",
         "max_bytes_per_second",
@@ -14994,6 +15425,33 @@ export const operationDefinitions = {
     inputSchema: V2CreatePrivateLinkAssociationInput,
     outputSchema: V2CreatePrivateLinkAssociationOutput,
   },
+  v2CreateWorkerUpload: {
+    id: "v2CreateWorkerUpload",
+    description:
+      "PUT the `.tar.gz` build context to the returned `url` before `expires_at`, then deploy with the upload id as `context_upload_id`. The bytes go straight to storage — no management API request carries them.",
+    method: "POST",
+    path: "/v2/projects/{ref}/workers/{name}/uploads",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2CreateWorkerUploadInput,
+    outputSchema: V2CreateWorkerUploadOutput,
+  },
+  v2DeleteAWorker: {
+    id: "v2DeleteAWorker",
+    description: "Tombstones the worker. Its instances and image are torn down asynchronously.",
+    method: "DELETE",
+    path: "/v2/projects/{ref}/workers/{name}",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V2DeleteAWorkerInput,
+    outputSchema: V2DeleteAWorkerOutput,
+  },
   v2DeleteLogDrain: {
     id: "v2DeleteLogDrain",
     description: "Delete a project log drain",
@@ -15048,6 +15506,34 @@ export const operationDefinitions = {
     inputSchema: V2DeletePrivateLinkAssociationForDatabaseInput,
     outputSchema: V2DeletePrivateLinkAssociationForDatabaseOutput,
   },
+  v2DeployAWorker: {
+    id: "v2DeployAWorker",
+    description:
+      "Creates the worker if it does not exist, building from a context staged through the uploads endpoint. The build runs asynchronously: this answers 202 and the worker reaches `build_state` `active` or `failed` later.",
+    method: "POST",
+    path: "/v2/projects/{ref}/workers/{name}/deploy",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "json", contentType: "application/json", fields: ["data"] },
+    response: { kind: "json" },
+    inputSchema: V2DeployAWorkerInput,
+    outputSchema: V2DeployAWorkerOutput,
+  },
+  v2GetAWorker: {
+    id: "v2GetAWorker",
+    description:
+      "Returns a worker along with its instance tally. Poll this after a deploy until `build_state` leaves `building`.",
+    method: "GET",
+    path: "/v2/projects/{ref}/workers/{name}",
+    pathParams: ["ref", "name"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2GetAWorkerInput,
+    outputSchema: V2GetAWorkerOutput,
+  },
   v2GetProjectConfig: {
     id: "v2GetProjectConfig",
     description:
@@ -15061,6 +15547,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V2GetProjectConfigInput,
     outputSchema: V2GetProjectConfigOutput,
+  },
+  v2ListAllWorkers: {
+    id: "v2ListAllWorkers",
+    description: "Returns all workers you've previously deployed to the specified project.",
+    method: "GET",
+    path: "/v2/projects/{ref}/workers",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V2ListAllWorkersInput,
+    outputSchema: V2ListAllWorkersOutput,
   },
   v2ListLogDrains: {
     id: "v2ListLogDrains",
