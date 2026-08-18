@@ -11,6 +11,7 @@ import {
   ManagedStackAttachedError,
   ManagedStackControlRequiredError,
   ManagedStackManager,
+  ManagedWorkspaceRepairConflictError,
   workspaceRepairConflict,
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
@@ -273,6 +274,14 @@ export const deleteManagedStack = (
           ),
           Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
+        const revalidatedStackId = yield* stackIdForInput(manager, input);
+        if (revalidatedStackId !== stackId) {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed before delete",
+            }),
+          );
+        }
         const result = yield* manager.deleteStack(stackId, acquisition);
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),

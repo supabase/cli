@@ -5,6 +5,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import {
   cpSync,
+  chmodSync,
   existsSync,
   type FSWatcher,
   mkdtempSync,
@@ -28,7 +29,9 @@ import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts"
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
+import { reservePortSet } from "./PortAllocator.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
+import { git } from "../tests/helpers/git-workspace.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -38,6 +41,30 @@ const errorChildEntryPoint = fileURLToPath(
 );
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 const FILE_WAIT_TIMEOUT_MS = 30_000;
+
+const reserveWorkspacePorts = async (
+  controlPort: number,
+): Promise<{ readonly apiPort: number; readonly dbPort: number }> => {
+  const lease = await Effect.runPromise(
+    reservePortSet(
+      [
+        { field: "apiPort", selection: { kind: "automatic" as const } },
+        { field: "dbPort", selection: { kind: "automatic" as const } },
+      ],
+      { reserved: new Set([controlPort]) },
+    ),
+  );
+  try {
+    const apiPort = lease.ports.apiPort;
+    const dbPort = lease.ports.dbPort;
+    if (apiPort === undefined || dbPort === undefined) {
+      throw new Error("expected isolated supervisor test ports");
+    }
+    return { apiPort, dbPort };
+  } finally {
+    await Effect.runPromise(lease.releaseAll);
+  }
+};
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
@@ -51,30 +78,43 @@ const workspace = async (): Promise<{
   readonly root: string;
   readonly stateRoot: string;
   readonly stackId: string;
+  readonly apiPort: number;
+  readonly dbPort: number;
 }> => {
-  const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
-  const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
-  mkdirSync(join(root, ".supabase"), { recursive: true });
-  const identity: EnvironmentIdentity = {
-    workspaceId: randomUUID(),
-    checkoutId: randomUUID(),
-    contextId: randomUUID(),
-    localProjectKey: ".",
-  };
-  writeFileSync(
-    join(root, ".supabase", "identity.json"),
-    `${JSON.stringify(
-      {
-        version: 1,
-        workspaceId: identity.workspaceId,
-        checkoutId: identity.checkoutId,
-        contextId: identity.contextId,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return { root, stateRoot, stackId: deriveStackId(identity, "default") };
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
+    const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
+    const identity: EnvironmentIdentity = {
+      workspaceId: randomUUID(),
+      checkoutId: randomUUID(),
+      contextId: randomUUID(),
+      localProjectKey: ".",
+    };
+    const stackId = deriveStackId(identity, "default");
+    const endpoint = await Effect.runPromise(controlEndpoint(stackId));
+    if (!(await canBind(endpoint.port))) {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(stateRoot, { recursive: true, force: true });
+      continue;
+    }
+    const { apiPort, dbPort } = await reserveWorkspacePorts(endpoint.port);
+    mkdirSync(join(root, ".supabase"), { recursive: true });
+    writeFileSync(
+      join(root, ".supabase", "identity.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          workspaceId: identity.workspaceId,
+          checkoutId: identity.checkoutId,
+          contextId: identity.contextId,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return { root, stateRoot, stackId, apiPort, dbPort };
+  }
+  throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
 };
 
 const waitForFile = (path: string): Promise<void> =>
@@ -115,6 +155,8 @@ const messageFor = (
     readonly root: string;
     readonly stateRoot: string;
     readonly stackId: string;
+    readonly apiPort: number;
+    readonly dbPort: number;
   },
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
@@ -141,7 +183,7 @@ const messageFor = (
   },
   portIntents: {
     activeFields: ["apiPort", "dbPort"],
-    document: {},
+    document: { api: { port: roots.apiPort }, db: { port: roots.dbPort } },
   },
   ...overrides,
 });
@@ -751,6 +793,61 @@ describe("detached supervisor child journeys", () => {
       await remoteStop(started.endpoint);
       await waitForExit(owner.child);
     } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      rmSync(copied, { recursive: true, force: true });
+      cleanupRoots(roots);
+    }
+  });
+
+  test("rejects a copied contender after dead-owner takeover before Docker cleanup", async () => {
+    const roots = await workspace();
+    const copied = `${roots.root}-copy`;
+    const dockerBin = join(roots.root, "fake-docker-bin");
+    const dockerSentinel = join(roots.root, "docker-called");
+    mkdirSync(dockerBin);
+    const docker = join(dockerBin, "docker");
+    writeFileSync(docker, `#!/bin/sh\nprintf called >> ${dockerSentinel}\n`);
+    chmodSync(docker, 0o755);
+    const owner = spawnChild(messageFor(roots), { testMode: "hold-start" });
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    try {
+      const starting = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(starting.id));
+      const stop = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      expect(stop.status).toBe(202);
+      await waitForExit(owner.child);
+      expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
+
+      cpSync(roots.root, copied, { recursive: true });
+      const originalGit = join(roots.root, ".git");
+      git(roots.root, "init", "-q", "-b", "main");
+      git(roots.root, "commit", "-q", "--allow-empty", "-m", "init");
+      fakeOwner = await listenOwnerSequence(
+        endpoint,
+        starting.id,
+        Array.from({ length: 100 }, () => "stopping" as const),
+      );
+      contender = spawnChild(messageFor(roots, { workspacePath: copied }), {
+        environment: { PATH: `${dockerBin}:${process.env.PATH ?? ""}` },
+      });
+      await contender.attachedBeforeReady;
+
+      rmSync(originalGit, { recursive: true, force: true });
+      const documentPath = managedStackDocumentPath(roots.stateRoot, starting.id);
+      const document = JSON.parse(readFileSync(documentPath, "utf8")) as Record<string, unknown>;
+      writeFileSync(documentPath, JSON.stringify({ ...document, lifecycle: "running" }));
+      fakeOwner.close();
+      fakeOwner = undefined;
+
+      await expect(contender.started).rejects.toThrow(
+        /ordinary workspace identity.*\.supabase\/identity\.json/,
+      );
+      expect(existsSync(dockerSentinel)).toBe(false);
+    } finally {
+      fakeOwner?.close();
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       rmSync(copied, { recursive: true, force: true });

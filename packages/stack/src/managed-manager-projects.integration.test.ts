@@ -121,6 +121,51 @@ describe("managed stack projects journeys", () => {
     );
   });
 
+  it.live(
+    "keeps a live ordinary owner as collision evidence after the old path becomes Git",
+    () => {
+      const { layer, workspace } = setup();
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const manager = yield* ManagedStackManager;
+          const environment = yield* ensureEnvironment(workspace);
+          const stackId = deriveStackId(environment.identity, "default");
+          const ownership = yield* acquireControl({ stackId });
+          if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+          const started = yield* manager.startStack({
+            workspacePath: workspace,
+            stackName: "default",
+            portDocument: automaticDocument(),
+            ownership,
+            lifecycle: "running",
+          });
+          yield* started.lease.releaseAll;
+
+          const copied = join(workspace, "..", "workspace-copy-live-owner");
+          cpSync(workspace, copied, { recursive: true });
+          git(workspace, "init", "-q", "-b", "main");
+          const blocked = yield* manager.discoverWorkspace(copied).pipe(Effect.exit);
+          expect(Exit.isFailure(blocked)).toBe(true);
+          if (Exit.isFailure(blocked)) {
+            expect(Cause.squash(blocked.cause)).toMatchObject({
+              _tag: "InvalidManagedIdentityError",
+            });
+          }
+
+          yield* ownership.close;
+          const allowed = yield* manager.discoverWorkspace(copied);
+          expect(allowed.state).toBe("ready");
+        }),
+      ).pipe(
+        Effect.provide(layer),
+        Effect.provide(NodeFileSystem.layer),
+        Effect.provide(NodePath.layer),
+        Effect.provide(gitConfigStoreLayer),
+        Effect.provide(controlTransportLayer),
+      );
+    },
+  );
+
   it.live("rejects empty and ASCII-control stack names before resolving a stack", () => {
     const { layer, workspace } = setup();
     return Effect.gen(function* () {

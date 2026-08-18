@@ -414,7 +414,7 @@ const runManaged = (
           : Effect.fail(error),
       ),
     );
-    if (acquisition._tag === "Attached") {
+    if (initialAcquisition._tag === "Attached") {
       const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
       const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
       if (revalidatedStackId !== stackId) {
@@ -424,6 +424,8 @@ const runManaged = (
           }),
         );
       }
+    }
+    if (acquisition._tag === "Attached") {
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;

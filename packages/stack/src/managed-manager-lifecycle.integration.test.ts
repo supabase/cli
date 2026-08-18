@@ -1,13 +1,22 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Deferred, Effect, Fiber, FileSystem, Layer, ManagedRuntime, Schedule } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Schedule,
+} from "effect";
 import { HttpServer } from "effect/unstable/http";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager, managedStackManagerLayer } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl } from "./managed/control.ts";
+import { acquireControl, ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
@@ -303,6 +312,88 @@ describe("managed stack lifecycle journeys", () => {
       Effect.provide(controlTransportLayer),
     );
   });
+
+  it.live(
+    "keeps a stack document when its identity changes before delete ownership settles",
+    () => {
+      const { layer, workspace } = setup();
+      const copied = join(workspace, "..", "delete-race-copy");
+      let armed = false;
+      let markerSwapped!: Deferred.Deferred<void>;
+      const gatedTransport = Layer.effect(
+        ControlTransport,
+        Effect.gen(function* () {
+          const base = yield* ControlTransport;
+          return {
+            ...base,
+            read: (endpoint: Parameters<typeof base.read>[0]) =>
+              Effect.gen(function* () {
+                if (armed) {
+                  armed = false;
+                  writeFileSync(
+                    join(copied, ".supabase", "identity.json"),
+                    readFileSync(join(workspace, ".supabase", "identity.json")),
+                  );
+                  yield* Deferred.succeed(markerSwapped, void 0);
+                }
+                return yield* base.read(endpoint);
+              }),
+          } satisfies typeof base;
+        }),
+      ).pipe(Layer.provide(controlTransportLayer));
+      const managerLayer = layer.pipe(Layer.provide(gatedTransport));
+      return Effect.scoped(
+        Effect.gen(function* () {
+          markerSwapped = yield* Deferred.make<void>();
+          const manager = yield* ManagedStackManager;
+          const originalEnvironment = yield* ensureEnvironment(workspace);
+          const originalStackId = deriveStackId(originalEnvironment.identity, "default");
+          const originalOwner = yield* acquireControl({ stackId: originalStackId });
+          if (originalOwner._tag !== "Owned") throw new Error("expected original ownership");
+          const original = yield* manager.startStack({
+            workspacePath: workspace,
+            portDocument: automaticDocument(),
+            ownership: originalOwner,
+            lifecycle: "stopped",
+          });
+          yield* releaseLease(original);
+          yield* originalOwner.close;
+
+          mkdirSync(copied);
+          const copiedEnvironment = yield* ensureEnvironment(copied);
+          const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
+          const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
+          if (copiedOwner._tag !== "Owned") throw new Error("expected copied ownership");
+          const copiedStack = yield* manager.startStack({
+            workspacePath: copied,
+            portDocument: automaticDocument(),
+            ownership: copiedOwner,
+            lifecycle: "stopped",
+          });
+          yield* releaseLease(copiedStack);
+
+          armed = true;
+          const deleting = yield* Effect.forkScoped(deleteManagedStack({ workspacePath: copied }));
+          yield* Deferred.await(markerSwapped);
+          yield* copiedOwner.close;
+          const result = yield* Fiber.join(deleting).pipe(Effect.exit);
+          expect(result._tag).toBe("Failure");
+          if (result._tag === "Failure") {
+            expect(Cause.squash(result.cause)).toMatchObject({
+              _tag: "InvalidManagedIdentityError",
+            });
+          }
+          expect(yield* manager.inspectStack(copiedStackId)).toBeDefined();
+        }),
+      ).pipe(
+        Effect.provide(managerLayer),
+        Effect.provide(gatedTransport),
+        Effect.provide(NodeFileSystem.layer),
+        Effect.provide(NodePath.layer),
+        Effect.provide(gitConfigStoreLayer),
+      );
+    },
+  );
 
   it.live("deletes an owned stack when its document path is a directory", () => {
     const { layer, stateRoot, workspace } = setup();
