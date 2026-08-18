@@ -1,7 +1,7 @@
 # 0017. Sparse Config Subtraction
 
 **Status**: proposed
-**Date**: 2026-08-14
+**Date**: 2026-08-18
 
 ## Problem Statement
 
