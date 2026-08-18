@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { deleteFunction } from "../../../../shared/functions/delete.ts";
-import { resolveProjectRef } from "../functions.shared.ts";
+import { resolveProjectRef } from "../../../config/resolve-project-ref.ts";
 import type { FunctionsDeleteFlags } from "./delete.command.ts";
 
 export const functionsDelete = Effect.fn("functions.delete")(function* (

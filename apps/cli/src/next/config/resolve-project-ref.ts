@@ -1,9 +1,14 @@
 import { Effect, Option } from "effect";
-import {
-  ProjectLinkState,
-  ProjectNotLinkedError,
-} from "../../config/project-link-state.service.ts";
+import { ProjectLinkState, ProjectNotLinkedError } from "./project-link-state.service.ts";
 
+/**
+ * Which project a project-scoped command acts on: an explicit `--project-ref`
+ * when given, otherwise the linked project.
+ *
+ * Lives here rather than beside any one command because more than one command
+ * family needs it (`functions`, `workers`), and a command tree may not import
+ * another command tree's internals.
+ */
 export const resolveProjectRef = Effect.fnUntraced(function* (projectRef: Option.Option<string>) {
   if (Option.isSome(projectRef)) {
     return projectRef.value;

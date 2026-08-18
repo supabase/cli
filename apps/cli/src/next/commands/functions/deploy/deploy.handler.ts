@@ -5,7 +5,7 @@ import { ProjectHome } from "../../../config/project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
-import { resolveProjectRef } from "../functions.shared.ts";
+import { resolveProjectRef } from "../../../config/resolve-project-ref.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
 
 export const functionsDeploy = Effect.fn("functions.deploy")(function* (

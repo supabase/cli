@@ -7,7 +7,7 @@ import {
 } from "../../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import { resolveProjectRef } from "../functions.shared.ts";
+import { resolveProjectRef } from "../../../config/resolve-project-ref.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 
 export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDownloadFlags) {
