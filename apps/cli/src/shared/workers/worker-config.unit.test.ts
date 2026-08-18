@@ -16,21 +16,39 @@ describe("readWorkersSection", () => {
   test("reads each worker's recorded dials", () => {
     expect(
       readWorkersSection({
-        api: { runtime: "node", size: "2gb", source: "packages/api" },
+        api: { runtime: "node", size: "2gb", instances: 4, source: "packages/api" },
         box: { runtime: "sandbox" },
       }),
     ).toEqual({
       workers: {
-        api: { runtime: "node", size: "2gb", source: "packages/api" },
-        box: { runtime: "sandbox", size: undefined, source: undefined },
+        api: { runtime: "node", size: "2gb", instances: 4, source: "packages/api" },
+        box: { runtime: "sandbox", size: undefined, instances: undefined, source: undefined },
       },
     });
   });
 
   test("drops non-object values so a stray scalar is not read as a worker", () => {
     expect(readWorkersSection({ stray: "oops", api: {} })).toEqual({
-      workers: { api: { runtime: undefined, size: undefined, source: undefined } },
+      workers: {
+        api: { runtime: undefined, size: undefined, instances: undefined, source: undefined },
+      },
     });
+  });
+
+  // `push` has to send a count with every deploy, so a value the API would
+  // reject is dropped here and the default used instead.
+  test.each([
+    ["a float", 1.5],
+    ["a negative", -1],
+    ["a string", "3"],
+  ])("drops %s instance count", (_label, value) => {
+    expect(readWorkersSection({ api: { instances: value } }).workers["api"]?.instances).toBe(
+      undefined,
+    );
+  });
+
+  test("keeps a zero instance count, which scales a worker down rather than being absent", () => {
+    expect(readWorkersSection({ api: { instances: 0 } }).workers["api"]?.instances).toBe(0);
   });
 
   test("treats a missing or malformed section as empty", () => {

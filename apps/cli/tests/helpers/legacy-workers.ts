@@ -14,10 +14,8 @@ import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
-import {
-  mockLegacyLinkedProjectCacheLayer,
-  mockLegacyTelemetryStateLayer,
-} from "./legacy-mocks.ts";
+import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
+import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
 import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
 
 /**
@@ -233,6 +231,30 @@ export interface WorkersSetupOptions {
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
 }
 
+/**
+ * `LegacyTelemetryState`, recording whether it was flushed.
+ *
+ * Every worker command is supposed to write the telemetry state file on every
+ * invocation, success or failure — which is only observable if the mock says so,
+ * so the shared always-void mock cannot cover it.
+ */
+function mockWorkersTelemetryState() {
+  let flushed = false;
+  return {
+    layer: Layer.succeed(LegacyTelemetryState, {
+      flush: Effect.sync(() => {
+        flushed = true;
+      }),
+      stitchLogin: () => Effect.void,
+      clearDistinctId: Effect.void,
+      resetIdentity: Effect.void,
+    } as unknown as LegacyTelemetryState["Service"]),
+    get flushed() {
+      return flushed;
+    },
+  };
+}
+
 export function setupLegacyWorkers(options: WorkersSetupOptions) {
   const out = mockOutput({
     format: options.format ?? "text",
@@ -245,17 +267,19 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       : { promptSelectResponses: options.promptSelectResponses }),
   });
   const http = mockWorkersHttp(options.routes ?? {});
+  const telemetry = mockWorkersTelemetryState();
 
   return {
     out,
     http,
+    telemetry,
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
       legacyTestCliConfigLayer(options.workdir),
       legacyTestProjectRefLayer(options.linked !== false),
-      mockLegacyTelemetryStateLayer,
+      telemetry.layer,
       mockLegacyLinkedProjectCacheLayer,
       randomLayer,
       Layer.succeed(

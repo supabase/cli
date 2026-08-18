@@ -65,6 +65,13 @@ export type WorkerSize = (typeof WORKER_SIZES)[number];
 /** The first available option — what `new` records when `--size` is omitted. */
 export const DEFAULT_WORKER_SIZE: WorkerSize = "2gb";
 
+/**
+ * Instances a worker runs when neither `--instances` nor `[workers.<name>]
+ * instances` says otherwise. One, because a deploy has to name a count — the
+ * API's spec requires it — and a worker nobody has scaled is a single instance.
+ */
+export const DEFAULT_WORKER_INSTANCES = 1;
+
 function isWorkerSize(value: string): value is WorkerSize {
   return WORKER_SIZES.some((size) => size === value);
 }
