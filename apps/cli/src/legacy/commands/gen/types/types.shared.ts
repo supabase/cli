@@ -46,10 +46,11 @@ export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
  * `--lang dart` pipes pg-meta's `json` generator metadata through the
  * `supabase_typegen` Dart package. The host's Dart SDK runs the package from
  * the current working directory, so it must be declared as a (dev) dependency
- * of the project the command runs in — the invocation and its stdin/stdout
+ * of the project the command runs in. The invocation and its stdin/stdout
  * contract (`--input -` reads the metadata document from stdin, `--output -`
  * writes the generated code to stdout) are pinned here so the handler and
- * tests share one definition.
+ * tests share one definition; the handler appends `--schema <schema>` because
+ * the package generates one schema per run.
  */
 export const DART_TYPEGEN_COMMAND = "dart";
 

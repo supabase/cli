@@ -464,20 +464,17 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             });
 
             // For `--lang dart` the container emits the json generator
-            // metadata, which is piped into the Dart typegen after the run
-            // instead of being printed.
-            let stdoutText = "";
+            // metadata, which is collected and piped into the Dart typegen
+            // after the run instead of being printed.
             let stderrText = "";
-            const [exitCode] = yield* Effect.all(
+            const [exitCode, stdoutText] = yield* Effect.all(
               [
                 child.exitCode.pipe(Effect.map(Number)),
-                forwardByteStream(child.stdout, (text) =>
-                  lang === "dart"
-                    ? Effect.sync(() => {
-                        stdoutText += text;
-                      })
-                    : output.raw(text, "stdout"),
-                ),
+                lang === "dart"
+                  ? collectByteStream(child.stdout)
+                  : forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")).pipe(
+                      Effect.map(() => ""),
+                    ),
                 forwardByteStream(child.stderr, (text) =>
                   Effect.sync(() => {
                     stderrText += text;
@@ -498,6 +495,18 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             probePort: conn.port,
           });
 
+        // The Dart typegen generates one schema per run; without this guard a
+        // multi-schema selection would silently come out as only one schema.
+        const dartSchemas = input.includedSchemas.split(",").filter((schema) => schema.length > 0);
+        if (lang === "dart" && dartSchemas.length > 1) {
+          return yield* Effect.fail(
+            new Error(
+              `--lang dart generates one schema per run, but got: ${input.includedSchemas}. ` +
+                "Pass a single --schema and run the command once per schema.",
+            ),
+          );
+        }
+
         const result =
           input.poolerFallback === undefined
             ? yield* buildRun(input)
@@ -517,7 +526,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         }
 
         if (lang === "dart") {
-          yield* runDartTypegen(result.stdoutText);
+          yield* runDartTypegen(result.stdoutText, dartSchemas[0] ?? "public");
         }
       }),
     );
@@ -525,12 +534,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   // Pipes the json generator metadata into the supabase_typegen package on
   // the host: the generated Dart code arrives on stdout like every other
   // language, and the package's own summary line stays on stderr.
-  const runDartTypegen = (metadataJson: string) =>
+  const runDartTypegen = (metadataJson: string, schema: string) =>
     Effect.scoped(
       Effect.gen(function* () {
         const child = yield* spawner
           .spawn(
-            ChildProcess.make(DART_TYPEGEN_COMMAND, DART_TYPEGEN_ARGS, {
+            ChildProcess.make(DART_TYPEGEN_COMMAND, [...DART_TYPEGEN_ARGS, "--schema", schema], {
               stdin: Stream.succeed(new TextEncoder().encode(metadataJson)),
               stdout: "pipe",
               stderr: "pipe",
@@ -550,7 +559,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           return yield* Effect.fail(
             new Error(
               `error running the supabase_typegen package: exit ${exitCode}. ` +
-                "Add supabase_typegen as a dev dependency of the current project to generate Dart types.",
+                "If the package could not be resolved, add supabase_typegen as a dev " +
+                "dependency of the current project to generate Dart types.",
             ),
           );
         }

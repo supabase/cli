@@ -51,7 +51,7 @@ config for that ref to build the fallback connection (the saved workdir
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
 | `docker`/`podman container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                 |
 | `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
-| `dart run supabase_typegen --input - --output -`                                       | `--lang dart`, after the pg-meta container exits successfully         | turn pg-meta's json metadata into Dart source      |
+| `dart run supabase_typegen --input - --output - --schema <schema>`                     | `--lang dart`, after the pg-meta container exits successfully         | turn pg-meta's json metadata into Dart source      |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
 detect TLS support before launching pg-meta, with the default 10s pg-delta probe
@@ -60,7 +60,9 @@ timeout.
 For `--lang dart` the pg-meta container runs the `json` generator; its stdout is
 collected instead of printed and piped to the Dart typegen's stdin. The Dart SDK
 must be on PATH and `supabase_typegen` must be a dev dependency of the current
-project.
+project. The typegen generates one schema per run, so `--lang dart` accepts at
+most one `--schema` (defaulting to `public`) and fails otherwise instead of
+silently dropping schemas.
 
 ## Environment Variables
 

@@ -1286,7 +1286,7 @@ describe("legacy gen types", () => {
           expect(dockerRun?.args).toContain("PG_META_GENERATE_TYPES=json");
           const dart = child.spawned[1];
           expect(dart?.command).toBe(DART_TYPEGEN_COMMAND);
-          expect(dart?.args).toEqual([...DART_TYPEGEN_ARGS]);
+          expect(dart?.args).toEqual([...DART_TYPEGEN_ARGS, "--schema", "public"]);
           // The metadata is piped to the Dart typegen, never printed; only the
           // generated code reaches stdout.
           expect(out.stdoutText).toContain("// generated dart");
@@ -1327,6 +1327,85 @@ describe("legacy gen types", () => {
 
           expect(Exit.isFailure(exit)).toBe(true);
           expect(String(exit)).toContain("error running the supabase_typegen package: exit 65");
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("forwards a single non-default schema to the Dart typegen", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0, stdout: ['{"version":1,"tables":[]}'] },
+            { exitCode: 0, stdout: ["// generated dart"] },
+          ]);
+          const { layer } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--lang",
+              "dart",
+              "--schema",
+              "sales",
+            ],
+            childLayer: child.layer,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                lang: "dart",
+                schema: ["sales"],
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          const dart = child.spawned[1];
+          expect(dart?.args).toEqual([...DART_TYPEGEN_ARGS, "--schema", "sales"]);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("rejects --lang dart with more than one schema", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([]);
+          const { layer } = setup({
+            args: [
+              "gen",
+              "types",
+              "--db-url",
+              `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+              "--lang",
+              "dart",
+              "--schema",
+              "public",
+              "--schema",
+              "sales",
+            ],
+            childLayer: child.layer,
+          });
+
+          const exit = await Effect.runPromiseExit(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                lang: "dart",
+                schema: ["public", "sales"],
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(String(exit)).toContain("--lang dart generates one schema per run");
+          // The guard fires before any container is spawned.
+          expect(child.spawned).toHaveLength(0);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
