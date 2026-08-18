@@ -168,7 +168,7 @@ importers:
         version: link:../../packages/stack
       '@supabase/supabase-js':
         specifier: ^2.110.7
-        version: 2.111.0
+        version: 2.112.2
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.10
