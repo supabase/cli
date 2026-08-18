@@ -961,7 +961,15 @@ const connect = (
       return fresh;
     });
 
-    const acquireBatchClient = Effect.callback<Pg.PoolClient, LegacyDbExecError>((resume) => {
+    // Checking a connection out of the pool for a batch is a connection-setup
+    // concern, so it fails with `LegacyDbConnectError` — the same classification
+    // `acquireRawClient` uses above, and for the same reason: the pool may have to
+    // redial (its single connection is discarded after an interrupted or poisoned
+    // batch), and a refused/auth/DNS failure there is not a statement failure. Mapping
+    // it to `LegacyDbExecError` would lose the connect suggestion and make the
+    // migration-apply formatter blame the batch's first statement for a connectivity
+    // problem. Only the batch's own execution (below) raises `LegacyDbExecError`.
+    const acquireBatchClient = Effect.callback<Pg.PoolClient, LegacyDbConnectError>((resume) => {
       let done = false;
       try {
         pool.connect((error, activeClient) => {
@@ -971,10 +979,12 @@ const connect = (
           }
           done = true;
           if (error !== undefined) {
-            resume(Effect.fail(legacyToExecError(error)));
+            resume(Effect.fail(legacyToConnectError(cfg, options.isLocal, error)));
           } else if (activeClient === undefined) {
             resume(
-              Effect.fail(new LegacyDbExecError({ message: "failed to acquire batch connection" })),
+              Effect.fail(
+                new LegacyDbConnectError({ message: "failed to acquire batch connection" }),
+              ),
             );
           } else {
             resume(Effect.succeed(activeClient));
@@ -982,7 +992,7 @@ const connect = (
         });
       } catch (error) {
         done = true;
-        resume(Effect.fail(legacyToExecError(error)));
+        resume(Effect.fail(legacyToConnectError(cfg, options.isLocal, error)));
       }
       return Effect.sync(() => {
         done = true;

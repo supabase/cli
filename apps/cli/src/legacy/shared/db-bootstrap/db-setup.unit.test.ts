@@ -59,6 +59,14 @@ function fakeSession() {
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
       }),
+    // A batched file records the same way a statement-at-a-time run would, so the
+    // fingerprint assertions below read the SQL regardless of how it was sent.
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql, params } of statements) {
+          calls.push(params === undefined ? { kind: "exec", sql } : { kind: "query", sql, params });
+        }
+      }),
     query: (sql, params) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql, params });
@@ -934,6 +942,10 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
       exec: (sql) =>
         Effect.sync(() => {
           execSql.push(sql);
+        }),
+      execBatch: (statements) =>
+        Effect.sync(() => {
+          for (const { sql } of statements) execSql.push(sql);
         }),
       query: (sql) =>
         sql.includes("supabase_migrations.schema_migrations")

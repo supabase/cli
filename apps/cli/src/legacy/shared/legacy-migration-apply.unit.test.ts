@@ -11,6 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
@@ -101,7 +102,10 @@ const executedSql = (
         : [],
   );
 
-const run = (session: LegacyDbSession, migrationPath: string): Effect.Effect<void, TestError> =>
+const run = (
+  session: LegacyDbSession,
+  migrationPath: string,
+): Effect.Effect<void, TestError | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

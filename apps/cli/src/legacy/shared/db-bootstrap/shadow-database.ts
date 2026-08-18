@@ -554,7 +554,14 @@ export const legacySetupShadowConn = (
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
-    yield* legacySetupDatabase(spawner, input, options);
+    yield* legacySetupDatabase(spawner, input, options).pipe(
+      // The baseline's batched SQL files check their own connection out of the pool;
+      // failing to acquire one is a shadow CONNECT failure, like
+      // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
+      Effect.catchTag("LegacyDbConnectError", (cause) =>
+        Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+      ),
+    );
     yield* input.session.exec(LEGACY_SHADOW_CREATE_TEMPLATE_SQL).pipe(
       Effect.mapError(
         (cause) =>
@@ -720,6 +727,13 @@ const migrateShadowDatabase = <E>(
         input.path,
         pending,
         (message) => new LegacyShadowDbError({ message, reason: "database" }),
+      ).pipe(
+        // A batch runs on its own pooled connection: failing to acquire it is a
+        // shadow CONNECT failure (same classification as `legacyConnectShadowDatabase`),
+        // never a `"database"` statement failure.
+        Effect.catchTag("LegacyDbConnectError", (cause) =>
+          Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+        ),
       );
     }),
   );
