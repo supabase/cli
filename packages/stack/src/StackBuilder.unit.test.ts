@@ -48,7 +48,21 @@ const baseConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "auto",
-  startupMode: "eager",
+  servicePolicies: {
+    postgres: "eager",
+    postgrest: "eager",
+    auth: "eager",
+    "edge-runtime": "off",
+    realtime: "off",
+    storage: "off",
+    imgproxy: "off",
+    mailpit: "off",
+    pgmeta: "off",
+    studio: "off",
+    analytics: "off",
+    vector: "off",
+    pooler: "off",
+  },
   readiness: DEFAULT_STACK_READINESS_POLICY,
   readinessSource: "default",
   jwtSecret: testJwtSecret,
@@ -120,6 +134,7 @@ const siblingManagedConfig: ResolvedStackConfig = {
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...baseConfig,
   mode: "auto",
+  servicePolicies: { ...baseConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
     port: basePorts.edgeRuntimePort,
@@ -252,70 +267,6 @@ describe("StackBuilder", () => {
         owner: "postgres",
         ownerStatusWhileActive: "Initializing",
       });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker fallback when auth binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      expect(graph.startOrder.length).toBe(4);
-
-      const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef).toBeDefined();
-      expect(authDef?.command).toBe("docker");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
-      expect(authDef?.supervision).toBeDefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker fallback when postgres binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["postgres"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      // No postgres-init when postgres falls back to Docker.
-      expect(graph.startOrder.length).toBe(3);
-
-      const postgresDef = graph.startOrder.find((s) => s.name === "postgres");
-      expect(postgresDef).toBeDefined();
-      expect(postgresDef?.command).toBe("docker");
-      expect(postgresDef?.supervision).toBeDefined();
-
-      // postgrest falls back to postgres(healthy) dependency
-      const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
-
-      const names = graph.startOrder.map((s) => s.name);
-      expect(names).not.toContain("postgres-init");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker fallback when postgrest binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["postgrest"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      // All 4 services still present (postgrest falls back to Docker, not removed)
-      expect(graph.startOrder.length).toBe(4);
-
-      const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef).toBeDefined();
-      expect(postgrestDef?.command).toBe("docker");
-      expect(postgrestDef?.supervision).toBeDefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -559,40 +510,6 @@ describe("StackBuilder", () => {
       ]);
       expect(cleanupTargets.dockerContainerNames).toContain(
         `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("falls back to the next registry for docker-only services", () => {
-    const resolver = mockBinaryResolver();
-    const spawnerLayer = mockSequenceSpawner([
-      { exitCode: 0 },
-      { exitCode: 0 },
-      { exitCode: 0 },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 0 },
-    ]);
-    const layer = builderLayer(resolver, spawnerLayer);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, {
-        ...dockerConfig,
-        realtime: {
-          port: 3010,
-          version: DEFAULT_VERSIONS.realtime,
-          tenantId: "realtime-dev",
-          encryptionKey: "supabaserealtime",
-          secretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-          maxHeaderLength: 4096,
-        },
-      });
-
-      const realtimeDef = graph.startOrder.find((service) => service.name === "realtime");
-      expect(realtimeDef?.args).toContain(`supabase/realtime:v${DEFAULT_VERSIONS.realtime}`);
-      expect(realtimeDef?.args).not.toContain(
-        `public.ecr.aws/supabase/realtime:v${DEFAULT_VERSIONS.realtime}`,
       );
     }).pipe(Effect.provide(layer));
   });

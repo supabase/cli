@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer, type Server } from "node:http";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
@@ -51,7 +52,21 @@ const defaultConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "native",
-  startupMode: "eager",
+  servicePolicies: {
+    postgres: "eager",
+    postgrest: "eager",
+    auth: "eager",
+    "edge-runtime": "off",
+    realtime: "off",
+    storage: "off",
+    imgproxy: "off",
+    mailpit: "off",
+    pgmeta: "off",
+    studio: "off",
+    analytics: "off",
+    vector: "off",
+    pooler: "off",
+  },
   readiness: DEFAULT_STACK_READINESS_POLICY,
   readinessSource: "default",
   jwtSecret: testJwtSecret,
@@ -100,6 +115,7 @@ const defaultConfig: ResolvedStackConfig = {
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...defaultConfig,
   mode: "auto",
+  servicePolicies: { ...defaultConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
     port: defaultPorts.edgeRuntimePort,
@@ -142,7 +158,7 @@ function setupLayer(
     Layer.provide(StackBuilder.layer),
     Layer.provide(stackPreparationLayer),
     Layer.provide(spawner.layer),
-    Layer.provide(BunServices.layer),
+    Layer.provide(NodeServices.layer),
   );
 
   return { layer, resolver, spawner };
@@ -211,7 +227,7 @@ describe("Stack", () => {
       Layer.provide(builderLayer),
       Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
       Layer.provide(mockChildProcessSpawner().layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
     const readRuntimeConfig = Effect.promise(() =>
       readFile(functionsRuntimeConfigPath(runtimeRoot), "utf8").then((contents) =>
@@ -422,39 +438,6 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("emits Downloading when a service fetches assets before startup", () => {
-    const resolver = mockBinaryResolver({
-      downloadedServices: ["postgres"],
-      downloadDelayMs: 20,
-    });
-    const spawner = mockChildProcessSpawner();
-    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
-      Layer.provide(StackBuilder.layer),
-      Layer.provide(stackPreparationLayer),
-    );
-    const providedLayer = layer.pipe(
-      Layer.provide(spawner.layer),
-      Layer.provide(BunServices.layer),
-    );
-
-    return Effect.gen(function* () {
-      const stack = yield* Stack;
-      const statesFiber = yield* stack.allStateChanges().pipe(
-        Stream.filter((state) => state.name === "postgres"),
-        Stream.take(2),
-        Stream.runCollect,
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-      const startFiber = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
-      const states = yield* Fiber.join(statesFiber);
-      yield* Fiber.interrupt(startFiber);
-
-      expect(states.map((state) => state.status)).toContain("Downloading");
-    }).pipe(Effect.provide(providedLayer));
-  });
-
   it.live("starts the readiness deadline after artifact preparation", () => {
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres"],
@@ -473,7 +456,7 @@ describe("Stack", () => {
       Layer.provide(StackBuilder.layer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(spawner.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
@@ -546,7 +529,7 @@ describe("Stack", () => {
     );
     const providedLayer = layer.pipe(
       Layer.provide(spawner.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
@@ -587,7 +570,7 @@ describe("Stack", () => {
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(spawner.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
@@ -648,7 +631,7 @@ describe("Stack", () => {
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(spawner.layer),
-      Layer.provide(BunServices.layer),
+      Layer.provide(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
@@ -662,7 +645,16 @@ describe("Stack", () => {
   });
 
   it.live("lazy startup starts direct services without starting HTTP backends", () => {
-    const { layer, spawner } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+    const { layer, spawner } = setupLayer({
+      ...defaultConfig,
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        postgrest: "lazy",
+        auth: "lazy",
+        storage: "lazy",
+        imgproxy: "lazy",
+      },
+    });
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
@@ -687,7 +679,13 @@ describe("Stack", () => {
     const config: ResolvedStackConfig = {
       ...defaultConfig,
       mode: "auto",
-      startupMode: "lazy",
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        postgrest: "lazy",
+        auth: "lazy",
+        storage: "lazy",
+        imgproxy: "lazy",
+      },
       storage: {
         port: defaultPorts.storagePort,
         dataDir: "/tmp/supabase/storage",
@@ -729,7 +727,15 @@ describe("Stack", () => {
             ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
             : Effect.void,
       });
-      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const config = {
+        ...defaultConfig,
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          postgrest: "lazy",
+          auth: "lazy",
+          mailpit: "eager",
+        },
+      } satisfies ResolvedStackConfig;
       const { layer } = setupLayer(config, noopPortLease(config.ports), spawner);
 
       yield* Effect.gen(function* () {
@@ -775,7 +781,10 @@ describe("Stack", () => {
               ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.andThen(Effect.never))
               : Effect.void,
         });
-        const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+        const config = {
+          ...defaultConfig,
+          servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+        } satisfies ResolvedStackConfig;
         const { layer } = setupLayer(config, noopPortLease(config.ports), spawner);
 
         yield* Effect.gen(function* () {
@@ -803,7 +812,12 @@ describe("Stack", () => {
       const config = {
         ...defaultConfig,
         mode: "auto",
-        startupMode: "lazy",
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          postgrest: "lazy",
+          auth: "lazy",
+          mailpit: "eager",
+        },
         mailpit: {
           port: defaultPorts.mailpitPort,
           smtpPort: defaultPorts.mailpitSmtpPort,
@@ -856,7 +870,10 @@ describe("Stack", () => {
               )
             : Effect.void,
       });
-      const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+      const config = {
+        ...defaultConfig,
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+      } satisfies ResolvedStackConfig;
       const { layer } = setupLayer(config, noopPortLease(config.ports), spawner);
 
       yield* Effect.gen(function* () {
@@ -883,57 +900,6 @@ describe("Stack", () => {
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
-  it.live("uses the stack readiness deadline for explicit lazy activation and cleans up", () =>
-    Effect.gen(function* () {
-      const spawner = mockChildProcessSpawner();
-      let releasedAll = false;
-      const config = {
-        ...defaultConfig,
-        startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 100 },
-        readinessSource: "configured",
-      } satisfies ResolvedStackConfig;
-      const lease: PortLease = {
-        ...noopPortLease(config.ports),
-        releaseAll: Effect.sync(() => {
-          releasedAll = true;
-        }),
-      };
-      const { layer } = setupLayer(config, lease, spawner);
-
-      yield* Effect.gen(function* () {
-        const stack = yield* Stack;
-        const activator = yield* StackServiceActivator;
-        yield* stack.start();
-
-        const error = yield* activator.activate("auth").pipe(Effect.flip);
-
-        expect(error._tag).toBe("StackReadinessError");
-        if (error._tag === "StackReadinessError") {
-          expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(100);
-        }
-        expect(releasedAll).toBe(true);
-        const spawnCountAfterDisposal = spawner.spawned.length;
-        expect((yield* activator.activate("postgres").pipe(Effect.flip))._tag).toBe(
-          "StackNotRunningError",
-        );
-        for (const operation of [
-          stack.start(),
-          stack.startService("postgres"),
-          stack.stopService("postgres"),
-          stack.restartService("postgres"),
-          stack.reloadFunctions(),
-          stack.reloadEdgeRuntime({ edgeRuntime: {} }),
-        ]) {
-          expect((yield* operation.pipe(Effect.flip))._tag).toBe("StackBuildError");
-        }
-        yield* stack.stop();
-        expect(spawner.spawned).toHaveLength(spawnCountAfterDisposal);
-      }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
-  );
-
   it.live("allows a finite wait override against an infinite stack policy", () =>
     Effect.gen(function* () {
       const spawnStarted = yield* Deferred.make<void>();
@@ -948,7 +914,7 @@ describe("Stack", () => {
       let releasedAll = false;
       const config = {
         ...defaultConfig,
-        startupMode: "lazy",
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
         readiness: { mode: "infinite" },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
@@ -987,15 +953,22 @@ describe("Stack", () => {
   it.live("does not revive stopped lazy dependents when restarting a dependency", () => {
     return Effect.gen(function* () {
       const authHealthServer = yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          Bun.serve({
-            port: 0,
-            fetch: () => new Response("ok"),
-          }),
+        Effect.tryPromise(
+          () =>
+            new Promise<Server>((resolve, reject) => {
+              const server = createServer((_request, response) => {
+                response.writeHead(200, { "content-type": "text/plain" });
+                response.end("ok");
+              });
+              server.once("error", reject);
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
         ),
-        (server) => Effect.sync(() => server.stop(true)),
+        (server) =>
+          Effect.tryPromise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
       );
-      const authPort = authHealthServer.port;
+      const address = authHealthServer.address();
+      const authPort = typeof address === "object" && address !== null ? address.port : undefined;
       if (authPort === undefined) {
         throw new Error("Expected the auth health test server to bind a TCP port");
       }
@@ -1005,7 +978,7 @@ describe("Stack", () => {
       }
       const { layer, spawner } = setupLayer({
         ...defaultConfig,
-        startupMode: "lazy",
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
         ports: { ...defaultPorts, authPort },
         auth: { ...authConfig, port: authPort },
       });
@@ -1033,7 +1006,10 @@ describe("Stack", () => {
   });
 
   it.live("lazy readiness fails fast before a service is activated", () => {
-    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" });
+    const { layer } = setupLayer({
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    });
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
@@ -1048,8 +1024,88 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
+  it.live(
+    "restores dormant lazy services after preparation failure and retries successfully",
+    () => {
+      return Effect.gen(function* () {
+        const healthServer = yield* Effect.acquireRelease(
+          Effect.tryPromise(
+            () =>
+              new Promise<Server>((resolve, reject) => {
+                const server = createServer((_request, response) => {
+                  response.writeHead(200, { "content-type": "text/plain" });
+                  response.end("ok");
+                });
+                server.once("error", reject);
+                server.listen(0, "127.0.0.1", () => resolve(server));
+              }),
+          ),
+          (server) =>
+            Effect.tryPromise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        );
+        const address = healthServer.address();
+        const postgrestPort = typeof address === "object" && address !== null ? address.port : 0;
+        if (postgrestPort === 0) throw new Error("Expected a PostgREST health port");
+        const basePostgrest = defaultConfig.postgrest;
+        if (basePostgrest === false) throw new Error("Expected PostgREST in the default config");
+        const config = {
+          ...defaultConfig,
+          servicePolicies: {
+            ...defaultConfig.servicePolicies,
+            postgrest: "lazy",
+            auth: "off",
+          },
+          auth: false,
+          ports: {
+            ...defaultConfig.ports,
+            postgrestPort,
+            postgrestAdminPort: postgrestPort + 1,
+          },
+          postgrest: {
+            ...basePostgrest,
+            port: postgrestPort,
+            adminPort: postgrestPort + 1,
+          },
+        } satisfies ResolvedStackConfig;
+        const failingResolver = mockBinaryResolver({ failOnceServices: ["postgrest"] });
+        const stackPreparationLayer = StackPreparation.layer.pipe(
+          Layer.provide(failingResolver.layer),
+        );
+        const testLayer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+          Layer.provide(StackBuilder.layer),
+          Layer.provide(stackPreparationLayer),
+          Layer.provide(mockChildProcessSpawner().layer),
+          Layer.provide(NodeServices.layer),
+        );
+
+        yield* Effect.gen(function* () {
+          const stack = yield* Stack;
+          const activator = yield* StackServiceActivator;
+          yield* stack.start();
+          expect(["Running", "Healthy", "Initializing"]).toContain(
+            (yield* stack.getState("postgres")).status,
+          );
+          expect((yield* stack.getState("postgrest")).status).toBe("Dormant");
+          const first = yield* activator.activate("postgrest").pipe(Effect.flip);
+          expect(first._tag).toBe("StackBuildError");
+          expect(["Running", "Healthy", "Initializing"]).toContain(
+            (yield* stack.getState("postgres")).status,
+          );
+          expect((yield* stack.getState("postgrest")).status).toBe("Dormant");
+
+          yield* activator.activate("postgrest");
+          expect(["Running", "Healthy"]).toContain((yield* stack.getState("postgrest")).status);
+          yield* stack.stop();
+        }).pipe(Effect.provide(testLayer));
+      }).pipe(Effect.scoped, Effect.timeout("5 seconds"));
+    },
+  );
+
   it.live("keeps unactivated services dormant after a stop and start cycle", () => {
-    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const config = {
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
     const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
@@ -1066,7 +1122,10 @@ describe("Stack", () => {
   });
 
   it.live("rejects a cached activation after the stack has stopped", () => {
-    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const config = {
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
     const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
@@ -1081,7 +1140,10 @@ describe("Stack", () => {
   });
 
   it.live("preserves an explicitly stopped service across a stack restart", () => {
-    const config = { ...defaultConfig, startupMode: "lazy" } satisfies ResolvedStackConfig;
+    const config = {
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
     const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
@@ -1119,7 +1181,13 @@ describe("Stack", () => {
         }),
       releaseAll: Effect.void,
     };
-    const { layer } = setupLayer({ ...defaultConfig, startupMode: "lazy" }, lease);
+    const { layer } = setupLayer(
+      {
+        ...defaultConfig,
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+      },
+      lease,
+    );
 
     return Effect.gen(function* () {
       const stack = yield* Stack;

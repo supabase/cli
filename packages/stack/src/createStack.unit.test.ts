@@ -211,21 +211,18 @@ describe("resolveConfig instanceId validation", () => {
   });
 });
 
-describe("resolveConfig startup mode", () => {
-  it("keeps eager startup as the package default", async () => {
-    const config = await resolveConfig();
-    expect(config.startupMode).toBe("eager");
-  });
-
-  it("preserves an explicit lazy startup mode", async () => {
-    const config = await resolveConfig({ startupMode: "lazy" });
-    expect(config.startupMode).toBe("lazy");
+describe("resolveConfig service policies", () => {
+  it("uses catalog defaults and resolves explicit policies", async () => {
+    const config = await resolveConfig({ servicePolicies: { postgrest: "eager" } });
+    expect(config.servicePolicies.postgres).toBe("eager");
+    expect(config.servicePolicies.postgrest).toBe("eager");
+    expect(config.servicePolicies.auth).toBe("lazy");
   });
 });
 
 describe("resolveConfig state roots", () => {
   it("uses disposable temporary roots when direct callers omit them", async () => {
-    const config = await resolveConfig({ startupMode: "lazy" });
+    const config = await resolveConfig();
 
     try {
       expect(config.autoManagedPaths).toEqual([config.stackRoot, config.runtimeRoot]);

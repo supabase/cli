@@ -70,7 +70,6 @@ describe("direct createStack port ownership", () => {
     const stack = await createStackWithFreshPorts(
       {
         mode: "native",
-        startupMode: "lazy",
         postgrest: false,
         auth: false,
         edgeRuntime: false,

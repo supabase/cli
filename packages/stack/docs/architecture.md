@@ -79,8 +79,11 @@ prepares/builds a scoped runtime and handle. It does **not** start service
 processes. Asset preparation and process-compose graph construction happen
 when the handle is first started or a service is activated.
 
-`stack.start()` starts services according to the configured startup mode and
-waits for the selected readiness policy. The handle also exposes status, logs,
+`stack.start()` prepares and starts Postgres plus the services whose resource
+policy is `eager`, then waits for the selected readiness policy. Services whose
+policy is `lazy` remain dormant until a proxy request or explicit service
+operation activates them; activation prepares the service and its required
+dependencies before starting it. The handle also exposes status, logs,
 per-service operations, and graceful `stop()`/`dispose()` methods. Its scope
 owns service processes and releases the lease when disposed. A direct stack
 never reads or writes managed documents and never coordinates with a sibling
@@ -217,15 +220,23 @@ status, service operations, logs, graceful stop, and launch-update routes;
 
 ## Service execution and `ApiProxy`
 
-`StackPreparation` resolves each enabled service to a verified native binary or
-a Docker image. `mode: "native"` uses the supported native services and rejects
-Docker-only services; `mode: "docker"` resolves every service to an image;
-`mode: "auto"` prefers native artifacts and falls back to Docker. The
-`StackBuilder` turns those resolutions into one process-compose graph, so a
-stack can run native and Docker-backed services together. Docker resources are
-namespaced with the managed stack id; when native Postgres is combined with
-Docker services, the graph supplies the platform-specific host address so the
-containers can reach it.
+`StackPreparation` plans resources without materializing them, then prepares
+only the requested services and their required dependency closure. Concurrent
+requests for the same resource share one installation or pull. Native assets
+come from the pinned slim-services release contract and are checksum- and
+manifest-verified before atomic publication. Docker assets use one canonical
+`ghcr.io/supabase/cli/<service>:<version>` reference; a locally cached image is
+reused and a missing image is pulled without registry fallback. `mode:
+"native"` rejects Docker-only services, `mode: "docker"` resolves every service
+to Docker, and `mode: "auto"` selects the catalog-supported runtime without
+falling back after a preparation failure.
+
+The `StackBuilder` turns planned resolutions into one process-compose graph,
+so a stack can run native and Docker-backed services together without eagerly
+materializing every graph resource. Docker resources are namespaced with the
+managed stack id; when native Postgres is combined with Docker services, the
+graph supplies the platform-specific host address so the containers can reach
+it.
 
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,

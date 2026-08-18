@@ -5,7 +5,10 @@ export type { StackServiceStatus } from "./StackServiceState.ts";
 export { StackServiceState, fromRawServiceState } from "./StackServiceState.ts";
 
 export {
+  BinaryHostCompatibilityError,
+  BinaryManifestError,
   BinaryNotFoundError,
+  BinaryRuntimeError,
   ChecksumMismatchError,
   DockerPullError,
   DownloadError,
@@ -17,15 +20,10 @@ export {
   toStackError,
 } from "./errors.ts";
 
-export type { PlatformInfo } from "./Platform.ts";
-export {
-  authAssetName,
-  detectPlatform,
-  postgresAssetName,
-  postgrestAssetName,
-} from "./Platform.ts";
+export type { NativeTarget, PlatformInfo } from "./Platform.ts";
+export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
 
-export type { ServiceResolution } from "./StackPreparation.ts";
+export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
 
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
@@ -93,6 +91,8 @@ export type {
   ResolvedVectorConfig,
   ReadinessPolicy,
   ReadyOptions,
+  ServicePolicy,
+  ServicePolicyManifest,
   StackConfig,
   StorageConfig,
   StudioConfig,
@@ -126,7 +126,6 @@ export {
   dockerImageForService,
   fillServiceVersionManifest,
   fullVersionManifest,
-  IMAGE_TAG_PREFIX,
   normalizeServiceVersion,
   normalizeServiceVersions,
   SERVICE_NAMES,

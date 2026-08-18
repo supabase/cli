@@ -259,7 +259,7 @@ describe("makePostgrestService", () => {
     });
 
     expect(def.name).toBe("postgrest");
-    expect(def.command).toBe(`${POSTGREST_BIN_PATH}/postgrest`);
+    expect(def.command).toBe(`${POSTGREST_BIN_PATH}/bin/postgrest`);
     expect(def.env?.PGRST_DB_URI).toBe(
       `postgresql://authenticator:postgres@127.0.0.1:${DB_PORT}/postgres`,
     );
@@ -324,7 +324,7 @@ describe("makeAuthServiceNative", () => {
     });
 
     expect(def.name).toBe("auth");
-    expect(def.command).toBe(`${AUTH_BIN_PATH}/auth`);
+    expect(def.command).toBe(`${AUTH_BIN_PATH}/bin/auth`);
     expect(def.env?.GOTRUE_DB_DATABASE_URL).toContain(`127.0.0.1:${DB_PORT}`);
     expect(def.env?.GOTRUE_SITE_URL).toBe("http://localhost:3000");
     expect(def.env?.GOTRUE_JWT_SECRET).toBe(JWT_SECRET);

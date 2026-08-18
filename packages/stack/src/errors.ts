@@ -16,6 +16,21 @@ export class ChecksumMismatchError extends Data.TaggedError("ChecksumMismatchErr
   readonly actual: string;
 }> {}
 
+export class BinaryManifestError extends Data.TaggedError("BinaryManifestError")<{
+  readonly url: string;
+  readonly detail: string;
+}> {}
+
+export class BinaryRuntimeError extends Data.TaggedError("BinaryRuntimeError")<{
+  readonly path: string;
+  readonly detail: string;
+}> {}
+
+export class BinaryHostCompatibilityError extends Data.TaggedError("BinaryHostCompatibilityError")<{
+  readonly target: string;
+  readonly detail: string;
+}> {}
+
 export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly image: string;
   readonly detail: string;
@@ -126,6 +141,12 @@ export function toStackError(err: unknown): StackError {
           message: taggedMessage,
           cause: err,
         });
+      case "BinaryManifestError":
+        return new StackError({ code: "BINARY_MANIFEST", message: taggedMessage, cause: err });
+      case "BinaryRuntimeError":
+        return new StackError({ code: "BINARY_RUNTIME", message: taggedMessage, cause: err });
+      case "BinaryHostCompatibilityError":
+        return new StackError({ code: "BINARY_HOST", message: taggedMessage, cause: err });
       case "DownloadError":
         return new StackError({
           code: "DOWNLOAD_ERROR",

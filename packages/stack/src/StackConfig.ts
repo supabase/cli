@@ -1,9 +1,11 @@
 import { Schema } from "effect";
 import type { ResolvedFunctionsBundle } from "./functions.ts";
 import type { ResolvedPorts } from "./PortCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 type StackMode = "native" | "auto" | "docker";
-type StackStartupMode = "eager" | "lazy";
+export type ServicePolicy = "off" | "lazy" | "eager";
+export type ServicePolicyManifest = Readonly<Record<ServiceName, ServicePolicy>>;
 
 export type ReadinessPolicy =
   | { readonly mode: "finite"; readonly timeoutMs: number }
@@ -174,8 +176,8 @@ export interface StackConfig {
   readonly runtimeRoot?: string;
   readonly projectDir?: string;
   readonly mode?: StackMode;
-  /** Start all services immediately, or defer proxied services until first use. */
-  readonly startupMode?: StackStartupMode;
+  /** Per-service resource policy. `off` excludes a service from the graph. */
+  readonly servicePolicies?: Partial<Record<ServiceName, ServicePolicy>>;
   /** Stack-wide readiness policy. Per-call ReadyOptions take precedence. */
   readonly readiness?: ReadinessPolicy;
   readonly jwtSecret?: string;
@@ -304,7 +306,7 @@ export interface ResolvedStackConfig {
   readonly runtimeRoot: string;
   readonly projectDir: string;
   readonly mode: StackMode;
-  readonly startupMode: StackStartupMode;
+  readonly servicePolicies: ServicePolicyManifest;
   readonly readiness: ReadinessPolicy;
   /** Whether readiness came from the package default or an explicit stack policy. */
   readonly readinessSource: "default" | "configured";

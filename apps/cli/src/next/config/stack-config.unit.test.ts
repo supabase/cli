@@ -2,18 +2,15 @@ import { describe, expect, it } from "vitest";
 import { toStartStackConfig, withServiceVersions } from "./stack-config.ts";
 
 describe("toStartStackConfig", () => {
-  it("uses lazy service startup with the requested runtime mode", () => {
+  it("uses the requested runtime mode and catalog service defaults", () => {
     expect(toStartStackConfig([], "auto")).toMatchObject({
       mode: "auto",
-      startupMode: "lazy",
     });
     expect(toStartStackConfig([], "docker")).toMatchObject({
       mode: "docker",
-      startupMode: "lazy",
     });
     expect(toStartStackConfig([], "native")).toMatchObject({
       mode: "native",
-      startupMode: "lazy",
     });
   });
 

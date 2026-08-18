@@ -6,9 +6,12 @@ import { stackServiceStartupBudgetSeconds } from "./services/health-budgets.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 import type { ReadinessPolicy } from "./StackConfig.ts";
+import type { ServicePolicyManifest } from "./StackConfig.ts";
 
-export const eagerServices = (enabled: ReadonlyArray<ServiceName>): ReadonlyArray<ServiceName> =>
-  enabled.filter((service) => serviceMetadata(service).activation.startup === "eager");
+export const eagerServices = (
+  enabled: ReadonlyArray<ServiceName>,
+  policies: ServicePolicyManifest,
+): ReadonlyArray<ServiceName> => enabled.filter((service) => policies[service] === "eager");
 
 export const activationTargetsForService = (
   enabledServices: ReadonlyArray<ServiceName>,

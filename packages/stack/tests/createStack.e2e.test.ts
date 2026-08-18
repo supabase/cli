@@ -126,38 +126,34 @@ describe("createStack e2e", () => {
     },
   );
 
-  test(
-    "supports a full PostgREST CRUD golden path",
-    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
-    async () => {
-      const seeded = await supabase.from("todos").select("*").order("id");
-      expect(seeded.error).toBeNull();
-      expect(seeded.data).toHaveLength(2);
+  test("supports a full PostgREST CRUD golden path", { timeout: 30_000 }, async () => {
+    const seeded = await supabase.from("todos").select("*").order("id");
+    expect(seeded.error).toBeNull();
+    expect(seeded.data).toHaveLength(2);
 
-      const inserted = await supabase
-        .from("todos")
-        .insert({ title: "E2E test todo" })
-        .select()
-        .single();
-      expect(inserted.error).toBeNull();
-      expect(inserted.data?.title).toBe("E2E test todo");
+    const inserted = await supabase
+      .from("todos")
+      .insert({ title: "E2E test todo" })
+      .select()
+      .single();
+    expect(inserted.error).toBeNull();
+    expect(inserted.data?.title).toBe("E2E test todo");
 
-      const updated = await supabase
-        .from("todos")
-        .update({ completed: true })
-        .eq("title", "E2E test todo")
-        .select()
-        .single();
-      expect(updated.error).toBeNull();
-      expect(updated.data?.completed).toBe(true);
+    const updated = await supabase
+      .from("todos")
+      .update({ completed: true })
+      .eq("title", "E2E test todo")
+      .select()
+      .single();
+    expect(updated.error).toBeNull();
+    expect(updated.data?.completed).toBe(true);
 
-      const deleted = await supabase.from("todos").delete().eq("title", "E2E test todo");
-      expect(deleted.error).toBeNull();
+    const deleted = await supabase.from("todos").delete().eq("title", "E2E test todo");
+    expect(deleted.error).toBeNull();
 
-      const remaining = await supabase.from("todos").select("*").eq("title", "E2E test todo");
-      expect(remaining.data).toHaveLength(0);
-    },
-  );
+    const remaining = await supabase.from("todos").select("*").eq("title", "E2E test todo");
+    expect(remaining.data).toHaveLength(0);
+  });
 });
 
 function writeFunction(projectDir: string, slug: string, body: string) {

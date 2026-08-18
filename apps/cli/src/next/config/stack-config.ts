@@ -27,7 +27,6 @@ export function toStartStackConfig(
   const excluded = new Set(exclude);
   return {
     mode,
-    startupMode: "lazy",
     realtime: excluded.has("realtime") ? false : {},
     storage: excluded.has("storage") ? false : {},
     imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},

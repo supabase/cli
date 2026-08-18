@@ -52,7 +52,7 @@ const postgrestHealthCheck = (port: number) => ({
 
 export const makePostgrestService = (opts: NativePostgrestOptions): ServiceDef => ({
   name: "postgrest",
-  command: `${opts.binPath}/postgrest`,
+  command: `${opts.binPath}/bin/postgrest`,
   env: postgrestEnv(opts),
   dependencies: opts.dependencies,
   healthCheck: postgrestHealthCheck(opts.port),

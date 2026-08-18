@@ -1,25 +1,24 @@
 import { Record } from "effect";
-import {
-  authAssetName,
-  edgeRuntimeAssetName,
-  postgresAssetName,
-  postgrestAssetName,
-  type PlatformInfo,
-} from "./Platform.ts";
+import { nativeTargetForPlatform, type NativeTarget, type PlatformInfo } from "./Platform.ts";
 import type { PortField } from "./PortCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
-type ArtifactOwnership = "supabase" | "upstream";
 type ServiceRuntimeSupport = "native-preferred" | "docker-only";
-export type ArchiveFormat = "tar.gz" | "tar.xz" | "zip";
+type ArchiveFormat = "tar.zst";
+export type ServicePreparationPolicy = "off" | "lazy" | "eager";
 
 export interface NativeReleaseArtifact {
+  readonly service: ServiceName;
+  readonly version: string;
   readonly provider: string;
   readonly assetName: string;
+  readonly releaseTag: string;
+  readonly target: NativeTarget;
   readonly archive: ArchiveFormat;
   readonly downloadUrl: string;
-  readonly checksumUrl: string | null;
-  readonly stripComponents: boolean;
+  readonly manifestUrl: string;
+  readonly checksumUrl: string;
+  readonly requiredRuntimePaths: ReadonlyArray<string>;
 }
 
 interface NativeReleaseSource {
@@ -28,7 +27,6 @@ interface NativeReleaseSource {
 }
 
 interface DockerImageSource {
-  readonly ownership: ArtifactOwnership;
   readonly repository: string;
   readonly tagPrefix?: string;
 }
@@ -39,12 +37,18 @@ interface ServiceArtifactDefinition {
 }
 
 interface ServiceActivationPolicy {
-  /** Whether the public service must already be running when lazy startup completes. */
-  readonly startup: "eager" | "lazy";
   /** Other public services required when this service is activated. */
   readonly activates: ReadonlyArray<ServiceName>;
   /** Private companions whose lifecycle is exclusively owned by this service. */
   readonly owns: ReadonlyArray<ServiceName>;
+}
+
+export interface ServicePreparationMetadata {
+  /** Policies supported by the service's runtime/resource implementation. */
+  readonly supported: ReadonlyArray<Exclude<ServicePreparationPolicy, "off">>;
+  readonly default: Exclude<ServicePreparationPolicy, "off">;
+  /** Services whose resources must be materialized before this service can start. */
+  readonly dependencies: ReadonlyArray<ServiceName>;
 }
 
 type ServiceConfigKey =
@@ -69,36 +73,61 @@ export interface ServiceCatalogEntry<Name extends ServiceName> {
   readonly runtimeSupport: ServiceRuntimeSupport;
   readonly artifact: ServiceArtifactDefinition;
   readonly activation: ServiceActivationPolicy;
+  readonly preparation: ServicePreparationMetadata;
   readonly portFields: ReadonlyArray<PortField>;
 }
 
-const SUPABASE_ECR_REGISTRY = "public.ecr.aws/supabase";
-const SUPABASE_DOCKER_HUB_REGISTRY = "supabase";
-const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase";
+const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase/cli";
+const SLIM_RELEASE_BASE = "https://github.com/supabase/slim-services/releases/download";
 
 const nativeRelease = (
-  provider: string,
-  assetName: string | null,
-  archive: ArchiveFormat,
-  downloadUrl: string,
-  options?: {
-    readonly checksumUrl?: string;
-    readonly stripComponents?: boolean;
+  service: ServiceName,
+  version: string,
+  platform: PlatformInfo,
+  options: {
+    readonly requiredRuntimePaths: ReadonlyArray<string>;
   },
-): NativeReleaseArtifact | undefined =>
-  assetName === null
-    ? undefined
-    : {
-        provider,
-        assetName,
-        archive,
-        downloadUrl,
-        checksumUrl: options?.checksumUrl ?? null,
-        stripComponents: options?.stripComponents ?? false,
-      };
+): NativeReleaseArtifact | undefined => {
+  const target = nativeTargetForPlatform(platform);
+  if (target === undefined) return undefined;
+  const releaseTag = `${service}-${version}`;
+  const base = `${SLIM_RELEASE_BASE}/${releaseTag}`;
+  const assetName = `${releaseTag}-${target}`;
+  return {
+    service,
+    version,
+    provider: "github.com/supabase/slim-services",
+    assetName,
+    releaseTag,
+    target,
+    archive: "tar.zst",
+    downloadUrl: `${base}/${assetName}.tar.zst`,
+    manifestUrl: `${base}/${assetName}.manifest.json`,
+    checksumUrl: `${base}/SHA256SUMS`,
+    requiredRuntimePaths: options.requiredRuntimePaths,
+  };
+};
 
-const authReleaseTag = (version: string): string =>
-  version.includes("-rc.") ? `rc${version}` : `v${version}`;
+const preparation = (
+  supported: ReadonlyArray<Exclude<ServicePreparationPolicy, "off">>,
+  defaultPolicy: Exclude<ServicePreparationPolicy, "off">,
+  dependencies: ReadonlyArray<ServiceName> = [],
+): ServicePreparationMetadata => ({
+  supported,
+  default: defaultPolicy,
+  dependencies,
+});
+
+const genericNativeRelease = (service: ServiceName) => ({
+  provider: "github.com/supabase/slim-services",
+  resolve: (version: string, platform: PlatformInfo) =>
+    nativeRelease(service, version, platform, {
+      // These services are prepared generically before native process wiring
+      // exists. Their manifest-declared paths are authoritative; do not guess
+      // a consumer path that could make a valid archive fail installation.
+      requiredRuntimePaths: [],
+    }),
+});
 
 /**
  * Exhaustive static identity and capability metadata for public stack services.
@@ -108,112 +137,103 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.159",
+    defaultVersion: "17.6.1.163",
     runtimeSupport: "native-preferred",
     artifact: {
-      docker: { ownership: "supabase", repository: "postgres" },
+      docker: { repository: "postgres" },
       native: {
-        provider: "github.com/supabase/postgres",
-        resolve: (version, platform) => {
-          const assetName = postgresAssetName(platform);
-          const cliVersion = `${version}-cli`;
-          const url = `https://github.com/supabase/postgres/releases/download/v${cliVersion}/supabase-postgres-v${cliVersion}-${assetName}.tar.gz`;
-          return nativeRelease("github.com/supabase/postgres", assetName, "tar.gz", url, {
-            checksumUrl: `${url}.sha256`,
-            stripComponents: true,
-          });
-        },
+        provider: "github.com/supabase/slim-services",
+        resolve: (version, platform) =>
+          nativeRelease("postgres", version, platform, {
+            requiredRuntimePaths: [
+              "bin/postgres",
+              "bin/pg_isready",
+              "bin/psql",
+              "share/supabase-cli/bin/supabase-postgres-init.sh",
+              "lib",
+            ],
+          }),
       },
     },
-    activation: { startup: "eager", activates: [], owns: [] },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["eager"], "eager"),
     portFields: ["dbPort"],
   },
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "16.1",
+    defaultVersion: "v16.1",
     runtimeSupport: "native-preferred",
     artifact: {
-      docker: { ownership: "supabase", repository: "postgrest", tagPrefix: "v" },
+      docker: { repository: "postgrest" },
       native: {
-        provider: "github.com/PostgREST/postgrest",
-        resolve: (version, platform) => {
-          const assetName = postgrestAssetName(platform);
-          const archive = assetName?.startsWith("windows") === true ? "zip" : "tar.xz";
-          return nativeRelease(
-            "github.com/PostgREST/postgrest",
-            assetName,
-            archive,
-            `https://github.com/PostgREST/postgrest/releases/download/v${version}/postgrest-v${version}-${assetName}.${archive}`,
-          );
-        },
+        provider: "github.com/supabase/slim-services",
+        resolve: (version, platform) =>
+          nativeRelease("postgrest", version, platform, {
+            requiredRuntimePaths: ["bin/postgrest"],
+          }),
       },
     },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["postgrestPort", "postgrestAdminPort"],
   },
   auth: {
     name: "auth",
     configKey: "auth",
-    defaultVersion: "2.195.0",
+    defaultVersion: "v2.195.0",
     runtimeSupport: "native-preferred",
     artifact: {
-      docker: { ownership: "supabase", repository: "gotrue", tagPrefix: "v" },
+      docker: { repository: "auth" },
       native: {
-        provider: "github.com/supabase/auth",
-        resolve: (version, platform) => {
-          const assetName = authAssetName(platform);
-          return nativeRelease(
-            "github.com/supabase/auth",
-            assetName,
-            "tar.gz",
-            `https://github.com/supabase/auth/releases/download/${authReleaseTag(version)}/auth-v${version}-${assetName}.tar.gz`,
-          );
-        },
+        provider: "github.com/supabase/slim-services",
+        resolve: (version, platform) =>
+          nativeRelease("auth", version, platform, {
+            requiredRuntimePaths: ["bin/auth"],
+          }),
       },
     },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["authPort"],
   },
   "edge-runtime": {
     name: "edge-runtime",
     configKey: "edgeRuntime",
-    defaultVersion: "1.74.3",
+    defaultVersion: "v1.74.3",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { ownership: "supabase", repository: "edge-runtime", tagPrefix: "v" },
-      native: {
-        provider: "github.com/supabase/edge-runtime",
-        resolve: (version, platform) => {
-          const assetName = edgeRuntimeAssetName(platform);
-          return nativeRelease(
-            "github.com/supabase/edge-runtime",
-            assetName,
-            "tar.gz",
-            `https://github.com/supabase/edge-runtime/releases/download/v${version}/edge-runtime-v${version}-${assetName}.tar.gz`,
-          );
-        },
-      },
+      docker: { repository: "edge-runtime" },
+      native: genericNativeRelease("edge-runtime"),
     },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["edgeRuntimePort", "edgeRuntimeInspectorPort"],
   },
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.129.0",
+    defaultVersion: "v2.129.1",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
-    activation: { startup: "eager", activates: [], owns: [] },
+    artifact: {
+      docker: { repository: "realtime" },
+      native: genericNativeRelease("realtime"),
+    },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["eager"], "eager", ["postgres"]),
     portFields: ["realtimePort"],
   },
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.69.11",
+    defaultVersion: "v1.70.1",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
-    activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
+    artifact: {
+      docker: { repository: "storage" },
+      native: genericNativeRelease("storage"),
+    },
+    activation: { activates: ["imgproxy"], owns: ["imgproxy"] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["storagePort"],
   },
   imgproxy: {
@@ -221,8 +241,12 @@ export const SERVICE_CATALOG = {
     configKey: "imgproxy",
     defaultVersion: "v3.8.0",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "upstream", repository: "darthsim/imgproxy" } },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    artifact: {
+      docker: { repository: "imgproxy" },
+      native: genericNativeRelease("imgproxy"),
+    },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["storage"]),
     portFields: ["imgproxyPort"],
   },
   mailpit: {
@@ -230,8 +254,12 @@ export const SERVICE_CATALOG = {
     configKey: "mailpit",
     defaultVersion: "v1.30.2",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "upstream", repository: "axllent/mailpit" } },
-    activation: { startup: "eager", activates: [], owns: [] },
+    artifact: {
+      docker: { repository: "mailpit" },
+      native: genericNativeRelease("mailpit"),
+    },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["eager"], "eager"),
     portFields: ["mailpitPort", "mailpitSmtpPort", "mailpitPop3Port"],
   },
   pgmeta: {
@@ -240,9 +268,11 @@ export const SERVICE_CATALOG = {
     defaultVersion: "0.98.0",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { ownership: "supabase", repository: "postgres-meta", tagPrefix: "v" },
+      docker: { repository: "pgmeta", tagPrefix: "v" },
+      native: genericNativeRelease("pgmeta"),
     },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["pgmetaPort"],
   },
   studio: {
@@ -250,35 +280,51 @@ export const SERVICE_CATALOG = {
     configKey: "studio",
     defaultVersion: "2026.08.17-sha-0c1da8f",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "supabase", repository: "studio" } },
-    activation: { startup: "eager", activates: ["analytics"], owns: [] },
+    artifact: {
+      docker: { repository: "studio" },
+      native: genericNativeRelease("studio"),
+    },
+    activation: { activates: ["analytics"], owns: [] },
+    preparation: preparation(["eager"], "eager", ["pgmeta", "analytics"]),
     portFields: ["studioPort"],
   },
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "1.50.2",
+    defaultVersion: "v1.50.3",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "supabase", repository: "logflare" } },
-    activation: { startup: "lazy", activates: ["vector"], owns: ["vector"] },
+    artifact: {
+      docker: { repository: "analytics" },
+      native: genericNativeRelease("analytics"),
+    },
+    activation: { activates: ["vector"], owns: ["vector"] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
     portFields: ["analyticsPort"],
   },
   vector: {
     name: "vector",
     configKey: "vector",
-    defaultVersion: "0.53.0-alpine",
+    defaultVersion: "0.53.0",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "upstream", repository: "timberio/vector" } },
-    activation: { startup: "lazy", activates: [], owns: [] },
+    artifact: {
+      docker: { repository: "vector" },
+      native: genericNativeRelease("vector"),
+    },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
     portFields: [],
   },
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "2.9.7",
+    defaultVersion: "v2.9.10",
     runtimeSupport: "docker-only",
-    artifact: { docker: { ownership: "supabase", repository: "supavisor" } },
-    activation: { startup: "eager", activates: [], owns: [] },
+    artifact: {
+      docker: { repository: "pooler" },
+      native: genericNativeRelease("pooler"),
+    },
+    activation: { activates: [], owns: [] },
+    preparation: preparation(["eager"], "eager", ["postgres"]),
     portFields: ["poolerPort", "poolerApiPort"],
   },
 } satisfies { readonly [Name in ServiceName]: ServiceCatalogEntry<Name> };
@@ -303,35 +349,28 @@ export const nativeReleaseForService = (
 export const isDockerOnlyService = (service: ServiceName): boolean =>
   SERVICE_CATALOG[service].runtimeSupport === "docker-only";
 
-const dockerTag = (service: ServiceName, version: string): string => {
-  const source = serviceMetadata(service).artifact.docker;
-  return `${source.tagPrefix ?? ""}${version}`;
+export const DEFAULT_SERVICE_POLICIES: Readonly<
+  Record<ServiceName, Exclude<ServicePreparationPolicy, "off">>
+> = {
+  postgres: SERVICE_CATALOG.postgres.preparation.default,
+  postgrest: SERVICE_CATALOG.postgrest.preparation.default,
+  auth: SERVICE_CATALOG.auth.preparation.default,
+  "edge-runtime": SERVICE_CATALOG["edge-runtime"].preparation.default,
+  realtime: SERVICE_CATALOG.realtime.preparation.default,
+  storage: SERVICE_CATALOG.storage.preparation.default,
+  imgproxy: SERVICE_CATALOG.imgproxy.preparation.default,
+  mailpit: SERVICE_CATALOG.mailpit.preparation.default,
+  pgmeta: SERVICE_CATALOG.pgmeta.preparation.default,
+  studio: SERVICE_CATALOG.studio.preparation.default,
+  analytics: SERVICE_CATALOG.analytics.preparation.default,
+  vector: SERVICE_CATALOG.vector.preparation.default,
+  pooler: SERVICE_CATALOG.pooler.preparation.default,
 };
+
+export const requiredPreparationDependencies = (service: ServiceName): ReadonlyArray<ServiceName> =>
+  serviceMetadata(service).preparation.dependencies;
 
 export const dockerImageForArtifact = (service: ServiceName, version: string): string => {
-  const source = SERVICE_CATALOG[service].artifact.docker;
-  const repository =
-    source.ownership === "supabase"
-      ? `${SUPABASE_ECR_REGISTRY}/${source.repository}`
-      : source.repository;
-  return `${repository}:${dockerTag(service, version)}`;
+  const source = serviceMetadata(service).artifact.docker;
+  return `${SUPABASE_GHCR_REGISTRY}/${source.repository}:${source.tagPrefix ?? ""}${version}`;
 };
-
-export const dockerImageCandidatesForArtifact = (
-  service: ServiceName,
-  version: string,
-): ReadonlyArray<string> => {
-  const source = SERVICE_CATALOG[service].artifact.docker;
-  const tag = dockerTag(service, version);
-  if (source.ownership === "upstream") {
-    return [`${source.repository}:${tag}`];
-  }
-  return [
-    `${SUPABASE_ECR_REGISTRY}/${source.repository}:${tag}`,
-    `${SUPABASE_DOCKER_HUB_REGISTRY}/${source.repository}:${tag}`,
-    `${SUPABASE_GHCR_REGISTRY}/${source.repository}:${tag}`,
-  ];
-};
-
-export const imageTagPrefixForService = (service: ServiceName): string | undefined =>
-  serviceMetadata(service).artifact.docker.tagPrefix;

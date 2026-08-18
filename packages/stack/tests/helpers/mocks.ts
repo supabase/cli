@@ -14,6 +14,7 @@ export function mockBinaryResolver(
     downloadDelayMs?: number;
     downloadDelaysMs?: Partial<Record<string, number>>;
     failServices?: string[];
+    failOnceServices?: string[];
   } = {},
 ) {
   const resolved: Array<{ service: string; version: string }> = [];
@@ -23,9 +24,10 @@ export function mockBinaryResolver(
     auth: `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`,
     "edge-runtime": `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`,
   };
+  const failOnceServices = new Set(opts.failOnceServices ?? []);
   const resolveWithMetadata = (spec: BinarySpec, options?: ResolveBinaryOptions) =>
     Effect.gen(function* () {
-      if (opts.failServices?.includes(spec.service)) {
+      if (opts.failServices?.includes(spec.service) || failOnceServices.delete(spec.service)) {
         return yield* new BinaryNotFoundError({
           service: spec.service,
           platform: "darwin-arm64",
@@ -52,6 +54,14 @@ export function mockBinaryResolver(
 
   return {
     layer: Layer.succeed(BinaryResolver, {
+      plan: (spec) => {
+        const path = binaries[spec.service];
+        return path
+          ? Effect.succeed(path)
+          : Effect.fail(
+              new BinaryNotFoundError({ service: spec.service, platform: "darwin-arm64" }),
+            );
+      },
       resolveWithMetadata,
       resolve: (spec) => Effect.map(resolveWithMetadata(spec), ({ path }) => path),
     }),

@@ -2,10 +2,8 @@ import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { StackConfig } from "./StackConfig.ts";
 
-export const serviceEnabledForConfig = (
-  config: StackConfig,
-  service: keyof typeof SERVICE_CATALOG,
-) => {
+const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERVICE_CATALOG) => {
+  if (config.servicePolicies?.[service] === "off") return false;
   if (service === "postgres" || service === "postgrest" || service === "auth") {
     return config[service === "postgres" ? "postgres" : service] !== false;
   }

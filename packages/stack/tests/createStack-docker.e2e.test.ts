@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { activationTimeoutSecondsForService } from "../src/ServiceActivation.ts";
 import { createStack, type StackHandle } from "../src/node.ts";
 import { dependencyTimeoutSecondsForServices } from "../src/services/health-budgets.ts";
+import { DEFAULT_VERSIONS } from "../src/versions.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 180_000;
@@ -37,7 +38,6 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     stack = await createStack({
       mode: "docker",
-      startupMode: "lazy",
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
       analytics: {},
@@ -78,9 +78,11 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       await Promise.all([stack.startService("postgrest"), stack.startService("auth")]);
 
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
-      expect(runningImages).toContain("supabase/postgrest");
-      expect(runningImages).toContain("supabase/postgres");
-      expect(runningImages).toContain("supabase/gotrue");
+      expect(runningImages).toContain(
+        `ghcr.io/supabase/cli/postgrest:${DEFAULT_VERSIONS.postgrest}`,
+      );
+      expect(runningImages).toContain(`ghcr.io/supabase/cli/postgres:${DEFAULT_VERSIONS.postgres}`);
+      expect(runningImages).toContain(`ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}`);
 
       const [proxyRes, authRes] = await Promise.all([
         fetch(`${stack.url}/health`),
@@ -104,7 +106,9 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       const runningImages = execSync("docker ps --format '{{.Image}}'").toString();
       const states = await stack.getStatus();
 
-      expect(runningImages).toContain("supabase/edge-runtime");
+      expect(runningImages).toContain(
+        `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`,
+      );
       expect(states).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "edge-runtime", status: "Healthy" }),
@@ -133,7 +137,9 @@ dockerDescribe("createStack e2e (docker mode)", () => {
         stack.getStatus(),
       ]);
 
-      expect(runningImages).toContain("supabase/logflare");
+      expect(runningImages).toContain(
+        `ghcr.io/supabase/cli/analytics:${DEFAULT_VERSIONS.analytics}`,
+      );
       expect(states).toEqual(
         expect.arrayContaining([expect.objectContaining({ name: "analytics", status: "Healthy" })]),
       );

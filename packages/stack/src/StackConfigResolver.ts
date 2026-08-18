@@ -17,7 +17,7 @@ import {
   type PortSelectionOptions,
 } from "./PortAllocator.ts";
 import { PORT_CATALOG, type PortField, type PortSet, type ResolvedPorts } from "./PortCatalog.ts";
-import { portFieldsForConfigInput, serviceEnabledForConfig } from "./ServicePorts.ts";
+import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
 import type {
   AnalyticsConfig,
@@ -42,12 +42,20 @@ import type {
   ResolvedStorageConfig,
   ResolvedStudioConfig,
   ResolvedVectorConfig,
+  ServicePolicy,
+  ServicePolicyManifest,
   StackConfig,
   StorageConfig,
   StudioConfig,
   VectorConfig,
 } from "./StackConfig.ts";
-import { DEFAULT_VERSIONS } from "./ServiceCatalog.ts";
+import {
+  DEFAULT_SERVICE_POLICIES,
+  DEFAULT_VERSIONS,
+  SERVICE_NAMES,
+  serviceMetadata,
+} from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
 export interface ResolveConfigOptions {
   readonly stackRoot?: string;
@@ -344,29 +352,120 @@ const enabledServiceConfig = <Config extends object>(
   config: Config | false | undefined,
 ): Config | undefined => (enabled && config !== false ? config : undefined);
 
+const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean => {
+  switch (service) {
+    case "postgres":
+      return true;
+    case "postgrest":
+      return config.postgrest !== false;
+    case "auth":
+      return config.auth !== false;
+    case "edge-runtime":
+      return (
+        ((config.mode ?? "auto") !== "native" || config.edgeRuntime !== undefined) &&
+        config.edgeRuntime !== false &&
+        (config.edgeRuntime?.enabled ?? true) !== false
+      );
+    case "realtime":
+      return config.realtime !== undefined && config.realtime !== false;
+    case "storage":
+      return config.storage !== undefined && config.storage !== false;
+    case "imgproxy":
+      return config.imgproxy !== undefined && config.imgproxy !== false;
+    case "mailpit":
+      return config.mailpit !== undefined && config.mailpit !== false;
+    case "pgmeta":
+      return config.pgmeta !== undefined && config.pgmeta !== false;
+    case "studio":
+      return config.studio !== undefined && config.studio !== false;
+    case "analytics":
+      return config.analytics !== undefined && config.analytics !== false;
+    case "vector":
+      return config.vector !== undefined && config.vector !== false;
+    case "pooler":
+      return config.pooler !== undefined && config.pooler !== false;
+  }
+};
+
+/**
+ * Resolve policy declarations before roots, ports, or config-dependent effects
+ * are acquired. This keeps unsupported policies a pure user/configuration error.
+ */
+const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
+  const policies: Record<ServiceName, ServicePolicy> = {
+    postgres: "off",
+    postgrest: "off",
+    auth: "off",
+    "edge-runtime": "off",
+    realtime: "off",
+    storage: "off",
+    imgproxy: "off",
+    mailpit: "off",
+    pgmeta: "off",
+    studio: "off",
+    analytics: "off",
+    vector: "off",
+    pooler: "off",
+  };
+  for (const service of SERVICE_NAMES) {
+    const requested = config.servicePolicies?.[service];
+    if (service === "postgres" && requested !== undefined && requested !== "eager") {
+      throw new StackBuildError({
+        detail: "postgres supports only the eager service preparation policy",
+        reason: "invalid_config",
+      });
+    }
+
+    const enabled = rawServiceEnabled(config, service);
+    if (!enabled || requested === "off") {
+      policies[service] = "off";
+      continue;
+    }
+
+    const policy: Exclude<ServicePolicy, "off"> =
+      requested === undefined ? DEFAULT_SERVICE_POLICIES[service] : requested;
+    if (!serviceMetadata(service).preparation.supported.includes(policy)) {
+      throw new StackBuildError({
+        detail: `${service} does not support the ${policy} service preparation policy`,
+        reason: "invalid_config",
+      });
+    }
+    policies[service] = policy;
+  }
+  return policies;
+};
+
 export async function resolveConfig(
   input?: StackConfig,
   opts: ResolveConfigOptions = {},
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
+  // Deliberately first: unsupported policies must not create roots or reserve ports.
+  const servicePolicies = resolveServicePolicies(config);
   const projectDir = config.projectDir ?? process.cwd();
   const instanceId = resolveInstanceId(config.instanceId);
   const functions = await resolveFunctionsConfig(config, projectDir);
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
   const postgresInput = config.postgres ?? {};
-  const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
-  const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
-  const edgeRuntimeEnabled = serviceEnabledForConfig(config, "edge-runtime");
-  const realtimeEnabled = serviceEnabledForConfig(config, "realtime");
-  const storageEnabled = serviceEnabledForConfig(config, "storage");
-  const imgproxyEnabled = serviceEnabledForConfig(config, "imgproxy");
-  const mailpitEnabled = serviceEnabledForConfig(config, "mailpit");
-  const pgmetaEnabled = serviceEnabledForConfig(config, "pgmeta");
-  const studioEnabled = serviceEnabledForConfig(config, "studio");
-  const analyticsEnabled = serviceEnabledForConfig(config, "analytics");
-  const vectorEnabled = serviceEnabledForConfig(config, "vector");
-  const poolerEnabled = serviceEnabledForConfig(config, "pooler");
+  const postgrestInput =
+    servicePolicies.postgrest !== "off" && config.postgrest !== false
+      ? (config.postgrest ?? undefined)
+      : undefined;
+  const authInput =
+    servicePolicies.auth !== "off" && config.auth !== false
+      ? (config.auth ?? undefined)
+      : undefined;
+  const edgeRuntimeEnabled = servicePolicies["edge-runtime"] !== "off";
+  const realtimeEnabled = servicePolicies.realtime !== "off";
+  const storageEnabled = servicePolicies.storage !== "off";
+  const imgproxyEnabled = servicePolicies.imgproxy !== "off";
+  const mailpitEnabled = servicePolicies.mailpit !== "off";
+  const pgmetaEnabled = servicePolicies.pgmeta !== "off";
+  const studioEnabled = servicePolicies.studio !== "off";
+  const analyticsEnabled = servicePolicies.analytics !== "off";
+  const vectorEnabled = servicePolicies.vector !== "off";
+  const poolerEnabled = servicePolicies.pooler !== "off";
   const edgeRuntimeInput = enabledServiceConfig(edgeRuntimeEnabled, config.edgeRuntime);
   const realtimeInput = enabledServiceConfig(realtimeEnabled, config.realtime);
   const storageInput = enabledServiceConfig(storageEnabled, config.storage);
@@ -457,7 +556,7 @@ export async function resolveConfig(
     runtimeRoot: roots.runtimeRoot,
     projectDir,
     mode: resolvedMode,
-    startupMode: config.startupMode ?? "eager",
+    servicePolicies,
     readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
     readinessSource: config.readiness === undefined ? "default" : "configured",
     jwtSecret,
@@ -476,8 +575,17 @@ export async function resolveConfig(
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
       autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
     },
-    postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
-    auth: resolveAuthConfig(authInput, config.auth, ports, apiPort),
+    postgrest: resolvePostgrestConfig(
+      postgrestInput,
+      servicePolicies.postgrest === "off" ? false : config.postgrest,
+      ports,
+    ),
+    auth: resolveAuthConfig(
+      authInput,
+      servicePolicies.auth === "off" ? false : config.auth,
+      ports,
+      apiPort,
+    ),
     edgeRuntime: edgeRuntimeEnabled
       ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
       : false,

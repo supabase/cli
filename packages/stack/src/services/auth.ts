@@ -71,7 +71,7 @@ const authHealthCheck = (port: number) => ({
 
 export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
   name: "auth",
-  command: `${opts.binPath}/auth`,
+  command: `${opts.binPath}/bin/auth`,
   env: authEnv(opts),
   dependencies: opts.dependencies,
   healthCheck: authHealthCheck(opts.authPort),
