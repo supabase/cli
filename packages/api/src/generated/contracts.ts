@@ -342,13 +342,17 @@ export const ThirdPartyAuth = Schema.Struct({
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 }).annotate({ identifier: "ThirdPartyAuth" });
 // recursive definitions
+export type Suspend_ = UpdateCustomHostnameResponseJsonValue;
+export const Suspend_ = Schema.suspend(
+  (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> => UpdateCustomHostnameResponseJsonValue,
+);
 export type UpdateCustomHostnameResponseJsonValue =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
-  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
+  | ReadonlyArray<Suspend_>
+  | { readonly [x: string]: Suspend_ };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
@@ -358,30 +362,26 @@ export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
     ]),
     Schema.Null,
   ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
-  ),
+  Schema.Array(Schema.suspend((): Schema.Codec<Suspend_> => Suspend_)),
   Schema.Record(
     Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
-        UpdateCustomHostnameResponseJsonValue,
-    ),
+    Schema.suspend((): Schema.Codec<Suspend_> => Suspend_),
   ),
 ]).annotate({
   description: "Any JSON-serializable value",
   identifier: "UpdateCustomHostnameResponseJsonValue",
 });
+export type Suspend_1 = ListProjectAddonsResponseJsonValue;
+export const Suspend_1 = Schema.suspend(
+  (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
+);
 export type ListProjectAddonsResponseJsonValue =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
-  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
+  | ReadonlyArray<Suspend_1>
+  | { readonly [x: string]: Suspend_1 };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
@@ -391,16 +391,10 @@ export const ListProjectAddonsResponseJsonValue = Schema.Union([
     ]),
     Schema.Null,
   ]),
-  Schema.Array(
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
-  ),
+  Schema.Array(Schema.suspend((): Schema.Codec<Suspend_1> => Suspend_1)),
   Schema.Record(
     Schema.String,
-    Schema.suspend(
-      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-    ),
+    Schema.suspend((): Schema.Codec<Suspend_1> => Suspend_1),
   ),
 ]).annotate({
   description: "Any JSON-serializable value",
