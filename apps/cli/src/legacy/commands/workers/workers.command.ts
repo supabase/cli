@@ -1,4 +1,5 @@
 import { Command } from "effect/unstable/cli";
+import { legacyWorkersDeleteCommand } from "./delete/delete.command.ts";
 import { legacyWorkersListCommand } from "./list/list.command.ts";
 import { legacyWorkersNewCommand } from "./new/new.command.ts";
 import { legacyWorkersPushCommand } from "./push/push.command.ts";
@@ -14,5 +15,6 @@ export const legacyWorkersCommand = Command.make("workers").pipe(
     legacyWorkersPushCommand,
     legacyWorkersListCommand,
     legacyWorkersStatusCommand,
+    legacyWorkersDeleteCommand,
   ]),
 );

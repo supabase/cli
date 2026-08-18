@@ -333,6 +333,29 @@ export const deployWorker = Effect.fnUntraced(function* (
   return toWorkerRecord(decoded.data);
 });
 
+export const deleteWorker = Effect.fnUntraced(function* (
+  api: ApiClient,
+  projectRef: string,
+  name: string,
+) {
+  const operation = `delete worker "${name}"`;
+  const response = yield* api
+    .executeRaw(operationDefinitions.v2DeleteAWorker, { ref: projectRef, name })
+    .pipe(Effect.mapError(mapRequestError(operation)));
+
+  // 404 is the caller's own "not deployed" verdict to report; a delete that
+  // races another one is still a delete that happened.
+  if (response.status === 204 || response.status === 200 || response.status === 404) {
+    return;
+  }
+
+  return yield* unexpectedStatus({
+    operation,
+    status: response.status,
+    body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+  });
+});
+
 /**
  * The build runs asynchronously — deploy answers 202 and the worker reaches
  * `active` or `failed` later — so `push` polls `get` until `build_state` leaves

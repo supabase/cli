@@ -172,3 +172,15 @@ export class WorkersApiUnexpectedStatusError extends Data.TaggedError(
     return actionability.apiStatus;
   }
 }
+
+/** The user answered the `delete` confirmation with something other than the name. */
+export class WorkerDeleteNotConfirmedError extends Data.TaggedError(
+  "WorkerDeleteNotConfirmedError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
