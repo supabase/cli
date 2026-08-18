@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Effect, Exit } from "effect";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
@@ -265,8 +265,6 @@ describe("managed stack ports journeys", () => {
     const { layer } = setup();
     const root = mkdtempSync(join(tmpdir(), "managed-auto-test-"));
     roots.push(root);
-    const secondWorkspace = join(root, "second");
-    mkdirSync(secondWorkspace);
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
@@ -351,7 +349,14 @@ describe("managed stack ports journeys", () => {
           });
         }
         yield* external.releaseAll;
-        const second = yield* startWithOwner(manager, secondWorkspace, automaticRuntimeDocument());
+        const { workspace: secondWorkspace, ownership: secondOwnership } =
+          yield* acquireWorkspaceControl(root, "second");
+        if (secondOwnership._tag !== "Owned") throw new Error("expected second ownership");
+        const second = yield* manager.startStack({
+          workspacePath: secondWorkspace,
+          portDocument: automaticRuntimeDocument(),
+          ownership: secondOwnership,
+        });
         expect(second.stack.ports[0]?.port).not.toBe(first.stack.ports[0]?.port);
         yield* releaseLease(second);
       }),
