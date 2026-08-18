@@ -49,13 +49,13 @@ jobs:
         env:
           GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if git diff --quiet -- packages/stack/src/versions.ts; then
+          if git diff --quiet -- packages/stack/src/ServiceCatalog.ts; then
             echo "Stack service versions are already synced."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages/stack/src/versions.ts
+          git add packages/stack/src/ServiceCatalog.ts
           git commit -m "chore(stack): sync service version manifest"
           git push "https://x-access-token:${GH_APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_HEAD_REF}"
