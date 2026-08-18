@@ -1,0 +1,10 @@
+import { Command } from "effect/unstable/cli";
+import { workersNewCommand } from "./new/new.command.ts";
+
+export const workersCommand = Command.make("workers").pipe(
+  Command.withDescription(
+    "Manage Supabase Workers — containers that run your code next to your project, deployed from supabase/workers/<name>/.",
+  ),
+  Command.withShortDescription("Manage Supabase Workers"),
+  Command.withSubcommands([workersNewCommand]),
+);
