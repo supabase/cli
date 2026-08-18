@@ -23,12 +23,12 @@ import {
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
-  controlEndpoint,
+  controlEndpointCandidates,
   ControlTransport,
   probeControl,
   type ControlAcquisition,
-  type ControlOwnerStatus,
   type ControlOwnership,
+  type ControlProbe,
 } from "./control.ts";
 import {
   discoverEnvironment,
@@ -204,7 +204,7 @@ export interface ManagedStackManagerShape {
   ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
   readonly probeControl: (
     stackId: string,
-  ) => Effect.Effect<ControlOwnerStatus | undefined, ManagedStackManagerError>;
+  ) => Effect.Effect<ControlProbe | undefined, ManagedStackManagerError>;
   readonly readStack: (
     request: ReadStackRequest,
   ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
@@ -435,7 +435,9 @@ const makeManager = (
             );
           }
           const strictReserved = new Set<number>();
-          const exactReserved = new Set<number>([(yield* controlEndpoint(request.stackId)).port]);
+          const exactReserved = new Set<number>(
+            (yield* controlEndpointCandidates(request.stackId)).map(({ port }) => port),
+          );
           const owners = new Map<
             number,
             ReadonlyArray<{
@@ -444,7 +446,9 @@ const makeManager = (
             }>
           >();
           for (const listing of listings.filter(isHealthyDocument)) {
-            exactReserved.add((yield* controlEndpoint(listing.document.id)).port);
+            for (const candidate of yield* controlEndpointCandidates(listing.document.id)) {
+              exactReserved.add(candidate.port);
+            }
             if (listing.document.id === request.stackId) continue;
             for (const assignment of listing.document.ports) {
               const liveExact =

@@ -7,10 +7,13 @@ import { describe, expect } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
 import {
   acquireControl,
+  CONTROL_CANDIDATE_COUNT,
   controlEndpoint,
+  controlEndpointCandidates,
   ControlBindError,
   ControlTransport,
   ControlTransportError,
+  probeControl,
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
@@ -103,10 +106,15 @@ const spawnBoundChild = (port: number) => {
 };
 
 describe("managed control endpoint", () => {
-  it.live("derives one deterministic loopback endpoint from the ownership id", () => {
+  it.live("derives deterministic loopback candidates from the ownership id", () => {
     return Effect.sync(() => {
       const endpoint = Effect.runSync(controlEndpoint(STACK_ID));
       expect(endpoint.url).toBe("http://127.0.0.1:13737");
+      const candidates = Effect.runSync(controlEndpointCandidates(STACK_ID));
+      expect(candidates).toHaveLength(CONTROL_CANDIDATE_COUNT);
+      expect(candidates.map(({ port }) => port)).toEqual(
+        Array.from({ length: CONTROL_CANDIDATE_COUNT }, (_, offset) => 13737 + offset),
+      );
     });
   });
 
@@ -254,7 +262,7 @@ describe("managed control endpoint", () => {
     ),
   );
 
-  it.live("rejects a valid owner with a colliding deterministic endpoint", () =>
+  it.live("claims the next candidate when another stack owns the first", () =>
     Effect.scoped(
       live(
         Effect.gen(function* () {
@@ -272,15 +280,20 @@ describe("managed control endpoint", () => {
             ),
           );
           yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-          const contender = yield* acquireControl({ stackId: COLLIDING_STACK_ID }).pipe(
-            Effect.exit,
-          );
-          expect(Exit.isFailure(contender)).toBe(true);
-          if (Exit.isFailure(contender)) {
-            expect(Cause.squash(contender.cause)).toMatchObject({
-              _tag: "ControlAddressConflictError",
-            });
-          }
+          const contender = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
+          if (contender._tag !== "Owned") throw new Error("expected contender ownership");
+          expect(contender.endpoint.port).not.toBe(owner.endpoint.port);
+
+          // Readers locate each owner at its actual candidate.
+          const ownerProbe = yield* probeControl(STACK_ID);
+          expect(ownerProbe?.endpoint.port).toBe(owner.endpoint.port);
+          const contenderProbe = yield* probeControl(COLLIDING_STACK_ID);
+          expect(contenderProbe?.endpoint.port).toBe(contender.endpoint.port);
+
+          // A second caller for the collided stack attaches to its owner.
+          const attached = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
+          expect(attached._tag).toBe("Attached");
+          expect(attached.endpoint.port).toBe(contender.endpoint.port);
           yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),
@@ -306,14 +319,36 @@ describe("managed control endpoint", () => {
     ),
   );
 
-  it.live("rejects an unrelated listener without taking it over", () =>
+  it.live("claims the next candidate without taking over an unrelated listener", () =>
     live(
       Effect.scoped(
         Effect.gen(function* () {
-          const endpoint = yield* controlEndpoint(STACK_ID);
+          const candidates = yield* controlEndpointCandidates(STACK_ID);
           const unrelated = yield* Effect.acquireRelease(
-            Effect.promise(() => listenRaw(endpoint.port)),
+            Effect.promise(() => listenRaw(candidates[0]!.port)),
             (server) => Effect.promise(() => closeRaw(server)),
+          );
+          const owner = yield* acquireControl({ stackId: STACK_ID });
+          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          expect(owner.endpoint.port).toBe(candidates[1]!.port);
+          expect(unrelated.listening).toBe(true);
+          const probe = yield* probeControl(STACK_ID);
+          expect(probe?.endpoint.port).toBe(candidates[1]!.port);
+        }),
+      ),
+    ),
+  );
+
+  it.live("fails once every candidate is occupied by unrelated listeners", () =>
+    live(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const candidates = yield* controlEndpointCandidates(STACK_ID);
+          yield* Effect.forEach(candidates, (candidate) =>
+            Effect.acquireRelease(
+              Effect.promise(() => listenRaw(candidate.port)),
+              (server) => Effect.promise(() => closeRaw(server)),
+            ),
           );
           const result = yield* acquireControl({
             stackId: STACK_ID,
@@ -325,7 +360,6 @@ describe("managed control endpoint", () => {
           );
           expect(result._tag).toBe("Left");
           if (result._tag === "Left") expect(result.error._tag).toBe("ControlAddressConflictError");
-          expect(unrelated.listening).toBe(true);
         }),
       ),
     ),
