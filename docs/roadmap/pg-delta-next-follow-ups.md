@@ -87,3 +87,14 @@ the command correct, at worst at cold-provision speed.
   container, job skipped) leaves that dead id in the encrypted settings. Only migrations that
   inspect or act on Realtime tenant configuration can observe the difference. Fix: normalize the
   seeded host before snapshotting, or refresh it after restore. (Codex comment 3789481478.)
+- **Cache key hashes image tags, not immutable digests** (`shadow-cache.ts`,
+  `legacyShadowCacheKey`): a registry tag republished with different bytes (or a locally retagged
+  image) keeps the same key, so a warm hit would restore the previous image's baseline and skip
+  the updated service migrations. Accepted risk: every keyed image is an exact pinned version tag
+  the release pipeline treats as immutable, a changed `SUPABASE_INTERNAL_IMAGE_REGISTRY` is
+  already in the key, and the 14-day TTL bounds staleness. Hashing digests is structurally
+  costly — the key is computed before images are pulled, so `docker image inspect` would have to
+  either move pulls ahead of the cache decision or fall back to tags for unpulled images (making
+  the first published tar never warm-hit), and it adds per-acquire inspect round-trips to the
+  warm path. Revisit only if the image-resolution pipeline ever produces mutable tags (`latest`,
+  branch tags) — those should become cache-ineligible at that point. (Codex comment 3802804637.)
