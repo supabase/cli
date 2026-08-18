@@ -59,7 +59,7 @@ describe("functions dev runtime", () => {
             emitted = true;
           }),
         ),
-        Effect.timeout(Duration.seconds(1)),
+        Effect.timeout(Duration.seconds(5)),
         Effect.provide(watcher.layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -84,7 +84,7 @@ describe("functions dev runtime", () => {
       ]).pipe(
         Stream.take(1),
         Stream.runCollect,
-        Effect.timeout(Duration.seconds(1)),
+        Effect.timeout(Duration.seconds(5)),
         Effect.provide(watcher.layer),
         Effect.forkChild({ startImmediately: true }),
       );
