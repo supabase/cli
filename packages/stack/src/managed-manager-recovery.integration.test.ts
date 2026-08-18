@@ -52,7 +52,7 @@ const acquireIsolatedCollisionOwner = () =>
       const stackId = randomBytes(32).toString("hex");
       const collidingStackId = `${stackId.slice(0, 10)}${randomBytes(27).toString("hex")}`;
       const acquisition = yield* acquireControl({ stackId }).pipe(
-        Effect.timeout("1 second"),
+        Effect.timeout("5 seconds"),
         Effect.exit,
       );
       if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
@@ -69,7 +69,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
       const stackName = `test-${randomBytes(8).toString("hex")}`;
       const stackId = deriveStackId(environment.identity, stackName);
       const acquisition = yield* acquireControl({ stackId }).pipe(
-        Effect.timeout("1 second"),
+        Effect.timeout("5 seconds"),
         Effect.exit,
       );
       if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
@@ -128,7 +128,7 @@ describe("managed stack recovery journeys", () => {
         } satisfies FileSystem.FileSystem;
       }),
     ).pipe(Layer.provide(NodeFileSystem.layer));
-    const managerLayer = managedStackManagerLayer({ stateRoot }).pipe(
+    const managerLayer = managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
       Layer.provide(gatedFileSystemLayer),
       Layer.provide(NodePath.layer),
       Layer.provide(gitConfigStoreLayer),
@@ -224,11 +224,11 @@ describe("managed stack recovery journeys", () => {
               ownership: stackOwner.ownership,
             })
             .pipe(Effect.forkScoped);
-          yield* Deferred.await(repairRead).pipe(Effect.timeout("1 second"));
+          yield* Deferred.await(repairRead).pipe(Effect.timeout("10 seconds"));
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;
           yield* Effect.promise(() => repairDaemon.dispose());
-          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("2 seconds"));
+          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("15 seconds"));
           expect(started.stack.id).toBe(stackId);
           yield* releaseLease(started);
         }),

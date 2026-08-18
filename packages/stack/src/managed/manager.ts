@@ -368,10 +368,17 @@ const conflictError = (
     ownerKey: owner.ports.find((candidate) => candidate.port === assignment.port)?.key,
   });
 
+interface ManagedStackManagerOptions {
+  readonly stateRoot: string;
+  /** Test seam: disable well-known default ports for automatic allocation. */
+  readonly preferCatalogDefaults?: boolean;
+}
+
 const makeManager = (
-  stateRoot: string,
+  options: ManagedStackManagerOptions,
 ): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
   Effect.gen(function* () {
+    const { stateRoot, preferCatalogDefaults = true } = options;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const gitConfig = yield* GitConfigStore;
@@ -458,6 +465,7 @@ const makeManager = (
             disabledFields: request.portDocument.disabledFields,
             intents: resolvePortIntents(request.portDocument),
             persisted,
+            preferCatalogDefaults,
           });
           const requests = portRequests(plan);
           const exactRequests = requests.filter((item) => item.selection.kind === "exact");
@@ -1003,11 +1011,12 @@ const makeManager = (
   });
 
 /** Internal manager layer. Platform layers provide filesystem, Git, and control transport. */
-export const managedStackManagerLayer = (options: {
-  readonly stateRoot: string;
-}): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
-  Layer.effect(ManagedStackManager, makeManager(options.stateRoot));
+export const managedStackManagerLayer = (
+  options: ManagedStackManagerOptions,
+): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
+  Layer.effect(ManagedStackManager, makeManager(options));
 
 export const makeManagedStackManager = (
   stateRoot: string,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> => makeManager(stateRoot);
+): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
+  makeManager({ stateRoot });

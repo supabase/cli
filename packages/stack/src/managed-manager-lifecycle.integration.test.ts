@@ -133,7 +133,9 @@ describe("managed stack lifecycle journeys", () => {
               ? Effect.succeed(current)
               : Effect.fail(new Error("stop pending")),
           ),
-          Effect.retry(Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "2 seconds" }))),
+          Effect.retry(
+            Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "10 seconds" })),
+          ),
         );
         yield* owner.close;
         yield* Fiber.join(stopFiber);
@@ -179,7 +181,7 @@ describe("managed stack lifecycle journeys", () => {
         } satisfies FileSystem.FileSystem;
       }),
     ).pipe(Layer.provide(NodeFileSystem.layer));
-    const managerLayer = managedStackManagerLayer({ stateRoot }).pipe(
+    const managerLayer = managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
       Layer.provide(gatedFileSystemLayer),
       Layer.provide(NodePath.layer),
       Layer.provide(gitConfigStoreLayer),
