@@ -5,10 +5,15 @@ import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
  * Sparse config subtraction — see `docs/adr/0017-sparse-config-subtraction.md`.
  *
  * A sparse config is a partial overlay containing only the values that differ
- * from some baseline; it is not a valid complete config on its own. Arrays are
- * compared wholesale (order-sensitive) and never subtracted element-wise, so a
- * sparse value is always either an entire array or an object subtree of kept
- * leaves — hence arrays survive `DeepPartial` unchanged below.
+ * from some baseline. In the primary case — subtracting the default config
+ * ({@link omitDefaultValues}) — the result is itself a valid config document:
+ * re-decoding refills exactly what was removed, so it denotes the same
+ * effective config under the current schema's defaults. Subtracting any other
+ * baseline (e.g. a remote block against the merged base config) yields an
+ * overlay meaningful only relative to that baseline. Arrays are compared
+ * wholesale (order-sensitive) and never subtracted element-wise, so a sparse
+ * value is always either an entire array or an object subtree of kept leaves —
+ * hence arrays survive `DeepPartial` unchanged below.
  */
 type DeepPartial<T> =
   T extends ReadonlyArray<unknown>
@@ -124,9 +129,11 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * Returns the sparse config `config − baseline`. Directional: a value equal to
  * the baseline's is removed even when it differs from the schema default, and
  * a value differing from the baseline's is kept even when it equals the schema
- * default. A `[remotes.*]` block's correct baseline is the merged base config,
- * never the default config — see ADR 0017 for why subtracting a remote block
- * against global defaults would silently change what the branch resolves to.
+ * default. A `[remotes.*]` block — config overrides for a specific persistent
+ * Supabase branch, bound to it by `project_id` — has the merged base config as
+ * its correct baseline, never the default config; see ADR 0017 for why
+ * subtracting a remote block against global defaults would silently change
+ * what the branch resolves to.
  */
 export function subtractProjectConfig(
   config: ProjectConfig,
@@ -143,8 +150,11 @@ export function subtractProjectConfig(config: ProjectConfig, baseline: ProjectCo
 /**
  * Returns the sparse config `config − default config`: only the values that
  * differ from their schema defaults, per {@link subtractProjectConfig}'s
- * semantics. `remotes` blocks pass through untouched (the default config has
- * none), and undefaulted `optionalKey` fields always survive when present.
+ * semantics. The result is itself a valid config document — re-decoding
+ * refills the removed defaults, yielding the same effective config. `remotes`
+ * blocks (per-persistent-branch overrides) pass through untouched (the
+ * default config has none), and undefaulted `optionalKey` fields always
+ * survive when present.
  */
 export function omitDefaultValues(config: ProjectConfig): SparseProjectConfig {
   return subtractProjectConfig(config, getDefaultProjectConfig());

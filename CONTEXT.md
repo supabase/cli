@@ -11,7 +11,7 @@ The `ProjectConfig` in which every value carries its schema-declared default —
 _Avoid_: defaults reference, base config
 
 **Sparse config**:
-A partial config overlay containing only values that differ from some baseline. Not a valid complete config on its own.
+A partial config overlay containing only values that differ from some baseline. When the baseline is the default config it is itself a valid config that re-decodes to the same effective config under the current schema's defaults; against any other baseline it is meaningful only relative to that baseline.
 _Avoid_: minimal config, pruned config, massaged config
 
 **Subtract**:
@@ -19,7 +19,7 @@ The directional operation `config − baseline` that produces a sparse config: r
 _Avoid_: prune, strip, massage
 
 **Remote block**:
-A `[remotes.<label>]` section — a sparse overlay on the base config scoped to one branch's project. Its baseline is the merged base config, never the default config.
+A `[remotes.<label>]` section declaring config overrides for a specific persistent Supabase branch — the branch's project ref in `project_id` binds the block (the label is a user-chosen alias), and unspecified options inherit from the base config. Its baseline is the merged base config, never the default config.
 _Avoid_: environment block, branch config
 
 **Base config**:
