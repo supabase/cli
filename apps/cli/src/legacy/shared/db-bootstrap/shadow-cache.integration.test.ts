@@ -113,6 +113,7 @@ function fakeCluster(opts: { readonly failConnect?: boolean } = {}) {
           : Effect.succeed({
               exec: () => Effect.void,
               query: () => Effect.succeed([]),
+              execBatch: () => Effect.void,
               extensionExists: () => Effect.succeed(false),
               copyToCsv: () => Effect.succeed(new Uint8Array()),
               queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),

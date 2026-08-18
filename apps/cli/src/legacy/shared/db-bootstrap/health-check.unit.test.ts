@@ -806,6 +806,7 @@ function mockShadowDbConnection(
   const session: LegacyDbSession = {
     exec: () => Effect.void,
     query: () => Effect.succeed([]),
+    execBatch: () => Effect.void,
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),

@@ -1,244 +1,193 @@
-import { Data, Duration, Effect } from "effect";
-import { FileSystem, Path } from "effect";
-import { dockerForceRemove } from "./cleanup.ts";
-import { defaultManagedStackName } from "./StackConfigResolver.ts";
+import { Effect } from "effect";
+import type { ManagedStackManagerError, ManagedStackManagerShape } from "./managed/manager.ts";
+import { ManagedStackManager } from "./managed/manager.ts";
+import type { ManagedStackDocument } from "./managed/document.ts";
 import {
-  InvalidStackMetadataError,
-  InvalidStackStateError,
-  NoRunningStackError,
-  StateManager,
-  scanAllManagedMetadata,
-  projectStateManagerPathsFromRoot,
-  projectStateManagerPaths,
-  scanAllManagedStates,
-  UnsupportedStackMetadataVersionError,
-} from "./StateManager.ts";
-import type { StackMetadata } from "./StackMetadata.ts";
-import { UnixHttpClient } from "./UnixHttpClient.ts";
-import { resolveManagedStack } from "./managed-stack.ts";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+  connectManagedStack,
+  deleteManagedStack,
+  resolveManagedDocument,
+  stopManagedStack,
+} from "./managed/lifecycle.ts";
+import { PORT_CATALOG, PORT_FIELDS, type ResolvedPorts } from "./PortCatalog.ts";
+import type { PartialVersionManifest } from "./versions.ts";
+import { NoRunningStackError } from "./managed/model.ts";
+import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/model.ts";
+import { HttpTransportClient } from "./HttpTransportClient.ts";
+import type { Stack } from "./Stack.ts";
 
 export interface StackSummary {
   readonly name: string;
   readonly running: boolean;
-  readonly ports: StackMetadata["ports"];
-  readonly versions: StackMetadata["services"];
+  readonly ports: ResolvedPorts;
+  readonly versions: PartialVersionManifest;
   readonly pid?: number;
   readonly url?: string;
   readonly dbUrl?: string;
   readonly startedAt?: string;
+  readonly lastNotifiedUpdateFingerprint?: string;
+  readonly launch?: ManagedStackDocument["launch"];
+  readonly drift?: ReadonlyArray<ManagedPortDrift>;
 }
 
-export class DaemonStillRunningError extends Data.TaggedError("DaemonStillRunningError")<{
-  readonly name: string;
-  readonly pid: number;
-}> {}
+const portFieldByKey: Readonly<Record<string, keyof ResolvedPorts>> = Object.fromEntries(
+  PORT_FIELDS.flatMap((field) => {
+    const key = PORT_CATALOG[field].configKey;
+    return key === undefined ? [] : [[key, field]];
+  }),
+);
 
-// ---------------------------------------------------------------------------
-// Operations
-// ---------------------------------------------------------------------------
+const summaryForDocument = (
+  document: ManagedStackDocument & { readonly drift?: ReadonlyArray<ManagedPortDrift> },
+  running?: boolean,
+): StackSummary => {
+  const ports: Record<string, number> = {};
+  for (const assignment of document.ports) {
+    const field = portFieldByKey[assignment.key];
+    if (field !== undefined) ports[field] = assignment.port;
+  }
+  if (ports.apiPort === undefined || ports.dbPort === undefined) {
+    throw new Error("Managed stack document is missing api.port or db.port");
+  }
+  const { apiPort, dbPort } = ports;
+  return {
+    name: document.identity.name,
+    running: running ?? (document.lifecycle === "running" && document.runtime !== undefined),
+    ports: {
+      ...ports,
+      apiPort,
+      dbPort,
+    },
+    versions: document.launch?.versions ?? {},
+    ...(document.launch === undefined ? {} : { launch: document.launch }),
+    ...(document.drift === undefined ? {} : { drift: document.drift }),
+    ...(document.launch?.lastNotifiedUpdateFingerprint === undefined
+      ? {}
+      : { lastNotifiedUpdateFingerprint: document.launch.lastNotifiedUpdateFingerprint }),
+    ...(document.runtime === undefined ? {} : { pid: document.runtime.pid }),
+    startedAt: document.updatedAt,
+  };
+};
 
-/**
- * List all known stacks and their liveness status.
- * Reads durable stack metadata and overlays live daemon state when present.
- */
+const liveStatus = (
+  manager: ManagedStackManagerShape,
+  document: ManagedStackDocument,
+): Effect.Effect<boolean, ManagedStackManagerError, never> =>
+  manager
+    .probeControl(document.id)
+    .pipe(Effect.map((status) => status?.state === "running" && status.ready));
+
 export const listStacks = (opts: {
-  cacheRoot: string;
-  projectStateRoot?: string;
-}): Effect.Effect<
-  ReadonlyArray<StackSummary>,
-  InvalidStackMetadataError | InvalidStackStateError | UnsupportedStackMetadataVersionError,
-  FileSystem.FileSystem | Path.Path
-> =>
+  readonly cacheRoot: string;
+  readonly projectDir?: string;
+}): Effect.Effect<ReadonlyArray<StackSummary>, ManagedStackManagerError, ManagedStackManager> =>
   Effect.gen(function* () {
-    const metadataEntries =
-      opts.projectStateRoot === undefined
-        ? yield* scanAllManagedMetadata(opts.cacheRoot)
-        : yield* StateManager.pipe(
-            Effect.provide(
-              StateManager.make(projectStateManagerPathsFromRoot(opts.projectStateRoot)),
-            ),
-            Effect.flatMap((stateManager) => stateManager.scanMetadata()),
-            Effect.map((metadata) =>
-              Array.from(metadata.entries()).map(([name, stackMetadata]) => ({
-                name,
-                metadata: stackMetadata,
-              })),
-            ),
+    const manager = yield* ManagedStackManager;
+    const listings = yield* manager.listStacks();
+    const projectPath =
+      opts.projectDir === undefined
+        ? undefined
+        : yield* manager.discoverWorkspace(opts.projectDir).pipe(
+            Effect.map((workspace) => workspace.path),
+            Effect.catchTag("UnsupportedGitWorkspaceError", () => Effect.succeed(null)),
           );
-    const states =
-      opts.projectStateRoot === undefined
-        ? yield* scanAllManagedStates(opts.cacheRoot)
-        : yield* StateManager.pipe(
-            Effect.provide(
-              StateManager.make(projectStateManagerPathsFromRoot(opts.projectStateRoot)),
-            ),
-            Effect.flatMap((stateManager) => stateManager.scan()),
-          );
-
-    const statesByName = new Map(states.map((state) => [state.name, state] as const));
-    const summaries: StackSummary[] = [];
-
-    for (const { name, metadata } of metadataEntries) {
-      const state = statesByName.get(name);
-      if (state === undefined) {
-        summaries.push({
-          name,
-          running: false,
-          ports: metadata.ports,
-          versions: metadata.services,
-        });
-        continue;
-      }
-
-      const stateManager = yield* StateManager.pipe(
-        Effect.provide(
-          StateManager.make(
-            opts.projectStateRoot === undefined
-              ? projectStateManagerPaths(opts.cacheRoot, state.projectDir)
-              : projectStateManagerPathsFromRoot(opts.projectStateRoot),
-          ),
-        ),
-      );
-      const alive = yield* stateManager.isAlive(state);
-      if (!alive) {
-        summaries.push({
-          name,
-          running: false,
-          ports: metadata.ports,
-          versions: metadata.services,
-        });
-        continue;
-      }
-
-      summaries.push({
-        name: state.name,
-        running: true,
-        ports: metadata.ports,
-        versions: metadata.services,
-        pid: state.pid,
-        url: state.url,
-        dbUrl: state.dbUrl,
-        startedAt: state.startedAt,
-      });
-    }
-
-    return summaries.sort((left, right) => left.name.localeCompare(right.name));
+    if (projectPath === null) return [];
+    const summaries = yield* Effect.forEach(listings, (listing) =>
+      Effect.gen(function* () {
+        if (
+          listing.status !== "healthy" ||
+          (projectPath !== undefined && listing.document.workspace.path !== projectPath)
+        ) {
+          return undefined;
+        }
+        const running = yield* liveStatus(manager, listing.document);
+        return summaryForDocument(listing.document, running);
+      }),
+    );
+    return summaries
+      .filter((summary): summary is StackSummary => summary !== undefined)
+      .sort((left, right) => left.name.localeCompare(right.name));
   });
 
 export const resolveStackSummary = (opts: {
-  cacheRoot: string;
-  projectStateRoot?: string;
-  name: string;
+  readonly cacheRoot: string;
+  readonly projectDir?: string;
+  readonly cwd?: string;
+  readonly name: string;
+  readonly portDocument?: ManagedPortIntentDocument;
 }): Effect.Effect<
   StackSummary,
-  | NoRunningStackError
-  | InvalidStackMetadataError
-  | InvalidStackStateError
-  | UnsupportedStackMetadataVersionError,
-  FileSystem.FileSystem | Path.Path
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager
 > =>
   Effect.gen(function* () {
-    const summaries = yield* listStacks(opts);
-    const summary = summaries.find((candidate) => candidate.name === opts.name);
-    if (summary !== undefined) {
-      return summary;
-    }
-    return yield* new NoRunningStackError({ cwd: opts.projectStateRoot ?? process.cwd() });
+    const document = yield* resolveManagedDocument({
+      workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
+      stackName: opts.name,
+      cwd: opts.cwd,
+      ...(opts.portDocument === undefined ? {} : { portDocument: opts.portDocument }),
+    });
+    const manager = yield* ManagedStackManager;
+    return summaryForDocument(document, yield* liveStatus(manager, document));
   });
 
-/**
- * Stop a running daemon by name or working directory.
- * Sends POST /stop to the daemon's Unix socket and waits for it to exit.
- * Removes the live-state pointer only after confirming the process is no
- * longer alive. Durable stack metadata is retained.
- */
 export const stopDaemon = (opts: {
-  name?: string;
-  cwd?: string;
-  cacheRoot: string;
-  projectDir?: string;
-  projectStateRoot?: string;
+  readonly name?: string;
+  readonly cwd?: string;
+  readonly cacheRoot: string;
+  readonly projectDir?: string;
 }): Effect.Effect<
   void,
-  NoRunningStackError | InvalidStackStateError | DaemonStillRunningError,
-  FileSystem.FileSystem | Path.Path | UnixHttpClient
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | HttpTransportClient
 > =>
-  Effect.gen(function* () {
-    const { state, alive } = yield* resolveManagedStack(opts);
-    const stateManager = yield* StateManager.pipe(
-      Effect.provide(
-        StateManager.make(
-          opts.projectStateRoot === undefined
-            ? projectStateManagerPaths(opts.cacheRoot, state.projectDir)
-            : projectStateManagerPathsFromRoot(opts.projectStateRoot),
-        ),
-      ),
-    );
-    if (!alive) {
-      yield* stateManager.readMetadata(state.name).pipe(
-        Effect.tap((metadata) =>
-          Effect.sync(() => {
-            dockerForceRemove(metadata.cleanupTargets?.dockerContainerNames ?? []);
-          }),
-        ),
-        Effect.ignore,
-      );
-      yield* stateManager.remove(state.name);
-      return;
-    }
-
-    // Send stop request to daemon's Unix socket
-    const unixHttpClient = yield* UnixHttpClient;
-    yield* unixHttpClient
-      .request(state.socketPath, "/stop", { method: "POST" })
-      .pipe(Effect.ignore);
-
-    const stopped = yield* Effect.gen(function* () {
-      const maxWait = 30_000;
-      const start = Date.now();
-      while (Date.now() - start < maxWait) {
-        const stillAlive = yield* stateManager.isAlive(state);
-        if (!stillAlive) return true;
-        yield* Effect.sleep(Duration.millis(200));
-      }
-      return false;
-    });
-
-    if (!stopped) {
-      return yield* new DaemonStillRunningError({ name: state.name, pid: state.pid });
-    }
-
-    yield* stateManager.remove(state.name);
+  stopManagedStack({
+    workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
+    ...(opts.name === undefined ? {} : { stackName: opts.name }),
+    cwd: opts.cwd,
   });
 
 export const deleteManagedStackPersistence = (opts: {
-  name?: string;
-  cwd?: string;
-  cacheRoot: string;
-  projectDir?: string;
-  projectStateRoot?: string;
-}): Effect.Effect<void, NoRunningStackError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const cwd = opts.cwd ?? process.cwd();
-    const projectDir = opts.projectDir ?? cwd;
-    const stateManager = yield* StateManager.pipe(
-      Effect.provide(
-        StateManager.make(
-          opts.projectStateRoot === undefined
-            ? projectStateManagerPaths(opts.cacheRoot, projectDir)
-            : projectStateManagerPathsFromRoot(opts.projectStateRoot),
-        ),
-      ),
-    );
-    const name = opts.name ?? defaultManagedStackName(projectDir);
-    const exists = yield* stateManager.stackExists(name);
-    if (!exists) {
-      return yield* new NoRunningStackError({ cwd });
-    }
+  readonly name?: string;
+  readonly cwd?: string;
+  readonly cacheRoot: string;
+  readonly projectDir?: string;
+}): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
+  deleteManagedStack({
+    workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
+    ...(opts.name === undefined ? {} : { stackName: opts.name }),
+    cwd: opts.cwd,
+  });
 
-    yield* stateManager.deleteStack(name);
+export type ManagedStack = ManagedStackDocument;
+
+export const resolveManagedStack = (opts: {
+  readonly cacheRoot: string;
+  readonly name?: string;
+  readonly cwd?: string;
+  readonly projectDir?: string;
+}): Effect.Effect<
+  ManagedStack,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager
+> =>
+  resolveManagedDocument({
+    workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
+    ...(opts.name === undefined ? {} : { stackName: opts.name }),
+    cwd: opts.cwd,
+  });
+
+export const connectManagedLayer = (opts: {
+  readonly name?: string;
+  readonly cwd?: string;
+  readonly cacheRoot: string;
+  readonly projectDir?: string;
+}): Effect.Effect<
+  import("effect").Layer.Layer<Stack>,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | HttpTransportClient
+> =>
+  connectManagedStack({
+    workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
+    ...(opts.name === undefined ? {} : { stackName: opts.name }),
+    cwd: opts.cwd,
   });

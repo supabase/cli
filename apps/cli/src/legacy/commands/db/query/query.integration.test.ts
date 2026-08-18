@@ -81,6 +81,7 @@ function mockDbConnection(opts: {
     connect: () =>
       Effect.succeed({
         exec: () => Effect.void,
+        execBatch: () => Effect.void,
         query: () => Effect.succeed([]),
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),

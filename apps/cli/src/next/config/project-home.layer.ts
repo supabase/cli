@@ -59,8 +59,6 @@ const makeProjectHome = Effect.gen(function* () {
       ),
     );
 
-  const stackDir = (name: string) => path.join(projectHomeDir, "stacks", name);
-
   return ProjectHome.of({
     projectRoot,
     supabaseDir,
@@ -68,11 +66,6 @@ const makeProjectHome = Effect.gen(function* () {
     projectLinkPath,
     projectLocalVersionsPath,
     ensureProjectHomeDir,
-    stackDir,
-    stackStatePath: (name: string) => path.join(stackDir(name), "state.json"),
-    stackMetadataPath: (name: string) => path.join(stackDir(name), "stack.json"),
-    stackDataDir: (name: string) => path.join(stackDir(name), "data"),
-    stackLogsDir: (name: string) => path.join(stackDir(name), "logs"),
   });
 });
 

@@ -81,6 +81,15 @@ export interface LegacyPgConnInput {
   readonly suggestionContext?: LegacyConnectSuggestionContext;
 }
 
+/** A parameter value supported by the legacy extended-protocol batch path. */
+export type LegacyDbBatchValue = string | ReadonlyArray<string> | null;
+
+/** One statement in a legacy extended-protocol batch. */
+export interface LegacyDbBatchStatement {
+  readonly sql: string;
+  readonly params?: ReadonlyArray<LegacyDbBatchValue>;
+}
+
 /**
  * An open Postgres session. Scoped: the owning `connect` call closes the
  * underlying connection when its `Scope` closes.
@@ -88,6 +97,19 @@ export interface LegacyPgConnInput {
 export interface LegacyDbSession {
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
+  /**
+   * Run statements as one extended-protocol batch with a single final Sync.
+   * On failure, {@link LegacyDbExecError.statementIndex} is the number of
+   * statements that completed before the error.
+   *
+   * A batch runs on its own pooled connection, which the driver checks out per
+   * call. Failing to acquire it raises `LegacyDbConnectError` (a connection-setup
+   * failure, surfaced verbatim — not masked as an exec error), consistent with
+   * {@link queryRaw}; only the batch's own execution raises `LegacyDbExecError`.
+   */
+  readonly execBatch: (
+    statements: ReadonlyArray<LegacyDbBatchStatement>,
+  ) => Effect.Effect<void, LegacyDbExecError | LegacyDbConnectError>;
   /**
    * Run a parameterized SQL query and return the result rows as plain objects
    * keyed by the query's column names (snake_case is preserved — the driver

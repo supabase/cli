@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
-import { StateManager, projectStateManagerPathsFromRoot } from "@supabase/stack/effect";
+import { fillServiceVersionManifest, listStacks } from "@supabase/stack/effect";
+import { CliConfig } from "../../config/cli-config.service.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
@@ -115,9 +116,7 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
   const output = yield* Output;
   const analytics = yield* Analytics;
   const projectHome = yield* ProjectHome;
-  const stateManager = yield* StateManager.pipe(
-    Effect.provide(StateManager.make(projectStateManagerPathsFromRoot(projectHome.projectHomeDir))),
-  );
+  const cliConfig = yield* CliConfig;
 
   yield* output.intro("Link local project to Supabase");
 
@@ -125,7 +124,13 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
   const refreshed = yield* refreshLinkedProjectSnapshot(
     projectRef,
-    yield* stateManager.scanMetadata(),
+    (yield* listStacks({
+      cacheRoot: cliConfig.supabaseHome,
+      projectDir: projectHome.projectRoot,
+    })).map((stack) => ({
+      stackName: stack.name,
+      services: fillServiceVersionManifest(stack.versions),
+    })),
   );
   const linkedProject = refreshed.linkedProject;
 

@@ -15,6 +15,8 @@ export const excludedStackServices = [
 ] as const;
 
 export type ExcludedStackService = (typeof excludedStackServices)[number];
+export const isExcludedStackService = (value: string): value is ExcludedStackService =>
+  excludedStackServices.some((candidate) => candidate === value);
 export const startModes = ["native", "auto", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 

@@ -10,6 +10,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -29,6 +30,7 @@ import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.t
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
+  type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import {
   LegacyDbAdvisorsFailOnError,
@@ -103,8 +105,8 @@ function mockConnection(opts: {
 }) {
   const execs: Array<string> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -123,7 +125,12 @@ function mockConnection(opts: {
             }
             return Effect.succeed(opts.rows ?? []);
           }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   return {
     layer,

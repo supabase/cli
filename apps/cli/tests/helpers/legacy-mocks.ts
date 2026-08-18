@@ -17,6 +17,11 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
+import { LegacyDbExecError } from "../../src/legacy/shared/legacy-db-connection.errors.ts";
+import type {
+  LegacyDbBatchStatement,
+  LegacyDbSession,
+} from "../../src/legacy/shared/legacy-db-connection.service.ts";
 import {
   LegacyCredentialDeleteError,
   LegacyDeleteTokenError,
@@ -670,6 +675,36 @@ export function mockLegacyPlatformApiService(
   } as ApiClient);
 
   return { layer, requests };
+}
+
+/**
+ * A `LegacyDbSession.execBatch` fake for mocks that only model statement-level
+ * behavior: it replays a batch's operations one at a time through the mock's own
+ * `exec` (no params) / `query` (params) fakes, and attaches the failing
+ * statement's index the way the real driver does. Mocks stay free of batch
+ * protocol details while `execs`/`queries` recordings and per-suite failure
+ * injection keep working for batched migration files.
+ */
+export function legacySequentialExecBatch(
+  session: Pick<LegacyDbSession, "exec" | "query">,
+): (statements: ReadonlyArray<LegacyDbBatchStatement>) => Effect.Effect<void, LegacyDbExecError> {
+  return (statements) =>
+    Effect.forEach(statements, ({ sql, params }, index) =>
+      (params === undefined ? session.exec(sql) : session.query(sql, params)).pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) =>
+          cause.statementIndex !== undefined
+            ? cause
+            : new LegacyDbExecError({
+                message: cause.message,
+                ...(cause.code === undefined ? {} : { code: cause.code }),
+                ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+                ...(cause.position === undefined ? {} : { position: cause.position }),
+                statementIndex: index,
+              }),
+        ),
+      ),
+    ).pipe(Effect.asVoid);
 }
 
 // ---------------------------------------------------------------------------

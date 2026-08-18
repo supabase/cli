@@ -40,6 +40,7 @@ import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-ap
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
 import {
+  type LegacyDbBatchStatement,
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../../../shared/legacy-db-connection.service.ts";
@@ -187,6 +188,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
   const dbExec: string[] = [];
+  const dbBatches: Array<ReadonlyArray<string>> = [];
   // Go's default `[db] shadow_port` (`legacy-db-config.toml-read.ts`'s
   // `DEFAULT_SHADOW_PORT`) — none of these tests override it. The migrations-
   // catalog resolution's shadow (CLI-1956) now ALSO connects through this same
@@ -205,6 +207,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
+        execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+          const sql = statements.map((statement) => statement.sql);
+          const failureIndex =
+            opts.applyFails === true
+              ? sql.findIndex((statement) => statement.startsWith("ALTER"))
+              : -1;
+          return failureIndex >= 0
+            ? Effect.fail({
+                _tag: "LegacyDbExecError",
+                message: "boom",
+                statementIndex: failureIndex,
+              } as never)
+            : Effect.sync(() => {
+                if (cfg.port !== SHADOW_PORT) {
+                  dbBatches.push(sql);
+                  dbExec.push(...sql);
+                }
+              });
+        },
         query: (sql: string) =>
           Effect.sync(() => {
             if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
@@ -358,6 +379,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out,
     child,
     dbExec,
+    dbBatches,
     cache,
     telemetry,
     localPostgresImageChecks,
@@ -1054,6 +1076,26 @@ describe("legacy db schema declarative sync integration", () => {
     },
   );
 
+  it.effect("--apply: batches the migration and history through the native session", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
+      expect(s.dbBatches).toContainEqual([
+        "ALTER TABLE a ADD COLUMN b int",
+        expect.stringContaining("supabase_migrations.schema_migrations"),
+      ]);
+      // No reset on success — the recovery reset's container-remove never ran.
+      expect(legacyLocalResetRemovedContainers(s.child.spawned)).toEqual([]);
+      expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("refuses a known implicit-extension load failure under --yes", () => {
     seedLegacyUuidDeclarative(tmp.current);
     const s = setup(tmp.current, {
@@ -1361,31 +1403,6 @@ describe("legacy db schema declarative sync integration", () => {
       expect(output).toContain("Found destructive changes");
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect(
-    "--apply: applies the migration natively (BEGIN … statements … COMMIT + history)",
-    () => {
-      seedDeclarative(tmp.current);
-      const s = setup(tmp.current, {
-        experimental: true,
-        diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
-        expect(s.dbExec).toContain("BEGIN");
-        expect(s.dbExec).toContain("ALTER TABLE a ADD COLUMN b int");
-        expect(s.dbExec).toContain("COMMIT");
-        expect(s.dbExec.some((q) => q.includes("supabase_migrations.schema_migrations"))).toBe(
-          true,
-        );
-        // No reset on success — the recovery reset's container-remove never ran.
-        expect(legacyLocalResetRemovedContainers(s.child.spawned)).toEqual([]);
-        expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
-          true,
-        );
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect("--name overrides the migration filename stem", () => {
     seedDeclarative(tmp.current);

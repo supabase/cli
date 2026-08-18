@@ -1,7 +1,12 @@
-import { planStackVersions, StateManager } from "@supabase/stack/effect";
+import {
+  fillServiceVersionManifest,
+  planStackVersions,
+  resolveStackSummary,
+} from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectHome } from "../../config/project-home.service.ts";
 import { ProjectLocalServiceVersions } from "../../config/project-local-service-versions.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -24,20 +29,26 @@ export const services = Effect.fnUntraced(function* () {
   const credentials = yield* Credentials;
   const projectLocalServiceVersions = yield* ProjectLocalServiceVersions;
   const projectLinkState = yield* ProjectLinkState;
-  const stateManager = yield* StateManager;
+  const projectHome = yield* ProjectHome;
   const commandRuntime = yield* CommandRuntime;
 
   const linkedStateExit = yield* projectLinkState.load.pipe(Effect.exit);
   const linkedState = Exit.isSuccess(linkedStateExit) ? linkedStateExit.value : Option.none();
   const accessToken = yield* credentials.getAccessToken;
   const localServiceVersions = yield* projectLocalServiceVersions.load;
-  const existingMetadata = yield* stateManager.readMetadata("default").pipe(
+  const existingSummary = yield* resolveStackSummary({
+    cacheRoot: cliConfig.supabaseHome,
+    projectDir: projectHome.projectRoot,
+    name: "default",
+  }).pipe(
     Effect.map(Option.some),
-    Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
+    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
   );
   const serviceVersionContext = planStackVersions({
     ...(Option.isSome(linkedState) ? { candidateBaseline: linkedState.value.versions } : {}),
-    ...(Option.isSome(existingMetadata) ? { pinnedBaseline: existingMetadata.value.services } : {}),
+    ...(Option.isSome(existingSummary)
+      ? { pinnedBaseline: fillServiceVersionManifest(existingSummary.value.versions) }
+      : {}),
     ...(Option.isSome(localServiceVersions)
       ? { localOverrides: localServiceVersions.value.versions }
       : {}),
