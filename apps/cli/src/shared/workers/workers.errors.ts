@@ -12,6 +12,42 @@ import {
  * output layer instead of by each command.
  */
 
+export class InvalidWorkerNameError extends Data.TaggedError("InvalidWorkerNameError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class UnknownWorkerRuntimeError extends Data.TaggedError("UnknownWorkerRuntimeError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class UnknownWorkerSizeError extends Data.TaggedError("UnknownWorkerSizeError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
+export class WorkerDirectoryExistsError extends Data.TaggedError("WorkerDirectoryExistsError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /**
  * `--source` names a directory it is not allowed to name. Worth its own error
  * because the destination is a directory `--force` will delete outright, so a

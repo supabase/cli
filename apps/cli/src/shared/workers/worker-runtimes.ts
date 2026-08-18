@@ -1,0 +1,130 @@
+/**
+ * The alpha envelope a worker is described by: which runtime it is built on,
+ * and how big an instance it runs as.
+ *
+ * Both are deliberately small closed sets. The Workers API takes `spec.size` as
+ * one opaque string (`2gb-1vcpu`) rather than independent cpu/memory dials, so
+ * the CLI offers exactly the sizes that string has values for and derives the
+ * vCPU count from the memory the user picked — one choice, not two that could
+ * be combined into a shape the platform does not run.
+ */
+
+/** A worker's runtime: its own Dockerfile, or one of the catalog base images. */
+export const WORKER_RUNTIMES = ["dockerfile", "node", "bun", "deno", "python", "sandbox"] as const;
+
+export type WorkerRuntime = (typeof WORKER_RUNTIMES)[number];
+
+/**
+ * The runtime a worker gets when nobody names one: what `new`'s prompt
+ * pre-selects, and what the classifier falls back to for a directory it does
+ * not recognize. Deno, because it is the runtime the rest of the Supabase CLI's
+ * function tooling assumes.
+ */
+export const DEFAULT_WORKER_RUNTIME: WorkerRuntime = "deno";
+
+function isWorkerRuntime(value: string): value is WorkerRuntime {
+  return (WORKER_RUNTIMES as ReadonlyArray<string>).includes(value);
+}
+
+/**
+ * The runtime a user (or a config file) named, case-insensitively — so the
+ * `Dockerfile` this CLI displays is accepted by `--runtime`, which would
+ * otherwise reject the one value it shows you. The canonical lowercase form is
+ * what gets recorded.
+ */
+export function parseWorkerRuntime(value: string): WorkerRuntime | undefined {
+  const canonical = value.trim().toLowerCase();
+  return isWorkerRuntime(canonical) ? canonical : undefined;
+}
+
+/** One-line description of each runtime, for `--runtime`'s prompt and help. */
+export const WORKER_RUNTIME_DESCRIPTIONS: Record<WorkerRuntime, string> = {
+  dockerfile: "Build the directory's own Dockerfile.",
+  node: "Node.js runtime (Web-standard fetch handler).",
+  bun: "Bun runtime (Web-standard fetch handler).",
+  deno: "Deno runtime (Web-standard fetch handler).",
+  python: "Python runtime (ASGI app).",
+  sandbox: "Bare sandbox environment; no HTTP handler.",
+};
+
+/**
+ * The only instance sizes the alpha envelope offers, denominated by memory.
+ * There is no resize — a different size later means a new worker, not a flag on
+ * `push`.
+ */
+export const WORKER_SIZES = ["2gb", "4gb"] as const;
+
+export type WorkerSize = (typeof WORKER_SIZES)[number];
+
+/** The first available option — what `new` records when `--size` is omitted. */
+export const DEFAULT_WORKER_SIZE: WorkerSize = "2gb";
+
+function isWorkerSize(value: string): value is WorkerSize {
+  return (WORKER_SIZES as ReadonlyArray<string>).includes(value);
+}
+
+/** As {@link parseWorkerRuntime}, for instance sizes. */
+export function parseWorkerSize(value: string): WorkerSize | undefined {
+  const canonical = value.trim().toLowerCase();
+  return isWorkerSize(canonical) ? canonical : undefined;
+}
+
+const VCPU_FOR_SIZE: Record<WorkerSize, number> = { "2gb": 1, "4gb": 2 };
+
+/** The vCPU count that comes with `size` — not independently choosable. */
+export function vcpuForSize(size: WorkerSize): number {
+  return VCPU_FOR_SIZE[size];
+}
+
+/** `spec.size` as the Workers API spells it: `2gb-1vcpu`. */
+export function apiSizeFor(size: WorkerSize): string {
+  return `${size}-${vcpuForSize(size)}vcpu`;
+}
+
+/**
+ * How a size reads in output: `2gb · 1 vCPU`. Takes the API's own spelling so a
+ * worker deployed at a size this CLI never offered still renders, verbatim,
+ * rather than being forced into the local enum.
+ */
+export function formatApiSize(apiSize: string): string {
+  const match = /^(\d+gb)-(\d+)vcpu$/.exec(apiSize.trim().toLowerCase());
+  if (match === null) {
+    return apiSize;
+  }
+  return `${match[1]} · ${match[2]} vCPU`;
+}
+
+/**
+ * `spec.exposure`: whether the worker is reachable over HTTP. Every catalog
+ * runtime and every Dockerfile build serves traffic; a bare `sandbox` has no
+ * HTTP handler at all, so it is deployed private and reached another way.
+ */
+export function exposureFor(runtime: WorkerRuntime): "public" | "private" {
+  return runtime === "sandbox" ? "private" : "public";
+}
+
+/**
+ * Worker names end up in hostnames, so they are DNS labels — the same pattern
+ * the Management API validates the `:name` path parameter against.
+ */
+const WORKER_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * `root` is the one name a worker cannot have: `[workers] root` is the
+ * project-wide scalar in the same table, so `[workers.root]` would be a string
+ * key holding a table and the whole `config.toml` stops parsing — taking every
+ * other worker command down with it. Refuse it at the door rather than let the
+ * CLI write a file it can no longer read.
+ */
+const RESERVED_WORKER_NAMES = ["root"];
+
+const workerNameRequirement =
+  "Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.";
+
+/** `undefined` when `name` is a valid worker name, else why it is not. */
+export function validateWorkerNameMessage(name: string): string | undefined {
+  if (RESERVED_WORKER_NAMES.includes(name)) {
+    return `"${name}" is reserved by the [workers] table's own \`${name}\` key.`;
+  }
+  return WORKER_NAME_PATTERN.test(name) ? undefined : workerNameRequirement;
+}

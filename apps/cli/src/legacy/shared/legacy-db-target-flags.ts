@@ -139,7 +139,9 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "release-channel",
   "remove-domains",
   "role",
+  "runtime",
   "size",
+  "source",
   "status",
   "sub",
   "swift-access-control",
@@ -177,7 +179,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
 export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
-  "p", // --password / -p (migration list, db push/pull/dump/remote)
+  "p", // --password / -p (migration list, db push/pull/dump/remote); --source / -p (workers new)
   "j", // --jobs / -j (storage cp)
   "f", // --file / -f (db dump/diff/query, db schema declarative sync)
   "t", // --template / -t (test new); --type / -t (sso add); --timestamp / -t (backups restore)
