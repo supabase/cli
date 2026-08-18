@@ -5,6 +5,7 @@ import {
   V2CreateWorkerUploadOutput,
   V2DeployAWorkerOutput,
   V2GetAWorkerOutput,
+  V2ListAllWorkersOutput,
   type ApiClient,
 } from "@supabase/api/effect";
 import { Effect, Option, Schedule, Schema } from "effect";
@@ -148,6 +149,33 @@ const decodeBody = <A, I>(
         }),
     ),
   );
+
+export const listWorkers = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
+  const operation = "list workers";
+  const response = yield* api
+    .executeRaw(operationDefinitions.v2ListAllWorkers, { ref: projectRef })
+    .pipe(Effect.mapError(mapRequestError(operation)));
+
+  if (response.status === 404) {
+    return yield* Effect.fail(
+      new WorkersUnavailableError({
+        detail: `Workers are not available for project ${projectRef}.`,
+        suggestion: workersSuggestion,
+      }),
+    );
+  }
+  if (response.status !== 200) {
+    return yield* unexpectedStatus({
+      operation,
+      status: response.status,
+      body: yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+    });
+  }
+
+  const body = yield* response.json.pipe(Effect.mapError(mapRequestError(operation)));
+  const decoded = yield* decodeBody(V2ListAllWorkersOutput, operation, body, response.status);
+  return decoded.data.map(toWorkerRecord);
+});
 
 /**
  * One worker, or `None` when the API has no record of it — which is also what a

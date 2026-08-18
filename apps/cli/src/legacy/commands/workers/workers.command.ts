@@ -1,4 +1,5 @@
 import { Command } from "effect/unstable/cli";
+import { legacyWorkersListCommand } from "./list/list.command.ts";
 import { legacyWorkersNewCommand } from "./new/new.command.ts";
 import { legacyWorkersPushCommand } from "./push/push.command.ts";
 
@@ -7,5 +8,9 @@ export const legacyWorkersCommand = Command.make("workers").pipe(
     "Manage Supabase Workers — containers that run your code next to your project, deployed from supabase/workers/<name>/.",
   ),
   Command.withShortDescription("Manage Supabase Workers"),
-  Command.withSubcommands([legacyWorkersNewCommand, legacyWorkersPushCommand]),
+  Command.withSubcommands([
+    legacyWorkersNewCommand,
+    legacyWorkersPushCommand,
+    legacyWorkersListCommand,
+  ]),
 );
