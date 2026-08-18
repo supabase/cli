@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { update } from "./update.handler.ts";
 import {
   mockOutput,
@@ -33,7 +34,7 @@ describe("update handler", () => {
           Effect.tap(
             Effect.promise(async () => {
               const document = await fixture.readDocument();
-              expect(document?.launch?.versions.postgres).toBe("17.6.1.158");
+              expect(document?.launch?.versions).toEqual(DEFAULT_VERSIONS);
             }),
           ),
           Effect.ensuring(Effect.promise(() => fixture.dispose())),
