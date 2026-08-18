@@ -21,6 +21,7 @@ import { appendTomlSection, tomlKey } from "./toml-section.ts";
 export interface WorkerEntry {
   readonly runtime?: string;
   readonly size?: string;
+  readonly instances?: number;
   readonly source?: string;
 }
 
@@ -54,6 +55,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
+ * A count only counts if it is a non-negative whole number. Anything else is
+ * dropped so `push` falls back to its own default; the config schema is what
+ * tells the user the value was wrong.
+ */
+const instanceCountOrUndefined = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+
+/**
  * The decoded `[workers]` section as per-worker tables. Anything that is not an
  * object is dropped rather than read as a worker named after it.
  */
@@ -76,6 +85,7 @@ export function readWorkersSection(workers: unknown): WorkersSection {
     entries[key] = {
       runtime: stringOrUndefined(value["runtime"]),
       size: stringOrUndefined(value["size"]),
+      instances: instanceCountOrUndefined(value["instances"]),
       source: stringOrUndefined(value["source"]),
     };
   }
