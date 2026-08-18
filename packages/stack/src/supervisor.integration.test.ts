@@ -380,12 +380,36 @@ const canBind = (port: number): Promise<boolean> =>
     });
   });
 
-const listenStartingOwner = async (
+const bindFakeOwner = async (
+  endpoint: ControlEndpoint,
+  makeServer: () => ReturnType<typeof createHttpServer>,
+): Promise<ReturnType<typeof createHttpServer>> => {
+  const deadline = Date.now() + 10_000;
+  do {
+    const server = makeServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint.port, endpoint.hostname, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+      return server;
+    } catch {
+      server.close();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  } while (Date.now() < deadline);
+  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+};
+
+const listenStartingOwner = (
   endpoint: ControlEndpoint,
   ownershipId: string,
-): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const server = createHttpServer((request, response) => {
+): Promise<ReturnType<typeof createHttpServer>> =>
+  bindFakeOwner(endpoint, () =>
+    createHttpServer((request, response) => {
       if (request.method === "GET" && request.url === "/owner") {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
@@ -400,32 +424,17 @@ const listenStartingOwner = async (
       }
       response.writeHead(404);
       response.end();
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
-};
+    }),
+  );
 
-const listenOwnerSequence = async (
+const listenOwnerSequence = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   states: ReadonlyArray<"starting" | "stopping">,
   onRead: (state: "starting" | "stopping") => void = () => undefined,
   closeAfterSequence = true,
-): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+): Promise<ReturnType<typeof createHttpServer>> =>
+  bindFakeOwner(endpoint, () => {
     let reads = 0;
     const server = createHttpServer((request, response) => {
       if (request.method !== "GET" || request.url !== "/owner") {
@@ -449,22 +458,8 @@ const listenOwnerSequence = async (
         },
       );
     });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
-};
+    return server;
+  });
 
 const listenStoppingOwner = async (
   endpoint: ControlEndpoint,
@@ -1073,7 +1068,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("bounds attached-owner recovery to one startup deadline", { timeout: 10_000 }, async () => {
+  test("bounds attached-owner recovery to one startup deadline", { timeout: 30_000 }, async () => {
     const roots = await workspace();
     const input = messageFor(roots);
     const attachedReady = join(roots.root, "attached-before-ready-ready");

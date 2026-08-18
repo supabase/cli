@@ -134,6 +134,34 @@ export const closeExternal = (server: Server): Promise<void> =>
     server.close((error) => (error === undefined ? resolve() : reject(error)));
   });
 
+/**
+ * Control endpoints project two identity-hash bytes into `CONTROL_PORT_RANGE`,
+ * so parallel test files can land on a port already owned by another live
+ * stack's control server. Acquires control for a fresh directory under `base`,
+ * retrying with a new directory (a new path-seeded identity, so a new port) on
+ * a conflict until a wall-clock deadline, rethrowing the last conflict.
+ */
+export const acquireWorkspaceControl = (base: string, prefix = "workspace") =>
+  Effect.gen(function* () {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const workspace = mkdtempSync(join(base, `${prefix}-`));
+      const environment = yield* ensureEnvironment(workspace);
+      const stackId = deriveStackId(environment.identity, "default");
+      const acquired = yield* acquireControl({ stackId }).pipe(
+        Effect.map((ownership) => ({ ownership })),
+        Effect.catch((error) =>
+          error._tag === "ControlAddressConflictError" && Date.now() < deadline
+            ? Effect.succeed(undefined)
+            : Effect.fail(error),
+        ),
+      );
+      if (acquired !== undefined) {
+        return { workspace, environment, stackId, ownership: acquired.ownership };
+      }
+    }
+  });
+
 export const startWithOwner = (
   manager: ManagedStackManagerShape,
   workspacePath: string,
