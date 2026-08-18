@@ -470,7 +470,7 @@ const runManaged = (
     ) {
       return yield* Effect.fail(
         new SupervisorStartError({
-          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}`,
+          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
         }),
       );
     }

@@ -58,5 +58,10 @@ const runtime =
 `stopDaemon` and the discovery helpers delegate to the managed lifecycle
 facade. No CLI metadata file or PID polling is involved.
 
+After a managed supervisor claims a stack, its persisted Docker, Podman, or
+native selection remains pinned even if startup later fails. Retry after
+restoring or starting that runtime; delete and recreate the stack to choose a
+different execution mode. Deletion removes the stack's managed data.
+
 For the end-to-end lifecycle, identity, ports, service execution, transport,
 compiled-Bun re-entry, and testing boundary, see [How `@supabase/stack` works](docs/architecture.md).

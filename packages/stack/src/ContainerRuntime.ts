@@ -35,7 +35,7 @@ export const validateStackRuntime = (
             ? Effect.succeed(selection)
             : Effect.fail(
                 new StackBuildError({
-                  detail: `Docker mode requires a usable ${selection.containerRuntime} runtime`,
+                  detail: `Docker mode requires a usable ${selection.containerRuntime} runtime. Restore or start the persisted ${selection.containerRuntime} runtime and retry, or delete and recreate the stack (removing its managed data) to choose another execution mode.`,
                   reason: "docker_not_running",
                 }),
               ),

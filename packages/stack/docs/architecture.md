@@ -231,7 +231,11 @@ selects exactly one execution mode: a usable Docker daemon is preferred, then a
 usable Podman service; if neither responds, the stack uses native mode. An
 explicit `mode: "native"` rejects Docker-only services, while explicit `mode:
 "docker"` requires a usable container runtime. Preparation never falls back to
-the other mode after that choice.
+the other mode after that choice. Once a managed supervisor claims and persists
+that selection, it remains pinned even when startup later fails during image
+pull, native download, graph build, or readiness. Retries restore or start the
+persisted runtime and reuse the same mode; selecting another mode requires
+deleting and recreating the stack, which removes its managed data.
 
 The `StackBuilder` turns planned resolutions into one process-compose graph,
 without eagerly materializing every graph resource. Container resources are

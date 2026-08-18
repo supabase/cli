@@ -50,7 +50,7 @@ export class DaemonServer extends Context.Service<
         const server = yield* HttpServer.HttpServer;
         const shutdownDeferred = yield* Deferred.make<void>();
         const textEncoder = new TextEncoder();
-        const errorResponse = (body: DaemonErrorResponse, status: 400 | 404 | 500) =>
+        const errorResponse = (body: DaemonErrorResponse, status: 400 | 404 | 409 | 500) =>
           HttpServerResponse.jsonUnsafe(body, { status });
         const notFoundResponse = (name: string) =>
           errorResponse(
@@ -75,6 +75,15 @@ export class DaemonServer extends Context.Service<
               ...(reason === undefined ? {} : { reason }),
             },
             500,
+          );
+        const notRunningResponse = (phase: string) =>
+          errorResponse(
+            {
+              code: "STACK_NOT_RUNNING",
+              error: `Stack is not running (phase: ${phase})`,
+              phase,
+            },
+            409,
           );
         const invalidReloadPayloadResponse = () =>
           errorResponse(
@@ -333,6 +342,9 @@ export class DaemonServer extends Context.Service<
               Effect.catchTag("StackBuildError", (e) =>
                 Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
+              Effect.catchTag("StackNotRunningError", (e) =>
+                Effect.succeed(notRunningResponse(e.phase)),
+              ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
               ),
@@ -401,6 +413,9 @@ export class DaemonServer extends Context.Service<
               Effect.catchTag("StackBuildError", (e) =>
                 Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
+              Effect.catchTag("StackNotRunningError", (e) =>
+                Effect.succeed(notRunningResponse(e.phase)),
+              ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
               ),
@@ -428,6 +443,9 @@ export class DaemonServer extends Context.Service<
               Effect.catchTag("StackBuildError", (e) =>
                 Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
+              Effect.catchTag("StackNotRunningError", (e) =>
+                Effect.succeed(notRunningResponse(e.phase)),
+              ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
               ),
@@ -454,6 +472,9 @@ export class DaemonServer extends Context.Service<
               ),
               Effect.catchTag("StackBuildError", (e) =>
                 Effect.succeed(buildErrorResponse(e.detail, e.reason)),
+              ),
+              Effect.catchTag("StackNotRunningError", (e) =>
+                Effect.succeed(notRunningResponse(e.phase)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),

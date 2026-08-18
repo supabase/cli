@@ -3,7 +3,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { DaemonErrorResponseSchema } from "./DaemonProtocol.ts";
-import { StackBuildError, StackReadinessError } from "./errors.ts";
+import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
@@ -138,7 +138,11 @@ const failDaemonResponse = (
   fallbackName: string,
 ): Effect.Effect<
   never,
-  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+  | ServiceNotFoundError
+  | ServiceReadyError
+  | StackBuildError
+  | StackNotRunningError
+  | StackReadinessError
 > =>
   Effect.gen(function* () {
     const body = yield* dieOnBodyDecodeError(
@@ -166,6 +170,8 @@ const failDaemonResponse = (
           timeoutMs: body.timeoutMs ?? 0,
           detail: body.error,
         });
+      case "STACK_NOT_RUNNING":
+        return yield* new StackNotRunningError({ phase: body.phase ?? "unknown" });
     }
   });
 
@@ -177,6 +183,25 @@ const expectDaemonOk = (
 ): Effect.Effect<
   void,
   ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
+  response.status >= 200 && response.status < 300
+    ? Effect.void
+    : failDaemonResponse(endpoint, path, response, fallbackName).pipe(
+        Effect.catchTag("StackNotRunningError", (error) => Effect.die(error)),
+      );
+
+const expectMutatingDaemonOk = (
+  endpoint: ControlEndpoint,
+  path: string,
+  response: HttpClientResponse.HttpClientResponse,
+  fallbackName: string,
+): Effect.Effect<
+  void,
+  | ServiceNotFoundError
+  | ServiceReadyError
+  | StackBuildError
+  | StackNotRunningError
+  | StackReadinessError
 > =>
   response.status >= 200 && response.status < 300
     ? Effect.void
@@ -386,7 +411,7 @@ export const RemoteStack = {
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
                 });
-                yield* expectDaemonOk(endpoint, path, response, name);
+                yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
@@ -413,7 +438,7 @@ export const RemoteStack = {
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
                 });
-                yield* expectDaemonOk(endpoint, path, response, name);
+                yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
@@ -426,7 +451,7 @@ export const RemoteStack = {
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts ?? {}),
                 });
-                yield* expectDaemonOk(endpoint, path, response, "edge-runtime");
+                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
               }),
             ),
 
@@ -439,7 +464,7 @@ export const RemoteStack = {
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts),
                 });
-                yield* expectDaemonOk(endpoint, path, response, "edge-runtime");
+                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
               }),
             ),
 

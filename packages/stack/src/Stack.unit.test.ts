@@ -7,7 +7,7 @@ import { chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
-import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { StackBuildError } from "./errors.ts";
@@ -314,6 +314,97 @@ describe("Stack", () => {
     );
   });
 
+  it.live("merges overlapping function and Edge Runtime reloads", () => {
+    const runtimeRoot = mkdtempSync(join(tmpdir(), "supabase-functions-reload-race-"));
+    const initialBundle = functionsBundle(runtimeRoot, "initial-secret");
+    const replacementBundle = functionsBundle(runtimeRoot, "replacement-secret");
+    const config = {
+      ...edgeRuntimeConfig,
+      projectDir: runtimeRoot,
+      runtimeRoot,
+      functions: initialBundle,
+      postgrest: false,
+      auth: false,
+      servicePolicies: {
+        ...edgeRuntimeConfig.servicePolicies,
+        postgrest: "off",
+        auth: "off",
+        "edge-runtime": "lazy",
+      },
+    } satisfies ResolvedStackConfig;
+    const graph = Effect.runSync(
+      buildGraph([
+        { name: "postgres", command: process.execPath, restart: "unless-stopped" },
+        { name: "edge-runtime", command: process.execPath, restart: "unless-stopped" },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.sync(() => {
+          return {
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([
+              ["postgres", { visibility: "public" as const }],
+              ["edge-runtime", { visibility: "public" as const }],
+            ]),
+          };
+        }),
+    });
+    const preparationStarted = Deferred.makeUnsafe<void>();
+    const allowPreparation = Deferred.makeUnsafe<void>();
+    let blockNextSpawn = false;
+    const resolver = mockBinaryResolver();
+    const spawner = mockChildProcessSpawner({
+      beforeSpawn: () => {
+        if (!blockNextSpawn) return Effect.void;
+        blockNextSpawn = false;
+        return Deferred.succeed(preparationStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowPreparation)),
+        );
+      },
+    });
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+      Layer.provide(spawner.layer),
+      Layer.provide(NodeServices.layer),
+    );
+    const readRuntimeConfig = Effect.promise(() =>
+      readFile(functionsRuntimeConfigPath(runtimeRoot), "utf8").then((contents) =>
+        JSON.parse(contents),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      blockNextSpawn = true;
+
+      const functionsReload = yield* stack
+        .reloadFunctions({ functions: replacementBundle })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(preparationStarted);
+
+      // Both requests join the same gated preparation before either can commit.
+      // The later Edge Runtime commit must preserve the Functions update.
+      const edgeReload = yield* stack
+        .reloadEdgeRuntime({ edgeRuntime: { env: { CONCURRENT: "edge-value" } } })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(allowPreparation, undefined);
+      yield* Fiber.join(functionsReload);
+      yield* Fiber.join(edgeReload);
+
+      expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
+      expect((yield* stack.getState("edge-runtime")).status).toBe("Healthy");
+      yield* stack.dispose();
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      Effect.timeout("5 seconds"),
+    );
+  });
+
   it.effect("getInfo returns valid JWT tokens", () => {
     const { layer } = setupLayer();
 
@@ -541,14 +632,26 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("startService fails with ServiceNotFoundError for unknown service", () => {
-    const { layer } = setupLayer();
+  it.live("startService fails with ServiceNotFoundError for unknown service", () => {
+    const config = {
+      ...defaultConfig,
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        postgrest: "lazy",
+        auth: "lazy",
+      },
+    } satisfies ResolvedStackConfig;
+    const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
+      yield* stack.start();
       const exit = yield* stack.startService("nonexistent").pipe(Effect.exit);
 
       expect(exit._tag).toBe("Failure");
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({ _tag: "ServiceNotFoundError" });
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -1052,18 +1155,35 @@ describe("Stack", () => {
 
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
-        const activator = yield* StackServiceActivator;
         yield* stack.start();
-        const activation = yield* activator
-          .activate("auth")
+        const activation = yield* stack
+          .startService("auth")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(preparationStarted);
+        const secondActivation = yield* stack
+          .startService("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
 
         const disposing = yield* stack.dispose().pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(disposed);
         yield* Fiber.join(disposing);
 
-        expect(Exit.isFailure(yield* Fiber.await(activation))).toBe(true);
+        const activationExit = yield* Fiber.await(activation);
+        const secondActivationExit = yield* Fiber.await(secondActivation);
+        expect(Exit.isFailure(activationExit)).toBe(true);
+        expect(Exit.isFailure(secondActivationExit)).toBe(true);
+        if (Exit.isFailure(activationExit)) {
+          expect(Cause.squash(activationExit.cause)).toMatchObject({
+            _tag: "StackBuildError",
+            detail: "Stack disposed during asset preparation",
+          });
+        }
+        if (Exit.isFailure(secondActivationExit)) {
+          expect(Cause.squash(secondActivationExit.cause)).toMatchObject({
+            _tag: "StackBuildError",
+            detail: "Stack disposed during asset preparation",
+          });
+        }
         expect((yield* stack.getState("auth")).status).not.toBe("Downloading");
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),

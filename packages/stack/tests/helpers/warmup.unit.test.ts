@@ -29,7 +29,7 @@ function makeResult(type: "binary" | "docker"): PrefetchResult {
 }
 
 describe("stack e2e warmup", () => {
-  test("warms Docker resources once when Docker is available", async () => {
+  test("warms native and Docker resources when Docker is available", async () => {
     const calls: Array<PrefetchOptions | undefined> = [];
     const { logger } = makeLogger();
 
@@ -42,7 +42,7 @@ describe("stack e2e warmup", () => {
       },
     });
 
-    expect(calls).toEqual([{ mode: "docker" }]);
+    expect(calls).toEqual([{ mode: "native" }, { mode: "docker" }]);
   });
 
   test("skips docker image warmup when Docker is unavailable", async () => {
@@ -58,7 +58,7 @@ describe("stack e2e warmup", () => {
       },
     });
 
-    expect(calls).toEqual([undefined]);
+    expect(calls).toEqual([{ mode: "native" }]);
   });
 
   test("can fail fast when warmup is required", async () => {
@@ -75,6 +75,24 @@ describe("stack e2e warmup", () => {
       }),
     ).rejects.toThrow("pull failed");
     expect(warn.some((message) => message.includes("Warmup failed"))).toBe(true);
+  });
+
+  test("continues to the Docker warmup after a best-effort native failure", async () => {
+    const calls: Array<PrefetchOptions | undefined> = [];
+    const { warn, logger } = makeLogger();
+
+    await warmStackE2eDependencies({
+      hasDockerDaemon: () => true,
+      logger,
+      prefetch: async (options?: PrefetchOptions) => {
+        calls.push(options);
+        if (options?.mode === "native") throw new Error("native unavailable");
+        return makeResult("docker");
+      },
+    });
+
+    expect(calls).toEqual([{ mode: "native" }, { mode: "docker" }]);
+    expect(warn.some((message) => message.includes("native unavailable"))).toBe(true);
   });
 
   test("only warns when warmup is best effort", async () => {

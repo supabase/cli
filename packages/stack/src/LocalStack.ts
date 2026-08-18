@@ -662,6 +662,18 @@ export const localStackLayer = (
             }
             disposed = true;
             yield* Ref.set(phaseRef, "stopping");
+            const preparationError = new StackBuildError({
+              detail: "Stack disposed during asset preparation",
+            });
+            if (planDeferred !== undefined) {
+              yield* Deferred.fail(planDeferred, preparationError);
+            }
+            for (const deferred of preparationInFlight.values()) {
+              yield* Deferred.fail(deferred, preparationError);
+            }
+            if (runtimeDeferred !== undefined) {
+              yield* Deferred.fail(runtimeDeferred, preparationError);
+            }
             yield* Scope.close(preparationScope, Exit.void);
             yield* cleanupLocalStackResources({
               stop: () =>
@@ -876,15 +888,16 @@ export const localStackLayer = (
             yield* requireMutable("reload functions");
             yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
-            const currentBundle = yield* Ref.get(functionsBundleRef);
-            const nextBundle =
+            const requestedBundle =
               opts?.functions === undefined
-                ? currentBundle
+                ? undefined
                 : yield* decodeFunctionsBundle(opts.functions);
             yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
               yield* requireRunningPhase;
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle = requestedBundle ?? currentBundle;
               yield* configureFunctions(config, nextBundle);
               yield* Ref.set(functionsBundleRef, nextBundle);
               const runtime = yield* ensureRuntime;
@@ -904,16 +917,20 @@ export const localStackLayer = (
             yield* requireMutable("reload Edge Runtime");
             yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
-            const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
-            const currentBundle = yield* Ref.get(functionsBundleRef);
-            const nextBundle =
+            if (opts.edgeRuntime.enabled === false) {
+              return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+            }
+            const requestedBundle =
               opts.functions === undefined
-                ? currentBundle
+                ? undefined
                 : yield* decodeFunctionsBundle(opts.functions);
             yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload Edge Runtime");
               yield* requireRunningPhase;
+              const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle = requestedBundle ?? currentBundle;
               const prepared = yield* ensurePlanned;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder.build(nextConfig, prepared);

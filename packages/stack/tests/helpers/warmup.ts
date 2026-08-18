@@ -29,14 +29,19 @@ export async function warmStackE2eDependencies(
   const shouldFailOnError = options.failOnError ?? false;
   const dockerAvailable = (options.hasDockerDaemon ?? hasDockerDaemon)();
 
-  try {
-    await prefetchDeps(dockerAvailable ? { mode: "docker" } : undefined);
-  } catch (error) {
-    logger.warn(
-      `[stack-e2e] Warmup failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    if (shouldFailOnError) {
-      throw error;
+  const modes: PrefetchOptions[] = [{ mode: "native" }];
+  if (dockerAvailable) modes.push({ mode: "docker" });
+
+  for (const mode of modes) {
+    try {
+      await prefetchDeps(mode);
+    } catch (error) {
+      logger.warn(
+        `[stack-e2e] Warmup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      if (shouldFailOnError) {
+        throw error;
+      }
     }
   }
 }

@@ -4,7 +4,7 @@ import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Result, Stream } fro
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
-import { StackBuildError, StackReadinessError } from "./errors.ts";
+import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
 import type { FunctionsReloadConfig, ResolvedFunctionsBundle } from "./functions.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type EdgeRuntimeReloadConfig, type StackInfo } from "./Stack.ts";
@@ -85,6 +85,7 @@ function mockStack(
     readonly waitReadyBuildReason?: "invalid_config" | "docker_not_running" | "asset_preparation";
     readonly waitReadyTimeoutMs?: number;
     readonly restartServiceReadyError?: string;
+    readonly notRunningPhase?: string;
   } = {},
 ) {
   let stopped = false;
@@ -107,25 +108,27 @@ function mockStack(
     startService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : options.startServiceBuildError !== undefined
-          ? Effect.fail(
-              new StackBuildError({
-                detail: options.startServiceBuildError,
-                ...(options.startServiceBuildReason === undefined
-                  ? {}
-                  : { reason: options.startServiceBuildReason }),
-              }),
-            )
-          : options.startServiceReadyError !== undefined
+        : options.notRunningPhase !== undefined
+          ? Effect.fail(new StackNotRunningError({ phase: options.notRunningPhase }))
+          : options.startServiceBuildError !== undefined
             ? Effect.fail(
-                new ServiceReadyError({
-                  name,
-                  reason: options.startServiceReadyError,
+                new StackBuildError({
+                  detail: options.startServiceBuildError,
+                  ...(options.startServiceBuildReason === undefined
+                    ? {}
+                    : { reason: options.startServiceBuildReason }),
                 }),
               )
-            : Effect.sync(() => {
-                serviceCalls.push(`start:${name}`);
-              }),
+            : options.startServiceReadyError !== undefined
+              ? Effect.fail(
+                  new ServiceReadyError({
+                    name,
+                    reason: options.startServiceReadyError,
+                  }),
+                )
+              : Effect.sync(() => {
+                  serviceCalls.push(`start:${name}`);
+                }),
     stopService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -135,26 +138,32 @@ function mockStack(
     restartService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : options.restartServiceReadyError !== undefined
-          ? Effect.fail(
-              new ServiceReadyError({
-                name,
-                reason: options.restartServiceReadyError,
+        : options.notRunningPhase !== undefined
+          ? Effect.fail(new StackNotRunningError({ phase: options.notRunningPhase }))
+          : options.restartServiceReadyError !== undefined
+            ? Effect.fail(
+                new ServiceReadyError({
+                  name,
+                  reason: options.restartServiceReadyError,
+                }),
+              )
+            : Effect.sync(() => {
+                serviceCalls.push(`restart:${name}`);
               }),
-            )
-          : Effect.sync(() => {
-              serviceCalls.push(`restart:${name}`);
-            }),
     reloadFunctions: (config) =>
-      Effect.sync(() => {
-        functionReloads.push(config ?? {});
-        serviceCalls.push("reload-functions");
-      }),
+      options.notRunningPhase !== undefined
+        ? Effect.fail(new StackNotRunningError({ phase: options.notRunningPhase }))
+        : Effect.sync(() => {
+            functionReloads.push(config ?? {});
+            serviceCalls.push("reload-functions");
+          }),
     reloadEdgeRuntime: (config) =>
-      Effect.sync(() => {
-        edgeRuntimeReloads.push(config);
-        serviceCalls.push("reload-edge-runtime");
-      }),
+      options.notRunningPhase !== undefined
+        ? Effect.fail(new StackNotRunningError({ phase: options.notRunningPhase }))
+        : Effect.sync(() => {
+            edgeRuntimeReloads.push(config);
+            serviceCalls.push("reload-edge-runtime");
+          }),
     getState: (name: string) => {
       const match = MOCK_STATES.find((s) => s.name === name);
       return match ? Effect.succeed(match) : Effect.fail(new ServiceNotFoundError({ name }));
@@ -563,6 +572,38 @@ describe("RemoteStack integration", () => {
       expect(restartError._tag).toBe("ServiceReadyError");
       if (restartError._tag === "ServiceReadyError") {
         expect(restartError.reason).toBe("restart failed readiness");
+      }
+    } finally {
+      await failingClient?.dispose();
+      await failingServer.dispose();
+    }
+  });
+
+  test("preserves StackNotRunningError across mutating daemon operations", async () => {
+    const failingMock = mockStack({ notRunningPhase: "stopped" });
+    const failingServer = ManagedRuntime.make(buildServerLayer(failingMock));
+    let failingClient: ManagedRuntime.ManagedRuntime<Stack, never> | undefined;
+    try {
+      const daemon = await failingServer.runPromise(DaemonServer);
+      const addr = daemon.address;
+      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+      failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
+
+      const operations = [
+        (stack: Stack["Service"]) => stack.startService("auth"),
+        (stack: Stack["Service"]) => stack.restartService("auth"),
+        (stack: Stack["Service"]) => stack.reloadFunctions(),
+        (stack: Stack["Service"]) =>
+          stack.reloadEdgeRuntime({ edgeRuntime: { policy: "oneshot" } }),
+      ];
+      for (const operation of operations) {
+        const error = await failingClient.runPromise(
+          Effect.flatMap(Stack, operation).pipe(Effect.flip),
+        );
+        expect(error).toBeInstanceOf(StackNotRunningError);
+        expect(error._tag).toBe("StackNotRunningError");
+        if (error._tag === "StackNotRunningError") expect(error.phase).toBe("stopped");
       }
     } finally {
       await failingClient?.dispose();
