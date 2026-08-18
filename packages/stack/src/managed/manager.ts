@@ -41,10 +41,15 @@ import {
   type WorkspaceDiscovery,
 } from "./environment.ts";
 import { GitConfigStore, inspectWorkspace } from "./git.ts";
-import { updateGitCheckoutLocationOwned } from "./identity.ts";
+import {
+  canonicalizeManagedWorkspacePathWithFileSystem,
+  readOrdinaryWorkspaceIdentityWithFileSystem,
+  updateGitCheckoutLocationOwned,
+} from "./identity.ts";
 import {
   ManagedExactPortOccupiedError,
   InvalidManagedStackNameError,
+  InvalidManagedIdentityError,
   ManagedPortAllocationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
@@ -381,6 +386,59 @@ const makeManager = (
     const store = yield* makeStackStore(stateRoot);
     const lifecycleLock = Semaphore.makeUnsafe(1);
 
+    const validateOrdinaryWorkspaceIdentity = (
+      discovery: WorkspaceDiscovery,
+    ): Effect.Effect<void, ManagedStackManagerError> =>
+      Effect.gen(function* () {
+        if (discovery.workspace.kind !== "folder") return;
+        const listings = yield* store.list();
+        const matching = listings
+          .filter(isHealthyDocument)
+          .map((listing) => listing.document)
+          .filter(
+            (document) =>
+              document.identity.workspaceId === discovery.identity.workspaceId &&
+              document.identity.checkoutId === discovery.identity.checkoutId &&
+              document.identity.contextId === discovery.identity.contextId &&
+              document.identity.localProjectKey === discovery.identity.localProjectKey,
+          );
+        for (const document of matching) {
+          const persistedPath = document.workspace.path;
+          const persistedInfo = yield* fileSystem
+            .stat(persistedPath)
+            .pipe(
+              Effect.catchTag("PlatformError", (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+              ),
+            );
+          if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
+          const canonicalPersistedPath = yield* provideDependencies(
+            canonicalizeManagedWorkspacePathWithFileSystem(persistedPath),
+          );
+          if (canonicalPersistedPath === discovery.workspace.path) continue;
+          const persistedInspection = yield* provideDependencies(
+            inspectWorkspace(canonicalPersistedPath),
+          );
+          if (persistedInspection.kind !== "ordinary-folder") continue;
+          const marker = yield* provideDependencies(
+            readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPersistedPath),
+          );
+          if (
+            marker !== undefined &&
+            marker.workspaceId === discovery.identity.workspaceId &&
+            marker.checkoutId === discovery.identity.checkoutId &&
+            marker.contextId === discovery.identity.contextId
+          ) {
+            return yield* Effect.fail(
+              new InvalidManagedIdentityError({
+                message:
+                  "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
+              }),
+            );
+          }
+        }
+      });
+
     const allocateManagedPorts = (
       ownership: ControlOwnership,
       request: AllocateManagedPortsRequest,
@@ -615,12 +673,14 @@ const makeManager = (
       Effect.gen(function* () {
         const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
           return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
         if (existing === undefined) return undefined;
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         const drift = stackDrift(existing, request.portDocument);
         return drift.length === 0 ? existing : { ...existing, drift };
       });
@@ -635,6 +695,7 @@ const makeManager = (
       Effect.gen(function* () {
         const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
           return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
@@ -660,6 +721,7 @@ const makeManager = (
         );
         return yield* Effect.gen(function* () {
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+          yield* validateOrdinaryWorkspaceIdentity(refreshed);
           if (refreshed.state === "needsRepair") {
             return yield* Effect.fail(workspaceRepairConflict(refreshed.reason));
           }
@@ -910,8 +972,18 @@ const makeManager = (
 
     return {
       stateRoot: store.stateRoot,
-      discoverWorkspace: (path) => provideDependencies(discoverEnvironment(path)),
-      ensureWorkspace: (path) => provideDependencies(ensureEnvironment(path)),
+      discoverWorkspace: (path) =>
+        Effect.gen(function* () {
+          const discovery = yield* provideDependencies(discoverEnvironment(path));
+          yield* validateOrdinaryWorkspaceIdentity(discovery);
+          return discovery;
+        }),
+      ensureWorkspace: (path) =>
+        Effect.gen(function* () {
+          const discovery = yield* provideDependencies(ensureEnvironment(path));
+          yield* validateOrdinaryWorkspaceIdentity(discovery);
+          return discovery;
+        }),
       acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
       probeControl: (stackId) => provideDependencies(probeControl(stackId)),
       readStack,
