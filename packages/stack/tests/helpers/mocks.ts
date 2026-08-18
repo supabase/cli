@@ -15,6 +15,7 @@ export function mockBinaryResolver(
     downloadDelaysMs?: Partial<Record<string, number>>;
     failServices?: string[];
     failOnceServices?: string[];
+    beforeResolve?: (spec: BinarySpec) => Effect.Effect<void>;
   } = {},
 ) {
   const resolved: Array<{ service: string; version: string }> = [];
@@ -44,6 +45,7 @@ export function mockBinaryResolver(
       const downloaded = opts.downloadedServices?.includes(spec.service) ?? false;
       if (downloaded) {
         yield* options?.onDownloadStart ?? Effect.void;
+        yield* opts.beforeResolve?.(spec) ?? Effect.void;
         const delayMs = opts.downloadDelaysMs?.[spec.service] ?? opts.downloadDelayMs ?? 0;
         if (delayMs > 0) {
           yield* Effect.sleep(`${delayMs} millis`);

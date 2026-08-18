@@ -38,4 +38,11 @@ describe("resolved service preparation policies", () => {
     expect(config.postgrest).toBe(false);
     expect(config.servicePolicies.postgrest).toBe("off");
   });
+
+  it("rejects a preparation policy for a service that is not configured", async () => {
+    await expect(resolveConfig({ servicePolicies: { realtime: "eager" } })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+  });
 });

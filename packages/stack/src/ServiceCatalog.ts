@@ -118,17 +118,6 @@ const preparation = (
   dependencies,
 });
 
-const genericNativeRelease = (service: ServiceName) => ({
-  provider: "github.com/supabase/slim-services",
-  resolve: (version: string, platform: PlatformInfo) =>
-    nativeRelease(service, version, platform, {
-      // These services are prepared generically before native process wiring
-      // exists. Their manifest-declared paths are authoritative; do not guess
-      // a consumer path that could make a valid archive fail installation.
-      requiredRuntimePaths: [],
-    }),
-});
-
 /**
  * Exhaustive static identity and capability metadata for public stack services.
  * Cross-service topology and process definitions deliberately remain in StackBuilder.
@@ -204,7 +193,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "edge-runtime" },
-      native: genericNativeRelease("edge-runtime"),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -217,7 +205,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
-      native: genericNativeRelease("realtime"),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
@@ -230,10 +217,9 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
-      native: genericNativeRelease("storage"),
     },
     activation: { activates: ["imgproxy"], owns: ["imgproxy"] },
-    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres", "imgproxy"]),
     portFields: ["storagePort"],
   },
   imgproxy: {
@@ -243,10 +229,9 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "imgproxy" },
-      native: genericNativeRelease("imgproxy"),
     },
     activation: { activates: [], owns: [] },
-    preparation: preparation(["lazy", "eager"], "lazy", ["storage"]),
+    preparation: preparation(["lazy", "eager"], "lazy"),
     portFields: ["imgproxyPort"],
   },
   mailpit: {
@@ -256,7 +241,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "mailpit" },
-      native: genericNativeRelease("mailpit"),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager"),
@@ -269,7 +253,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pgmeta", tagPrefix: "v" },
-      native: genericNativeRelease("pgmeta"),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -282,7 +265,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "studio" },
-      native: genericNativeRelease("studio"),
     },
     activation: { activates: ["analytics"], owns: [] },
     preparation: preparation(["eager"], "eager", ["pgmeta", "analytics"]),
@@ -295,10 +277,9 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
-      native: genericNativeRelease("analytics"),
     },
     activation: { activates: ["vector"], owns: ["vector"] },
-    preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
+    preparation: preparation(["lazy", "eager"], "lazy", ["postgres", "vector"]),
     portFields: ["analyticsPort"],
   },
   vector: {
@@ -308,10 +289,9 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "vector" },
-      native: genericNativeRelease("vector"),
     },
     activation: { activates: [], owns: [] },
-    preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
+    preparation: preparation(["lazy", "eager"], "lazy"),
     portFields: [],
   },
   pooler: {
@@ -321,7 +301,6 @@ export const SERVICE_CATALOG = {
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pooler" },
-      native: genericNativeRelease("pooler"),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),

@@ -260,6 +260,7 @@ export const localStackLayer = (
           .plan({
             mode: config.mode,
             services: enabledServicesForConfig(config),
+            enabledServices,
             versions: versionsForConfig(config),
           })
           .pipe(
@@ -314,6 +315,7 @@ export const localStackLayer = (
             preparation.prepareEvents({
               mode: config.mode,
               services: pending,
+              enabledServices,
               versions: versionsForConfig(config),
             }),
             () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
@@ -704,11 +706,11 @@ export const localStackLayer = (
             );
             return;
           }
+          yield* prepareServices([service]);
           const started = yield* Effect.gen(function* () {
             yield* requireRunningPhase;
             const concurrentlyStarted = yield* inspectStartedTargets(service);
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
-            yield* prepareServices([service]);
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
           yield* waitForTargets(started).pipe((effect) =>
@@ -797,10 +799,11 @@ export const localStackLayer = (
         dispose: disposeOnce,
         startService: (name) =>
           Effect.gen(function* () {
+            yield* requireMutable(`start service ${name}`);
+            const service = yield* requireKnownServiceName(name);
+            yield* prepareServices([service]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable(`start service ${name}`);
-              const service = yield* requireKnownServiceName(name);
-              yield* prepareServices([service]);
               return yield* beginStartTargets(
                 service,
                 new Set(lifecycleTargetsForService(enabledServices, service)),
@@ -822,9 +825,11 @@ export const localStackLayer = (
           }).pipe(withLifecycleLock),
         restartService: (name) =>
           Effect.gen(function* () {
+            yield* requireMutable(`restart service ${name}`);
+            const service = yield* requireKnownServiceName(name);
+            yield* prepareServices([service]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable(`restart service ${name}`);
-              const service = yield* requireKnownServiceName(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(service, serviceStartOptions);
               return { runtime, targets: [service] };
@@ -833,9 +838,11 @@ export const localStackLayer = (
           }).pipe(cleanupOnReadinessFailure),
         reloadFunctions: (opts) =>
           Effect.gen(function* () {
+            yield* requireMutable("reload functions");
+            yield* requireKnownService("edge-runtime");
+            yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
-              yield* requireKnownService("edge-runtime");
               const currentBundle = yield* Ref.get(functionsBundleRef);
               const nextBundle =
                 opts?.functions === undefined
@@ -857,9 +864,11 @@ export const localStackLayer = (
           }).pipe(cleanupOnReadinessFailure),
         reloadEdgeRuntime: (opts) =>
           Effect.gen(function* () {
+            yield* requireMutable("reload Edge Runtime");
+            yield* requireKnownService("edge-runtime");
+            yield* prepareServices(["edge-runtime"]);
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload Edge Runtime");
-              yield* requireKnownService("edge-runtime");
               const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
               const currentBundle = yield* Ref.get(functionsBundleRef);
               const nextBundle =

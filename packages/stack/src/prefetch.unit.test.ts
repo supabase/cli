@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
-import { DockerPullError } from "./errors.ts";
+import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
 import { prefetch } from "./prefetch.ts";
 import {
   ServiceDownloadFinished,
@@ -119,6 +119,96 @@ describe("prefetch", () => {
     );
 
     expect(Object.keys(result).sort()).toEqual(["postgres", "postgrest"]);
+  });
+
+  test("prefetching storage includes the companion it starts", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker", services: ["storage"] }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Object.keys(result).sort()).toEqual(["imgproxy", "postgres", "storage"]);
+  });
+
+  test("prefetching a companion does not pull its owner", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker", services: ["imgproxy"] }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Object.keys(result)).toEqual(["imgproxy"]);
+  });
+
+  test("does not prepare dependencies that are disabled in the stack", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const preparation = yield* StackPreparation;
+        return yield* preparation.prepare({
+          mode: "docker",
+          services: ["studio"],
+          enabledServices: ["postgres", "pgmeta", "studio"],
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Object.keys(result.resolutions).sort()).toEqual(["pgmeta", "postgres", "studio"]);
+  });
+
+  test("auto mode falls back to Docker when a service has no native target", async () => {
+    const resolver = mockBinaryResolver({
+      binaries: { postgres: "/cache/postgres/native" },
+    });
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "auto", services: ["postgrest"] }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.postgrest).toEqual({
+      type: "docker",
+      image: `ghcr.io/supabase/cli/postgrest:${DEFAULT_VERSIONS.postgrest}`,
+    });
+  });
+
+  test("native mode rejects services that have no native runtime", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["edge-runtime"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(BinaryNotFoundError);
   });
 
   test("prefetches pgmeta using its published container tag", async () => {

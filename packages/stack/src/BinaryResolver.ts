@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { zstdDecompressSync } from "node:zlib";
 import { Context, Effect, FileSystem, Layer, Option, Path, Result } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -71,11 +72,6 @@ const cachePath = (baseDir: string, info: AssetInfo): string =>
 const CACHE_COMPLETE_MARKER = ".complete";
 const STALE_STAGING_AGE_MS = 24 * 60 * 60 * 1_000;
 
-const extractCommand = (archivePath: string, destDir: string): string[] => {
-  const args = ["tar", "--zstd", "-xf", archivePath, "-C", destDir];
-  return args;
-};
-
 const hasTraversalSegment = (value: string): boolean =>
   value.split(/[\\/]/).some((segment) => segment === "..");
 
@@ -104,7 +100,7 @@ const verifyChecksum = (
   Effect.sync(() => {
     const actual = createHash("sha256").update(new Uint8Array(data)).digest("hex");
     // The .sha256 file typically contains "hex  filename" or just "hex"
-    const expectedHex = expected.trim().split(/\s+/)[0] ?? "";
+    const expectedHex = (expected.trim().split(/\s+/)[0] ?? "").toLowerCase();
     return { actual, expectedHex };
   }).pipe(
     Effect.flatMap(({ actual, expectedHex }) => {
@@ -118,10 +114,11 @@ const verifyChecksum = (
 const checksumForArchive = (contents: string, archiveName: string): string | undefined => {
   for (const line of contents.split(/\r?\n/)) {
     const match = line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/i);
-    if (match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`)) return match[1];
+    if (match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`)) {
+      return match[1]?.toLowerCase();
+    }
   }
-  const single = contents.trim().match(/^([a-f0-9]{64})(?:\s|$)/i);
-  return single?.[1];
+  return undefined;
 };
 
 const manifestError = (url: string, detail: string): BinaryManifestError =>
@@ -584,11 +581,15 @@ export class BinaryResolver extends Context.Service<
             }
             yield* verifyChecksum(tarball, expected, release.checksumUrl);
 
-            const archivePath = path.join(destination, `_download.${release.archive}`);
-            yield* fs.writeFile(archivePath, new Uint8Array(tarball));
+            const archivePath = path.join(destination, "_download.tar");
+            const archive = yield* Effect.try({
+              try: () => zstdDecompressSync(new Uint8Array(tarball)),
+              catch: (cause) => new DownloadError({ url: release.downloadUrl, cause }),
+            });
+            yield* fs.writeFile(archivePath, archive);
 
             const members = yield* spawner
-              .string(ChildProcess.make("tar", ["--zstd", "-tf", archivePath]))
+              .string(ChildProcess.make("tar", ["-tf", archivePath]))
               .pipe(
                 Effect.catch((cause) =>
                   Effect.fail(
@@ -612,17 +613,8 @@ export class BinaryResolver extends Context.Service<
               );
             }
 
-            const [command, ...args] = extractCommand(archivePath, destination);
-            if (command === undefined) {
-              return yield* Effect.fail(
-                new DownloadError({
-                  url: release.downloadUrl,
-                  cause: new Error("No extraction command was configured"),
-                }),
-              );
-            }
             const exitCode = yield* spawner
-              .exitCode(ChildProcess.make(command, args))
+              .exitCode(ChildProcess.make("tar", ["-xf", archivePath, "-C", destination]))
               .pipe(
                 Effect.catchTag("PlatformError", (cause) =>
                   Effect.fail(new DownloadError({ url: release.downloadUrl, cause })),

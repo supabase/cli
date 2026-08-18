@@ -15,12 +15,11 @@ import { BinaryResolver } from "./BinaryResolver.ts";
 import type {
   BinaryHostCompatibilityError,
   BinaryManifestError,
-  BinaryNotFoundError,
   BinaryRuntimeError,
   ChecksumMismatchError,
   DownloadError,
 } from "./errors.ts";
-import { DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
+import { BinaryNotFoundError, DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
 import { isDockerOnlyService, requiredPreparationDependencies } from "./ServiceCatalog.ts";
 import {
   DEFAULT_VERSIONS,
@@ -43,6 +42,7 @@ export type ServiceResolution =
 export interface StackPreparationInput {
   readonly versions?: Partial<VersionManifest>;
   readonly services?: ReadonlyArray<ServiceName>;
+  readonly enabledServices?: ReadonlyArray<ServiceName>;
   readonly mode?: "native" | "auto" | "docker";
 }
 
@@ -104,9 +104,14 @@ const resolveDockerImageForService = (
 ): Effect.Effect<string, DockerPullError> =>
   pullImage(spawner, dockerImageForService(service, version), callbacks);
 
-const preparationClosure = (services: ReadonlyArray<ServiceName>): ReadonlyArray<ServiceName> => {
+const preparationClosure = (
+  services: ReadonlyArray<ServiceName>,
+  enabledServices?: ReadonlyArray<ServiceName>,
+): ReadonlyArray<ServiceName> => {
+  const enabled = enabledServices === undefined ? undefined : new Set(enabledServices);
   const closure = new Set<ServiceName>();
   const add = (service: ServiceName): void => {
+    if (enabled !== undefined && !enabled.has(service)) return;
     if (closure.has(service)) return;
     closure.add(service);
     for (const dependency of requiredPreparationDependencies(service)) add(dependency);
@@ -116,7 +121,7 @@ const preparationClosure = (services: ReadonlyArray<ServiceName>): ReadonlyArray
 };
 
 const selectedServices = (input?: StackPreparationInput): ReadonlyArray<ServiceName> =>
-  preparationClosure(input?.services ?? SERVICE_NAMES);
+  preparationClosure(input?.services ?? SERVICE_NAMES, input?.enabledServices);
 
 const plannedResolution = (
   resolver: BinaryResolver["Service"],
@@ -130,7 +135,21 @@ const plannedResolution = (
       image: dockerImageForService(service, version),
     });
   }
-  return resolver.plan({ service, version }).pipe(Effect.map((path) => ({ type: "binary", path })));
+  if (isDockerOnlyService(service)) {
+    return Effect.fail(new BinaryNotFoundError({ service, platform: "native" }));
+  }
+  const native = resolver
+    .plan({ service, version })
+    .pipe(Effect.map((path): ServiceResolution => ({ type: "binary", path })));
+  if (mode === "native") return native;
+  return native.pipe(
+    Effect.catchTag("BinaryNotFoundError", () =>
+      Effect.succeed({
+        type: "docker" as const,
+        image: dockerImageForService(service, version),
+      }),
+    ),
+  );
 };
 
 const planAssetsWithDependencies = (

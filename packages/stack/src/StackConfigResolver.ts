@@ -417,6 +417,12 @@ const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
     }
 
     const enabled = rawServiceEnabled(config, service);
+    if (!enabled && requested !== undefined && requested !== "off") {
+      throw new StackBuildError({
+        detail: `${service} cannot use the ${requested} service preparation policy because the service is not configured`,
+        reason: "invalid_config",
+      });
+    }
     if (!enabled || requested === "off") {
       policies[service] = "off";
       continue;

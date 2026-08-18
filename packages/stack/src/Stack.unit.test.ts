@@ -151,8 +151,8 @@ function setupLayer(
   config: ResolvedStackConfig = defaultConfig,
   portLease: PortLease = noopPortLease(config.ports),
   spawner = mockChildProcessSpawner(),
+  resolver = mockBinaryResolver(),
 ) {
-  const resolver = mockBinaryResolver();
   const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
   const layer = localStackLayer(config, portLease).pipe(
     Layer.provide(StackBuilder.layer),
@@ -293,6 +293,59 @@ describe("Stack", () => {
       Effect.timeout("5 seconds"),
     );
   });
+
+  const coldEdgeRuntimeReload = (operation: "reloadFunctions" | "reloadEdgeRuntime") =>
+    Effect.gen(function* () {
+      const runtimeRoot = mkdtempSync(join(tmpdir(), `supabase-${operation}-`));
+      const edgeRuntimeSpawnStarted = yield* Deferred.make<void>();
+      const image = `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`;
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: ({ command, args }) =>
+          command === process.execPath &&
+          args.some((arg) => Buffer.from(arg, "base64url").toString().includes(image))
+            ? Deferred.succeed(edgeRuntimeSpawnStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const config = {
+        ...edgeRuntimeConfig,
+        runtimeRoot,
+        projectDir: runtimeRoot,
+        servicePolicies: {
+          ...edgeRuntimeConfig.servicePolicies,
+          "edge-runtime": "lazy",
+        },
+      } satisfies ResolvedStackConfig;
+      const { layer } = setupLayer(config, noopPortLease(config.ports), spawner);
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        const reloading = yield* (
+          operation === "reloadFunctions"
+            ? stack.reloadFunctions()
+            : stack.reloadEdgeRuntime({ edgeRuntime: {} })
+        ).pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(edgeRuntimeSpawnStarted);
+
+        expect(spawner.spawned).toContainEqual({
+          command: "docker",
+          args: ["image", "inspect", image],
+        });
+
+        yield* Fiber.interrupt(reloading);
+        yield* stack.dispose();
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
+      );
+    });
+
+  it.live("prepares dormant Edge Runtime before reloading Functions", () =>
+    coldEdgeRuntimeReload("reloadFunctions").pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("prepares dormant Edge Runtime before reloading its configuration", () =>
+    coldEdgeRuntimeReload("reloadEdgeRuntime").pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
 
   it.effect("getInfo returns valid JWT tokens", () => {
     const { layer } = setupLayer();
@@ -675,6 +728,50 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
+  it.live("prepares a dormant service before restarting it", () =>
+    Effect.gen(function* () {
+      const postgrestSpawnStarted = yield* Deferred.make<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: ({ args }) =>
+          args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/postgrest/'),
+          )
+            ? Deferred.succeed(postgrestSpawnStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const resolver = mockBinaryResolver({ downloadedServices: ["postgrest"] });
+      const config = {
+        ...defaultConfig,
+        servicePolicies: {
+          ...defaultConfig.servicePolicies,
+          postgrest: "lazy",
+          auth: "lazy",
+        },
+      } satisfies ResolvedStackConfig;
+      const { layer } = setupLayer(config, noopPortLease(config.ports), spawner, resolver);
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        yield* stack.start();
+        const stateChanges = yield* stack.stateChanges("postgrest");
+        const downloading = yield* stateChanges.pipe(
+          Stream.filter((state) => state.status === "Downloading"),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const restarting = yield* stack
+          .restartService("postgrest")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(postgrestSpawnStarted);
+
+        expect((yield* Fiber.join(downloading))._tag).toBe("Some");
+
+        yield* Fiber.interrupt(restarting);
+        yield* stack.stop();
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
   it.live("lazy activation honors explicitly stopped transitive dependencies", () => {
     const config: ResolvedStackConfig = {
       ...defaultConfig,
@@ -896,6 +993,49 @@ describe("Stack", () => {
 
         const error = yield* activator.activate("auth").pipe(Effect.flip);
         expect(error._tag).toBe("StackNotRunningError");
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+  );
+
+  it.live("dispose is not blocked by in-flight lazy preparation", () =>
+    Effect.gen(function* () {
+      const preparationStarted = yield* Deferred.make<void>();
+      const allowPreparation = yield* Deferred.make<void>();
+      const disposed = yield* Deferred.make<void>();
+      const resolver = mockBinaryResolver({
+        downloadedServices: ["auth"],
+        beforeResolve: ({ service }) =>
+          service === "auth"
+            ? Deferred.succeed(preparationStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowPreparation)),
+              )
+            : Effect.void,
+      });
+      const config = {
+        ...defaultConfig,
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+      } satisfies ResolvedStackConfig;
+      const lease = {
+        ...noopPortLease(config.ports),
+        releaseAll: Deferred.succeed(disposed, undefined).pipe(Effect.asVoid),
+      } satisfies PortLease;
+      const { layer } = setupLayer(config, lease, mockChildProcessSpawner(), resolver);
+
+      yield* Effect.gen(function* () {
+        const stack = yield* Stack;
+        const activator = yield* StackServiceActivator;
+        yield* stack.start();
+        const activation = yield* activator
+          .activate("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(preparationStarted);
+
+        const disposing = yield* stack.dispose().pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(disposed);
+        yield* Fiber.join(disposing);
+
+        yield* Deferred.succeed(allowPreparation, undefined);
+        yield* Fiber.interrupt(activation);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
