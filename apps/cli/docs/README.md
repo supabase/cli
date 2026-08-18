@@ -16,7 +16,8 @@ bun scripts/generate-docs-spec.ts > cli_v1_commands.yaml
 The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
 release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
 pushes the `cli/ref-doc` branch in [supabase/supabase](https://github.com/supabase/supabase),
-and opens a PR when none is open. When the spec already matches, the run is a no-op.
+and opens a PR when none is open. When the spec is already published and a PR is open
+or not needed, the run is a no-op.
 Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
 fixes committed onto the branch survive.
 

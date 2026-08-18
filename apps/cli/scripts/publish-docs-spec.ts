@@ -9,9 +9,11 @@
  *
  *   bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version>
  *
- * Like `bumpdoc`, this is a no-op when the published file already matches: it
- * prints "already up to date" and exits 0 without touching the branch or
- * opening a PR. Any real failure exits non-zero.
+ * Like `bumpdoc`, this is a no-op when the spec is already published and no PR
+ * is missing: it prints "already up to date" and exits 0. A branch whose spec
+ * is ahead of base still gets its PR ensured, so a run that pushed but failed
+ * to open the PR is repaired by the next release. Any real failure exits
+ * non-zero.
  */
 import { $ } from "bun";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -108,18 +110,27 @@ try {
   const prettier = path.resolve(import.meta.dir, "../node_modules/.bin/prettier");
   await $`${prettier} --no-config --single-quote --print-width 100 --log-level warn --write ${target}`;
 
+  const message = "chore: update cli reference doc";
   await $`git -C ${tmpDir} add ${specPath}`;
   const unchanged = await $`git -C ${tmpDir} diff --quiet --cached -- ${specPath}`
     .nothrow()
     .quiet();
   if (unchanged.exitCode === 0) {
-    console.log(`${specPath} is already up to date in ${repo}`);
+    console.log(
+      remoteBranch.exitCode === 0
+        ? `${specPath} is already up to date on ${branch}`
+        : `${specPath} is already up to date in ${repo}`,
+    );
   } else {
-    const message = "chore: update cli reference doc";
     await $`git -C ${tmpDir} -c ${"user.name=github-actions[bot]"} -c ${"user.email=41898282+github-actions[bot]@users.noreply.github.com"} commit --quiet -m ${message}`;
     await $`git -C ${tmpDir} push --quiet origin ${branch}`;
     console.log(`Pushed ${branch} to ${repo}`);
+  }
 
+  const unpublished = await $`git -C ${tmpDir} diff --quiet origin/${base} HEAD -- ${specPath}`
+    .nothrow()
+    .quiet();
+  if (unpublished.exitCode === 1) {
     const existing = await $`gh pr list --repo ${repo} --head ${branch} --state open --json number`
       .cwd(tmpDir)
       .text();
