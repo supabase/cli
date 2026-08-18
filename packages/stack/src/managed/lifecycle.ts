@@ -10,6 +10,7 @@ import type { ManagedStackDocument } from "./document.ts";
 import {
   ManagedStackAttachedError,
   ManagedStackManager,
+  ManagedWorkspaceRepairConflictError,
   workspaceRepairConflict,
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
@@ -114,6 +115,14 @@ export const stopManagedStack = (
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
       const acquisition = yield* manager.acquireControl(stackId);
+      const revalidatedStackId = yield* stackIdForInput(manager, input);
+      if (revalidatedStackId !== stackId) {
+        return yield* Effect.fail(
+          new ManagedWorkspaceRepairConflictError({
+            reason: "Workspace identity changed before stop",
+          }),
+        );
+      }
       if (acquisition._tag === "Owned") {
         if (
           document.lifecycle === "running" ||
@@ -260,6 +269,14 @@ export const deleteManagedStack = (
           ),
           Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
+        const revalidatedStackId = yield* stackIdForInput(manager, input);
+        if (revalidatedStackId !== stackId) {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed before delete",
+            }),
+          );
+        }
         const result = yield* manager.deleteStack(stackId, acquisition);
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),
