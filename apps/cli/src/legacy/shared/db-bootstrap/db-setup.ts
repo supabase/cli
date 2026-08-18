@@ -31,14 +31,18 @@
  *        `STORAGE_S3_REGION`, no JWKS) — built locally, not reused.
  *      - `initAuthJob` (`start.go:319-332`) — ditto, a minimal env distinct from
  *        `gotrue.service.ts`'s full container builder.
- * 2. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
+ * 2. **Database Webhooks activation** — installs `pg_net` when the user opted
+ *    into `experimental.webhooks`, unless the setup caller disables user extension
+ *    activation. Legacy callers may explicitly request the historical `pg_net`
+ *    baseline independently of that user config.
+ * 3. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
  *    `api.auto_expose_new_tables`: `true` is a no-op (keep the bundled initial-schema
  *    grants); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
  *    (Go's inline `RevokeDefaultDataApiPrivilegesSql` constant, `start.go:405-412`)
  *    via a temp file, same as the schema SQL above.
- * 3. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
+ * 4. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
  *    the custom-roles seed "so roles.sql can reference them" (Go's own comment).
- * 4. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
+ * 5. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
  *    prints "Seeding globals from roles.sql..." UNCONDITIONALLY, BEFORE checking
  *    whether `supabase/roles.sql` even exists (Go's `SeedGlobals` prints first,
  *    then attempts the read), then execs the file via `legacyExecSqlFile` only when
@@ -46,7 +50,7 @@
  *    os.ErrNotExist)` check, reproduced here as an existence check ahead of the read
  *    rather than a caught not-found error — see the call site's own comment for why);
  *    any other read/exec error propagates.
- * 5. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
+ * 6. **`apply.MigrateAndSeed`** (`start.go:368`, via the already-ported
  *    `legacyMigrateAndSeed`) with the caller-supplied {@link
  *    LegacyStartSetupLocalDatabaseInput.version} — `""` (every pending migration) for
  *    `db start`'s own call, matching `SetupLocalDatabase`'s call in the `start`
@@ -56,7 +60,7 @@
  *    `--no-seed`/`--sql-paths` overrides on top of the loaded `[db.seed]` config first
  *    (a no-op for `db start`, which has neither flag) — see
  *    {@link legacyResolveResetSeedConfig}.
- * 6. **`pgcache.TryCacheMigrationsCatalog`** (`start.go:371-379`) — a best-effort
+ * 7. **`pgcache.TryCacheMigrationsCatalog`** (`start.go:371-379`) — a best-effort
  *    warmup of the `catalog-local-migrations-*` snapshot subsequent pg-delta
  *    workflows (`db diff`/`db push`) consume, via the already-ported
  *    `legacyTryCacheMigrationsCatalog` ({@link legacy-pgdelta.cache.ts}, the exact
@@ -137,7 +141,14 @@ import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.
 import { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
+import { legacyReadMigrationTable } from "../legacy-migration-history.ts";
+import { legacyStatementInstallsPgNet } from "../legacy-pg-net-guidance.ts";
 import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "../legacy-pgdelta-next-flag.ts";
 import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError, LegacySeedConfig } from "../legacy-seed.ts";
@@ -174,6 +185,15 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
+
+const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+  "create extension if not exists pg_net schema extensions;";
+
+// The historical PG14 dump installs pg_net because later statements grant on
+// its schema. Remove it after the dump so the final baseline still follows the
+// user's webhooks setting. Enabled projects recreate it after the dump, when
+// the bundled event trigger can apply the intended grants.
+const LEGACY_START_REMOVE_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_net;";
 
 /**
  * A SQL exec (schema/globals/API-privileges) or one-shot service-migration Docker
@@ -353,6 +373,8 @@ export interface LegacySetupDatabaseInput {
   readonly workdir: string;
   /** The caller's already-resolved, effective config (env overrides already applied). */
   readonly config: ProjectConfig;
+  /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
+  readonly webhooksEnabled: boolean;
   /** `db.major_version` (13-17) — Go's `utils.Config.Db.MajorVersion`, resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
@@ -440,10 +462,15 @@ export interface LegacySetupDatabaseInput {
   readonly vault: ReadonlyArray<LegacyVaultSecret>;
 }
 
+/** Controls the extension side effects of {@link legacySetupDatabase}. */
+export interface LegacySetupDatabaseOptions {
+  readonly webhooks?: "config" | "enabled" | "disabled";
+}
+
 /** Input to {@link legacyStartSetupLocalDatabase}. */
 export interface LegacyStartSetupLocalDatabaseInput extends Omit<
   LegacySetupDatabaseInput,
-  "apiAutoExposeNewTables" | "vault"
+  "apiAutoExposeNewTables" | "vault" | "webhooksEnabled"
 > {
   /**
    * `--experimental`/`SUPABASE_EXPERIMENTAL`, resolved by the caller (Go's
@@ -899,6 +926,47 @@ export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   );
 });
 
+/** Installs pg_net for the local Database Webhooks feature when enabled. */
+export const legacyApplyDatabaseWebhooks = Effect.fnUntraced(function* (
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tmpDir: string,
+  enabled: boolean,
+) {
+  if (!enabled) return;
+  yield* legacyExecSqlConstant(
+    session,
+    fs,
+    path,
+    tmpDir,
+    "enable-database-webhooks.sql",
+    LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
+  );
+});
+
+/**
+ * Drops pg_net. Hoisted so the fresh-setup PG14 dump cleanup, the `db reset` PG14
+ * path, and the existing-volume webhooks convergence all run the identical statement
+ * instead of one of them silently diverging (`db reset` on PG14 with webhooks
+ * disabled used to leave pg_net installed while fresh setup removed it).
+ */
+export const legacyRemoveDatabaseWebhooks = Effect.fnUntraced(function* (
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tmpDir: string,
+) {
+  yield* legacyExecSqlConstant(
+    session,
+    fs,
+    path,
+    tmpDir,
+    "remove-database-webhooks.sql",
+    LEGACY_START_REMOVE_DATABASE_WEBHOOKS_SQL,
+  );
+});
+
 /**
  * Port of Go's `initCurrentBranch` (`start.go:233-241`): writes
  * `supabase/.branches/_current_branch` = `"main"` (Go's `CurrBranchPath`,
@@ -961,15 +1029,22 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
 export const legacySetupDatabase = (
   spawner: Spawner,
   input: LegacySetupDatabaseInput,
+  options: LegacySetupDatabaseOptions = {},
 ): Effect.Effect<
   void,
-  LegacyDbSetupError | LegacyMigrationVaultError | LegacyImagePrepullError,
+  | LegacyDbSetupError
+  | LegacyMigrationVaultError
+  | LegacyImagePrepullError
+  // A batched SQL file whose pooled connection cannot be acquired fails with the
+  // driver's own connect error, surfaced verbatim (never relabeled as a setup
+  // failure) like every other connection failure on this path.
+  | LegacyDbConnectError,
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
 
-    // initSchema -> ApplyApiPrivileges (start.go:383-389).
+    // initSchema -> user/baseline extension activation -> ApplyApiPrivileges.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const tmpDir = yield* fs
@@ -983,7 +1058,19 @@ export const legacySetupDatabase = (
                 }),
             ),
           );
+        const requiresPg14WebhooksCleanup = input.majorVersion === 14;
         yield* legacyStartInitSchema(spawner, input, tmpDir);
+        if (requiresPg14WebhooksCleanup) {
+          yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
+        }
+        const webhooks = options.webhooks ?? "config";
+        yield* legacyApplyDatabaseWebhooks(
+          session,
+          fs,
+          path,
+          tmpDir,
+          webhooks === "enabled" || (webhooks === "config" && input.webhooksEnabled),
+        );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
     );
@@ -1037,7 +1124,10 @@ export const legacyStartSetupLocalDatabase = (
   input: LegacyStartSetupLocalDatabaseInput,
 ): Effect.Effect<
   void,
-  LegacyStartSetupLocalDatabaseError,
+  // `LegacyDbConnectError` rides alongside the alias (as in `legacyRunFreshDbSetup`)
+  // because a batch that cannot check a connection out of the pool fails with the
+  // driver's connect error verbatim, suggestion included.
+  LegacyStartSetupLocalDatabaseError | LegacyDbConnectError,
   | Output
   | LegacyDockerRun
   | RuntimeInfo
@@ -1074,6 +1164,7 @@ export const legacyStartSetupLocalDatabase = (
     // `apply.MigrateAndSeed` below.
     yield* legacySetupDatabase(spawner, {
       ...input,
+      webhooksEnabled: toml.webhooksEnabled,
       apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
       vault: toml.vault,
     });
@@ -1097,6 +1188,7 @@ export const legacyStartSetupLocalDatabase = (
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
+      localDatabaseWebhooksEnabled: toml.webhooksEnabled,
     });
 
     const output = yield* Output;
@@ -1121,6 +1213,12 @@ export const legacyStartSetupLocalDatabase = (
       input.version.length === 0 &&
       (toml.pgDelta.enabled ||
         legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
+    const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
+      legacyPgDeltaImplementationFlag(
+        process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+        toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+      ),
+    );
     const pgDeltaCtx: LegacyPgDeltaContext = {
       projectId: input.projectId,
       cwd: workdir,
@@ -1141,7 +1239,8 @@ export const legacyStartSetupLocalDatabase = (
       Effect.gen(function* () {
         yield* legacyApplyProjectEnv(input.projectEnvValues ?? {});
         yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
-          enabled: cacheEnabled,
+          // The catalog is a legacy-engine artifact with no in-process consumer.
+          enabled: cacheEnabled && pgDeltaImplementation === "legacy",
           targetUrl: input.dbUrl,
           conn: {
             host: hostDbUrl.hostname,
@@ -1209,6 +1308,82 @@ export interface LegacyFreshDbSetupInput<E> {
   readonly debug: boolean;
 }
 
+const legacyConnectLocalPostgres = (input: {
+  readonly hostname: string;
+  readonly dbPort: number;
+  readonly password: string;
+}) =>
+  Effect.gen(function* () {
+    const dbConnection = yield* LegacyDbConnection;
+    return yield* dbConnection
+      .connect(
+        {
+          host: input.hostname,
+          port: input.dbPort,
+          user: "postgres",
+          password: input.password,
+          database: "postgres",
+        },
+        { isLocal: true, dnsResolver: "native" },
+      )
+      .pipe(
+        Effect.retry({
+          schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+          while: (error) => error.retryable === true,
+        }),
+      );
+  });
+
+/** Converges pg_net while preserving extensions installed by user migrations. */
+export const legacyRunDatabaseWebhooksSetup = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly hostname: string;
+  readonly dbPort: number;
+  readonly dbUrl: string;
+  readonly enabled: boolean;
+}) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const session = yield* legacyConnectLocalPostgres({
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        password: legacyStartInternalDbPassword(input.dbUrl),
+      });
+      if (!input.enabled) {
+        const pgNetOwnedByMigrations = yield* legacyReadMigrationTable(session).pipe(
+          Effect.map((migrations) =>
+            migrations.some(
+              (migration) =>
+                // NULL/`{}` history rows become `[]`. That is incomplete evidence,
+                // not proof the migration did not install pg_net — preserve.
+                migration.statements.length === 0 ||
+                migration.statements.some(legacyStatementInstallsPgNet),
+            ),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+        if (pgNetOwnedByMigrations) return;
+      }
+      const tmpDir = yield* input.fs
+        .makeTempDirectoryScoped({ prefix: "supabase-start-db-webhooks-" })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new LegacyDbSetupError({
+                message: `failed to create temp directory: ${errMessage(error)}`,
+                reason: "filesystem",
+              }),
+          ),
+        );
+      if (!input.enabled) {
+        yield* legacyRemoveDatabaseWebhooks(session, input.fs, input.path, tmpDir);
+        return;
+      }
+      yield* legacyApplyDatabaseWebhooks(session, input.fs, input.path, tmpDir, input.enabled);
+    }),
+  );
+
 /**
  * Runs {@link legacyStartSetupLocalDatabase} against a freshly-provisioned local
  * Postgres — the exact sequence BOTH real Go callers run once Postgres's own
@@ -1252,7 +1427,6 @@ export const legacyRunFreshDbSetup = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const dbConnection = yield* LegacyDbConnection;
       const { setup } = input;
       const dbPassword = legacyStartInternalDbPassword(setup.dbUrl);
       // Go's `SetupLocalDatabase` dials this first host-facing connect exactly
@@ -1260,23 +1434,11 @@ export const legacyRunFreshDbSetup = <E>(
       // failures: the container's internal health check says nothing about the
       // HOST side, where Docker Desktop (Windows/WSL2) can publish the port a
       // few seconds late (#6136).
-      const session = yield* dbConnection
-        .connect(
-          {
-            host: input.hostname,
-            port: input.dbPort,
-            user: "postgres",
-            password: dbPassword,
-            database: "postgres",
-          },
-          { isLocal: true, dnsResolver: "native" },
-        )
-        .pipe(
-          Effect.retry({
-            schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-            while: (error) => error.retryable === true,
-          }),
-        );
+      const session = yield* legacyConnectLocalPostgres({
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        password: dbPassword,
+      });
 
       const { jwks, images: dbSetupImages } = yield* legacyResolveDbSetupPrelude(setup);
 

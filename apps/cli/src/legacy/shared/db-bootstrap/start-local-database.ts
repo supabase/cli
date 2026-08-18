@@ -720,6 +720,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     setup,
+    webhooksEnabled: dbTomlValues.webhooksEnabled,
     onFreshVolumeResolved: (resolved) => {
       isFreshVolume = resolved;
     },

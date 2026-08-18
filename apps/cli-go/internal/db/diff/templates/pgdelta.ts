@@ -59,9 +59,9 @@ try {
   // `units` with transaction boundaries. `renderPlanFiles` turns those into one
   // numbered SQL file per unit (header comments included). `includeTransactions:
   // false` because the CLI appliers already wrap each migration file in a single
-  // transaction (Go's implicit ExecBatch / the TS BEGIN/COMMIT wrap), so embedded
-  // BEGIN/COMMIT would nest; format options are applied per unit here instead of a
-  // manual `formatSqlStatements` pass.
+  // transaction (Go and TS implicit extended-protocol batches), so embedded
+  // BEGIN/COMMIT would override that file-level boundary. Format options are
+  // applied per unit here instead of a manual `formatSqlStatements` pass.
   const files = result
     ? renderPlanFiles(result.plan, {
         includeTransactions: false,

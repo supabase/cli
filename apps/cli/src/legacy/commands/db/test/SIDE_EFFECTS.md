@@ -73,7 +73,7 @@ Identical to `test db`. See
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy (CLI-1962). Hidden command —
-  registered with `.pipe(Command.withHidden)` in `../db.command.ts`.
+  registered with `.pipe(Command.unlisted)` in `../db.command.ts`.
 - `--local` defaults to `true` on both `db test` and `test db` — bare
   `supabase db test` always targets the local stack. This resolves a former
   proxy-only `--local` default-modelling caveat that existed while this

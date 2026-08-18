@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
@@ -26,6 +26,7 @@ import {
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -40,12 +41,17 @@ import { LegacyPlatformApi } from "../../../../../auth/legacy-platform-api.servi
 import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-api-factory.service.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../../../shared/legacy-db-connection.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyPgDeltaLegacyEngineLayer } from "../../../shared/legacy-pgdelta-engine.legacy.layer.ts";
+import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
 import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import {
   type LegacyCatalogMode,
@@ -86,6 +92,7 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   exportFailsForMode?: LegacyCatalogMode;
   staleLocalImage?: boolean;
+  engineImplementation?: "legacy" | "next";
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -109,8 +116,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         exec: (sql: string) =>
           Effect.sync(() => {
             dbExec.push(sql);
@@ -123,7 +130,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode, projectRef }) => {
@@ -181,29 +193,78 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
     execCapture: () => Effect.succeed(""),
   });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
+  const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
+  const processControl = mockProcessControl();
+  const experimentalFlag = Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true);
+  const cliArgs = Layer.succeed(CliArgs, {
+    args: opts.args ?? ["db", "schema", "declarative", "generate"],
+  });
+  const networkIdFlag = Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none());
+  const debugFlag = Layer.succeed(LegacyDebugFlag, false);
+  const dockerRun = legacyDockerRunLayer.pipe(
+    Layer.provide(child.layer),
+    Layer.provide(processControl.layer),
+  );
+  const engineRuntime = Layer.mergeAll(
+    seam,
+    edge,
+    sslProbe,
+    out.layer,
+    dbConn,
+    runtimeInfo,
+    experimentalFlag,
+    cliArgs,
+    networkIdFlag,
+    debugFlag,
+    processControl.layer,
+    alwaysReadyHttpClientLayer,
+    dockerRun,
+    BunServices.layer,
+    child.layer,
+  );
+  const engine =
+    opts.engineImplementation === "next"
+      ? Layer.succeed(
+          LegacyPgDeltaEngine,
+          LegacyPgDeltaEngine.of({
+            implementation: "next",
+            diffExplicit: () => Effect.die("diffExplicit not used in generate tests"),
+            diffDatabase: () => Effect.die("diffDatabase not used in generate tests"),
+            planDeclarativeSchema: () =>
+              Effect.die("planDeclarativeSchema not used in generate tests"),
+            exportDeclarativeSchema: () =>
+              Effect.succeed({
+                files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
+                manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+              }),
+          }),
+        )
+      : legacyPgDeltaLegacyEngineLayer.pipe(Layer.provide(engineRuntime));
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
     seam,
     edge,
+    engine,
     resolver,
     proxy,
     dbConn,
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
-    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "generate"] }),
+    experimentalFlag,
+    cliArgs,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
+    networkIdFlag,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyDebugFlag, false),
+    debugFlag,
     // The remote ref is a non-Supabase host that refuses TLS → no SSL env.
-    Layer.succeed(LegacyPgDeltaSslProbe, {
-      requireSsl: () => Effect.succeed(false),
-      requireSslForHost: () => Effect.succeed(false),
-    }),
+    sslProbe,
     // The local-reset bucket-seed core statically requires the (lazy) Management-API
     // factory; never invoked on the local reset (projectRef === "").
     Layer.succeed(LegacyPlatformApiFactory, {
@@ -214,13 +275,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // resolves a duplicate service tag to whichever layer is listed LAST, so this
     // mock overrides Bun's real `ChildProcessSpawner` instead of the reverse.
     child.layer,
-    mockRuntimeInfo({ platform: "linux" }),
-    mockProcessControl().layer,
+    runtimeInfo,
+    processControl.layer,
     alwaysReadyHttpClientLayer,
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
+    dockerRun,
   );
   return {
     layer,
@@ -245,7 +303,9 @@ const flags = (
   over: Partial<LegacyDbSchemaDeclarativeGenerateFlags> = {},
 ): LegacyDbSchemaDeclarativeGenerateFlags => ({
   noCache: over.noCache ?? false,
+  strictCoverage: over.strictCoverage ?? false,
   overwrite: over.overwrite ?? false,
+  outputDir: over.outputDir ?? Option.none(),
   reset: over.reset ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
@@ -404,19 +464,38 @@ describe("legacy db schema declarative generate integration", () => {
     },
   );
 
-  it.effect("explicit --local: provisions baseline, exports, writes declarative files", () => {
+  it.effect("warns when the tree still lives under the former supabase/database default", () => {
+    // Upgrade path: the implicit default moved from supabase/database to
+    // supabase/schemas; a project relying on the old default must be told before
+    // a fresh tree is generated somewhere its existing files are not.
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "database", "public.sql"), "create table a();");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      // baseline (source catalog) for the diff, then the post-write declarative cache warm.
-      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
-      // TARGET is the local DB URL (passthrough); SOURCE is the baseline catalog.
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain('declarative_schema_path = "./database"');
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit --local: provisions a raw shadow, exports, and writes files", () => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      // Only the optional legacy post-write warm remains seam-backed. The export
+      // source is a workflow-owned native raw shadow.
+      expect(s.seamCalls).toEqual(["declarative"]);
+      expect(s.edgeCalls[0]!.env["SOURCE"]).toContain(
+        "postgresql://postgres:postgres@127.0.0.1:54320",
+      );
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain(
         "postgresql://postgres:postgres@127.0.0.1:54322",
       );
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
           "utf8",
         ),
       );
@@ -426,12 +505,114 @@ describe("legacy db schema declarative generate integration", () => {
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
       expect(s.out.rawChunks.some((c) => c.text.includes(tmp.current))).toBe(false);
       // Go runs ensureLocalDatabaseStarted before generating from local.
       expect(s.ensureStartedCalls).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "--output-dir writes a complete next export relative to the project without activating it",
+    () => {
+      mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
+      const configPath = join(tmp.current, "supabase", "config.toml");
+      const config = [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "supabase/database"',
+        "",
+      ].join("\n");
+      writeFileSync(configPath, config);
+      const destination = join("supabase", "database-next");
+      const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeGenerate(
+          flags({ local: Option.some(true), outputDir: Option.some(destination) }),
+        );
+
+        expect(
+          readFileSync(join(tmp.current, destination, "public", "tables", "players.sql"), "utf8"),
+        ).toBe("create table players ();");
+        expect(
+          JSON.parse(readFileSync(join(tmp.current, destination, ".pgdelta-export.json"), "utf8")),
+        ).toMatchObject({
+          formatVersion: 1,
+          profile: "supabase",
+          files: ["public/tables/players.sql"],
+        });
+        expect(
+          readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
+        ).toBe("select 1;");
+        expect(readFileSync(configPath, "utf8")).toBe(config);
+        expect(
+          s.out.rawChunks.map((chunk) => ({ text: stripAnsi(chunk.text), stream: chunk.stream })),
+        ).toContainEqual({
+          text: `Declarative schema written to ${destination}\n`,
+          stream: "stderr",
+        });
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("--output-dir protects a non-empty destination without --overwrite", () => {
+    const destination = join(tmp.current, "staged-schema");
+    mkdirSync(destination, { recursive: true });
+    writeFileSync(join(destination, "keep.sql"), "select 'keep';");
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      promptConfirmResponses: [false],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(
+        flags({ local: Option.some(true), outputDir: Option.some(destination) }),
+      );
+      expect(readFileSync(join(destination, "keep.sql"), "utf8")).toBe("select 'keep';");
+      expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(false);
+      expect(s.out.rawChunks.some((chunk) => chunk.text.includes("Skipped writing"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects output paths that could overwrite the project or an ancestor", () => {
+    const projectDir = join(tmp.current, "project");
+    mkdirSync(projectDir, { recursive: true });
+    const sentinel = join(projectDir, "project-sentinel.txt");
+    writeFileSync(sentinel, "keep");
+    const s = setup(projectDir, { experimental: true, engineImplementation: "next" });
+    return Effect.gen(function* () {
+      for (const output of ["", ".", "..", dirname(projectDir)]) {
+        const exit = yield* legacyDbSchemaDeclarativeGenerate(
+          flags({ local: Option.some(true), outputDir: Option.some(output), overwrite: true }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeWriteError",
+          message:
+            "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
+        });
+        expect(readFileSync(sentinel, "utf8")).toBe("keep");
+      }
+      expect(s.localPostgresImageChecks).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--output-dir does not warm the configured legacy declarative tree", () => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(
+        flags({ local: Option.some(true), outputDir: Option.some("staged-schema") }),
+      );
+      expect(s.seamCalls).toEqual([]);
+      expect(
+        existsSync(
+          join(tmp.current, "staged-schema", "schemas", "public", "tables", "players.sql"),
+        ),
+      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -457,14 +638,14 @@ describe("legacy db schema declarative generate integration", () => {
     // Go's confirmOverwrite returns true immediately (Console.PromptYesNo); the
     // handler must skip the prompt and overwrite. No promptConfirmResponses are
     // queued, so reaching the prompt would error — success proves --yes bypassed it.
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database", "existing.sql"), "create table x ();");
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "schemas", "existing.sql"), "create table x ();");
     const s = setup(tmp.current, { experimental: true, yes: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
           "utf8",
         ),
       );
@@ -476,10 +657,10 @@ describe("legacy db schema declarative generate integration", () => {
     // Go's confirmOverwrite returns the ReadDir error and Generate aborts on it
     // (declarative.go:123-127, 226-229), rather than treating an unreadable existing
     // dir as empty and letting WriteDeclarativeSchemas wipe/recreate the path.
-    // Seeding supabase/database as a FILE makes readDirectory fail with ENOTDIR (a
+    // Seeding supabase/schemas as a FILE makes readDirectory fail with ENOTDIR (a
     // non-NotFound PlatformError), so the command must fail without writing.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database"), "not a directory");
+    writeFileSync(join(tmp.current, "supabase", "schemas"), "not a directory");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -488,7 +669,7 @@ describe("legacy db schema declarative generate integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       // The declarative path is untouched — still our seeded file, never wiped and
       // rewritten as a directory of schema files.
-      expect(readFileSync(join(tmp.current, "supabase", "database"), "utf8")).toBe(
+      expect(readFileSync(join(tmp.current, "supabase", "schemas"), "utf8")).toBe(
         "not a directory",
       );
       expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
@@ -604,30 +785,6 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("explicit --linked builds the baseline catalog from the remote-merged config", () => {
-    // Go loads the [remotes.<ref>] override before building the baseline catalog, so
-    // the seam's baseline export must carry the resolved ref (SUPABASE_PROJECT_ID) to
-    // trigger that merge. Local/smart paths must NOT pass a ref.
-    const ref = "abcdefghijklmnopqrst";
-    const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
-      const baseline = s.seamExportCalls.find((c) => c.mode === "baseline");
-      expect(baseline?.projectRef).toBe(ref);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("explicit --local builds the baseline catalog without a project ref", () => {
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      const baseline = s.seamExportCalls.find((c) => c.mode === "baseline");
-      expect(baseline?.projectRef).toBeUndefined();
-      // No linked ref resolved → no linked-project cache write (Go gates on ProjectRef).
-      expect(s.cache.cached).toBe(false);
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("caches the linked project after generate --linked (Go PersistentPostRun)", () => {
     const ref = "abcdefghijklmnopqrst";
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
@@ -643,8 +800,8 @@ describe("legacy db schema declarative generate integration", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(false) }));
-      // Took the explicit local target (baseline built, local URL) ...
-      expect(s.seamCalls).toContain("baseline");
+      // Took the explicit local target and completed the optional legacy warm ...
+      expect(s.seamCalls).toContain("declarative");
       // ... but did NOT auto-start (value is false).
       expect(s.ensureStartedCalls).toBe(0);
       expect(s.localPostgresImageChecks).toHaveLength(1);
@@ -693,7 +850,7 @@ describe("legacy db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: existing files + decline regenerate → skips", () => {
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, {
@@ -715,18 +872,18 @@ describe("legacy db schema declarative generate integration", () => {
     // under --yes, so existing declarative files are regenerated (not skipped) and
     // no prompt is shown. No migrations → the smart target resolves to local without
     // a further prompt. No promptConfirmResponses are queued, so a prompt would throw.
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
-      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
+      expect(s.seamCalls).toEqual(["declarative"]);
       // Go's PromptYesNo echoes the auto-accepted question to stderr under the
       // global YES flag (`console.go:70-72`) — the echo must not be skipped, and
       // the prompt renders the relative dir (`db_schema_declarative.go:268`).
       expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
@@ -737,7 +894,7 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("smart mode: SUPABASE_YES=1 regenerates over existing files like --yes", () => {
     // Go reads `viper.GetBool("YES")`, which `AutomaticEnv` also binds to the
     // SUPABASE_YES env var — the flag alone is not the whole surface (CLI-1974).
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const prev = process.env["SUPABASE_YES"];
@@ -745,9 +902,9 @@ describe("legacy db schema declarative generate integration", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
-      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
+      expect(s.seamCalls).toEqual(["declarative"]);
       expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
     }).pipe(
       Effect.ensuring(
@@ -764,8 +921,8 @@ describe("legacy db schema declarative generate integration", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true), noCache: true }));
-      // --no-cache skips the post-write warm, so only the baseline export runs.
-      expect(s.seamCalls).toEqual(["baseline"]);
+      // --no-cache skips the post-write warm; the raw source never uses the seam.
+      expect(s.seamCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1042,6 +1199,23 @@ describe("legacy db schema declarative generate integration", () => {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       // Normalized via ToPostgresURL → connect_timeout appended, like Go.
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain("@db.example.com:5432/app?connect_timeout=");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next engine writes its manifest and skips legacy catalog warming", () => {
+    const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      const manifest = JSON.parse(
+        readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
+      );
+      expect(manifest).toMatchObject({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        files: ["public/tables/players.sql"],
+      });
+      expect(s.seamCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 });

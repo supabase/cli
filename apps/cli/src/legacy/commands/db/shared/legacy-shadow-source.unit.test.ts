@@ -61,7 +61,7 @@ describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
     () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["database"], pgDelta())).toBe(
+        expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["schemas"], pgDelta())).toBe(
           true,
         );
       }).pipe(Effect.provide(BunServices.layer)),
@@ -70,7 +70,7 @@ describe("legacyShouldApplyDeclarativeWithPgDelta", () => {
   it.effect("is false when the single schema_paths entry does not match the declarative dir", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["schemas"], pgDelta())).toBe(
+      expect(legacyShouldApplyDeclarativeWithPgDelta(path, true, ["database"], pgDelta())).toBe(
         false,
       );
     }).pipe(Effect.provide(BunServices.layer)),
@@ -210,7 +210,10 @@ describe("legacyLoadDeclaredSchemas", () => {
           path,
           workdir,
           [],
-          pgDelta({ enabled: true }),
+          pgDelta({
+            enabled: true,
+            declarativeSchemaPath: Option.some("supabase/database"),
+          }),
         );
         expect(result).toEqual(["supabase/database/t.sql"]);
         rmSync(workdir, { recursive: true, force: true });
@@ -234,7 +237,10 @@ describe("legacyLoadDeclaredSchemas", () => {
           path,
           workdir,
           ["custom/*.sql"],
-          pgDelta({ enabled: true }),
+          pgDelta({
+            enabled: true,
+            declarativeSchemaPath: Option.some("supabase/database"),
+          }),
         );
         expect(result).toEqual(["supabase/custom/x.sql"]);
         rmSync(workdir, { recursive: true, force: true });
@@ -497,7 +503,10 @@ describe("legacyLoadDeclaredSchemas", () => {
           path,
           workdir,
           [],
-          pgDelta({ enabled: true }),
+          pgDelta({
+            enabled: true,
+            declarativeSchemaPath: Option.some("supabase/database"),
+          }),
         );
         expect(result).toEqual(["supabase/schemas/a.sql"]);
         rmSync(workdir, { recursive: true, force: true });
@@ -544,7 +553,10 @@ describe("legacyLoadDeclaredSchemas", () => {
           path,
           workdir,
           [],
-          pgDelta({ enabled: true }),
+          pgDelta({
+            enabled: true,
+            declarativeSchemaPath: Option.some("supabase/database"),
+          }),
         );
         expect(result).toEqual([]);
         rmSync(workdir, { recursive: true, force: true });
@@ -735,7 +747,10 @@ describe("legacyLoadDeclaredSchemas", () => {
           path,
           workdir,
           [],
-          pgDelta({ enabled: true }),
+          pgDelta({
+            enabled: true,
+            declarativeSchemaPath: Option.some("supabase/database"),
+          }),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {

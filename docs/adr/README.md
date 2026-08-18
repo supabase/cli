@@ -41,23 +41,24 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 
 ## ADR index
 
-| ID   | Title                                                                                      | Status   |
-| ---- | ------------------------------------------------------------------------------------------ | -------- |
-| 0000 | [Use ADR to Record Decisions](0000-use-adr-to-record-decisions.md)                         | accepted |
-| 0001 | [CLI DX Architecture: The 7 Pillars](0001-cli-dx-architecture-pillars.md)                  | accepted |
-| 0002 | [CLI Product Metrics](0002-cli-product-metrics.md)                                         | accepted |
-| 0003 | [Self-Documenting CLI & Documentation Strategy](0003-self-documenting-cli.md)              | accepted |
-| 0004 | [CLI Design Goals & Development Workflows](0004-cli-design-goals-and-workflows.md)         | accepted |
-| 0005 | [OpenAPI-Driven Code Generation for CRUD Commands](0005-openapi-driven-code-generation.md) | proposed |
-| 0006 | [Environment Management & Variable Resolution](0006-environment-management.md)             | proposed |
-| 0007 | [Real-time Progress in Command Handlers](0007-realtime-progress-in-command-handlers.md)    | proposed |
-| 0008 | [Authentication & Token Management](0008-authentication-and-token-management.md)           | proposed |
-| 0009 | [Configuration Schema & Validation](0009-configuration-schema-and-validation.md)           | proposed |
-| 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)       | proposed |
-| 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)         | proposed |
-| 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)                 | proposed |
-| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed |
-| 0017 | [Sparse Config Subtraction](0017-sparse-config-subtraction.md)                             | proposed |
+| ID   | Title                                                                                                          | Status     |
+| ---- | -------------------------------------------------------------------------------------------------------------- | ---------- |
+| 0000 | [Use ADR to Record Decisions](0000-use-adr-to-record-decisions.md)                                             | accepted   |
+| 0001 | [CLI DX Architecture: The 7 Pillars](0001-cli-dx-architecture-pillars.md)                                      | accepted   |
+| 0002 | [CLI Product Metrics](0002-cli-product-metrics.md)                                                             | accepted   |
+| 0003 | [Self-Documenting CLI & Documentation Strategy](0003-self-documenting-cli.md)                                  | accepted   |
+| 0004 | [CLI Design Goals & Development Workflows](0004-cli-design-goals-and-workflows.md)                             | accepted   |
+| 0005 | [OpenAPI-Driven Code Generation for CRUD Commands](0005-openapi-driven-code-generation.md)                     | proposed   |
+| 0006 | [Environment Management & Variable Resolution](0006-environment-management.md)                                 | proposed   |
+| 0007 | [Real-time Progress in Command Handlers](0007-realtime-progress-in-command-handlers.md)                        | proposed   |
+| 0008 | [Authentication & Token Management](0008-authentication-and-token-management.md)                               | proposed   |
+| 0009 | [Configuration Schema & Validation](0009-configuration-schema-and-validation.md)                               | proposed   |
+| 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)                           | proposed   |
+| 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)                             | proposed   |
+| 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)                                     | superseded |
+| 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed   |
+| 0017 | [Simplified Managed Stack Architecture](0017-simplified-managed-stack-architecture.md)                         | accepted   |
+| 0018 | [Sparse Config Subtraction](0018-sparse-config-subtraction.md)                                                 | proposed   |
 
 ## Template
 

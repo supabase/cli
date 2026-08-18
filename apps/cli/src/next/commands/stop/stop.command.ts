@@ -21,7 +21,7 @@ export type StopFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
 export const stopCommand = Command.make("stop", flags).pipe(
   Command.withDescription(
-    "Stop the local Supabase development stack.\n\nUse --no-backup to delete the persisted data for the selected stack under .supabase/stacks/<name>/ after stopping.",
+    "Stop the local Supabase development stack.\n\nUse --no-backup to delete the managed persisted data for the selected stack after stopping.",
   ),
   Command.withShortDescription("Stop local Supabase stack"),
   Command.withHandler((flags) =>

@@ -23,6 +23,7 @@ import {
   LegacyDeclarativeParseOutputError,
   LegacyPgDeltaDiffParseError,
 } from "../commands/db/shared/legacy-pgdelta.errors.ts";
+import type { LegacyMigrationTransactionMode } from "./legacy-migration-file.ts";
 
 const PG_DELTA_NPM_REGISTRY_ENV = "PGDELTA_NPM_REGISTRY";
 
@@ -49,14 +50,18 @@ export interface LegacyDeclarativeOutput {
 interface LegacyPgDeltaPlanFile {
   readonly order: number;
   readonly name: string;
-  readonly transactionMode: string;
+  readonly transactionMode: LegacyMigrationTransactionMode;
   readonly sql: string;
 }
 
 /** The pg-delta diff envelope. Mirrors Go's `PgDeltaDiffOutput`. */
 interface LegacyPgDeltaDiffOutput {
   readonly version: number;
-  readonly files: ReadonlyArray<LegacyPgDeltaPlanFile>;
+  readonly files: ReadonlyArray<
+    Omit<LegacyPgDeltaPlanFile, "transactionMode"> & {
+      readonly transactionMode: string;
+    }
+  >;
 }
 
 /**
@@ -71,7 +76,7 @@ interface LegacyPgDeltaDiffResult {
 }
 
 /**
- * Ambient inputs shared by every pg-delta invocation: the project id (for the
+ * Ambient inputs retained for the legacy pg-delta adapter: the project id (for the
  * `supabase_edge_runtime_<id>` Deno-cache volume), the working directory (mounted
  * at `/workspace`), and the resolved pg-delta npm version (template interpolation).
  */
@@ -294,7 +299,19 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
         }:\n${result.stderr}`,
       }),
   });
-  const files = envelope.files ?? [];
+  const rawFiles = envelope.files ?? [];
+  const files: Array<LegacyPgDeltaPlanFile> = [];
+  for (const file of rawFiles) {
+    const transactionMode = file.transactionMode;
+    if (transactionMode !== "transactional" && transactionMode !== "none") {
+      return yield* Effect.fail(
+        new LegacyPgDeltaDiffParseError({
+          message: `unknown pg-delta transaction mode ${JSON.stringify(transactionMode)}`,
+        }),
+      );
+    }
+    files.push({ ...file, transactionMode });
+  }
   // Flatten to one blob for callers that need it; unit header comments keep the
   // transaction boundaries visible (mirrors Go's `joinPgDeltaFiles`).
   const sql = files.map((file) => file.sql).join("\n\n");

@@ -22,6 +22,7 @@ import {
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
@@ -56,6 +57,7 @@ import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.t
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
+  type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyDbReset } from "./reset.handler.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
@@ -163,8 +165,8 @@ function mockConnection(
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   let replicationCallIndex = 0;
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -211,7 +213,12 @@ function mockConnection(
               return Effect.succeed([]);
             },
           ),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   return {
     layer,
@@ -1136,6 +1143,57 @@ describe("legacy db reset", () => {
         expect(
           conn.execs.some((sql) => sql.includes("insert into pg14_seed_marker values (1)")),
         ).toBe(true);
+      });
+    });
+
+    it.live("installs pg_net before replay when Database Webhooks is enabled (PG14)", () => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: `${PG14_TOML}[experimental.webhooks]\nenabled = true\n`,
+        files: migrationFile(
+          "20240101000000",
+          "select net.http_post(url := 'https://example.com');",
+        ),
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const pgNetIndex = conn.execs.findIndex((sql) =>
+          sql.includes("create extension if not exists pg_net schema extensions"),
+        );
+        const migrationIndex = conn.execs.findIndex((sql) => sql.includes("https://example.com"));
+        expect(pgNetIndex).toBeGreaterThanOrEqual(0);
+        expect(migrationIndex).toBeGreaterThan(pgNetIndex);
+        // Same drop-then-recreate order as fresh setup: the PG14 dump installs pg_net
+        // unconditionally, so it is dropped first and only recreated because webhooks
+        // are enabled.
+        const dropIndex = conn.execs.findIndex((sql) =>
+          sql.includes("drop extension if exists pg_net"),
+        );
+        expect(dropIndex).toBeGreaterThanOrEqual(0);
+        expect(pgNetIndex).toBeGreaterThan(dropIndex);
+      });
+    });
+
+    it.live("drops the PG14 dump's implicit pg_net when Database Webhooks is disabled", () => {
+      // Fresh setup already removed it here; without the same drop on the reset path a
+      // PG14 `db reset` left pg_net installed and diverged from `supabase start`,
+      // surfacing as pg_net drift in the next engine's shadow baseline.
+      const { layer, conn } = setup(tmp.current, {
+        toml: PG14_TOML,
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.execs.some((sql) => sql.includes("drop extension if exists pg_net"))).toBe(
+          true,
+        );
+        expect(
+          conn.execs.some((sql) =>
+            sql.includes("create extension if not exists pg_net schema extensions"),
+          ),
+        ).toBe(false);
       });
     });
 

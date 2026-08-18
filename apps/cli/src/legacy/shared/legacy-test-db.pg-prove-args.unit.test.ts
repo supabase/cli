@@ -90,6 +90,8 @@ describe("buildLegacyPgProveArgs", () => {
     ]);
     // workingDir is derived from the first path only (a file → its parent).
     expect(Option.getOrNull(result.workingDir)).toBe("/abs");
+    // `hostPaths` reports what pg_prove searches — the files/dirs, not their mounts.
+    expect(result.hostPaths).toEqual(["/abs/first_test.sql", "/abs/second/dir"]);
   });
 
   test("appends --verbose when debug is enabled", () => {

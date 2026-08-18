@@ -94,17 +94,20 @@ export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): 
   return resolveManagedStateRoot({ stateRoot });
 };
 
-/**
- * The registry file, named after the schema generation it holds. A generation
- * has no migration path in this unreleased POC, so the name is what keeps an
- * older generation's file from being opened and refused by a newer CLI.
- */
-export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry-v4.sqlite3");
+export const managedStacksRoot = (stateRoot: string): string => join(stateRoot, "stacks");
+
+const SHA256_STACK_ID_PATTERN = /^[0-9a-f]{64}$/i;
+
+const assertManagedStackId = (stackId: string): string => {
+  if (SHA256_STACK_ID_PATTERN.test(stackId)) {
+    return stackId;
+  }
+  return assertManagedUuid(stackId, "stackId");
+};
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
-  assertManagedUuid(stackId, "stackId");
-  const root = join(stateRoot, "stacks", stackId);
+  assertManagedStackId(stackId);
+  const root = join(managedStacksRoot(stateRoot), stackId);
   return {
     root,
     data: join(root, "data"),
@@ -112,6 +115,9 @@ export const managedStackPaths = (stateRoot: string, stackId: string): ManagedSt
     runtime: join(root, "runtime"),
   };
 };
+
+export const managedStackDocumentPath = (stateRoot: string, stackId: string): string =>
+  join(managedStackPaths(stateRoot, stackId).root, "stack.json");
 
 export const assertManagedStackRoot = (
   stateRoot: string,
@@ -154,3 +160,11 @@ export const gitWorktreeConfigPath = (commonDirectory: string): string =>
  */
 export const gitCheckoutIdentityPath = (gitDirectory: string): string =>
   join(gitDirectory, "supabase-checkout.json");
+
+/** A checkout-scoped detached-context identity beside its checkout marker. */
+export const gitDetachedContextIdentityPath = (gitDirectory: string): string =>
+  join(gitDirectory, "supabase-detached-context.json");
+
+/** The last canonical workspace path observed for a checkout identity. */
+export const gitCheckoutLocationPath = (gitDirectory: string): string =>
+  join(gitDirectory, "supabase-checkout-location.json");

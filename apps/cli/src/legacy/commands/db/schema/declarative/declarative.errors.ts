@@ -5,6 +5,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../../shared/telemetry/error-actionability.ts";
+import type { LegacyDeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
  * Declarative commands were invoked without `--experimental` and without
@@ -100,6 +101,26 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
+  }
+}
+
+/** Sync stopped because a manifest-less legacy schema needs an explicit migration choice. */
+export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
+  "LegacyDeclarativeCompatibilityError",
+)<{
+  readonly message: string;
+  /**
+   * Recovery commands, printed bare on stderr by `Output.fail` INSTEAD of the
+   * generic "Try rerunning the command with --debug" footer. A compatibility
+   * gate is a deliberate refusal, not a crash, so it must never suggest
+   * troubleshooting flags (same mechanism as {@link LegacyDeclarativeApplyError}).
+   */
+  readonly suggestion?: string;
+  /** Structured only for a known implicit-extension failure during shadow load. */
+  readonly loadFindings?: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

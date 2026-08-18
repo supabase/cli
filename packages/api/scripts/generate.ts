@@ -784,6 +784,7 @@ function renderSchemaSource(
       schemas,
     },
     {
+      patterns: "apply",
       onEnter(schema) {
         const next = { ...schema };
         if (next.type === "object" && next.additionalProperties === undefined) {

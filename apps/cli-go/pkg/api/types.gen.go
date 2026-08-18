@@ -4263,6 +4263,7 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesOrioledb                     V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.orioledb"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesReadReplicas                 V1ListEntitlementsResponseEntitlementsFeatureKey = "instances.read_replicas"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubConnections         V1ListEntitlementsResponseEntitlementsFeatureKey = "integrations.github_connections"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit   V1ListEntitlementsResponseEntitlementsFeatureKey = "integrations.github_push_webhooks_limit"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyIpv4                                  V1ListEntitlementsResponseEntitlementsFeatureKey = "ipv4"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyLogDrains                             V1ListEntitlementsResponseEntitlementsFeatureKey = "log_drains"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyLogRetentionDays                      V1ListEntitlementsResponseEntitlementsFeatureKey = "log.retention_days"
@@ -4362,6 +4363,8 @@ func (e V1ListEntitlementsResponseEntitlementsFeatureKey) Valid() bool {
 	case V1ListEntitlementsResponseEntitlementsFeatureKeyInstancesReadReplicas:
 		return true
 	case V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubConnections:
+		return true
+	case V1ListEntitlementsResponseEntitlementsFeatureKeyIntegrationsGithubPushWebhooksLimit:
 		return true
 	case V1ListEntitlementsResponseEntitlementsFeatureKeyIpv4:
 		return true

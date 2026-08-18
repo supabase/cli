@@ -18,7 +18,7 @@ const config = {
   // pflag `Changed`.
   declarative: Flag.boolean("declarative").pipe(
     Flag.withDescription(
-      "Pull schema as declarative files using pg-delta instead of creating a migration.",
+      "Replace the declarative schema tree from the selected database instead of creating a migration; migration history is not updated.",
     ),
     Flag.optional,
   ),
@@ -33,6 +33,11 @@ const config = {
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
     Flag.optional,
+  ),
+  strictCoverage: Flag.boolean("strict-coverage").pipe(
+    Flag.withDescription(
+      "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
+    ),
   ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
@@ -72,7 +77,9 @@ const config = {
 export type LegacyDbPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbPullCommand = Command.make("pull", config).pipe(
-  Command.withDescription("Pull schema from the remote database."),
+  Command.withDescription(
+    "Migration mode compares supabase/migrations with the selected live database (--linked by default), writes the complete difference as migration files, and may record them in that database's migration history. --declarative instead replaces the declarative schema tree and does not create migrations or update migration history.",
+  ),
   Command.withShortDescription("Pull schema from the remote database"),
   Command.withHandler((flags) =>
     legacyDbPull(flags).pipe(
@@ -81,6 +88,7 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
           declarative: flags.declarative,
           "use-pg-delta": flags.usePgDelta,
           "diff-engine": flags.diffEngine,
+          "strict-coverage": flags.strictCoverage,
           schema: flags.schema,
           "db-url": flags.dbUrl,
           linked: flags.linked,

@@ -16,6 +16,8 @@ import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import {
   legacyApplyProjectEnv,
   legacyReadDbToml,
+  legacyResolveDeclarativeDir,
+  type LegacyDbTomlValues,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
@@ -39,6 +41,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import {
   legacyParseBoolEnv,
   legacyResolveDiffEngine,
+  legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
 } from "../../../shared/legacy-diff-engine.ts";
 import {
@@ -46,12 +49,17 @@ import {
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
-import { legacyResolveMigrationsCatalogRef } from "../../../shared/legacy-pgdelta.cache.ts";
+import {
+  LegacyPgDeltaEngine,
+  type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaDiffResult,
+  type LegacyPgDeltaEndpoint,
+  type LegacyPgDeltaRenderedFile,
+} from "../shared/legacy-pgdelta-engine.service.ts";
+import { LegacyLoadPgDeltaSqlFiles } from "../shared/legacy-pgdelta-files.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import {
   type LegacyPgDeltaContext,
-  legacyDiffPgDelta,
-  legacyExportCatalogPgDelta,
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
@@ -77,6 +85,20 @@ Run ${legacyAqua("supabase db reset")} to verify that the new migration does not
 // This warning is additive to (and prints before) the delegated child's own
 // "experimental" warning, which it still prints unchanged.
 const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+
+const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
+  code: "DeclarativeSchemaNotUsedAsDiffBaseline",
+  severity: "info",
+  message: "Declarative schema files were not used as the db diff baseline.",
+  context: {
+    baseline: "supabase/migrations",
+    declarativePath,
+    fileFlagFiltersObjects: false,
+  },
+});
+
+const declarativeBaselineNote = (displayPath: string) =>
+  `Note: db diff -f uses supabase/migrations as its baseline. Declarative schema files in ${displayPath} are not part of that baseline. If migrations are empty or outdated, the generated migration may include existing declarative objects. -f names the migration; it does not filter objects.\n`;
 
 /**
  * Rebuilds the `db diff` argv for the `--use-pg-schema` delegate path — the CLI's
@@ -113,6 +135,7 @@ const rebuildPgSchemaDelegateArgs = (flags: LegacyDbDiffFlags): Array<string> =>
 export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: LegacyDbDiffFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
+  const pgDelta = yield* LegacyPgDeltaEngine;
   const proxy = yield* LegacyGoProxy;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
@@ -205,6 +228,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // merge the matching `[remotes.<ref>]` override. Undefined until a linked ref
       // resolves, so a `migrations` ref resolved before any linked ref uses base.
       let mergedLinkedRef: string | undefined;
+      // The FIRST migrations endpoint resolved wins: the engine provisions a single
+      // migrations shadow/catalog, and resolution-order (like `mergedLinkedRef` above)
+      // says only refs resolved before that point should influence it.
+      let migrationsToml: LegacyDbTomlValues | undefined;
       // The preflight target resolve below validates a changed target flag
       // (`--db-url bad` fails parsing) and is STATEFUL: a changed `--linked`
       // resolves the project ref and merges `[remotes.<ref>]`, so the explicit
@@ -241,17 +268,24 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string) =>
+      const resolveRef = (ref: string): Effect.Effect<LegacyPgDeltaEndpoint, unknown> =>
         Effect.gen(function* () {
           switch (legacyClassifyExplicitRef(ref)) {
-            case "local":
-              return legacyToPostgresURL({
+            case "local": {
+              const connection = {
                 host: legacyGetHostname(),
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,
                 database: "postgres",
-              });
+              };
+              return {
+                kind: "database",
+                ref: legacyToPostgresURL(connection),
+                connection,
+                connectOptions: { isLocal: true, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
+            }
             case "linked": {
               const resolved = yield* resolver.resolve({
                 dbUrl: Option.none(),
@@ -266,46 +300,40 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 mergedLinkedRef = ref2;
                 cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
               }
-              return legacyToPostgresURL(resolved.conn);
+              return {
+                kind: "database",
+                ref: legacyToPostgresURL(resolved.conn),
+                connection: resolved.conn,
+                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
             }
-            case "migrations": {
-              // The pg-delta context AND the shadow's own container spec (`cfg`
-              // below, passed through to `legacyResolveMigrationsCatalogRef`'s
-              // `toml` parameter) are built from whatever `cfg` is current at this
-              // point in the cascade (possibly re-merged by an earlier "linked" ref
-              // above) — see `legacyResolveMigrationsCatalogRef`'s own doc comment.
-              const migrationsCtx: LegacyPgDeltaContext = {
-                projectId: legacyResolvePgDeltaProjectId(
-                  cliConfig.projectId,
-                  cfg,
-                  cliConfig.workdir,
-                ),
-                cwd: cliConfig.workdir,
-                npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
-                denoVersion: cfg.denoVersion,
-                projectEnv: cfg.projectEnv,
-              };
-              // Pass the linked ref only if one resolved earlier in the cascade, so
-              // the shadow merges the same remote override. Absent otherwise → base
-              // config.
-              return yield* legacyResolveMigrationsCatalogRef(
-                fs,
-                path,
-                migrationsCtx,
-                cfg,
-                mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {},
-              );
-            }
+            case "migrations":
+              // Preserve resolution order: the migrations shadow/catalog config must
+              // reflect only refs resolved before THIS endpoint, same contract as the
+              // `projectRef` spread below.
+              migrationsToml ??= cfg;
+              return {
+                kind: "migrations",
+                // Preserve resolution order: only refs resolved before this endpoint
+                // influence the migrations shadow/catalog.
+                ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
+              } satisfies LegacyPgDeltaEndpoint;
             case "url":
-              return ref;
+              return {
+                kind: "database",
+                ref,
+                // The next engine parses arbitrary explicit URLs itself. They are
+                // remote by default, matching Go's TLS-safe connection path.
+                connectOptions: { isLocal: false, dnsResolver },
+              } satisfies LegacyPgDeltaDatabaseEndpoint;
             default:
               return yield* Effect.fail(
                 new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
               );
           }
         });
-      const sourceRef = yield* resolveRef(from);
-      const targetRef = yield* resolveRef(to);
+      const source = yield* resolveRef(from);
+      const desired = yield* resolveRef(to);
       const explicitCtx: LegacyPgDeltaContext = {
         projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, cfg, cliConfig.workdir),
         cwd: cliConfig.workdir,
@@ -313,11 +341,15 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
       };
-      const result = yield* legacyDiffPgDelta(explicitCtx, {
-        sourceRef,
-        targetRef,
+      const result = yield* pgDelta.diffExplicit({
+        context: explicitCtx,
+        toml: migrationsToml ?? cfg,
+        source,
+        desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
+        debug: legacyIsPgDeltaDebugEnabled(),
+        strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
       // (pg-delta ends each statement `;\n`). The file write is gated on the value
@@ -532,6 +564,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       usePgSchema,
       pgDeltaDefault,
     });
+    // Only the next engine ignores schema_paths when building its migrations baseline.
+    const usesPgDeltaNext = useDelta && pgDelta.implementation === "next";
+    if (usesPgDeltaNext && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
+      yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
+    }
 
     // pgAdmin's own text-mode status lines go to STDOUT, not stderr — unlike the migra/
     // pg-delta path's diagnostics below, which always go to stderr. In machine output
@@ -559,7 +596,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     let diffResult: {
       readonly sql: string;
-      readonly files: ReadonlyArray<{ readonly name: string; readonly sql: string }> | undefined;
+      readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile> | undefined;
+      readonly hazards?: LegacyPgDeltaDiffResult["hazards"];
     };
     if (usePgAdmin) {
       // The running-db check runs AFTER the config load + target resolve above, and —
@@ -600,12 +638,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         password: shadowBase.password,
         database: "postgres",
       };
-      // Same `acquireUseRelease` rationale as the migra/pg-delta branch below: `acquire` is
-      // ONLY container creation (uninterruptible); the health-wait + migrate + diff run
-      // inside the interruptible `use` phase. `acquire` here is ONLY
-      // `legacyCreateShadowDatabase` — NOT `legacyPrepareShadowSource` (no `--target-local`
-      // declarative-schema branch, no `targetUrlOverride`, no pg-delta apply: the pgAdmin
-      // engine migrates the shadow directly).
+      // Register cleanup atomically with shadow creation; preparation stays interruptible.
       const sql = yield* Effect.acquireUseRelease(
         legacyCreateShadowDatabase(spawner, shadowBase),
         (handle) =>
@@ -643,10 +676,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       diffResult = { sql, files: undefined };
     } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
+      const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext ? "pgdelta-next" : "legacy";
       const shadowInput = {
         ...(yield* resolveShadowRunInput()),
         targetLocal: resolved.isLocal,
         usePgDelta: useDelta,
+        migrationMode,
         // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
         // the latter is the raw `@supabase/config` field, which never applies
         // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `cfg` above (`legacyReadDbToml`) already
@@ -655,26 +690,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // `Effect.acquireUseRelease`, NOT a separate `yield* legacyCreateShadowDatabase(...)`
-      // followed by a later `.pipe(Effect.ensuring(...))`: the latter shape leaves a real gap
-      // between the shadow's successful creation and the `Effect.ensuring` finalizer actually
-      // being attached — a fiber interrupt landing in that gap (between the two `yield*`
-      // statements) would skip `legacyRemoveShadowDatabase` entirely, leaking the live shadow
-      // container and leaving the shadow port occupied. `acquireUseRelease` closes that:
-      // `acquire` runs inside an `uninterruptibleMask`, and the release finalizer is registered
-      // in the SAME uninterruptible continuation `acquire` resolves into. This does NOT make
-      // removal unconditional, though — see `legacyCreateShadowDatabase`'s own doc comment
-      // (`shadow-database.ts`) for the still-present leak window when `acquire` itself fails
-      // partway through (a `docker create` success followed by a `docker cp`/`docker start`
-      // failure).
-      //
-      // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
-      // health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs. Those run
-      // inside the `use` phase below instead, where a SIGINT can still interrupt them; passing
-      // all of `legacyPrepareShadowSource` as `acquire` made that whole sequence uninterruptible
-      // too, since `acquireUseRelease`'s `uninterruptibleMask` has no `restore` around
-      // `acquire` — see `legacy-shadow-source.ts`'s own doc comment on
-      // `legacyPrepareShadowSource` for the full rationale.
+      // Register cleanup atomically with creation; prepare and diff remain interruptible.
       diffResult = yield* Effect.acquireUseRelease(
         legacyCreateShadowDatabase(spawner, shadowInput),
         (handle) =>
@@ -688,34 +704,31 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               "stderr",
             );
             if (useDelta) {
-              // With PGDELTA_DEBUG set, export the shadow's baseline catalog before diffing
-              // (shared behavior with `db pull`) — the snapshot itself is unused here
-              // (unlike `db pull`'s `legacySaveEmptyPgDeltaPullDebug`, `db diff` has no
-              // debug-bundle consumer for it); a failed export only warns and the diff
-              // continues.
-              if (legacyIsPgDeltaDebugEnabled()) {
-                yield* legacyExportCatalogPgDelta(ctx, {
-                  targetRef: shadow.sourceUrl,
-                  role: "postgres",
-                }).pipe(
-                  Effect.catch((error) =>
-                    output.raw(
-                      `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
-                      "stderr",
-                    ),
-                  ),
-                );
-              }
-              const result = yield* legacyDiffPgDelta(ctx, {
-                sourceRef: shadow.sourceUrl,
-                targetRef: target,
+              const result = yield* pgDelta.diffDatabase({
+                context: ctx,
+                source: {
+                  kind: "database",
+                  ref: shadow.sourceUrl,
+                  connectOptions: { isLocal: true, dnsResolver: "native" },
+                },
+                target: {
+                  kind: "database",
+                  ref: target,
+                  ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
+                  connectOptions: {
+                    isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
+                    dnsResolver,
+                  },
+                },
                 schema: flags.schema,
                 formatOptions,
+                debug: legacyIsPgDeltaDebugEnabled(),
+                strictCoverage: flags.strictCoverage,
               });
               // Keep the per-unit plan files so a multi-unit plan can be written as one
               // migration file each; `sql` stays the flattened join for stdout review +
               // machine payloads.
-              return { sql: result.sql, files: result.files };
+              return { sql: result.sql, files: result.files, hazards: result.hazards };
             }
             const sql = yield* legacyDiffMigra(ctx, {
               source: shadow.sourceUrl,
@@ -746,8 +759,38 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     // The file-write + drop-statement warning below is bypassed by the pgadmin path.
     const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
-    const drops: ReadonlyArray<string> = usePgAdmin ? [] : legacyFindDropStatements(out);
+    const drops: ReadonlyArray<string> = usePgAdmin
+      ? []
+      : diffResult.hazards !== undefined
+        ? diffResult.hazards.dataLoss.map((action) => action.sql)
+        : legacyFindDropStatements(out);
     const writtenFiles: Array<string> = [];
+    let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
+    if (
+      out.length >= 2 &&
+      useDelta &&
+      pgDelta.implementation === "next" &&
+      Option.isSome(flags.file) &&
+      flags.file.value.length > 0
+    ) {
+      // This is an informational, best-effort probe only. Declarative files are
+      // intentionally not inputs to normal db diff, so an unreadable or changing
+      // directory must never turn a previously successful diff into a failure.
+      const declarativeDir = legacyResolveDeclarativeDir(path, cfg.pgDelta);
+      const declarativeDirAbsolute = path.resolve(cliConfig.workdir, declarativeDir);
+      const hasDeclarativeSql = yield* Effect.gen(function* () {
+        if (!(yield* fs.exists(declarativeDirAbsolute))) return false;
+        return (yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDirAbsolute)).length > 0;
+      }).pipe(Effect.orElseSucceed(() => false));
+      if (hasDeclarativeSql) {
+        const isAbsolute = path.isAbsolute(declarativeDir);
+        const displayPath = isAbsolute
+          ? "the configured declarative schema directory"
+          : declarativeDir.split("\\").join("/");
+        ignoredDeclarativeAdvisory = declarativeBaselineAdvisory(isAbsolute ? null : displayPath);
+        yield* output.raw(declarativeBaselineNote(displayPath), "stderr");
+      }
+    }
     if (out.length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
       // The file write is gated on the value being non-empty, so an empty
@@ -755,22 +798,21 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // writing a `<timestamp>_.sql` migration with no name.
     } else if (Option.isSome(flags.file) && flags.file.value.length > 0) {
       const fileName = flags.file.value;
-      // A pg-delta plan that crosses a transaction boundary yields more than one
-      // ordered unit; writing them into a single migration file would later fail
-      // when `db push`/`reset` applies it as one transaction. Write one migration
-      // file per unit in that case via the shared writer: each file appends the
-      // unit name and gets a strictly increasing timestamp, the full set is
-      // collision-checked against existing migrations, and every file is written
-      // exclusively so a pre-existing migration is never overwritten. A
-      // single-unit plan (and the migra engine) keeps the exact `<ts>_<name>.sql`
-      // file.
+      // Plans spanning transaction boundaries need one migration per ordered unit.
       const planFiles = diffResult.files ?? [];
       if (planFiles.length > 1) {
         const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
           workdir: cliConfig.workdir,
           baseMillis: yield* Clock.currentTimeMillis,
           name: fileName,
-          files: planFiles.map((file) => ({ name: file.name, sql: file.sql })),
+          files: planFiles.map((file) => ({
+            name:
+              file.suffix !== undefined && file.suffix !== null
+                ? file.suffix.replace(/^_/u, "")
+                : file.name,
+            sql: file.sql,
+            transactionMode: file.transactionMode,
+          })),
         }).pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
         for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {
@@ -792,7 +834,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     }
     if (drops.length > 0) {
       yield* output.raw(
-        "Found drop statements in schema diff. Please double check if these are expected:\n",
+        diffResult.hazards === undefined
+          ? "Found drop statements in schema diff. Please double check if these are expected:\n"
+          : "Found destructive changes in schema diff. Please double check if these are expected:\n",
         "stderr",
       );
       yield* output.raw(`${legacyYellow(drops.join("\n"))}\n`, "stderr");
@@ -809,6 +853,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         schemas: flags.schema,
         engine,
         dropStatements: drops,
+        ...(ignoredDeclarativeAdvisory === undefined
+          ? {}
+          : { advisories: [ignoredDeclarativeAdvisory] }),
       });
     }
   }).pipe(

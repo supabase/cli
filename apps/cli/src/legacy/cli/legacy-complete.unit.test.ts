@@ -90,7 +90,9 @@ describe("legacyRespondToComplete", () => {
     const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "diff", "--o"]);
     const outputCandidates = result?.candidates.filter((c) => c.name === "--output");
     expect(outputCandidates).toHaveLength(1);
-    expect(outputCandidates?.[0]?.description).toBe("Write explicit diff output to a file path.");
+    expect(outputCandidates?.[0]?.description).toBe(
+      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
+    );
   });
 
   describe("subcommand completion is not blocked by a preceding global flag", () => {
@@ -1313,7 +1315,9 @@ describe("legacyCollectInScopeFlags", () => {
     const flags = legacyCollectInScopeFlags(legacyRoot, commandChain);
     const outputFlags = flags.filter((flag) => flag.name === "output");
     expect(outputFlags).toHaveLength(1);
-    expect(outputFlags[0]?.description).toBe("Write explicit diff output to a file path.");
+    expect(outputFlags[0]?.description).toBe(
+      "Write flattened explicit diff SQL to a file for review; this is not a portable apply script.",
+    );
   });
 
   it("orders flags like cobra's InheritedFlags().VisitAll then NonInheritedFlags().VisitAll — alphabetical within each block, not declaration order (CLI-1965 review)", () => {
