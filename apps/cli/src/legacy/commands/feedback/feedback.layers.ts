@@ -9,7 +9,7 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import type { LegacyDebugLoggerShape } from "../../shared/legacy-debug-logger.service.ts";
 import { LegacyDebugLogger } from "../../shared/legacy-debug-logger.service.ts";
-import { legacyDohFetch } from "../../shared/legacy-http-dns.ts";
+import { legacyDohFetch, type LegacyDohFetchOptions } from "../../shared/legacy-http-dns.ts";
 
 export const legacyFeedbackCliConfigLayer = legacyCliConfigLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
@@ -20,6 +20,8 @@ interface LegacyFeedbackFetchOptions {
   readonly logger: LegacyDebugLoggerShape;
   /** Injectable inner transport for hermetic tests; defaults to `globalThis.fetch`. */
   readonly innerFetch?: typeof globalThis.fetch;
+  /** Injectable DoH resolver for hermetic tests; defaults to the real Cloudflare DoH lookup. */
+  readonly resolver?: LegacyDohFetchOptions["resolver"];
 }
 
 /**
@@ -30,7 +32,11 @@ interface LegacyFeedbackFetchOptions {
  */
 export function legacyFeedbackFetch(options: LegacyFeedbackFetchOptions): typeof globalThis.fetch {
   const { dnsResolver, logger } = options;
-  const dohFetch = legacyDohFetch({ dnsResolver, innerFetch: options.innerFetch });
+  const dohFetch = legacyDohFetch({
+    dnsResolver,
+    innerFetch: options.innerFetch,
+    resolver: options.resolver,
+  });
   return Object.assign(
     (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const method = init?.method ?? (input instanceof Request ? input.method : "GET");
