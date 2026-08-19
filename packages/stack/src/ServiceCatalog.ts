@@ -108,7 +108,7 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.159",
+    defaultVersion: "17.6.1.165",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "postgres" },
