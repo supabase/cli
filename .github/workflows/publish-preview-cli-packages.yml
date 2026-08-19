@@ -21,6 +21,9 @@ on:
         description: Publish even when the PR is a draft (used by run-ci.yml)
         type: boolean
         default: false
+    secrets:
+      DF_FIREWALL_TOKEN:
+        required: true
 
 permissions:
   actions: read

@@ -48,7 +48,8 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       force: true
-    secrets: inherit
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   preview:
     name: Preview packages
@@ -62,4 +63,5 @@ jobs:
     uses: ./.github/workflows/publish-preview-cli-packages.yml
     with:
       force: true
-    secrets: inherit
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
