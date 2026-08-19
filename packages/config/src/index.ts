@@ -50,6 +50,7 @@ export { projectConfigStoreLayer } from "./project-config.layer.ts";
 export { ProjectConfigStore } from "./project-config.service.ts";
 export { PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
+  type BaseProjectConfig,
   type SparseProjectConfig,
   getDefaultProjectConfig,
   omitDefaultValues,

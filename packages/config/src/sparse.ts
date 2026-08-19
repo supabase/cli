@@ -24,6 +24,14 @@ type DeepPartial<T> =
 
 export type SparseProjectConfig = DeepPartial<ProjectConfig>;
 
+/**
+ * The root-scope fields shared by a full {@link ProjectConfig} and a decoded
+ * `[remotes.*]` block (which has the same sections but no nested `remotes`).
+ * Subtraction accepts this shape so a remote block can be subtracted against
+ * the merged base config directly, as ADR 0018 prescribes, without a cast.
+ */
+export type BaseProjectConfig = Omit<ProjectConfig, "remotes">;
+
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
 let defaultProjectConfig: ProjectConfig | undefined;
@@ -37,12 +45,24 @@ let defaultProjectConfig: ProjectConfig | undefined;
  * (e.g. `project_id`, `api.external_url`) are absent.
  *
  * Memoized (and the memo shared with callers) rather than computed at module
- * load, so importing the package doesn't pay for a full schema decode; the
- * decoded config is deeply readonly by type, so sharing is safe.
+ * load, so importing the package doesn't pay for a full schema decode. The
+ * memo is deeply frozen before it is shared: it doubles as the module-wide
+ * subtraction baseline, so a caller mutation would silently corrupt every
+ * later {@link omitDefaultValues} result.
  */
 export function getDefaultProjectConfig(): ProjectConfig {
-  defaultProjectConfig ??= decodeProjectConfig({});
+  defaultProjectConfig ??= deepFreeze(decodeProjectConfig({}));
   return defaultProjectConfig;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null) {
+    for (const child of Object.values(value)) {
+      deepFreeze(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -136,13 +156,16 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * what the branch resolves to.
  */
 export function subtractProjectConfig(
-  config: ProjectConfig,
-  baseline: ProjectConfig,
+  config: BaseProjectConfig,
+  baseline: BaseProjectConfig,
 ): SparseProjectConfig;
 // The implementation signature stays untyped because TypeScript cannot verify
 // that a structural walk over `unknown` reconstructs a `DeepPartial` of its
 // input; the overload above is the contract, pinned by the unit tests.
-export function subtractProjectConfig(config: ProjectConfig, baseline: ProjectConfig): unknown {
+export function subtractProjectConfig(
+  config: BaseProjectConfig,
+  baseline: BaseProjectConfig,
+): unknown {
   const result = subtractValue(config, baseline);
   return isObject(result) ? result : {};
 }
@@ -156,6 +179,6 @@ export function subtractProjectConfig(config: ProjectConfig, baseline: ProjectCo
  * default config has none), and undefaulted `optionalKey` fields always
  * survive when present.
  */
-export function omitDefaultValues(config: ProjectConfig): SparseProjectConfig {
+export function omitDefaultValues(config: BaseProjectConfig): SparseProjectConfig {
   return subtractProjectConfig(config, getDefaultProjectConfig());
 }

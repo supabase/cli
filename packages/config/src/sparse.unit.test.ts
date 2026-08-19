@@ -30,6 +30,17 @@ describe("getDefaultProjectConfig", () => {
     expect("project_id" in defaults).toBe(false);
     expect("external_url" in defaults.api).toBe(false);
   });
+
+  test("is deeply frozen so mutation cannot poison the shared baseline", () => {
+    const defaults = getDefaultProjectConfig();
+    expect(Object.isFrozen(defaults)).toBe(true);
+    expect(Object.isFrozen(defaults.api)).toBe(true);
+    expect(Object.isFrozen(defaults.api.schemas)).toBe(true);
+    expect(() => {
+      // @ts-expect-error -- readonly by type; pinning the runtime guard too
+      defaults.api.port = 9999;
+    }).toThrow(TypeError);
+  });
 });
 
 describe("omitDefaultValues", () => {
@@ -107,6 +118,23 @@ describe("subtractProjectConfig", () => {
   test("subtracting a config from itself yields an empty overlay", () => {
     const config = decodeProjectConfig({ api: { max_rows: 500 } });
     expect(subtractProjectConfig(config, config)).toEqual({});
+  });
+
+  test("accepts a decoded remote block against the merged base config", () => {
+    // The ADR 0018 call shape for CLI-2156: a remote block has the root
+    // sections but no nested `remotes`, and must be accepted without a cast.
+    const config = decodeProjectConfig({
+      api: { max_rows: 500 },
+      remotes: { staging: { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } } },
+    });
+    const base = decodeProjectConfig({ api: { max_rows: 500 } });
+    const staging = config.remotes["staging"];
+    expect(staging).toBeDefined();
+    if (staging === undefined) return;
+    expect(subtractProjectConfig(staging, base)).toEqual({
+      project_id: "abcdefghijklmnopqrst",
+      api: { max_rows: 1000 },
+    });
   });
 
   test("subtraction is directional against the baseline, not the defaults", () => {

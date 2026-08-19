@@ -21,7 +21,7 @@ What the output *is* depends on the baseline. In the primary case — subtractin
 
 Subtraction never recurses into `remotes` when the baseline is the default config: the default config has no remote blocks, so under subtract semantics user remote blocks survive untouched. **The correct baseline for a remote block is the merged base config, never the default config.** Callers that want to sparsify a remote block (CLI-2156/2064) must call `subtractProjectConfig(remoteBlock, mergedBaseConfig)` explicitly.
 
-All functions are pure and synchronous, operating on decoded `ProjectConfig` values, with no Effect in the public signature.
+All functions are pure and synchronous, operating on decoded config values, with no Effect in the public signature. Subtraction accepts the shared base-config shape (`BaseProjectConfig`, a `ProjectConfig` without the nested `remotes`), which both full configs and decoded remote blocks satisfy — so the remote-block call above type-checks without a cast.
 
 ## Rationale
 
