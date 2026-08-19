@@ -241,6 +241,16 @@ func TestIsPipelineIncompatible(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "drop index concurrently",
+			sql:  "DROP INDEX CONCURRENTLY public.widgets_id_idx",
+			want: true,
+		},
+		{
+			name: "drop index concurrently if exists",
+			sql:  "drop index concurrently if exists api.idx_rx_orders_clinic_id",
+			want: true,
+		},
+		{
 			name: "reindex table concurrently",
 			sql:  "REINDEX TABLE CONCURRENTLY public.widgets",
 			want: true,
@@ -273,6 +283,11 @@ func TestIsPipelineIncompatible(t *testing.T) {
 		{
 			name: "ordinary create index",
 			sql:  "CREATE INDEX widgets_id_idx ON public.widgets(id)",
+			want: false,
+		},
+		{
+			name: "ordinary drop index",
+			sql:  "DROP INDEX IF EXISTS public.widgets_id_idx",
 			want: false,
 		},
 		{
