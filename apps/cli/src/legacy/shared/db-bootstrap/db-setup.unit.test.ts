@@ -18,15 +18,19 @@ import {
   LegacyEdgeRuntimeScript,
   type LegacyEdgeRuntimeRunOpts,
 } from "../legacy-edge-runtime-script.service.ts";
+import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
+import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import {
   LegacyDbSetupError,
   legacyResolveDbSetupPrelude,
   legacyRunDatabaseWebhooksSetup,
+  legacyRunFreshDbSetup,
   legacyStartInitCurrentBranch,
-  legacyStartSetupLocalDatabase,
-  type LegacyStartSetupLocalDatabaseInput,
+  type LegacyFreshDbSetupInput,
+  type LegacyRunFreshDbSetupInput,
 } from "./db-setup.ts";
+import { legacyResolvePinnedImage } from "./pinned-image.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
@@ -167,7 +171,7 @@ function mockDockerRunFails() {
 /**
  * `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe` back
  * `legacyTryCacheMigrationsCatalog`'s own pg-delta catalog-export call (`db-setup.ts`'s
- * pgcache-warmup step) — required by {@link legacyStartSetupLocalDatabase}'s own widened
+ * pgcache-warmup step) — required by {@link legacyRunFreshDbSetup}'s own widened
  * effect environment regardless of whether a given test's config actually enables
  * pg-delta (the early `!params.enabled` return means these mocks are never invoked at
  * runtime unless a test opts in via `writeConfigToml`'s `[experimental.pgdelta]`).
@@ -205,52 +209,102 @@ function writeConfigToml(workdir: string, content: string): void {
 
 const defaultConfig: ProjectConfig = decodeConfig({});
 
+/**
+ * Flat override keys accepted by {@link baseInput} — the SAME shape the pre-merge test suite
+ * used against the (now-deleted) flat `LegacyStartSetupLocalDatabaseInput`, distributed here
+ * into `legacyRunFreshDbSetup`'s split top-level/`setup` shape. Kept as a standalone interface
+ * (not `Partial<LegacyRunFreshDbSetupInput<never>>`) since several keys (`dbHost`/`images`) no
+ * longer exist on the real input at all, and several others (`majorVersion`, `config`, `jwks`, …)
+ * now live nested under `setup` instead of flat.
+ */
+interface RunFreshDbSetupOverrides {
+  readonly config?: ProjectConfig;
+  readonly experimental?: boolean;
+  readonly majorVersion?: number;
+  readonly projectId?: string;
+  readonly networkId?: string;
+  readonly hostname?: string;
+  readonly dbPort?: number;
+  readonly dbUrl?: string;
+  readonly jwtSecret?: string;
+  /** A plain string, matching the pre-merge flat shape — wrapped as `Effect.succeed(...)` for `setup.jwks`. */
+  readonly jwks?: string;
+  readonly apiUrl?: string;
+  readonly authExternalUrl?: string;
+  readonly siteUrl?: string;
+  readonly anonKey?: string;
+  readonly serviceRoleKey?: string;
+  readonly storageTargetMigration?: string;
+  readonly realtimeEnabledForSetup?: boolean;
+  readonly storageEnabledForSetup?: boolean;
+  readonly authEnabledForSetup?: boolean;
+  readonly serviceVersionOverrides?: LocalServiceVersionOverrides;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
+  readonly debug?: boolean;
+  readonly version?: string;
+  readonly seedFlags?: { readonly noSeed: boolean; readonly sqlPaths: ReadonlyArray<string> };
+}
+
+/**
+ * `session` travels alongside the real `legacyRunFreshDbSetup` input as an extra property —
+ * `run` below pulls it off and turns it into the `LegacyDbConnection` mock layer instead of
+ * passing it through (the real function opens its own session via that service; it no longer
+ * accepts one as input).
+ */
+type RunFreshDbSetupTestInput = Omit<LegacyRunFreshDbSetupInput<never>, "fs" | "path"> & {
+  readonly session: LegacyDbSession;
+};
+
 function baseInput(
   workdir: string,
   session: LegacyDbSession,
-  overrides: Partial<LegacyStartSetupLocalDatabaseInput> = {},
-): Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path"> {
+  overrides: RunFreshDbSetupOverrides = {},
+): RunFreshDbSetupTestInput {
+  const setup: LegacyFreshDbSetupInput<never> = {
+    majorVersion: overrides.majorVersion ?? 17,
+    config: overrides.config ?? defaultConfig,
+    experimental: overrides.experimental ?? false,
+    dbUrl: overrides.dbUrl ?? "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
+    jwtSecret: overrides.jwtSecret ?? "super-secret-jwt-token-with-at-least-32-characters-long",
+    jwks: Effect.succeed(overrides.jwks ?? '{"keys":[]}'),
+    apiUrl: overrides.apiUrl ?? "http://127.0.0.1:54321",
+    authExternalUrl: overrides.authExternalUrl,
+    siteUrl: overrides.siteUrl ?? defaultConfig.auth.site_url,
+    anonKey: overrides.anonKey ?? "anon-key",
+    serviceRoleKey: overrides.serviceRoleKey ?? "service-role-key",
+    storageTargetMigration: overrides.storageTargetMigration ?? "",
+    realtimeEnabledForSetup: overrides.realtimeEnabledForSetup ?? true,
+    storageEnabledForSetup: overrides.storageEnabledForSetup ?? true,
+    authEnabledForSetup: overrides.authEnabledForSetup ?? true,
+    serviceVersionOverrides: overrides.serviceVersionOverrides ?? {},
+    projectEnvValues: overrides.projectEnvValues,
+    debug: overrides.debug ?? false,
+  };
   return {
     session,
     workdir,
-    config: defaultConfig,
-    experimental: false,
-    majorVersion: 17,
-    dbHost: "supabase_db_proj",
-    projectId: "proj",
-    networkId: "supabase_network_proj",
-    dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
-    jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
-    jwks: '{"keys":[]}',
-    apiUrl: "http://127.0.0.1:54321",
-    siteUrl: defaultConfig.auth.site_url,
-    anonKey: "anon-key",
-    serviceRoleKey: "service-role-key",
-    storageTargetMigration: "",
-    images: {
-      realtime: "public.ecr.aws/supabase/realtime:v2.34.7",
-      storage: "public.ecr.aws/supabase/storage-api:v1.0.0",
-      auth: "public.ecr.aws/supabase/gotrue:v2.170.0",
-    },
-    projectEnvValues: undefined,
-    debug: false,
-    version: "",
-    seedFlags: { noSeed: false, sqlPaths: [] },
-    ...overrides,
+    projectId: overrides.projectId ?? "proj",
+    networkId: overrides.networkId ?? "supabase_network_proj",
+    hostname: overrides.hostname ?? "127.0.0.1",
+    dbPort: overrides.dbPort ?? 54322,
+    version: overrides.version ?? "",
+    seedFlags: overrides.seedFlags ?? { noSeed: false, sqlPaths: [] },
+    setup,
   };
 }
 
 const run = (
-  input: Omit<LegacyStartSetupLocalDatabaseInput, "fs" | "path">,
+  input: RunFreshDbSetupTestInput,
   out: ReturnType<typeof mockOutput>,
   docker: ReturnType<typeof mockDockerRun> | ReturnType<typeof mockDockerRunFails>,
   edgeRuntime: ReturnType<typeof mockEdgeRuntime> = mockEdgeRuntime(),
-) =>
-  Effect.gen(function* () {
+) => {
+  const { session, ...rest } = input;
+  return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
-      ...input,
+    return yield* legacyRunFreshDbSetup(mockAlwaysCachedSpawner(), {
+      ...rest,
       fs,
       path,
     });
@@ -263,11 +317,15 @@ const run = (
         mockRuntimeInfo({ platform: "darwin" }),
         edgeRuntime.layer,
         mockPgDeltaSslProbeLayer(),
+        Layer.succeed(LegacyDbConnection, {
+          connect: () => Effect.succeed(session),
+        }),
       ),
     ),
   );
+};
 
-describe("legacyStartSetupLocalDatabase", () => {
+describe("legacyRunFreshDbSetup", () => {
   describe("PG <= 14 vs PG >= 15 schema branch", () => {
     it.effect("PG14: execs globals + the PG14 initial schema, runs no one-shot docker jobs", () => {
       const workdir = makeWorkdir();
@@ -337,9 +395,20 @@ describe("legacyStartSetupLocalDatabase", () => {
         Effect.map(() => {
           expect(docker.runs.length).toBe(2);
           const images = docker.runs.map((r) => r.image);
-          expect(images).toContain("public.ecr.aws/supabase/realtime:v2.34.7");
-          expect(images).toContain("public.ecr.aws/supabase/gotrue:v2.170.0");
-          expect(images).not.toContain("public.ecr.aws/supabase/storage-api:v1.0.0");
+          // `mockAlwaysCachedSpawner` reports the FIRST registry candidate
+          // (`legacyGetRegistryImageUrlCandidates`'s default-registry entry) as already
+          // cached, so the job's resolved `image` is the registry-qualified form of the
+          // pinned image, not the bare pinned string — same derivation
+          // `squash.integration.test.ts`/`serve.integration.test.ts` already use.
+          expect(images).toContain(
+            legacyGetRegistryImageUrl(legacyResolvePinnedImage("realtime", "realtime", {})),
+          );
+          expect(images).toContain(
+            legacyGetRegistryImageUrl(legacyResolvePinnedImage("gotrue", "auth", {})),
+          );
+          expect(images).not.toContain(
+            legacyGetRegistryImageUrl(legacyResolvePinnedImage("storage", "storage", {})),
+          );
           rmSync(workdir, { recursive: true, force: true });
         }),
       );
@@ -402,7 +471,10 @@ describe("legacyStartSetupLocalDatabase", () => {
           baseInput(workdir, session, {
             majorVersion: 15,
             config,
-            dbHost: "supabase_db_myproj",
+            // `dbHost` is no longer caller-supplied — it's derived internally via
+            // `localDbContainerId(projectId)` (`supabase_db_<projectId>`), so overriding
+            // `projectId` here reproduces the same `supabase_db_myproj` DB_HOST value.
+            projectId: "myproj",
             jwks: '{"keys":["stub"]}',
           }),
           out,
@@ -825,33 +897,25 @@ describe("legacyStartSetupLocalDatabase", () => {
       },
     );
 
-    it.effect(
-      "warns without failing legacyStartSetupLocalDatabase when the catalog export fails",
-      () => {
-        const workdir = makeWorkdir();
-        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
-        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
-        const { session } = fakeSession();
-        const out = mockOutput();
-        const docker = mockDockerRun();
-        const edgeRuntime = mockEdgeRuntime({
-          failWith: "edge-runtime script produced no output",
-        });
-        return run(
-          baseInput(workdir, session, { majorVersion: 14 }),
-          out,
-          docker,
-          edgeRuntime,
-        ).pipe(
-          Effect.map(() => {
-            expect(out.stderrText).toContain(
-              "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-            );
-            rmSync(workdir, { recursive: true, force: true });
-          }),
-        );
-      },
-    );
+    it.effect("warns without failing legacyRunFreshDbSetup when the catalog export fails", () => {
+      const workdir = makeWorkdir();
+      writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+      writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
+      const { session } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      const edgeRuntime = mockEdgeRuntime({
+        failWith: "edge-runtime script produced no output",
+      });
+      return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker, edgeRuntime).pipe(
+        Effect.map(() => {
+          expect(out.stderrText).toContain(
+            "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+          );
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
   });
 });
 

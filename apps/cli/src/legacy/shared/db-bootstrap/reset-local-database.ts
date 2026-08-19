@@ -132,7 +132,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
   // (`internal/db/reset/reset.go:57-61`). Re-validate here as an explicit, independent gate
   // (the same pattern `db start`/`db push` use), so "a malformed config aborts before the
   // local database is recreated" is enforced by this function directly.
-  yield* legacyCheckDbToml(fs, path, workdir);
+  const dbTomlValues = yield* legacyCheckDbToml(fs, path, workdir);
 
   // AssertSupabaseDbIsRunning — error if the local db container is down.
   const running = yield* legacyIsLocalDbRunning(
@@ -190,6 +190,13 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     postgresSpec: postgresSpecBase,
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
+    // The `[db]` values this function's own validating load above already resolved — what the
+    // PG15 recreate's baseline cache keys on, rather than a third silent `config.toml` pass.
+    toml: {
+      webhooksEnabled: dbTomlValues.webhooksEnabled,
+      apiAutoExposeNewTables: dbTomlValues.baseline.apiAutoExposeNewTables,
+      vault: dbTomlValues.vault,
+    },
     version: input.version,
     seedFlags: input.seedFlags,
     // `db reset` resolves `--experimental` EARLIER than this prelude (it gates the

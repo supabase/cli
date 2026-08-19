@@ -222,7 +222,7 @@ export const legacyResolveDbBootstrapConfig = <E>(
     );
 
     // Both the long-running Realtime container (`supabase start` only) AND the PG15+ one-shot
-    // Realtime setup job (both callers, via `legacyStartSetupLocalDatabase`) must see the SAME
+    // Realtime setup job (both callers, via `legacyRunFreshDbSetup`) must see the SAME
     // already-overridden values (Go's single `utils.Config.Realtime` source of truth,
     // `internal/start/start.go:922,928`, `internal/db/start/start.go:283,290`).
     const realtimeIpVersion = yield* wrapConfigOverride(

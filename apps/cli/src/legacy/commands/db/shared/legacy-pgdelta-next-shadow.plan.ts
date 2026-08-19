@@ -10,7 +10,7 @@
  *
  * - `parallel` — both snapshots are published: both provisions warm-restore concurrently. A warm
  *   provision skips the platform baseline entirely (`legacySetupShadowDatabase`'s
- *   `baselinePresent` branch), so the declarative fiber prints nothing and the migrations fiber's
+ *   `warm` branch), so the declarative fiber prints nothing and the migrations fiber's
  *   `Applying migration ...` lines stream live and in order.
  * - `baseline-handoff` — both are cold with the SAME cache key (webhooks agree): the baseline is
  *   paid exactly once. The migrations shadow cold-provisions; its snapshot export runs at the

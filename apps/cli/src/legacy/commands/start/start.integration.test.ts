@@ -21,6 +21,7 @@ import {
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -87,6 +88,12 @@ vi.mock("../../shared/legacy-local-config-values.ts", async () => {
 });
 
 const tempRoot = useLegacyTempWorkdir("supabase-start-int-");
+
+// The baseline cache (`db-bootstrap/main-db-baseline.ts`) is ON by default and reads
+// `process.env` directly, so every fresh-volume bring-up below would otherwise restore or publish
+// a real tar under the developer's own `~/.supabase`. This suite's subject is the bring-up itself;
+// the cache-focused scenarios opt back in per-test with `withLegacyShadowCacheEnabled`.
+useLegacyShadowCacheDisabled();
 
 function flags(overrides: Partial<LegacyStartFlags> = {}): LegacyStartFlags {
   return {
@@ -367,7 +374,7 @@ function mockStorageBucketHttpClient() {
 
 /**
  * A fake `LegacyDbSession` recording every `exec`/`query` call — the fresh-volume
- * `SetupLocalDatabase`-equivalent path (`legacyStartSetupLocalDatabase`) needs an
+ * `SetupLocalDatabase`-equivalent path (`legacyRunFreshDbSetup`) needs an
  * open session for PG<=14's schema SQL / `ApplyApiPrivileges`; PG15+ (this suite's
  * default) never calls `exec`/`query` at all (its schema init is three one-shot
  * `LegacyDockerRun` jobs instead — see `db-setup.ts`'s header), so this mostly just
@@ -463,7 +470,7 @@ function setup(opts: SetupOpts = {}) {
     opts.httpClientLayer ?? alwaysReadyHttpClientLayer,
     // Only ever exercised by a fresh-volume scenario (`volume inspect` exiting
     // non-zero) — every other scenario's default "volume already exists" route
-    // never reaches `legacyStartSetupLocalDatabase`/`legacySeedBucketsRun`, but
+    // never reaches `legacyRunFreshDbSetup`/`legacySeedBucketsRun`, but
     // both are still part of `legacyStart`'s aggregate Effect type, so every
     // scenario needs these satisfied regardless of whether it exercises them.
     Layer.succeed(LegacyDbConnection, { connect: () => Effect.succeed(dbSession.session) }),
@@ -2388,7 +2395,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("fresh volume: DB setup + bucket seeding", () => {
-    /** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
+    /** The three PG15+ one-shot migrate jobs (`legacyRunFreshDbSetup`'s `LegacyDockerRun` calls) — a plain `docker run --rm ...`, never `-d`, distinct from Edge Runtime's own detached `docker run -d`. */
     function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
       return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
     }
@@ -2535,7 +2542,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
       () => {
-        // `legacyCheckDbToml`'s own internal call inside `legacyStartSetupLocalDatabase` only
+        // `legacyCheckDbToml`'s own internal call inside `legacyRunFreshDbSetup` only
         // runs on a fresh volume — an undecryptable `[db.vault]`
         // secret (a DB-specific field `@supabase/config`'s own schema never decrypts, only
         // `legacyCheckDbToml`'s pipeline does) must still fail eagerly, before any Docker work,

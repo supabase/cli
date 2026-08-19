@@ -10,6 +10,7 @@ import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
 import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
+import { useLegacyShadowCacheDisabled } from "../../../../../tests/helpers/legacy-mocks.ts";
 
 const common = {
   context: {
@@ -103,6 +104,11 @@ function setup() {
     layer: legacyPgDeltaNextEngineLayer.pipe(Layer.provide(dependencies)),
   };
 }
+
+// The baseline PGDATA cache is ON by default and roots its tar directory at the ambient
+// `SUPABASE_HOME` — which this suite does not pin — so a cold provision here would read from, and
+// publish into, the developer's real `~/.supabase`. This suite's subject is not the cache.
+useLegacyShadowCacheDisabled();
 
 describe("pg-delta next shadow selection", () => {
   it.effect("does not provision a second shadow for prepared database diffs", () => {

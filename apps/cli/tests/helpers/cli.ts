@@ -254,10 +254,10 @@ export function spawnSupabase(
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",
-    // The shadow baseline cache (`db-bootstrap/shadow-cache.ts`) is ON by default. Off here so an
-    // e2e/live run observes the plain shadow lifecycle and never leaves a ~90MB tar in a temp
-    // project — a test whose subject IS the cache opts back in through `options.env`, which is
-    // spread after this.
+    // The baseline PGDATA cache (`db-bootstrap/shadow-cache.ts`, and `main-db-baseline.ts` for
+    // the long-running `db` container) is ON by default. Off here so an e2e/live run observes the
+    // plain shadow/bring-up lifecycle and never leaves a ~90MB tar behind — a test whose subject
+    // IS the cache opts back in through `options.env`, which is spread after this.
     SUPABASE_SHADOW_CACHE: "0",
     ...options?.env,
   };

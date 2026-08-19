@@ -16,6 +16,15 @@
  * pipeline (skipped IN FULL when `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the
  * LAST line of `StartDatabase`, reached on every path that doesn't already return/fail above).
  *
+ * One TS-only addition sits inside that order, with no Go counterpart: the baseline PGDATA cache
+ * (`main-db-baseline.ts`), consulted only on the run that would provision the platform baseline
+ * (fresh volume, no `--from-backup`). Its decision lands between the container spec being built
+ * and `docker create`, because a warm restore is a `docker cp -` into the created-but-unstarted
+ * container; it then owns create + health wait, so a restore that comes up broken can fall back to
+ * a cold provision, and hands `legacyRunFreshDbSetup` the baseline state that decides whether the
+ * platform baseline is re-run or snapshotted. With `SUPABASE_SHADOW_CACHE=false`, on PG<=14, and
+ * on `--from-backup`, every step above is byte-for-byte what it was.
+ *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
  * `StartDatabase` has no `ignoreHealthCheck` parameter at all). `supabase start`'s own caller
@@ -47,7 +56,7 @@
  *    baked into those containers' envs).
  */
 
-import { Data, Effect, type FileSystem, type Path, Result } from "effect";
+import { Data, Effect, type FileSystem, type Path } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 
@@ -65,15 +74,16 @@ import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
 import {
   legacyEnsureNetwork,
-  legacyCreateContainer,
   legacyVolumeExists,
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerCreateError,
   type LegacyContainerOpts,
+  type LegacyContainerRemoveError,
   type LegacyContainerStartError,
   type LegacyNetworkCreateError,
   type LegacyVolumeCreateError,
   type LegacyVolumeInspectError,
+  type LegacyVolumeRemoveError,
 } from "./container-lifecycle.ts";
 import {
   legacyRunDatabaseWebhooksSetup,
@@ -87,6 +97,10 @@ import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
 } from "./health-check.ts";
+import {
+  legacyBringUpMainDbWithBaseline,
+  type LegacyMainDbBaselineTomlInputs,
+} from "./main-db-baseline.ts";
 import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
@@ -132,7 +146,11 @@ export type LegacyStartDatabaseError =
   | LegacyImagePrepullError
   | LegacyHealthCheckTimeoutError
   | LegacyDbConnectError
-  | LegacyStartSetupLocalDatabaseError;
+  | LegacyStartSetupLocalDatabaseError
+  // Only reachable through the baseline cache's warm-restore fallback, which force-removes the
+  // restored container and its volume before recreating them cold — see `main-db-baseline.ts`.
+  | LegacyContainerRemoveError
+  | LegacyVolumeRemoveError;
 
 export interface LegacyStartDatabaseInput<E> {
   readonly fs: FileSystem.FileSystem;
@@ -156,8 +174,12 @@ export interface LegacyStartDatabaseInput<E> {
    */
   readonly resolvePostgresImage: Effect.Effect<string, LegacyImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
-  /** Effective `[experimental.webhooks].enabled`, used to converge existing volumes. */
-  readonly webhooksEnabled: boolean;
+  /**
+   * The `[db]` values from the caller's OWN already-validated `legacyCheckDbToml` pass —
+   * `webhooksEnabled` converges existing volumes here, and all three describe the baseline the
+   * cache keys on (see {@link LegacyMainDbBaselineTomlInputs}).
+   */
+  readonly toml: LegacyMainDbBaselineTomlInputs;
   readonly setup: LegacyFreshDbSetupInput<E>;
   /**
    * Fired synchronously, exactly once, right after the pre-create volume probe resolves —
@@ -243,46 +265,77 @@ export const legacyStartDatabase = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* legacyCreateContainer(spawner, postgresSpec, input.containerOpts);
 
-    const postgresHealthResult = yield* legacyWaitForHealthyServices(
+    // Go's `if utils.NoBackupVolume && len(fromBackup) == 0 { SetupLocalDatabase(...) }`
+    // (`start.go:184-188`) — SKIPPED IN FULL when `fromBackup` is set, not merely reduced: no
+    // initSchema/ApplyApiPrivileges/vault/roles.sql/MigrateAndSeed on that path at all. Resolved
+    // ahead of the container create because the baseline cache below needs the same answer: only
+    // a run that would provision the platform baseline can restore or publish one.
+    const runsFreshSetup = isFreshVolume && fromBackup === undefined;
+
+    const rawPostgresHealthWait = legacyWaitForHealthyServices(
       spawner,
       [postgresSpec.containerName],
       {
         timeoutSeconds: input.dbHealthTimeoutSeconds,
         images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
       },
-    ).pipe(Effect.result);
-    if (Result.isFailure(postgresHealthResult)) {
-      // Go's `StartDatabase` (`start.go:179-181`): `WaitForHealthyService`'s error is discarded
-      // ONLY when `len(fromBackup) > 0` — the log dump to stderr already happened inside
-      // `legacyWaitForHealthyServices` regardless of this branch. Any OTHER failure propagates
-      // BARE — this function has no `--ignore-health-check` knowledge at all, see this module's
-      // header for why that's entirely the caller's concern.
-      if (fromBackup === undefined) {
-        return yield* Effect.fail(postgresHealthResult.failure);
-      }
-    }
+    );
+    // Go's `StartDatabase` (`start.go:179-181`): `WaitForHealthyService`'s error is discarded
+    // ONLY when `len(fromBackup) > 0` — the log dump to stderr already happened inside
+    // `legacyWaitForHealthyServices` regardless of this branch. Any OTHER failure propagates
+    // BARE — this function has no `--ignore-health-check` knowledge at all, see this module's
+    // header for why that's entirely the caller's concern. Folded into the effect itself (rather
+    // than a `Result` branch after the fact) so the baseline cache's own bring-up can reuse it
+    // verbatim as its readiness gate.
+    const postgresHealthWait =
+      fromBackup === undefined
+        ? rawPostgresHealthWait
+        : rawPostgresHealthWait.pipe(Effect.catch(() => Effect.void));
 
-    // Go's `if utils.NoBackupVolume && len(fromBackup) == 0 { SetupLocalDatabase(...) }`
-    // (`start.go:184-188`) — SKIPPED IN FULL when `fromBackup` is set, not merely reduced: no
-    // initSchema/ApplyApiPrivileges/vault/roles.sql/MigrateAndSeed on that path at all.
-    if (isFreshVolume && fromBackup === undefined) {
-      yield* legacyRunFreshDbSetup(spawner, {
-        fs: input.fs,
-        path: input.path,
-        workdir: input.workdir,
-        projectId: input.projectId,
-        networkId: input.networkId,
-        hostname: input.hostname,
-        dbPort: input.dbPort,
-        // Go's own `StartDatabase` -> `SetupLocalDatabase(ctx, "", ...)` call
-        // (`start.go:185`) — every pending migration, no `db reset`-only seed
-        // override (`db start` has neither `--no-seed` nor `--sql-paths`).
-        version: "",
-        seedFlags: { noSeed: false, sqlPaths: [] },
-        setup: input.setup,
-      });
+    // The baseline cache's decision has to land BEFORE `docker create`: a warm restore is a
+    // `docker cp -` into the created-but-unstarted container, so the whole create + health wait
+    // belongs to it. `--from-backup` and a non-fresh volume bypass it outright (`cacheEligible`)
+    // — the former owns `preStartArchives` (its own logical dump) and skips the whole baseline
+    // anyway, and neither provisions one. See `main-db-baseline.ts`.
+    const baseline = yield* legacyBringUpMainDbWithBaseline(spawner, {
+      fs: input.fs,
+      path: input.path,
+      workdir: input.workdir,
+      dbContainerId: input.dbContainerId,
+      hostname: input.hostname,
+      dbPort: input.dbPort,
+      healthTimeoutSeconds: input.dbHealthTimeoutSeconds,
+      image: resolvedPostgresImage,
+      postgresSpec: input.postgresSpec,
+      setup: input.setup,
+      toml: input.toml,
+      spec: postgresSpec,
+      containerOpts: input.containerOpts,
+      cacheEligible: runsFreshSetup,
+      waitReady: postgresHealthWait,
+    });
+
+    if (runsFreshSetup) {
+      yield* legacyRunFreshDbSetup(
+        spawner,
+        {
+          fs: input.fs,
+          path: input.path,
+          workdir: input.workdir,
+          projectId: input.projectId,
+          networkId: input.networkId,
+          hostname: input.hostname,
+          dbPort: input.dbPort,
+          // Go's own `StartDatabase` -> `SetupLocalDatabase(ctx, "", ...)` call
+          // (`start.go:185`) — every pending migration, no `db reset`-only seed
+          // override (`db start` has neither `--no-seed` nor `--sql-paths`).
+          version: "",
+          seedFlags: { noSeed: false, sqlPaths: [] },
+          setup: input.setup,
+        },
+        baseline,
+      );
     } else if (fromBackup === undefined) {
       yield* legacyRunDatabaseWebhooksSetup({
         fs: input.fs,
@@ -290,7 +343,7 @@ export const legacyStartDatabase = <E>(
         hostname: input.hostname,
         dbPort: input.dbPort,
         dbUrl: input.setup.dbUrl,
-        enabled: input.webhooksEnabled,
+        enabled: input.toml.webhooksEnabled,
       });
     }
 

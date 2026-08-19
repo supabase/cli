@@ -599,11 +599,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `legacyCheckDbToml` resolves `[db.vault]`/`[db.seed]`/`db.migrations.enabled`/the effective
     // `api.auto_expose_new_tables` tri-state — this must run unconditionally,
     // before any Docker work. The port only ran this inside
-    // `legacyStartSetupLocalDatabase`, which is itself gated on the DB container's
+    // `legacyRunFreshDbSetup`, which is itself gated on the DB container's
     // healthcheck passing AND a fresh volume (the `NoBackupVolume` gate) — so a malformed
     // `SUPABASE_DB_SEED_ENABLED`/an undecryptable `[db.vault]` secret went completely unvalidated
     // whenever `start` reused an existing volume. The resolved Webhooks flag is also retained so
-    // existing volumes can converge `pg_net`; `legacyStartSetupLocalDatabase`'s own internal call
+    // existing volumes can converge `pg_net`; `legacyRunFreshDbSetup`'s own internal call
     // (an already-accepted duplicate config-load pass, matching `db start`'s own independent
     // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
     // values for its own use when it runs.
@@ -1584,7 +1584,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // `db start` (see `legacyStartDatabase`'s header for why this is caller-supplied).
         resolvePostgresImage: Effect.succeed(resolveImage(postgresImage)),
         dbHealthTimeoutSeconds,
-        webhooksEnabled: dbTomlValues.webhooksEnabled,
+        // This run's own already-validated `[db]` values: `webhooksEnabled` converges an
+        // existing volume's pg_net, and all three are what the baseline cache keys on — see
+        // `LegacyMainDbBaselineTomlInputs` (`db-bootstrap/main-db-baseline.ts`).
+        toml: {
+          webhooksEnabled: dbTomlValues.webhooksEnabled,
+          apiAutoExposeNewTables: dbTomlValues.baseline.apiAutoExposeNewTables,
+          vault: dbTomlValues.vault,
+        },
         setup: {
           majorVersion,
           experimental,

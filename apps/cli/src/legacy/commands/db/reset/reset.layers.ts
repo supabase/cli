@@ -27,7 +27,7 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * command, so `LegacyGoProxy` is not composed here.
  *
  * `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot migrate
- * jobs (`legacyStartSetupLocalDatabase`, reused via `legacyRecreateLocalDatabase`)
+ * jobs (`legacyRunFreshDbSetup`, reused via `legacyRecreateLocalDatabase`)
  * — same reasoning as `db start`'s own `start.layers.ts`.
  * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same shared
  * setup pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s

@@ -720,7 +720,14 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     resolvePostgresImage,
     dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
     setup,
-    webhooksEnabled: dbTomlValues.webhooksEnabled,
+    // This run's own already-validated `[db]` values: `webhooksEnabled` converges an existing
+    // volume's pg_net, and all three are what the baseline cache keys on — see
+    // `LegacyMainDbBaselineTomlInputs` (`main-db-baseline.ts`).
+    toml: {
+      webhooksEnabled: dbTomlValues.webhooksEnabled,
+      apiAutoExposeNewTables: dbTomlValues.baseline.apiAutoExposeNewTables,
+      vault: dbTomlValues.vault,
+    },
     onFreshVolumeResolved: (resolved) => {
       isFreshVolume = resolved;
     },

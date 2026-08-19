@@ -53,7 +53,7 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // the same `FetchHttpClient`-backed layer `db reset`/`seed buckets` use, needed for the
 // health-check probes (`legacyWaitForHealthyServices`) and `legacySeedBucketsRun`.
 // `legacyDockerRunLayer`/`legacyDbConnectionLayer` ARE listed here — the fresh-volume
-// `SetupLocalDatabase` equivalent (`start.handler.ts`'s `legacyStartSetupLocalDatabase`
+// `SetupLocalDatabase` equivalent (`start.handler.ts`'s `legacyRunFreshDbSetup`
 // call) needs both: the PG15+ one-shot migrate jobs run through `LegacyDockerRun`, and
 // the schema/globals/API-privileges SQL runs over a direct `LegacyDbConnection` session.
 // `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same fresh-volume

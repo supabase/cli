@@ -1371,7 +1371,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // side effect (`start.handler.ts:614`, `db/start/start.handler.ts:125`, both discard
   // the result), then again internally wherever a resolved value is actually needed
   // (`legacyIsLocalDbRunning`'s best-effort `projectId` probe,
-  // `legacyStartSetupLocalDatabase`'s own accepted duplicate config-load pass —
+  // `legacyRunFreshDbSetup`'s own accepted duplicate config-load pass —
   // see `db-bootstrap/db-setup.ts`'s header). Those internal re-reads pass
   // `false` so the warning still fires exactly once per invocation instead of
   // two or three times.

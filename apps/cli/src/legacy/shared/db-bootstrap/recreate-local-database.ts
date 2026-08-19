@@ -8,7 +8,7 @@
  * different composition over the SAME underlying primitives
  * (`legacyEnsureNetwork`, `legacyBuildPostgresStartContainerSpec`,
  * `legacyCreateContainer`, `legacyWaitForHealthyServices`,
- * `legacyStartSetupLocalDatabase`), matching Go's own structure:
+ * `legacyRunFreshDbSetup`), matching Go's own structure:
  *
  * **PG >= 15** (`resetDatabase15`, `reset.go:114-142`):
  * 1. `docker container rm -f <db>` — NOT tolerant of "not found" (a genuine
@@ -27,7 +27,7 @@
  *    `legacyBuildPostgresStartContainerSpec`/`legacyCreateContainer`.
  * 6. Health wait — NEVER swallowed (no `--from-backup`-equivalent gate here at
  *    all).
- * 7. `legacyStartSetupLocalDatabase` — UNCONDITIONALLY (no fresh-volume gate: a
+ * 7. `legacyRunFreshDbSetup` — UNCONDITIONALLY (no fresh-volume gate: a
  *    reset just removed the volume, so it's always fresh) and with the
  *    RESOLVED reset `version`/`seedFlags` (not `""` like `db start`'s own call)
  *    — see `db-setup.ts`'s own header for this one genuine parameter
@@ -61,7 +61,7 @@
  *    the PG14 path too, after the db container restart.
  * 4. Final connect as `postgres`/`postgres` → `apply.MigrateAndSeed` with the
  *    resolved reset `version`/`seedFlags` — the same seed-override logic PG15's
- *    `legacyStartSetupLocalDatabase` call applies.
+ *    `legacyRunFreshDbSetup` call applies.
  *
  * Deliberately absent, matching Go exactly: no volume-existence probe (a reset
  * just removed the volume, so there is nothing to probe), no `NoBackupVolume`/
@@ -70,9 +70,19 @@
  * call it), and no rollback on failure (Go's `cmd/db.go` only wraps `--mode
  * start` in a `DockerRemoveAll` cleanup — the recreate dispatch has none).
  *
+ * Steps 5-7 on the PG15 path additionally run through the baseline PGDATA cache
+ * (`main-db-baseline.ts`) — a TS-only addition with no Go counterpart, and the one
+ * place this composition diverges from `resetDatabase15`'s literal shape. It decides
+ * warm/cold BEFORE the container is created (a warm restore is a `docker cp -` into
+ * the created-but-unstarted container), owns the create + health wait so a failed
+ * restore can fall back to a cold one, and hands `legacyRunFreshDbSetup` the baseline
+ * state that decides whether the platform baseline is re-run or snapshotted. With
+ * `SUPABASE_SHADOW_CACHE=false` — and on the PG<=14 path, which never consults it at
+ * all — every step above is byte-for-byte what it was.
+ *
  * `pgcache.TryCacheMigrationsCatalog`'s best-effort catalog warmup (part of Go's
  * `SetupLocalDatabase`, reachable from the PG15 path above via
- * `legacyStartSetupLocalDatabase`) IS reached here too — see `db-setup.ts`'s own
+ * `legacyRunFreshDbSetup`) IS reached here too — see `db-setup.ts`'s own
  * header for the exact gate/citations. `reset.layers.ts` composes
  * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` for it, matching
  * `db start`'s own layer composition (`db/start/start.layers.ts`).
@@ -108,7 +118,6 @@ import {
   legacyEnsureNetwork,
   legacyRemoveContainer,
   legacyRemoveVolume,
-  legacyCreateContainer,
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerRemoveError,
   type LegacyContainerError,
@@ -133,6 +142,10 @@ import {
 } from "./health-check.ts";
 import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyStartInternalDbPassword } from "./internal-db-connection.ts";
+import {
+  legacyBringUpMainDbWithBaseline,
+  type LegacyMainDbBaselineTomlInputs,
+} from "./main-db-baseline.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
   type LegacyPostgresStartServiceInput,
@@ -212,6 +225,13 @@ export interface LegacyRecreateLocalDatabaseInput<E> {
   /** Lazy — evaluated right where Go's `DockerStart` would resolve it (PG15 path only). */
   readonly resolvePostgresImage: Effect.Effect<string, LegacyImagePrepullError>;
   readonly dbHealthTimeoutSeconds: number;
+  /**
+   * The `[db]` values from the caller's OWN already-validated `legacyCheckDbToml` pass — they
+   * describe the baseline the cache keys the PG15 recreate on (see
+   * {@link LegacyMainDbBaselineTomlInputs}). The PG14 branch below loads config itself, for the
+   * many other fields it needs.
+   */
+  readonly toml: LegacyMainDbBaselineTomlInputs;
   /** The resolved reset migration version (`""` for every pending migration). */
   readonly version: string;
   /** `db reset`'s `--no-seed`/`--sql-paths` — see {@link legacyResolveResetSeedConfig}. */
@@ -387,29 +407,52 @@ const legacyRecreateLocalDatabase15 = <E>(
       ...input.postgresSpec,
       image: resolvedPostgresImage,
     });
-    yield* legacyCreateContainer(spawner, postgresSpec, input.containerOpts);
 
-    // Never swallowed — reset has no `--from-backup`-equivalent gate at all.
-    yield* legacyWaitForHealthyServices(spawner, [postgresSpec.containerName], {
-      timeoutSeconds: input.dbHealthTimeoutSeconds,
-      images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
+    // The baseline cache's decision has to land BEFORE `docker create`: a warm restore is a
+    // `docker cp -` into the created-but-unstarted container, so the whole create + health wait
+    // belongs to it. Always eligible: a reset just removed the volume, so this run always
+    // provisions the platform baseline. See `main-db-baseline.ts`.
+    const baseline = yield* legacyBringUpMainDbWithBaseline(spawner, {
+      fs: input.fs,
+      path: input.path,
+      workdir: input.workdir,
+      dbContainerId: input.dbContainerId,
+      hostname: input.hostname,
+      dbPort: input.dbPort,
+      healthTimeoutSeconds: input.dbHealthTimeoutSeconds,
+      image: resolvedPostgresImage,
+      postgresSpec: input.postgresSpec,
+      setup: input.setup,
+      toml: input.toml,
+      spec: postgresSpec,
+      containerOpts: input.containerOpts,
+      cacheEligible: true,
+      // Never swallowed — reset has no `--from-backup`-equivalent gate at all.
+      waitReady: legacyWaitForHealthyServices(spawner, [postgresSpec.containerName], {
+        timeoutSeconds: input.dbHealthTimeoutSeconds,
+        images: new Map([[postgresSpec.containerName, resolvedPostgresImage]]),
+      }),
     });
 
     // UNCONDITIONAL — no fresh-volume gate: a reset just removed the volume above, so
     // it's always fresh. Passes the RESOLVED reset `version`/`seedFlags`, unlike `db
     // start`'s own call — see `db-setup.ts`'s header for this one real difference.
-    yield* legacyRunFreshDbSetup(spawner, {
-      fs: input.fs,
-      path: input.path,
-      workdir: input.workdir,
-      projectId: input.projectId,
-      networkId: input.networkId,
-      hostname: input.hostname,
-      dbPort: input.dbPort,
-      version: input.version,
-      seedFlags: input.seedFlags,
-      setup: input.setup,
-    });
+    yield* legacyRunFreshDbSetup(
+      spawner,
+      {
+        fs: input.fs,
+        path: input.path,
+        workdir: input.workdir,
+        projectId: input.projectId,
+        networkId: input.networkId,
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        version: input.version,
+        seedFlags: input.seedFlags,
+        setup: input.setup,
+      },
+      baseline,
+    );
 
     yield* output.raw("Restarting containers...\n", "stderr");
     yield* legacyRestartServicesAndReloadKong(spawner, input.projectId);
@@ -421,7 +464,7 @@ const legacyRecreateLocalDatabase15 = <E>(
  * `initDatabase` (needs `api.auto_expose_new_tables`) and the final
  * `MigrateAndSeed` (needs `db.migrations.enabled`/`[db.seed]`/pg-delta gate) —
  * the same "each caller re-loads its own config" duplication `db start`'s own
- * handler and `legacyStartSetupLocalDatabase` both already take independently.
+ * handler and `legacyRunFreshDbSetup` both already take independently.
  */
 const legacyRecreateLocalDatabase14 = <E>(
   spawner: Spawner,

@@ -777,11 +777,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
             }),
           },
           {},
-          {
-            baselinePresent: true,
-            snapshotRequired: false,
-            snapshotBaseline: Effect.void,
-          },
+          { _tag: "warm" },
         );
         expect(jwksEvaluated).toBe(false);
         expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
@@ -846,9 +842,9 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           setup: baseShadowSetup(),
         });
         // ONE connect, matching Go's single-connection flow: the default baseline state
-        // (`LEGACY_SHADOW_BASELINE_COLD`) requires no snapshot, so baseline + template +
+        // (`LEGACY_SHADOW_BASELINE_UNCACHED`) requires no snapshot, so baseline + template +
         // migrations all share one session — the split-session shape is reserved for the
-        // cache's own snapshotting cold provision (`snapshotRequired: true`), whose disk-level
+        // cache's own snapshotting cold provision (a `cold` state), whose disk-level
         // export must close the session before stopping the container. The ordering under test
         // is unaffected — the migration listing still precedes the connect.
         expect(events).toEqual(["list", "connect"]);
