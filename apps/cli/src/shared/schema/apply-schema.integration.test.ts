@@ -126,7 +126,6 @@ function setup(
           migrationsDir: "/tmp/migrations",
           migrationsDirDisplay: "supabase/migrations",
           customDir: "/tmp/schemas/_custom",
-          checkpointPath: "/tmp/c",
           journalPath: "/tmp/j",
           lockPath: "/tmp/l",
           readDeclarationFiles: Effect.succeed([]),
@@ -138,8 +137,6 @@ function setup(
       Layer.succeed(
         SchemaStateStore,
         SchemaStateStore.of({
-          readCheckpoint: Effect.succeed(Option.none()),
-          writeCheckpoint: () => Effect.void,
           readJournal: Effect.succeed(
             opts.journal === undefined ? Option.none() : Option.some(opts.journal),
           ),

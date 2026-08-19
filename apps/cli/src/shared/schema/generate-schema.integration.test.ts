@@ -94,7 +94,6 @@ function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: 
         migrationsDir: "/tmp/migrations",
         migrationsDirDisplay: "supabase/migrations",
         customDir: "/tmp/schemas/_custom",
-        checkpointPath: "/tmp/c",
         journalPath: "/tmp/j",
         lockPath: "/tmp/l",
         readDeclarationFiles: Effect.succeed([{ name: "a.sql", sql: "create table a (id int);" }]),
@@ -106,8 +105,6 @@ function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: 
     Layer.succeed(
       SchemaStateStore,
       SchemaStateStore.of({
-        readCheckpoint: Effect.succeed(Option.none()),
-        writeCheckpoint: () => Effect.void,
         readJournal: Effect.succeed(
           opts.journal === undefined ? Option.none() : Option.some(opts.journal),
         ),

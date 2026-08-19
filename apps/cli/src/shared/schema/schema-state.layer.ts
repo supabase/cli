@@ -1,34 +1,8 @@
 import { Clock, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
-import { SchemaCheckpointError, SchemaLockError } from "./schema-errors.ts";
+import { SchemaLockError, SchemaStateError } from "./schema-errors.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
-import type { SchemaCheckpoint, SchemaDraftJournal } from "./schema-types.ts";
+import type { SchemaDraftJournal } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
-
-const CheckpointSchema = Schema.Struct({
-  version: Schema.Literal(1),
-  declarativeDigest: Schema.String,
-  migrationHeadDigest: Schema.String,
-  sourceFingerprint: Schema.optionalKey(Schema.String),
-  desiredFingerprint: Schema.optionalKey(Schema.String),
-  profile: Schema.String,
-  scope: Schema.Literal("database"),
-  engineVersion: Schema.String,
-  artifactFormatVersion: Schema.Number,
-  acceptedRenames: Schema.Array(Schema.Struct({ from: Schema.String, to: Schema.String })),
-  exportManifestIdentity: Schema.optionalKey(Schema.String),
-  catalogSnapshot: Schema.optionalKey(Schema.String),
-  lastGenerateName: Schema.optionalKey(Schema.String),
-  lastGenerateHazards: Schema.optionalKey(
-    Schema.Struct({
-      kinds: Schema.Array(Schema.String),
-      destructive: Schema.Number,
-      rewrite: Schema.Number,
-      coverageGaps: Schema.Number,
-    }),
-  ),
-  generatedMigrationVersions: Schema.optionalKey(Schema.Array(Schema.String)),
-  destructiveMigrationVersions: Schema.optionalKey(Schema.Array(Schema.String)),
-});
 
 const JournalSchema = Schema.Struct({
   version: Schema.Literal(1),
@@ -60,10 +34,10 @@ const JournalSchema = Schema.Struct({
 
 const STALE_LOCK_MS = 10 * 60 * 1000;
 
-const checkpointError = (detail: string) =>
-  new SchemaCheckpointError({
+const stateError = (detail: string) =>
+  new SchemaStateError({
     detail,
-    suggestion: "Fix or delete the schema checkpoint and rerun the command.",
+    suggestion: "Fix or delete `.supabase/schema-draft.json` and rerun the command.",
   });
 
 export const schemaStateLayer = Layer.effect(
@@ -76,26 +50,24 @@ export const schemaStateLayer = Layer.effect(
     const readDecoded = <A>(
       filePath: string,
       decode: (value: unknown) => A,
-    ): Effect.Effect<Option.Option<A>, SchemaCheckpointError> =>
+    ): Effect.Effect<Option.Option<A>, SchemaStateError> =>
       Effect.gen(function* () {
         const exists = yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false));
         if (!exists) return Option.none();
         const raw = yield* fs
           .readFileString(filePath)
           .pipe(
-            Effect.mapError((error) =>
-              checkpointError(`Failed to read ${filePath}: ${error.message}`),
-            ),
+            Effect.mapError((error) => stateError(`Failed to read ${filePath}: ${error.message}`)),
           );
         const parsed = yield* Effect.try({
           try: (): unknown => JSON.parse(raw),
-          catch: () => checkpointError(`Malformed ${path.basename(filePath)}.`),
+          catch: () => stateError(`Malformed ${path.basename(filePath)}.`),
         });
         return Option.some(
           yield* Effect.try({
             try: () => decode(parsed),
             catch: (error) =>
-              checkpointError(
+              stateError(
                 `Malformed ${path.basename(filePath)}: ${error instanceof Error ? error.message : String(error)}`,
               ),
           }),
@@ -108,25 +80,17 @@ export const schemaStateLayer = Layer.effect(
           .makeDirectory(path.dirname(filePath), { recursive: true })
           .pipe(
             Effect.mapError((error) =>
-              checkpointError(`Failed to create ${path.dirname(filePath)}: ${error.message}`),
+              stateError(`Failed to create ${path.dirname(filePath)}: ${error.message}`),
             ),
           );
         yield* fs
           .writeFileString(filePath, `${JSON.stringify(value, null, 2)}\n`)
           .pipe(
-            Effect.mapError((error) =>
-              checkpointError(`Failed to write ${filePath}: ${error.message}`),
-            ),
+            Effect.mapError((error) => stateError(`Failed to write ${filePath}: ${error.message}`)),
           );
       });
 
     return SchemaStateStore.of({
-      readCheckpoint: readDecoded(
-        workspace.checkpointPath,
-        Schema.decodeUnknownSync(CheckpointSchema),
-      ),
-      writeCheckpoint: (checkpoint: SchemaCheckpoint) =>
-        writeJson(workspace.checkpointPath, checkpoint),
       readJournal: readDecoded(workspace.journalPath, Schema.decodeUnknownSync(JournalSchema)),
       writeJournal: (journal: SchemaDraftJournal) => writeJson(workspace.journalPath, journal),
       clearJournal: Effect.gen(function* () {
@@ -136,7 +100,7 @@ export const schemaStateLayer = Layer.effect(
             Effect.catchTag("PlatformError", (error) =>
               error.reason._tag === "NotFound"
                 ? Effect.void
-                : Effect.fail(checkpointError(error.message)),
+                : Effect.fail(stateError(error.message)),
             ),
           );
       }),

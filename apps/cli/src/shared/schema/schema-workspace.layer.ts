@@ -6,7 +6,6 @@ import {
   type SqlFileClassification,
 } from "@supabase/pg-delta/frontends";
 import {
-  SCHEMA_CHECKPOINT_FILE_NAME,
   SCHEMA_CUSTOM_DIRECTORY_NAME,
   SCHEMA_DIRECTORY_NAME,
   SCHEMA_DRAFT_JOURNAL_FILE_NAME,
@@ -112,7 +111,6 @@ export const schemaWorkspaceLayer = (paths: SchemaWorkspacePaths) =>
       const schemasDir = path.join(paths.supabaseDir, SCHEMA_DIRECTORY_NAME);
       const migrationsDir = path.join(paths.supabaseDir, MIGRATIONS_DIRECTORY_NAME);
       const customDir = path.join(schemasDir, SCHEMA_CUSTOM_DIRECTORY_NAME);
-      const checkpointPath = path.join(schemasDir, SCHEMA_CHECKPOINT_FILE_NAME);
       const journalPath = path.join(paths.projectHomeDir, SCHEMA_DRAFT_JOURNAL_FILE_NAME);
       const lockPath = path.join(paths.projectHomeDir, SCHEMA_LOCK_FILE_NAME);
 
@@ -283,7 +281,6 @@ export const schemaWorkspaceLayer = (paths: SchemaWorkspacePaths) =>
         migrationsDir,
         migrationsDirDisplay: path.join("supabase", MIGRATIONS_DIRECTORY_NAME),
         customDir,
-        checkpointPath,
         journalPath,
         lockPath,
         readDeclarationFiles: Effect.gen(function* () {

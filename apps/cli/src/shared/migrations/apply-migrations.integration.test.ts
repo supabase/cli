@@ -105,8 +105,6 @@ function setup(
       Layer.succeed(
         SchemaStateStore,
         SchemaStateStore.of({
-          readCheckpoint: Effect.succeed(Option.none()),
-          writeCheckpoint: () => Effect.void,
           readJournal: Effect.succeed(journal === undefined ? Option.none() : Option.some(journal)),
           writeJournal: () => Effect.void,
           clearJournal: Effect.void,

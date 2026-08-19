@@ -38,7 +38,6 @@ function setup(disposable: boolean) {
           migrationsDir: "/tmp/migrations",
           migrationsDirDisplay: "supabase/migrations",
           customDir: "/tmp/schemas/_custom",
-          checkpointPath: "/tmp/c",
           journalPath: "/tmp/j",
           lockPath: "/tmp/l",
           readDeclarationFiles: Effect.succeed([]),
@@ -50,8 +49,6 @@ function setup(disposable: boolean) {
       Layer.succeed(
         SchemaStateStore,
         SchemaStateStore.of({
-          readCheckpoint: Effect.succeed(Option.none()),
-          writeCheckpoint: () => Effect.void,
           readJournal: Effect.succeed(Option.none()),
           writeJournal: () => Effect.void,
           clearJournal: Effect.void,

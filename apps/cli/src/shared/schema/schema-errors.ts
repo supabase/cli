@@ -47,7 +47,7 @@ export class SchemaLockError extends SchemaCliError("SchemaLockError") {
   }
 }
 
-export class SchemaCheckpointError extends SchemaCliError("SchemaCheckpointError") {
+export class SchemaStateError extends SchemaCliError("SchemaStateError") {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }

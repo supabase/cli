@@ -32,7 +32,6 @@ interface SchemaWorkspaceShape {
   readonly migrationsDir: string;
   readonly migrationsDirDisplay: string;
   readonly customDir: string;
-  readonly checkpointPath: string;
   readonly journalPath: string;
   readonly lockPath: string;
   readonly readDeclarationFiles: Effect.Effect<

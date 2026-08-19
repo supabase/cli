@@ -61,28 +61,6 @@ export type SchemaFileSummary = Pick<
   "created" | "updated" | "unchanged" | "removed" | "unmanaged"
 >;
 
-export type SchemaCheckpoint = {
-  readonly version: 1;
-  readonly declarativeDigest: string;
-  readonly migrationHeadDigest: string;
-  readonly sourceFingerprint?: string;
-  readonly desiredFingerprint?: string;
-  readonly profile: string;
-  readonly scope: "database";
-  readonly engineVersion: string;
-  readonly artifactFormatVersion: number;
-  readonly acceptedRenames: ReadonlyArray<{ readonly from: string; readonly to: string }>;
-  readonly exportManifestIdentity?: string;
-  readonly catalogSnapshot?: string;
-  readonly lastGenerateName?: string;
-  readonly lastGenerateHazards?: Pick<
-    SchemaHazardSummary,
-    "kinds" | "destructive" | "rewrite" | "coverageGaps"
-  >;
-  readonly generatedMigrationVersions?: ReadonlyArray<string>;
-  readonly destructiveMigrationVersions?: ReadonlyArray<string>;
-};
-
 type SchemaJournaledPlan = {
   readonly planId: string;
   readonly targetFingerprint: string;
