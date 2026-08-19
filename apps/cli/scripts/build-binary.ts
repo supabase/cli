@@ -2,17 +2,12 @@ import { $ } from "bun";
 import process from "node:process";
 
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { workerStacksDefine } from "./worker-stacks-define.ts";
 
 /**
  * Compile a single CLI shell to a standalone binary, embedding the pre-bundled
  * edge-runtime template via the `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define so
  * the binary serves Functions offline without bundling at runtime
- * (supabase/supabase#45570), and the worker starter files via
- * `SUPABASE_WORKER_STACKS` so `workers new` can scaffold without a `stacks/`
- * directory on disk. Used by the `build:next` / `build:legacy` scripts; the
- * multi-target release build in `build.ts` injects the same defines — miss one
- * there and the shipped binary scaffolds nothing while dev and CI stay green.
+ * (supabase/supabase#45570). Used by the `build:next` / `build:legacy` scripts.
  */
 const shell = process.argv[2];
 if (shell !== "next" && shell !== "legacy") {
@@ -25,4 +20,4 @@ const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.string
   await bundleServeMainTemplate(),
 )}`;
 
-await $`bun build ${entrypoint} --compile ${defineArg} ${workerStacksDefine()} --outfile ${outfile}`;
+await $`bun build ${entrypoint} --compile ${defineArg} --outfile ${outfile}`;

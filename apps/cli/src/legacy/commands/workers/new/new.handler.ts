@@ -20,7 +20,7 @@ import {
   type WorkerRuntime,
   type WorkerSize,
 } from "../../../../shared/workers/worker-runtimes.ts";
-import { workerStacks } from "../../../../shared/workers/worker-stacks.ts";
+import { WORKER_STACKS } from "../../../../shared/workers/worker-stacks.ts";
 import {
   InvalidWorkerNameError,
   UnknownWorkerRuntimeError,
@@ -291,7 +291,7 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
     // the worker elsewhere in the project.
     yield* fs.makeDirectory(project.supabaseDir, { recursive: true });
 
-    for (const [filename, contents] of Object.entries(workerStacks()[runtime])) {
+    for (const [filename, contents] of Object.entries(WORKER_STACKS[runtime])) {
       yield* fs.writeFileString(join(destination, filename), contents);
     }
 

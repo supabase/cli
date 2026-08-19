@@ -1,7 +1,10 @@
 # Examples
 
 Minimal deployable workers, one per way of packaging code for the lambda
-backend. Each returns JSON that includes the `GREETING` secret (null until the
+backend. Each runtime directory is discovered by
+`worker-stacks.macro.ts` and scaffolded verbatim by `workers new`; adding a
+runtime here means adding it to `WORKER_RUNTIMES` too, which the macro checks
+at build time. Each returns JSON that includes the `GREETING` secret (null until the
 project has one), so the secret-rotation loop is visible in responses.
 
 | Example      | Spec                                                                      | Notes                                                                                      |

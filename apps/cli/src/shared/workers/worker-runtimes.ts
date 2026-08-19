@@ -13,7 +13,7 @@
 /**
  * Kept in step with the directories under `./stacks/` — a runtime offered here
  * with no starter files there would scaffold an empty worker, which
- * `assertCompleteWorkerStacks` refuses.
+ * `worker-stacks.macro.ts` refuses at build time.
  */
 export const WORKER_RUNTIMES = ["dockerfile", "node", "deno"] as const;
 
