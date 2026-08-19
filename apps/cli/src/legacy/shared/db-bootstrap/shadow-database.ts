@@ -730,22 +730,96 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
 });
 
 /**
- * Port of Go's `SetupShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:181-193`):
- * connects to the shadow (Go's `ConnectShadowDatabase`, {@link legacyConnectShadowDatabase})
- * FIRST, THEN resolves the setup prelude (JWKS/pinned image names, {@link
- * legacyResolveDbSetupPrelude}) and runs {@link legacySetupShadowConn} — the platform
- * baseline plus the template database, no user migrations. Connect-then-setup, matching Go's
- * own `SetupShadowDatabase` (which dials `ConnectShadowDatabase` before ever calling
- * `start.SetupDatabase`, `diff.go:186-192`) and this same module's `legacyRunFreshDbSetup`
- * (`db-setup.ts`) for the real local `db` container: an unconnectable shadow must surface a
- * connect error immediately, not pay for JWKS work first. The connection is closed once this
- * resolves (Go's `defer conn.Close(...)`), matching `Effect.scoped`'s finalizer running at the
- * end of this function rather than leaking a `Scope.Scope` requirement to the caller.
+ * Go's `SetupShadowDatabase`/`MigrateShadowDatabase` shared prologue: connect to the shadow
+ * (Go's `ConnectShadowDatabase`, {@link legacyConnectShadowDatabase}), resolve the setup prelude
+ * (JWKS/pinned image names, {@link legacyResolveDbSetupPrelude}), run the platform baseline
+ * ({@link legacySetupDatabase}) — and hand the caller back the STILL-OPEN session everything
+ * after the baseline runs on. Connect-then-setup, matching Go's own `SetupShadowDatabase`
+ * (which dials `ConnectShadowDatabase` before ever calling `start.SetupDatabase`,
+ * `diff.go:186-192`) and this same module's `legacyRunFreshDbSetup` (`db-setup.ts`) for the real
+ * local `db` container: an unconnectable shadow must surface a connect error immediately, not
+ * pay for JWKS work first.
+ *
+ * The returned session's lifetime is the CALLER's enclosing `Scope.Scope` (Go's
+ * `defer conn.Close(...)`), which is why this function leaks that requirement instead of
+ * wrapping itself in `Effect.scoped`.
  *
  * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}, i.e. exactly the sequence above.
- * A warm shadow-cache hit skips the prelude + `SetupDatabase` (the restored cluster already
- * has them) and only recreates `contrib_regression`; a cache-enabled COLD provision snapshots
- * between the baseline and the template, matching {@link migrateShadowDatabase}.
+ * A warm shadow-cache hit skips the prelude + `SetupDatabase` entirely (the restored cluster
+ * already carries them); a cache-enabled COLD provision runs the baseline in its OWN scope, so
+ * its session is closed before {@link LegacyShadowBaselineState.snapshotBaseline} stops the
+ * container, and returns a second session opened against the restarted one.
+ *
+ * Shared by all three baseline-running shadow compositions — {@link legacySetupShadowDatabase}
+ * and {@link migrateShadowDatabase} here, plus `migration squash`'s own dump/apply/dump sequence
+ * (`migration/squash/squash.handler.ts`), which needs the baseline WITHOUT the template database
+ * (see {@link legacySetupShadowConn}'s own doc comment) and keeps the session open across its
+ * mid-sequence `pg_dump`s.
+ */
+export const legacyOpenShadowBaselineSession = <E>(
+  spawner: Spawner,
+  input: LegacyShadowSetupRunInput<E>,
+  options: LegacySetupDatabaseOptions = {},
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
+): Effect.Effect<
+  LegacyDbSession,
+  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
+  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection | Scope.Scope
+> =>
+  Effect.gen(function* () {
+    if (!baseline.baselinePresent && baseline.snapshotRequired) {
+      // Own scope: the baseline session must be closed before `snapshotBaseline` — see
+      // {@link LegacyShadowBaselineState.snapshotRequired}.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
+          const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+          yield* legacySetupDatabase(
+            spawner,
+            legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
+            options,
+          ).pipe(
+            // The baseline's batched SQL files check their own connection out of the pool;
+            // failing to acquire one is a shadow CONNECT failure, like
+            // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
+            Effect.catchTag("LegacyDbConnectError", (cause) =>
+              Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+            ),
+          );
+        }),
+      );
+      yield* baseline.snapshotBaseline;
+    }
+    const session = yield* legacyConnectShadowDatabase(input.connConfig);
+    if (!baseline.baselinePresent && !baseline.snapshotRequired) {
+      // Go's single-connection flow, verbatim: baseline and everything after it on this one
+      // session — see {@link LegacyShadowBaselineState.snapshotRequired}.
+      const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+      yield* legacySetupDatabase(
+        spawner,
+        legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+        options,
+      ).pipe(
+        // Same pooled-connection failure mapping as the snapshotting branch above.
+        Effect.catchTag("LegacyDbConnectError", (cause) =>
+          Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
+        ),
+      );
+    }
+    return session;
+  });
+
+/**
+ * Port of Go's `SetupShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:181-193`):
+ * {@link legacyOpenShadowBaselineSession} (connect + platform baseline) followed by the template
+ * database — together Go's `setupShadowConn`, no user migrations. The connection is closed once
+ * this resolves (Go's `defer conn.Close(...)`), matching `Effect.scoped`'s finalizer running at
+ * the end of this function rather than leaking a `Scope.Scope` requirement to the caller.
+ *
+ * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}. A warm shadow-cache hit skips the
+ * prelude + `SetupDatabase` (the restored cluster already has them) and only recreates
+ * `contrib_regression`; a cache-enabled COLD provision snapshots between the baseline and the
+ * template, matching {@link migrateShadowDatabase}.
  */
 export const legacySetupShadowDatabase = <E>(
   spawner: Spawner,
@@ -759,41 +833,7 @@ export const legacySetupShadowDatabase = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      if (!baseline.baselinePresent && baseline.snapshotRequired) {
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
-            const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
-            yield* legacySetupDatabase(
-              spawner,
-              legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
-              options,
-            ).pipe(
-              // The baseline's batched SQL files check their own connection out of the pool;
-              // failing to acquire one is a shadow CONNECT failure, like
-              // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
-              Effect.catchTag("LegacyDbConnectError", (cause) =>
-                Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
-              ),
-            );
-          }),
-        );
-        yield* baseline.snapshotBaseline;
-      }
-      const session = yield* legacyConnectShadowDatabase(input.connConfig);
-      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
-        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
-        yield* legacySetupDatabase(
-          spawner,
-          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
-          options,
-        ).pipe(
-          // Same connect-vs-setup classification as the snapshot branch above.
-          Effect.catchTag("LegacyDbConnectError", (cause) =>
-            Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
-          ),
-        );
-      }
+      const session = yield* legacyOpenShadowBaselineSession(spawner, input, options, baseline);
       yield* legacyCreateShadowTemplateDatabase(session);
     }),
   );
@@ -872,14 +912,9 @@ export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
  * the template database and the user migrations; a COLD cache-enabled provision passes the same
  * cold sequence plus a `snapshotBaseline` step between the baseline and the template database.
  *
- * The one structural divergence from Go is confined to the SNAPSHOTTING cold branch
- * (`baseline.snapshotRequired`): there the baseline runs in its own scope, its session is CLOSED
- * before {@link LegacyShadowBaselineState.snapshotBaseline} (the disk-level PGDATA snapshot stops
- * the container, which severs any live backend), and the template database + migrations run on a
- * second session. Every OTHER state — uncached (cache off / `--no-cache` / OrioleDB) and warm —
- * uses exactly one session, matching Go's single connection: see
- * {@link LegacyShadowBaselineState.snapshotRequired} for why the split must not leak into the
- * uncached path. The SQL every path issues is unchanged.
+ * The one structural divergence from Go is confined to the SNAPSHOTTING cold branch and is owned
+ * by {@link legacyOpenShadowBaselineSession} — see its doc comment. The SQL every path issues is
+ * unchanged.
  */
 const migrateShadowDatabase = <E>(
   spawner: Spawner,
@@ -904,45 +939,12 @@ const migrateShadowDatabase = <E>(
         ),
       );
 
-      if (!baseline.baselinePresent && baseline.snapshotRequired) {
-        // Own scope: the baseline session must be closed before `snapshotBaseline` — see this
-        // function's own doc comment.
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
-            const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
-            yield* legacySetupDatabase(
-              spawner,
-              legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
-              setupOptions,
-            ).pipe(
-              // The baseline's batched SQL files check their own connection out of the pool;
-              // failing to acquire one is a shadow CONNECT failure, like
-              // `legacyConnectShadowDatabase`'s, never a setup/statement failure.
-              Effect.catchTag("LegacyDbConnectError", (cause) =>
-                Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
-              ),
-            );
-          }),
-        );
-        yield* baseline.snapshotBaseline;
-      }
-      const session = yield* legacyConnectShadowDatabase(input.connConfig);
-      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
-        // Go's single-connection flow, verbatim: baseline + template + migrations all on this
-        // one session — see this function's own doc comment.
-        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
-        yield* legacySetupDatabase(
-          spawner,
-          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
-          setupOptions,
-        ).pipe(
-          // Same connect-vs-setup classification as the snapshot branch above.
-          Effect.catchTag("LegacyDbConnectError", (cause) =>
-            Effect.fail(new LegacyShadowDbError({ message: cause.message, reason: "connect" })),
-          ),
-        );
-      }
+      const session = yield* legacyOpenShadowBaselineSession(
+        spawner,
+        input,
+        setupOptions,
+        baseline,
+      );
       yield* legacyCreateShadowTemplateDatabase(session);
       yield* legacyApplyMigrations(
         session,

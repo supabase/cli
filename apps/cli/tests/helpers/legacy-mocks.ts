@@ -793,6 +793,44 @@ export function useLegacyShadowCacheDisabled(): void {
 }
 
 /**
+ * The opposite direction of {@link useLegacyShadowCacheDisabled}, scoped to ONE effect rather than
+ * a whole file: turns the shadow baseline cache back on for `body` and roots it at `homeDir`,
+ * restoring whatever the host had afterwards. Both variables have to move together — the cache
+ * reads `SUPABASE_SHADOW_CACHE` for the gate and `SUPABASE_HOME` for the tar directory
+ * (`legacyShadowBaselineCacheDir`), so pinning only the gate would write ~90MB-shaped tars into
+ * the developer's real `~/.supabase`.
+ *
+ * For a suite that has opted out file-wide, this is how a single cache-focused scenario opts back
+ * in. Point `homeDir` at a per-test temp dir (see {@link useLegacyTempWorkdir}).
+ */
+export const withLegacyShadowCacheEnabled = <A, E, R>(
+  homeDir: string,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = {
+        cache: process.env["SUPABASE_SHADOW_CACHE"],
+        home: process.env["SUPABASE_HOME"],
+      };
+      process.env["SUPABASE_SHADOW_CACHE"] = "1";
+      process.env["SUPABASE_HOME"] = homeDir;
+      return previous;
+    }),
+    () => body,
+    (previous) =>
+      Effect.sync(() => {
+        for (const [name, value] of [
+          ["SUPABASE_SHADOW_CACHE", previous.cache],
+          ["SUPABASE_HOME", previous.home],
+        ] as const) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
+      }),
+  );
+
+/**
  * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
  * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
  * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
@@ -885,29 +923,18 @@ const LEGACY_SHADOW_HEALTHY_STATE =
   '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
 
 /**
- * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
- * {@link legacyWaitForHealthyServices}'s retry loop genuinely retries on its real 1-second
- * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
- * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
- * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
- * past the initial `create` call).
- */
-const LEGACY_SHADOW_STARTING_STATE =
-  '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
-
-/**
  * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
  * (`legacyBuildLocalDbContainerInputs`'s image-cache check, `legacyCreateShadowDatabase`'s
- * network-create + container create/start, `legacyWaitForHealthyServices`'s container
+ * network-create + container create/start, `legacyWaitForShadowReady`'s container
  * inspect, and `legacyRemoveShadowDatabase`'s cleanup) — scoped-down port of
  * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
  * create one (shadow) container, never named.
  *
- * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
- * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
- * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
- * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
- * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ * `container inspect` on the shadow's own id always reports `"healthy"`: no shadow consumer
+ * gates on the Docker healthcheck any more — they all wait on `legacyWaitForShadowReady`'s direct
+ * connect probe instead, so a suite that needs a shadow to stay un-ready refuses connects on the
+ * shadow port through its own `LegacyDbConnection` fake (see `diff.integration.test.ts`'s
+ * `neverConnectableShadow`) rather than faking a `"starting"` container.
  *
  * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
  * non-zero instead — hoisted from `migration squash`'s own scoped-down copy of this mock
@@ -920,7 +947,7 @@ const LEGACY_SHADOW_STARTING_STATE =
  * supabase_db_<projectId>` probe `legacyIsLocalDbRunning` issues before `--use-pgadmin`
  * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
  * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
- * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
+ * own health check on its normal path. `dbNotRunning` reports the
  * Go/Docker "container doesn't exist" shape (`legacyIsContainerNotFoundMessage`); mutually
  * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
  * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
@@ -928,7 +955,6 @@ const LEGACY_SHADOW_STARTING_STATE =
  */
 export function mockLegacyShadowContainerCliSpawner(
   opts: {
-    readonly neverHealthy?: boolean;
     readonly failCreate?: boolean;
     readonly failRemove?: boolean;
     readonly dbNotRunning?: boolean;
@@ -943,7 +969,6 @@ export function mockLegacyShadowContainerCliSpawner(
       "mockLegacyShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
     );
   }
-  const neverHealthy = opts.neverHealthy ?? false;
   const failCreate = opts.failCreate ?? false;
   const failRemove = opts.failRemove ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
@@ -1002,7 +1027,7 @@ export function mockLegacyShadowContainerCliSpawner(
             stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
           }
         } else if (args[0] === "container" && args[1] === "inspect") {
-          stdoutLines = [neverHealthy ? LEGACY_SHADOW_STARTING_STATE : LEGACY_SHADOW_HEALTHY_STATE];
+          stdoutLines = [LEGACY_SHADOW_HEALTHY_STATE];
         } else if (args[0] === "rm") {
           if (failRemove) {
             exitCode = 1;
@@ -1158,9 +1183,9 @@ interface LegacyFakeContainer {
  * restore's copy-in have no meaning against a stateless spawner, and a failed export is
  * fail-open (a warning, no tar), so a stateless fake makes cache assertions pass vacuously.
  *
- * `container inspect supabase_db_<projectId>` reports "no such container" here (the table only
- * holds shadows), i.e. the local stack is DOWN — fine for every non-`--use-pgadmin` path, which
- * never issues that probe.
+ * `container inspect supabase_db_<projectId>` reports running-and-healthy (the table only holds
+ * shadows, so the local stack is faked UP rather than looked up) — `--use-pgadmin`'s local-stack
+ * probe is the one caller, and its cache tests need this model for the export round trip.
  */
 export function mockLegacyDockerDaemonCliSpawner(
   opts: {
@@ -1293,16 +1318,26 @@ export function mockLegacyDockerDaemonCliSpawner(
             marker === undefined ? LEGACY_FAKE_UNSTAMPED_PGDATA_TAR : legacyFakePgDataTar(marker);
         }
       } else if (args[0] === "container" && args[1] === "inspect") {
-        const container = containers.get(args[2] ?? "");
-        exitCode = container === undefined ? 1 : 0;
-        stdout =
-          container === undefined
-            ? ""
-            : JSON.stringify({
-                Running: container.running,
-                Status: container.running ? "running" : "exited",
-                Health: { Status: "healthy" },
-              });
+        if ((args[2] ?? "").startsWith("supabase_db_")) {
+          // The local stack's own container — not a shadow this table tracks. Report it
+          // running-and-healthy so `--use-pgadmin`'s local-stack probe passes.
+          stdout = JSON.stringify({
+            Running: true,
+            Status: "running",
+            Health: { Status: "healthy" },
+          });
+        } else {
+          const container = containers.get(args[2] ?? "");
+          exitCode = container === undefined ? 1 : 0;
+          stdout =
+            container === undefined
+              ? ""
+              : JSON.stringify({
+                  Running: container.running,
+                  Status: container.running ? "running" : "exited",
+                  Health: { Status: "healthy" },
+                });
+        }
       }
 
       return ChildProcessSpawner.makeHandle({

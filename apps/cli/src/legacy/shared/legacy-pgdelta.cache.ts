@@ -890,9 +890,12 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
-    // `legacyProvisionMigrationsShadow` migrates via `legacyMigrateShadowDatabase`, which forces
-    // `pg_net` on — the key must record that, not the config-following default (no `bypassCache`:
-    // `db diff` has no `--no-cache` on this path).
+    // Same forced-on policy {@link legacyGetMigrationsCatalogRef} passes below, for the same
+    // reason: `legacyProvisionMigrationsShadow` migrates through `legacyMigrateShadowDatabase`,
+    // whose baseline installs `pg_net` regardless of `config.toml`. Leaving this at the
+    // config-following default would key the published tar as `webhooks_enabled=false` on a
+    // webhooks-disabled project even though the snapshotted cluster HAS `pg_net` — poisoning
+    // every other config-following consumer of that key.
     { webhooks: "enabled" },
   );
 });

@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -13,10 +13,12 @@ import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
   useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
+  withLegacyShadowCacheEnabled,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import {
@@ -40,12 +42,16 @@ import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LEGACY_INTERNAL_SCHEMAS } from "../../../shared/legacy-pg-dump.env.ts";
 import { legacyDumpSchemaScript } from "../../../shared/legacy-pg-dump.scripts.ts";
+import { legacyShadowBaselineCacheDir } from "../../../shared/legacy-pgdelta.paths.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
 } from "../../../shared/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
+import {
+  LegacyDbConnectError,
+  LegacyDbExecError,
+} from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
@@ -209,6 +215,9 @@ function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
   ).pipe(Layer.provide(BunServices.layer));
 }
 
+/** The default `[db] shadow_port`, i.e. the port squash's own shadow listens on. */
+const LEGACY_SHADOW_PORT = 54320;
+
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -230,7 +239,13 @@ interface SetupOpts {
   readonly failResolve?: boolean;
   readonly failSql?: string;
   readonly networkId?: string;
-  readonly neverHealthyShadow?: boolean;
+  /**
+   * Every connect to the shadow's own port is refused, so its readiness gate
+   * (`legacyWaitForShadowReady`) keeps polling until the health budget runs out. That gate is a
+   * direct Postgres connect probe, not the Docker healthcheck, so an unconnectable shadow — not
+   * an unhealthy container — is what a squash readiness timeout actually looks like.
+   */
+  readonly neverConnectableShadow?: boolean;
   readonly failCreateShadow?: boolean;
   readonly failRemoveShadow?: boolean;
   readonly failSetupJob?: boolean;
@@ -239,6 +254,10 @@ interface SetupOpts {
   readonly fullDumpSql?: string;
   readonly failDumpKind?: "before" | "after" | "full";
   readonly fsFaults?: FsFaultOpts;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -247,10 +266,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const cache = mockLegacyLinkedProjectCacheTracked();
 
   const spawner = mockLegacyShadowContainerCliSpawner({
-    neverHealthy: opts.neverHealthyShadow ?? false,
     failCreate: opts.failCreateShadow ?? false,
     failRemove: opts.failRemoveShadow ?? false,
   });
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
   const docker = mockSquashDockerRun({
     beforeSql: opts.beforeDumpSql,
     afterSql: opts.afterDumpSql,
@@ -269,8 +292,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const connectedDatabases: Array<string> = [];
   const connection = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
+        if (opts.neverConnectableShadow === true && cfg.port === LEGACY_SHADOW_PORT) {
+          return yield* Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        }
         const session: LegacyDbSession = {
           exec: (sql: string) =>
             Effect.suspend(() => {
@@ -366,7 +392,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    spawner.layer,
+    dockerDaemon?.layer ?? spawner.layer,
     docker.layer,
     debugLogger,
     alwaysReadyHttpClientLayer,
@@ -403,6 +429,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolverCalls,
     debugLogs,
     shadowSpawned: spawner.spawned,
+    dockerDaemon,
     dumpCalls: docker.dumpCalls,
     setupJobCalls: docker.setupJobCalls,
   };
@@ -887,6 +914,95 @@ describe("legacy migration squash", () => {
     });
   });
 
+  // The shadow baseline cache (`shared/db-bootstrap/shadow-cache.ts`) is ON by default in
+  // production; the suite-wide `useLegacyShadowCacheDisabled` above turns it off everywhere else
+  // so the other scenarios assert the plain shadow lifecycle. These scenarios turn it back on —
+  // under a per-test `SUPABASE_HOME`, so the ~90MB-in-production tar never lands in the
+  // developer's real `~/.supabase` — and drive squash twice to prove the seam is wired: the
+  // second run must reuse the first's baseline WITHOUT changing anything squash itself produces.
+  // The cache's own mechanics (key derivation, atomic publish, retention, degradation) are
+  // covered at their own level in `shared/db-bootstrap/shadow-cache.integration.test.ts`.
+  describe("shadow baseline cache", () => {
+    const BEFORE_SQL = "CREATE SCHEMA IF NOT EXISTS auth;\nold auth object;\n";
+    const AFTER_SQL = "CREATE SCHEMA IF NOT EXISTS auth;\nnew auth object;\n";
+    const FULL_SQL = "CREATE TABLE t (id int);\n";
+    const EXPECTED_TARGET =
+      FULL_SQL +
+      "\n--\n-- Dumped schema changes for auth and storage\n--\n\n" +
+      "new auth object;\n";
+
+    /** Re-enables the cache the suite-wide gate turned off, rooted at a per-test `SUPABASE_HOME`. */
+    const withCacheEnabled = <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+      withLegacyShadowCacheEnabled(join(tmp.current, "_supabase_home"), body);
+
+    /** One full squash run over a freshly re-seeded two-migration project. */
+    const runSquash = Effect.fnUntraced(function* () {
+      seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
+      seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
+      const s = setup(tmp.current, {
+        statefulDocker: true,
+        beforeDumpSql: BEFORE_SQL,
+        afterDumpSql: AFTER_SQL,
+        fullDumpSql: FULL_SQL,
+      });
+      yield* legacyMigrationSquash(flags()).pipe(Effect.provide(s.layer));
+      return s;
+    });
+
+    it.effect(
+      "reuses the first run's platform baseline on the second squash, without changing the dumps it produces",
+      () =>
+        withCacheEnabled(
+          Effect.gen(function* () {
+            const cold = yield* runSquash();
+            // Cold: the baseline really ran (progress lines + the PG15+ one-shot setup jobs),
+            // and the snapshot was taken at the baseline seam (`docker stop` -> `cp` -> `start`).
+            expect(stderr(cold.out)).toContain("Initialising schema...");
+            expect(stderr(cold.out)).toContain("Seeding globals from roles.sql...");
+            expect(cold.setupJobCalls.length).toBeGreaterThan(0);
+            expect(cold.dockerDaemon?.calls("stop")).toHaveLength(1);
+            expect(cold.dockerDaemon?.calls("start").length).toBeGreaterThan(0);
+
+            const warm = yield* runSquash();
+            // Warm: the restored cluster already carries the baseline, so `SetupDatabase` — and
+            // therefore its progress text and its one-shot jobs — is skipped entirely, and
+            // nothing is re-snapshotted.
+            expect(stderr(warm.out)).not.toContain("Initialising schema...");
+            expect(stderr(warm.out)).not.toContain("Seeding globals from roles.sql...");
+            expect(warm.setupJobCalls).toHaveLength(0);
+            expect(warm.dockerDaemon?.calls("stop")).toHaveLength(0);
+
+            // Everything downstream of the baseline seam is untouched: both dumps, the
+            // migrations, the rewritten target file, and the shadow's own lifecycle.
+            expect(warm.dumpCalls).toHaveLength(3);
+            expect(stderr(warm.out)).toContain("Applying migration 0_init.sql...");
+            expect(stderr(warm.out)).toContain("Applying migration 1_target.sql...");
+            expect(stderr(warm.out)).toContain(
+              "Squashed local migrations to supabase/migrations/1_target.sql",
+            );
+            expect(warm.dockerDaemon?.calls("rm")).toHaveLength(1);
+            const target = join(tmp.current, "supabase", "migrations", "1_target.sql");
+            expect(readFileSync(target, "utf8")).toBe(EXPECTED_TARGET);
+          }),
+        ),
+    );
+
+    it.effect("keys its snapshots under the cache root, not the project directory", () =>
+      withCacheEnabled(
+        Effect.gen(function* () {
+          yield* runSquash();
+          // The production path helper resolving the `SUPABASE_HOME` `withCacheEnabled` pinned,
+          // not a hand-built join — so this stays honest if the cache root ever moves.
+          const cacheDir = legacyShadowBaselineCacheDir(yield* Path.Path);
+          const tars = readdirSync(cacheDir).filter((name) => name.endsWith(".tar"));
+          expect(tars).toHaveLength(1);
+          expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]+\.tar$/);
+          expect(existsSync(join(tmp.current, "supabase", ".temp", "shadow-baseline"))).toBe(false);
+        }).pipe(Effect.provide(BunServices.layer)),
+      ),
+    );
+  });
+
   // Failure paths — every one leaves the shadow removed (unless creation
   // itself is what failed, matching the established leak-on-create-failure behavior).
 
@@ -907,7 +1023,7 @@ describe("legacy migration squash", () => {
     });
 
     it.effect(
-      "fails with a health-check timeout when the shadow never becomes healthy, and removes it",
+      "fails with a health-check timeout when the shadow never becomes connectable, and removes it",
       () => {
         seedMigration(tmp.current, "0_init.sql");
         seedMigration(tmp.current, "1_target.sql");
@@ -918,7 +1034,7 @@ describe("legacy migration squash", () => {
           join(tmp.current, "supabase", "config.toml"),
           '[db]\nhealth_timeout = "0s"\n',
         );
-        const s = setup(tmp.current, { neverHealthyShadow: true });
+        const s = setup(tmp.current, { neverConnectableShadow: true });
         return Effect.gen(function* () {
           const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
           expect(failureTag(exit)).toBe("LegacyHealthCheckTimeoutError");
