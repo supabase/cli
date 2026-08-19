@@ -34,7 +34,10 @@ import {
 } from "../legacy-docker-bind-classify.ts";
 import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
 import { legacyIsDockerDaemonUnreachable } from "../legacy-docker-suggest.ts";
-import { isUserDefinedDockerNetwork } from "../../../shared/functions/functions-docker.ts";
+import {
+  containerArchiveBytes,
+  isUserDefinedDockerNetwork,
+} from "../../../shared/functions/functions-docker.ts";
 import {
   legacyBuildStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
@@ -162,8 +165,8 @@ export interface LegacyContainerOpts {
    * {@link legacyCopyStartSecretFilesIntoContainer}), so they never touch host disk at
    * all. This label is still load-bearing for OTHER host-persisted staging under the same
    * `<workdir>/supabase/.temp/start-secrets/<containerName>/` tree that this function
-   * itself never writes — e.g. Edge Runtime's own env-file/multiline-env-script/serve-
-   * main-template staging (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer`),
+   * itself never writes — e.g. Edge Runtime's own env-file/multiline-env-script
+   * staging (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer`),
    * which `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`) still reclaims
    * by this same label once that container is torn down.
    */
@@ -743,14 +746,13 @@ function legacyCopyStartSecretFilesIntoContainer(
 ): Effect.Effect<void, LegacyContainerCreateError> {
   if (secretFiles.length === 0) return Effect.void;
 
-  const entries = Object.fromEntries(
-    secretFiles.map((secretFile) => [
-      secretFile.containerPath.replace(/^\/+/, ""),
-      secretFile.content,
-    ]),
-  );
   return Effect.tryPromise({
-    try: () => new Bun.Archive(entries).bytes(),
+    try: () =>
+      containerArchiveBytes(
+        Object.fromEntries(
+          secretFiles.map((secretFile) => [secretFile.containerPath, secretFile.content]),
+        ),
+      ),
     catch: (cause) =>
       new LegacyContainerCreateError({
         message: `failed to create docker container: failed to prepare container secret files: ${

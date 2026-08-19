@@ -22678,6 +22678,7 @@
                         "project_restore_after_expiry",
                         "assistant.advance_model",
                         "integrations.github_connections",
+                        "integrations.github_push_webhooks_limit",
                         "dedicated_pooler",
                         "observability.dashboard_advanced_metrics",
                         "api.members.invitations",
@@ -24870,9 +24871,6 @@
                           "minimum": -9007199254740991,
                           "maximum": 9007199254740991,
                           "example": 1
-                        },
-                        "backend": {
-                          "type": "string"
                         }
                       },
                       "required": ["size", "exposure", "instances"]
@@ -24971,9 +24969,6 @@
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991,
                         "example": 1
-                      },
-                      "backend": {
-                        "type": "string"
                       }
                     },
                     "required": ["size", "exposure", "instances"]
@@ -25106,9 +25101,6 @@
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991,
                         "example": 1
-                      },
-                      "backend": {
-                        "type": "string"
                       }
                     },
                     "required": ["size", "exposure", "instances"]

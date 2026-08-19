@@ -42,8 +42,8 @@ describe("dockerBindContainerPath", () => {
   });
 
   it("strips the SELinux relabel suffix this file emits", () => {
-    expect(dockerBindContainerPath("/tmp/x/main/index.ts:/root/index.ts:ro,Z")).toBe(
-      "/root/index.ts",
+    expect(dockerBindContainerPath("/tmp/x/multiline-env:/root/.supabase/multiline-env:ro,Z")).toBe(
+      "/root/.supabase/multiline-env",
     );
   });
 
