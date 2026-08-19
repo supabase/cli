@@ -12,6 +12,7 @@ export type MigrationHistoryRow = {
 export type MigrationApplyResult = {
   readonly applied: ReadonlyArray<string>;
   readonly skipped: ReadonlyArray<string>;
+  readonly recorded?: ReadonlyArray<string>;
 };
 
 interface MigrationRunnerShape {
@@ -22,7 +23,7 @@ interface MigrationRunnerShape {
     pool: Pool,
     local: ReadonlyArray<MigrationFile>,
   ) => Effect.Effect<MigrationApplyResult, SchemaEngineError | SchemaHistoryConflictError>;
-  readonly recordApplied: (
+  readonly markApplied: (
     pool: Pool,
     files: ReadonlyArray<MigrationFile>,
   ) => Effect.Effect<void, SchemaEngineError>;

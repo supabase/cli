@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
 import { Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
+import { SchemaLocalStackNotRunningError } from "../schema/schema-errors.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
+import type { SchemaDraftJournal, SchemaPlanView } from "../schema/schema-types.ts";
 import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
@@ -19,8 +22,76 @@ const linked = {
   projectRef: "abcdefghijklmnop",
 };
 
-function setup(opts: { declarations?: boolean; digestMatch?: boolean } = {}) {
+function emptyPlan(): Plan {
+  return {
+    formatVersion: 1,
+    engineVersion: "0.3.0",
+    planId: "plan",
+    source: { fingerprint: "s" },
+    target: { fingerprint: "d" },
+    preamble: [],
+    deltas: [],
+    filteredDeltas: [],
+    renameCandidates: [],
+    actions: [],
+    safetyReport: {
+      destructiveActions: 0,
+      rewriteRiskActions: 0,
+      nonTransactionalActions: 0,
+      lockClasses: {},
+    },
+  };
+}
+
+function planView(changes: boolean): SchemaPlanView {
+  const plan = emptyPlan();
+  return {
+    planId: plan.planId,
+    sourceFingerprint: plan.source.fingerprint,
+    desiredFingerprint: plan.target.fingerprint,
+    engineVersion: plan.engineVersion,
+    profile: "supabase",
+    changes,
+    files: [],
+    hazards: {
+      kinds: [],
+      destructive: 0,
+      rewrite: 0,
+      coverageGaps: 0,
+      report: classifyPlanHazards(plan),
+    },
+    destructive: false,
+    renameCandidates: [],
+    acceptedRenames: [],
+    coverageBlocked: false,
+    renameBlocked: false,
+    plan,
+  };
+}
+
+const ungeneratedJournal: SchemaDraftJournal = {
+  version: 1,
+  draftId: "draft",
+  targetIdentity: "local:default",
+  startingMigrationHeadDigest: "abc",
+  sourceFingerprint: "s",
+  engineVersion: "0.3.0",
+  declarativelyAhead: true,
+  generated: false,
+  plans: [],
+};
+
+function setup(
+  opts: {
+    declarations?: boolean;
+    ahead?: boolean;
+    localRunning?: boolean;
+    drift?: boolean;
+    journal?: SchemaDraftJournal;
+  } = {},
+) {
   const out = mockOutput({ interactive: false });
+  let shadowProvisions = 0;
   const layer = Layer.mergeAll(
     out.layer,
     Layer.succeed(
@@ -45,25 +116,11 @@ function setup(opts: { declarations?: boolean; digestMatch?: boolean } = {}) {
     Layer.succeed(
       SchemaStateStore,
       SchemaStateStore.of({
-        readCheckpoint: Effect.succeed(
-          opts.digestMatch === true
-            ? Option.some({
-                version: 1 as const,
-                declarativeDigest:
-                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                migrationHeadDigest: "b",
-                profile: "supabase",
-                scope: "database",
-                engineVersion: "0.3.0",
-                artifactFormatVersion: 1,
-                acceptedRenames: [],
-                generatedMigrationVersions: ["20260101000000"],
-                lastGenerateHazards: { kinds: [], destructive: 0, rewrite: 0, coverageGaps: 0 },
-              })
-            : Option.none(),
-        ),
+        readCheckpoint: Effect.succeed(Option.none()),
         writeCheckpoint: () => Effect.void,
-        readJournal: Effect.succeed(Option.none()),
+        readJournal: Effect.succeed(
+          opts.journal === undefined ? Option.none() : Option.some(opts.journal),
+        ),
         writeJournal: () => Effect.void,
         clearJournal: Effect.void,
         withLock: (effect) => effect,
@@ -72,7 +129,17 @@ function setup(opts: { declarations?: boolean; digestMatch?: boolean } = {}) {
     Layer.succeed(
       DatabaseTargetResolver,
       DatabaseTargetResolver.of({
-        resolve: () => Effect.succeed(linked),
+        resolve: (selector) => {
+          if (selector.kind === "local" && opts.localRunning === false) {
+            return Effect.fail(
+              new SchemaLocalStackNotRunningError({
+                detail: "No local Supabase stack is running for this project.",
+                suggestion: "Run `supabase start`, then retry.",
+              }),
+            );
+          }
+          return Effect.succeed(linked);
+        },
       }),
     ),
     Layer.succeed(
@@ -89,34 +156,94 @@ function setup(opts: { declarations?: boolean; digestMatch?: boolean } = {}) {
       MigrationRunner.of({
         listRemote: () => Effect.succeed([]),
         applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
-        recordApplied: () => Effect.void,
+        markApplied: () => Effect.die("unused"),
       }),
     ),
     Layer.succeed(
       PgDeltaSchemaEngine,
       PgDeltaSchemaEngine.of({
         exportSchema: () => Effect.die("unused"),
-        planFiles: () => Effect.die("unused"),
-        diffPools: () => Effect.die("unused"),
+        planFiles: () => Effect.succeed(planView(opts.ahead === true)),
+        diffPools: () => Effect.succeed(planView(opts.drift === true)),
         applyPlan: () => Effect.die("unused"),
-        provisionShadow: Effect.die("unused"),
+        provisionShadow: Effect.sync(() => {
+          shadowProvisions += 1;
+          return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
+        }),
       }),
     ),
   );
-  return { layer };
+  return {
+    layer,
+    get shadowProvisions() {
+      return shadowProvisions;
+    },
+  };
 }
 
+const pushFlags = {
+  yes: true,
+  allowRemote: false,
+  projectRef: "abcdefghijklmnop",
+  skipVerify: false,
+} as const;
+
 describe("pushMigrations", () => {
-  it.live("fails closed when declarations are ahead of the checkpoint", () => {
-    const { layer } = setup({ declarations: true, digestMatch: false });
+  it.live("fails closed when an ungenerated draft is active", () => {
+    const { layer } = setup({ journal: ungeneratedJournal });
     return Effect.gen(function* () {
-      const exit = yield* pushMigrations({
-        yes: true,
-        allowDataLoss: true,
-        allowRemote: false,
-        projectRef: "abcdefghijklmnop",
-      }).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+    });
+  });
+
+  it.live("fails closed when live M to D still has changes", () => {
+    const { layer } = setup({ declarations: true, ahead: true });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    });
+  });
+
+  it.live("checks remote drift even when no local stack is running", () => {
+    const ctx = setup({
+      declarations: false,
+      localRunning: false,
+      drift: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(ctx.shadowProvisions).toBe(1);
+    });
+  });
+
+  it.live("pushes when replay matches declarations and the remote", () => {
+    const ctx = setup({
+      declarations: true,
+      ahead: false,
+      localRunning: false,
+      drift: false,
+    });
+    return Effect.gen(function* () {
+      const result = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer));
+      expect(result.mutatedDatabase).toBe(false);
+      expect(ctx.shadowProvisions).toBe(3);
+    });
+  });
+
+  it.live("skips shadow verify when --skip-verify is set", () => {
+    const ctx = setup({
+      declarations: true,
+      ahead: true,
+      drift: true,
+    });
+    return Effect.gen(function* () {
+      const result = yield* pushMigrations({ ...pushFlags, skipVerify: true }).pipe(
+        Effect.provide(ctx.layer),
+      );
+      expect(result.mutatedDatabase).toBe(false);
+      expect(ctx.shadowProvisions).toBe(0);
     });
   });
 });

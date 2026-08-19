@@ -8,33 +8,24 @@ import {
 import type { DatabaseTarget } from "./database-target.ts";
 import { Output } from "../output/output.service.ts";
 
-export type DestructiveAuthFlags = {
+export type MutationAuthFlags = {
   readonly yes: boolean;
-  readonly allowDataLoss: boolean;
   readonly projectRef?: string;
   readonly allowRemote: boolean;
 };
 
 export const authorizeMutation = Effect.fnUntraced(function* (input: {
   readonly target: DatabaseTarget;
-  readonly destructive: boolean;
-  readonly flags: DestructiveAuthFlags;
+  readonly flags: MutationAuthFlags;
   readonly command: string;
 }) {
-  const { target, destructive, flags, command } = input;
+  const { target, flags, command } = input;
 
   if (target.disposable) {
     return;
   }
 
-  if (destructive && !flags.allowDataLoss) {
-    return yield* new SchemaDestructiveAuthError({
-      detail: "This plan contains destructive actions.",
-      suggestion: `Re-run with --allow-data-loss. --yes never authorizes data loss.`,
-    });
-  }
-
-  if (!target.connectionVerified) {
+  if (target.kind === "url") {
     if (!flags.allowRemote) {
       return yield* new SchemaAllowRemoteRequiredError({
         detail: "This connection string cannot be identity-verified.",
@@ -74,18 +65,10 @@ export const authorizeMutation = Effect.fnUntraced(function* (input: {
     return;
   }
 
-  if (destructive) {
-    return yield* new SchemaProjectRefMismatchError({
-      detail: `Non-interactive destructive mutation of ${resolvedRef} requires an explicit identity assertion.`,
-      suggestion: `Pass --project-ref ${resolvedRef}.`,
-    });
-  }
-
   if (!flags.yes) {
     return yield* new SchemaDestructiveAuthError({
       detail: "Non-interactive mutation of a durable target requires confirmation.",
-      suggestion:
-        "Pass --yes for ordinary confirmation. Destructive plans also need --allow-data-loss and --project-ref.",
+      suggestion: "Pass --yes, or pass --project-ref to assert the target identity.",
     });
   }
 });

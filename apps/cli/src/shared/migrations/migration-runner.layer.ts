@@ -20,8 +20,12 @@ COMMIT;
 
 const LIST_HISTORY =
   "SELECT version, coalesce(name, '') AS name FROM supabase_migrations.schema_migrations ORDER BY version";
+const LIST_HISTORY_VERSION_ONLY =
+  "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 const INSERT_HISTORY =
   "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3)";
+
+const MISSING_HISTORY_CODES = new Set(["3F000", "42P01"]);
 
 const engineError = (detail: string) =>
   new SchemaEngineError({
@@ -29,17 +33,50 @@ const engineError = (detail: string) =>
     suggestion: "Check the database connection and migration SQL, then retry.",
   });
 
+function postgresErrorCode(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
+    return undefined;
+  }
+  const { code } = cause;
+  return typeof code === "string" ? code : undefined;
+}
+
+function postgresErrorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isMissingMigrationHistory(cause: unknown): boolean {
+  const code = postgresErrorCode(cause);
+  if (code !== undefined) return MISSING_HISTORY_CODES.has(code);
+  const message = postgresErrorMessage(cause);
+  return (
+    /relation .* does not exist/iu.test(message) && !/column .* does not exist/iu.test(message)
+  );
+}
+
+function isMissingNameColumn(cause: unknown): boolean {
+  return /column ["']?name["']? does not exist/iu.test(postgresErrorMessage(cause));
+}
+
 export const migrationRunnerLayer = Layer.succeed(
   MigrationRunner,
   MigrationRunner.of({
     listRemote: (pool: Pool) =>
       Effect.tryPromise({
         try: async () => {
-          await pool.query(ENSURE_HISTORY);
-          const result = await pool.query<MigrationHistoryRow>(LIST_HISTORY);
-          return result.rows;
+          try {
+            const result = await pool.query<MigrationHistoryRow>(LIST_HISTORY);
+            return result.rows;
+          } catch (cause) {
+            if (isMissingMigrationHistory(cause)) return [];
+            if (isMissingNameColumn(cause)) {
+              const result = await pool.query<{ version: string }>(LIST_HISTORY_VERSION_ONLY);
+              return result.rows.map((row) => ({ version: row.version, name: "" }));
+            }
+            throw cause;
+          }
         },
-        catch: (cause) => engineError(cause instanceof Error ? cause.message : String(cause)),
+        catch: (cause) => engineError(postgresErrorMessage(cause)),
       }),
     applyPending: (pool: Pool, local: ReadonlyArray<MigrationFile>) =>
       Effect.gen(function* () {
@@ -97,7 +134,7 @@ export const migrationRunnerLayer = Layer.succeed(
             .map((file) => file.version),
         } satisfies MigrationApplyResult;
       }),
-    recordApplied: (pool: Pool, files: ReadonlyArray<MigrationFile>) =>
+    markApplied: (pool: Pool, files: ReadonlyArray<MigrationFile>) =>
       Effect.tryPromise({
         try: async () => {
           await pool.query(ENSURE_HISTORY);

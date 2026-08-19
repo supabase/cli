@@ -12,7 +12,7 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 5. `schema generate` is declarations → migrations. `schema pull` is database → declarations.
 6. `schema generate --dry-run` previews generate. `migrations diff` replaces `db diff`.
 7. `schema pull` is database-authoritative regeneration (`--force` / `--output`). No merge.
-8. `--yes` answers ordinary prompts only. Destructive plans need `--allow-data-loss`. Durable targets also need `--project-ref` (or `--allow-remote` for raw URLs). Local disposable `schema apply` auto-approves modeled hazards.
+8. `--yes` answers ordinary prompts. Durable identity is `--yes` or matching `--project-ref` for linked targets, and `--allow-remote` for raw URLs. There is no `--allow-data-loss`. Local disposable `schema apply` auto-approves modeled hazards.
 9. New commands live at top level in the **legacy** (stable) CLI. The same verbs also stay on next (alpha). Go-parity `db` and singular `migration` stay on stable. Plural `migrations` is the schema-first group (it is no longer an alias of `migration`).
 10. `schema generate` / `apply` / `migrations diff|push|pull` plan against **isolated native Postgres clusters** with a cached platform baseline — not co-located `CREATE DATABASE` shadows. `planSchemaFiles` always uses `isolatedShadow: true`.
 
@@ -20,22 +20,22 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 
 | # | Decision |
 | - | -------- |
-| 1 | Checkpoint: `supabase/schemas/.schema-checkpoint.json` (tracked). Export ownership stays in `.pgdelta-export.json`. Draft journal: `.supabase/schema-draft.json` (gitignored). |
-| 2 | After generate, the draft journal is marked `generated`. Local history is never silently inserted. A later `migrations apply` on a draft-ahead database fails closed (reset or explicit fingerprint-gated reconcile). |
+| 1 | No tracked schema checkpoint sidecar. Export ownership stays in `.pgdelta-export.json`. Draft journal: `.supabase/schema-draft.json` (gitignored). Existing `.schema-checkpoint.json` files are ignored. |
+| 2 | After a successful non-dry `schema generate` (including no-op when `M` already equals `D`), the draft journal is cleared. Local history is never written at generate time. `migrations apply` runs pending SQL, or inserts missing `supabase_migrations` rows when the live catalog already matches full file replay. Catalog match is schema-shape only — a pending DML-only file can be recorded without executing. Local `db reset` clears the journal. Reset is optional rebuild, not required to apply additive files. |
 | 3 | `schema generate --baseline --name <name>` is the existing-database onboarding step. Registering that baseline as already applied on a remote is a separate, explicit migration-history operation (not pull). |
-| 4 | Manual migration changes during an active draft fail closed with generate / reset / discard. No automatic rebase. |
-| 5 | `migrations push` requires `--allow-data-loss` when the checkpoint records destructive hazards for pending generated files, or when pending files are not in the generated set (unclassified). Ambiguous rename / coverage gaps are generate-time failures. |
+| 4 | Manual migration changes during an active ungenerated draft fail closed with generate / reset / discard. No automatic rebase. |
+| 5 | Push does not classify pending files as destructive. Generate still fail-closes on ambiguous rename / coverage gaps. |
 | 6 | Only a running local stack owned by this project is verified-disposable. Every remote/URL target is durable. No environment classification yet. |
-| 7 | Clone proof is not required. Generate verifies by planning `M → D` and checking convergence on a clean replay. |
+| 7 | Clone proof is not required. Generate verifies by planning `M → D` and checking convergence on a clean replay. Push live-verifies declarations-ahead (`M → D`) and remote drift unless `--skip-verify`. |
 | 8 | `migrations diff` supports `--file` / `-f` (preview-to-file, no apply). |
 | 9 | Isolated shadows are native Postgres (same binaries as `start`), snapshotted under `$SUPABASE_HOME/cache/native-shadow-baseline/`. Co-located shadows are not used on this path. |
 
 ## Shell and ownership
 
 ```
-apps/cli/src/shared/schema/       engine adapter, workspace, checkpoint, journal, use cases, runtime
+apps/cli/src/shared/schema/       engine adapter, workspace, journal, use cases, runtime
 apps/cli/src/shared/migrations/   repository, history, runner, use cases
-apps/cli/src/shared/database/     target resolution, pool, destructive auth
+apps/cli/src/shared/database/     target resolution, pool, mutation auth
 apps/cli/src/legacy/commands/schema/
 apps/cli/src/legacy/commands/migrations/
 apps/cli/src/next/commands/schema/      same verbs on alpha
@@ -53,15 +53,15 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 
 | Command | Source → action | Side effects |
 | ------- | --------------- | ------------ |
-| `schema pull` | L/R → D | Declarative files, manifest, checkpoint (primary tree only) |
+| `schema pull` | L/R → D | Declarative files, manifest (primary tree only) |
 | `schema generate --dry-run` | M → D | None |
-| `schema generate` | M → D | Migration files + checkpoint |
+| `schema generate` | M → D | Migration files; clears draft journal |
 | `schema apply` | L → D | Local DB + draft journal |
 | `migrations new` | — | Empty migration file |
 | `migrations list` | files ↔ history | None |
 | `migrations diff` | M → live | Preview (optional `--file`) |
-| `migrations apply` | pending files → L | Local DB + history |
-| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift |
+| `migrations apply` | pending files → L | Local DB + `supabase_migrations` |
+| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift unless `--skip-verify` |
 | `migrations pull` | R − M → files | Migration files |
 
 ### Aliases (next only, deprecation notice on stderr)
@@ -81,11 +81,11 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 ## Safety
 
 - Target identity comes from stack ownership or linked project-ref, never hostname heuristics.
-- `--yes` never authorizes data loss, target-gate bypass, or stale plans.
-- `--allow-data-loss` is required whenever `dataLossActions(plan)` is non-empty, or when push cannot classify pending files.
-- Durable identity: interactive confirm-by-typing-ref; non-interactive `--project-ref` must match.
+- `--yes` never bypasses the target gate or live verify (unless `--skip-verify`).
+- Durable identity: interactive confirm-by-typing-ref; non-interactive `--yes` or matching `--project-ref`.
 - Raw URL targets: `--allow-remote` instead of ref assertion.
-- Local `schema apply`: behave as `--yes --allow-data-loss`. Ambiguous rename / coverage gap / unknown metadata still fail closed.
+- Local `schema apply`: auto-approve modeled hazards. Ambiguous rename / coverage gap / unknown metadata still fail closed.
+- `--skip-verify` skips push’s isolated-shadow declarations-ahead and remote-drift checks. Identity flags unchanged.
 - Project lock: `.supabase/schema.lock`.
 
 ## Out of scope

@@ -41,10 +41,10 @@ const dbDiffCommand = Command.make("diff", dbDiffFlags).pipe(
 
 const dbPushFlags = {
   yes: Flag.boolean("yes").pipe(Flag.withAlias("y")),
-  allowDataLoss: Flag.boolean("allow-data-loss"),
   projectRef: Flag.string("project-ref").pipe(Flag.optional),
   allowRemote: Flag.boolean("allow-remote"),
   dbUrl: Flag.string("db-url").pipe(Flag.optional),
+  skipVerify: Flag.boolean("skip-verify"),
 } as const;
 
 const dbPushCommand = Command.make("push", dbPushFlags).pipe(
@@ -55,10 +55,10 @@ const dbPushCommand = Command.make("push", dbPushFlags).pipe(
       yield* notice("db push", "migrations push");
       const result = yield* pushMigrations({
         yes: flags.yes,
-        allowDataLoss: flags.allowDataLoss,
         projectRef: Option.getOrUndefined(flags.projectRef),
         allowRemote: flags.allowRemote,
         dbUrl: Option.getOrUndefined(flags.dbUrl),
+        skipVerify: flags.skipVerify,
       });
       yield* renderSchemaResult("Push migrations", result);
     }).pipe(withCommandInstrumentation(), withJsonErrorHandling),
@@ -135,7 +135,6 @@ const declarativeSyncCommand = Command.make("sync", declarativeSyncFlags).pipe(
       if (flags.apply) {
         const applied = yield* applySchema({
           yes: true,
-          allowDataLoss: true,
           allowRemote: false,
         });
         yield* renderSchemaResult("Apply declarative schema", applied);

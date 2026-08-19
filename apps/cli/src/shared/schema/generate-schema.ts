@@ -1,19 +1,13 @@
 import { Clock, Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
-import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { MigrationRunner } from "../migrations/migration-runner.service.ts";
-import { digestFileSet, digestVersions } from "./schema-digest.ts";
-import { SchemaEngineError } from "./schema-errors.ts";
+import { digestVersions } from "./schema-digest.ts";
+import { SchemaDraftConflictError, SchemaEngineError } from "./schema-errors.ts";
 import { formatPlanSummary } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
-import {
-  SCHEMA_ARTIFACT_FORMAT_VERSION,
-  SCHEMA_MANAGEMENT_SCOPE,
-  SCHEMA_PROFILE_ID,
-} from "./schema-paths.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
-import type { SchemaCheckpoint, SchemaCommandResult } from "./schema-types.ts";
+import type { SchemaCommandResult } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 
@@ -27,19 +21,32 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
   const workspace = yield* SchemaWorkspace;
   const state = yield* SchemaStateStore;
   const engine = yield* PgDeltaSchemaEngine;
-  const targets = yield* DatabaseTargetResolver;
   const migrations = yield* MigrationRepository;
   const runner = yield* MigrationRunner;
 
-  const target = yield* targets.resolve({ kind: "local" });
   const declarations = yield* workspace.readDeclarationFiles;
   const localMigrations = yield* migrations.listLocal;
-  const existingCheckpoint = yield* state.readCheckpoint;
   const name = input.name ?? (input.baseline ? "initial_schema" : "schema");
 
   return yield* state.withLock(
     Effect.scoped(
       Effect.gen(function* () {
+        const journal = yield* state.readJournal;
+        if (
+          journal._tag === "Some" &&
+          journal.value.declarativelyAhead &&
+          journal.value.generated !== true
+        ) {
+          const currentHead = digestVersions(localMigrations.map((file) => file.version));
+          if (currentHead !== journal.value.startingMigrationHeadDigest) {
+            return yield* new SchemaDraftConflictError({
+              detail: "Migration files changed while a declarative draft is active.",
+              suggestion:
+                "Reset the local database, discard the draft, or restore the migration files from before schema apply.",
+            });
+          }
+        }
+
         const sourceShadow = yield* engine.provisionShadow;
         const desiredShadow = yield* engine.provisionShadow;
 
@@ -70,6 +77,9 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
         });
 
         if (input.dryRun || !plan.changes) {
+          if (!input.dryRun && !plan.changes) {
+            yield* state.clearJournal;
+          }
           return {
             status: plan.changes ? "needs_approval" : "clean",
             message: plan.changes
@@ -122,64 +132,7 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
             });
           }
 
-          const localPool = yield* acquireDatabasePool(target.connectionString);
-          // planFiles requires an empty shadow. verifyDesired already holds the
-          // loaded declarations, so compare the live catalog against that shape.
-          const liveVsDeclared = yield* engine.diffPools({
-            sourcePool: localPool,
-            desiredPool: verifyDesiredPool,
-            allowDrops: true,
-          });
-          if (!liveVsDeclared.changes) {
-            yield* runner.recordApplied(localPool, written);
-          }
-
-          const previousGenerated =
-            existingCheckpoint._tag === "Some"
-              ? (existingCheckpoint.value.generatedMigrationVersions ?? [])
-              : [];
-          const previousDestructive =
-            existingCheckpoint._tag === "Some"
-              ? (existingCheckpoint.value.destructiveMigrationVersions ?? [])
-              : [];
-          const checkpoint: SchemaCheckpoint = {
-            version: 1,
-            declarativeDigest: digestFileSet(declarations),
-            migrationHeadDigest: digestVersions(allMigrations.map((file) => file.version)),
-            sourceFingerprint: plan.sourceFingerprint,
-            desiredFingerprint: plan.desiredFingerprint,
-            profile: SCHEMA_PROFILE_ID,
-            scope: SCHEMA_MANAGEMENT_SCOPE,
-            engineVersion: plan.engineVersion,
-            artifactFormatVersion: SCHEMA_ARTIFACT_FORMAT_VERSION,
-            acceptedRenames: plan.acceptedRenames,
-            ...(existingCheckpoint._tag === "Some" &&
-            existingCheckpoint.value.catalogSnapshot !== undefined
-              ? { catalogSnapshot: existingCheckpoint.value.catalogSnapshot }
-              : {}),
-            lastGenerateName: name,
-            lastGenerateHazards: {
-              kinds: plan.hazards.kinds,
-              destructive: plan.hazards.destructive,
-              rewrite: plan.hazards.rewrite,
-              coverageGaps: plan.hazards.coverageGaps,
-            },
-            generatedMigrationVersions: [
-              ...new Set([...previousGenerated, ...written.map((file) => file.version)]),
-            ],
-            destructiveMigrationVersions: plan.destructive
-              ? [...new Set([...previousDestructive, ...written.map((file) => file.version)])]
-              : previousDestructive,
-          };
-          yield* state.writeCheckpoint(checkpoint);
-          const journal = yield* state.readJournal;
-          if (journal._tag === "Some") {
-            yield* state.writeJournal({
-              ...journal.value,
-              generated: true,
-              declarativelyAhead: false,
-            });
-          }
+          yield* state.clearJournal;
 
           return {
             status: "generated",

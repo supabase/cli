@@ -96,7 +96,7 @@ function setup(files = [{ name: "public.sql", sql: "create table public.t (id in
 }
 
 describe("pullSchema", () => {
-  it.live("writes declarations, manifest, and checkpoint into an empty tree", () => {
+  it.live("writes declarations and the export manifest into an empty tree", () => {
     const { project, layer } = setup();
     return Effect.gen(function* () {
       const result = yield* pullSchema({ from: "local", force: false, pruneUnmanaged: false }).pipe(
@@ -106,7 +106,7 @@ describe("pullSchema", () => {
       expect(result.data["created"]).toEqual(["public.sql"]);
       expect(existsSync(join(project.supabaseDir, "schemas", "public.sql"))).toBe(true);
       expect(existsSync(join(project.supabaseDir, "schemas", ".schema-checkpoint.json"))).toBe(
-        true,
+        false,
       );
       expect(existsSync(join(project.supabaseDir, "schemas", ".pgdelta-export.json"))).toBe(true);
     });
@@ -207,47 +207,6 @@ describe("pullSchema", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(readFileSync(join(schemas, "existing.sql"), "utf8")).toBe("select 1;\n");
       expect(existsSync(join(schemas, "public.sql"))).toBe(false);
-    });
-  });
-
-  it.live("keeps generated migration versions when force-pulling", () => {
-    const { project, layer } = setup();
-    const schemas = join(project.supabaseDir, "schemas");
-    mkdirSync(schemas, { recursive: true });
-    writeFileSync(
-      join(schemas, ".schema-checkpoint.json"),
-      `${JSON.stringify(
-        {
-          version: 1,
-          declarativeDigest: "old",
-          migrationHeadDigest: "old-head",
-          profile: "supabase",
-          scope: "database",
-          engineVersion: "0.3.0",
-          artifactFormatVersion: 1,
-          acceptedRenames: [],
-          lastGenerateName: "add_widgets",
-          generatedMigrationVersions: ["20260101000000"],
-          destructiveMigrationVersions: ["20260101000000"],
-        },
-        null,
-        2,
-      )}\n`,
-    );
-    return Effect.gen(function* () {
-      yield* pullSchema({ from: "local", force: true, pruneUnmanaged: false }).pipe(
-        Effect.provide(layer),
-      );
-      const checkpoint: unknown = JSON.parse(
-        readFileSync(join(schemas, ".schema-checkpoint.json"), "utf8"),
-      );
-      expect(checkpoint).toEqual(
-        expect.objectContaining({
-          generatedMigrationVersions: ["20260101000000"],
-          destructiveMigrationVersions: ["20260101000000"],
-          lastGenerateName: "add_widgets",
-        }),
-      );
     });
   });
 });

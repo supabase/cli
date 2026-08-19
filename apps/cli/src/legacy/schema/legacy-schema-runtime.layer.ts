@@ -5,6 +5,7 @@ import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyNextCliConfigLayer } from "../config/legacy-next-cli-config.layer.ts";
 import { legacyDockerLocalDatabaseFallbackLayer } from "./legacy-docker-local-database.layer.ts";
+import { legacySchemaProjectLinkStateLayer } from "./legacy-schema-project-link-state.layer.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 
@@ -36,6 +37,9 @@ export const legacySchemaRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
           ),
         ),
         localDatabaseFallback: legacyDockerLocalDatabaseFallbackLayer.pipe(
+          Layer.provide(Layer.succeed(LegacyCliConfig, config)),
+        ),
+        projectLinkState: legacySchemaProjectLinkStateLayer.pipe(
           Layer.provide(Layer.succeed(LegacyCliConfig, config)),
         ),
       });

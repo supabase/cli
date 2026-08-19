@@ -7,13 +7,8 @@ import { schemaApply } from "./apply.handler.ts";
 
 const flags = {
   yes: Flag.boolean("yes").pipe(
-    Flag.withDescription("Answer ordinary prompts. Never authorizes data loss."),
+    Flag.withDescription("Answer ordinary prompts. Does not skip target identity."),
     Flag.withAlias("y"),
-  ),
-  allowDataLoss: Flag.boolean("allow-data-loss").pipe(
-    Flag.withDescription(
-      "Required for destructive plans on durable targets. Implied on local apply.",
-    ),
   ),
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Explicit project ref assertion for durable targets."),

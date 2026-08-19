@@ -7,24 +7,22 @@ import { migrationsPush } from "./push.handler.ts";
 
 const flags = {
   yes: Flag.boolean("yes").pipe(
-    Flag.withDescription("Answer ordinary prompts. Never authorizes data loss."),
+    Flag.withDescription("Answer ordinary prompts. Does not skip target identity or live verify."),
     Flag.withAlias("y"),
   ),
-  allowDataLoss: Flag.boolean("allow-data-loss").pipe(
-    Flag.withDescription("Required when pending migrations are destructive or unclassified."),
-  ),
   projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription(
-      "Must match the resolved linked project for destructive non-interactive runs.",
-    ),
+    Flag.withDescription("Must match the resolved linked project."),
     Flag.optional,
   ),
   allowRemote: Flag.boolean("allow-remote").pipe(
     Flag.withDescription("Acknowledge an unverifiable --db-url target."),
   ),
   dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription("Raw connection string. Requires --allow-remote for destructive plans."),
+    Flag.withDescription("Raw connection string. Requires --allow-remote."),
     Flag.optional,
+  ),
+  skipVerify: Flag.boolean("skip-verify").pipe(
+    Flag.withDescription("Skip isolated-shadow declarations-ahead and remote-drift checks."),
   ),
 } as const;
 

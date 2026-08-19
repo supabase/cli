@@ -2,8 +2,8 @@ import { Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { authorizeMutation } from "../database/destructive-auth.ts";
+import { applyLocalPending } from "../migrations/apply-local-pending.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
-import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { digestUtf8, digestVersions } from "./schema-digest.ts";
 import {
   SchemaDraftConflictError,
@@ -19,7 +19,6 @@ import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 
 export type ApplySchemaInput = {
   readonly yes: boolean;
-  readonly allowDataLoss: boolean;
   readonly projectRef?: string;
   readonly allowRemote: boolean;
 };
@@ -30,7 +29,6 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
   const engine = yield* PgDeltaSchemaEngine;
   const targets = yield* DatabaseTargetResolver;
   const migrations = yield* MigrationRepository;
-  const runner = yield* MigrationRunner;
 
   const target = yield* targets.resolve({ kind: "local" });
   if (!target.disposable) {
@@ -49,11 +47,11 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
       Effect.gen(function* () {
         const pool = yield* acquireDatabasePool(target.connectionString);
         const existingJournal = yield* state.readJournal;
-        if (
+        const ungeneratedDraft =
           existingJournal._tag === "Some" &&
           existingJournal.value.declarativelyAhead &&
-          existingJournal.value.generated !== true
-        ) {
+          existingJournal.value.generated !== true;
+        if (ungeneratedDraft) {
           const currentHead = digestVersions(localMigrations.map((file) => file.version));
           if (currentHead !== existingJournal.value.startingMigrationHeadDigest) {
             return yield* new SchemaDraftConflictError({
@@ -63,7 +61,7 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
             });
           }
         } else {
-          yield* runner.applyPending(pool, localMigrations);
+          yield* applyLocalPending(pool, localMigrations);
         }
 
         const shadow = yield* engine.provisionShadow;
@@ -78,10 +76,8 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
         yield* assertPlanActionable(plan);
         yield* authorizeMutation({
           target,
-          destructive: plan.destructive,
           flags: {
-            yes: true,
-            allowDataLoss: true,
+            yes: input.yes,
             allowRemote: input.allowRemote,
             ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
           },

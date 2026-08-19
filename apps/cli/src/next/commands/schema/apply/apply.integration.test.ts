@@ -72,7 +72,7 @@ function setup(disposable: boolean) {
         MigrationRunner.of({
           listRemote: () => Effect.succeed([]),
           applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
-          recordApplied: () => Effect.void,
+          markApplied: () => Effect.void,
         }),
       ),
       Layer.succeed(
@@ -95,7 +95,6 @@ describe("applySchema", () => {
     return Effect.gen(function* () {
       const exit = yield* applySchema({
         yes: true,
-        allowDataLoss: true,
         allowRemote: true,
         projectRef: "abcdefghijklmnop",
       }).pipe(Effect.provide(layer), Effect.exit);

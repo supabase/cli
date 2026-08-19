@@ -4,13 +4,12 @@ import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { SchemaDraftConflictError } from "../schema/schema-errors.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
+import { applyLocalPending } from "./apply-local-pending.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
-import { MigrationRunner } from "./migration-runner.service.ts";
 
 export const applyMigrations = Effect.fn("migrations.apply")(function* () {
   const targets = yield* DatabaseTargetResolver;
   const repository = yield* MigrationRepository;
-  const runner = yield* MigrationRunner;
   const state = yield* SchemaStateStore;
   const journal = yield* state.readJournal;
   if (
@@ -30,23 +29,28 @@ export const applyMigrations = Effect.fn("migrations.apply")(function* () {
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const pool = yield* acquireDatabasePool(target.connectionString);
-      const result = yield* runner.applyPending(pool, local);
+      const result = yield* applyLocalPending(pool, local);
+      const recorded = result.recorded ?? [];
+      const mutatedDatabase = result.applied.length > 0 || recorded.length > 0;
       return {
         status: "clean",
         message:
-          result.applied.length === 0
-            ? "No pending migrations."
-            : `Applied ${result.applied.length} migration(s): ${result.applied.join(", ")}`,
+          recorded.length > 0
+            ? `Recorded ${recorded.length} already-applied migration(s): ${recorded.join(", ")}`
+            : result.applied.length === 0
+              ? "No pending migrations."
+              : `Applied ${result.applied.length} migration(s): ${result.applied.join(", ")}`,
         data: {
           status: "clean",
           applied: result.applied,
+          recorded,
           skipped: result.skipped,
           target: target.identity,
-          mutated_database: result.applied.length > 0,
+          mutated_database: mutatedDatabase,
           mutated_files: false,
         },
         nextActions: [],
-        mutatedDatabase: result.applied.length > 0,
+        mutatedDatabase,
         mutatedFiles: false,
       } satisfies SchemaCommandResult;
     }),

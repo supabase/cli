@@ -8,7 +8,6 @@ export const legacySchemaApply = Effect.fn("legacy.schema.apply")(function* (
 ) {
   const result = yield* applySchema({
     yes: flags.yes,
-    allowDataLoss: flags.allowDataLoss,
     projectRef: Option.getOrUndefined(flags.projectRef),
     allowRemote: flags.allowRemote,
   });

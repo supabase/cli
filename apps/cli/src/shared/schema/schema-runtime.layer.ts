@@ -3,6 +3,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
+import { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../next/config/project-local-service-versions.layer.ts";
 import {
   provideProjectCommandRuntime,
@@ -33,26 +34,31 @@ const workspaceFromProjectHome = Layer.unwrap(
   }),
 );
 
-const schemaEngineLive = pgDeltaSchemaEngineLayer.pipe(
-  Layer.provide(nativeIsolatedShadowLayer),
-  Layer.provide(FetchHttpClient.layer),
-  Layer.provide(projectLocalServiceVersionsLayer),
-  Layer.provide(projectLinkStateLayer),
-);
-
 export type SchemaRuntimeOptions = ProjectCommandRuntimeOptions & {
   readonly localDatabaseFallback?: Layer.Layer<
     LocalDatabaseFallback,
     never,
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >;
+  readonly projectLinkState?: Layer.Layer<
+    ProjectLinkState,
+    never,
+    FileSystem.FileSystem | Path.Path | ProjectHome
+  >;
 };
 
 export const schemaRuntimeLayer = (
   commandPath: ReadonlyArray<string>,
   options?: SchemaRuntimeOptions,
-) =>
-  provideProjectCommandRuntime(
+) => {
+  const linkState = options?.projectLinkState ?? projectLinkStateLayer;
+  const schemaEngineLive = pgDeltaSchemaEngineLayer.pipe(
+    Layer.provide(nativeIsolatedShadowLayer),
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(projectLocalServiceVersionsLayer),
+    Layer.provide(linkState),
+  );
+  return provideProjectCommandRuntime(
     Layer.mergeAll(
       workspaceFromProjectHome,
       schemaStateLayer.pipe(Layer.provide(workspaceFromProjectHome)),
@@ -61,13 +67,14 @@ export const schemaRuntimeLayer = (
       schemaEngineLive,
       databaseTargetLayer.pipe(
         Layer.provide(options?.localDatabaseFallback ?? noLocalDatabaseFallbackLayer),
-        Layer.provide(projectLinkStateLayer),
+        Layer.provide(linkState),
         Layer.provide(unixHttpClientLayer),
       ),
-      projectLinkStateLayer,
+      linkState,
       projectLocalServiceVersionsLayer,
       unixHttpClientLayer,
       commandRuntimeLayer(commandPath),
     ),
     options,
   );
+};

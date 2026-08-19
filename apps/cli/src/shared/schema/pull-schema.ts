@@ -3,20 +3,13 @@ import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector, redactConnectionString } from "../database/database-target.ts";
-import { digestFileSet } from "./schema-digest.ts";
 import { SchemaDraftConflictError, SchemaTargetRequiredError } from "./schema-errors.ts";
-import {
-  SCHEMA_ARTIFACT_FORMAT_VERSION,
-  SCHEMA_MANAGEMENT_SCOPE,
-  SCHEMA_PROFILE_ID,
-} from "./schema-paths.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
-import type { SchemaCheckpoint, SchemaCommandResult } from "./schema-types.ts";
+import type { SchemaCommandResult } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 import { formatFileSummary } from "./schema-output.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
-import { digestVersions } from "./schema-digest.ts";
 
 export type PullSchemaInput = {
   readonly from?: string;
@@ -72,46 +65,6 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
         });
 
         const localMigrations = yield* migrations.listLocal;
-        if (mode !== "output") {
-          const existingCheckpoint = yield* state.readCheckpoint;
-          const previousGenerated =
-            existingCheckpoint._tag === "Some"
-              ? (existingCheckpoint.value.generatedMigrationVersions ?? [])
-              : [];
-          const previousDestructive =
-            existingCheckpoint._tag === "Some"
-              ? (existingCheckpoint.value.destructiveMigrationVersions ?? [])
-              : [];
-          const checkpoint: SchemaCheckpoint = {
-            version: 1,
-            declarativeDigest: digestFileSet(exported.files),
-            migrationHeadDigest: digestVersions(localMigrations.map((file) => file.version)),
-            profile: SCHEMA_PROFILE_ID,
-            scope: SCHEMA_MANAGEMENT_SCOPE,
-            engineVersion: exported.engineVersion,
-            artifactFormatVersion: SCHEMA_ARTIFACT_FORMAT_VERSION,
-            acceptedRenames: [],
-            exportManifestIdentity: digestFileSet(
-              exported.manifest.files.map((name) => ({ name, sql: name })),
-            ),
-            catalogSnapshot: exported.snapshot,
-            ...(existingCheckpoint._tag === "Some" &&
-            existingCheckpoint.value.lastGenerateName !== undefined
-              ? { lastGenerateName: existingCheckpoint.value.lastGenerateName }
-              : {}),
-            ...(existingCheckpoint._tag === "Some" &&
-            existingCheckpoint.value.lastGenerateHazards !== undefined
-              ? { lastGenerateHazards: existingCheckpoint.value.lastGenerateHazards }
-              : {}),
-            ...(previousGenerated.length > 0
-              ? { generatedMigrationVersions: previousGenerated }
-              : {}),
-            ...(previousDestructive.length > 0
-              ? { destructiveMigrationVersions: previousDestructive }
-              : {}),
-          };
-          yield* state.writeCheckpoint(checkpoint);
-        }
 
         const summary = installed.classification;
         const nextActions =

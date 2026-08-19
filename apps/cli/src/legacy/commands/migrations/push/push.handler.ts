@@ -8,10 +8,10 @@ export const legacyMigrationsPush = Effect.fn("legacy.migrations.push")(function
 ) {
   const result = yield* pushMigrations({
     yes: flags.yes,
-    allowDataLoss: flags.allowDataLoss,
     projectRef: Option.getOrUndefined(flags.projectRef),
     allowRemote: flags.allowRemote,
     dbUrl: Option.getOrUndefined(flags.dbUrl),
+    skipVerify: flags.skipVerify,
   });
   yield* renderSchemaResult("Push migrations", result);
 });

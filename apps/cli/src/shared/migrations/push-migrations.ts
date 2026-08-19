@@ -2,20 +2,20 @@ import { Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { authorizeMutation } from "../database/destructive-auth.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
-import { assertDeclarationsNotAhead } from "../schema/declarations-ahead.ts";
-import { SchemaRemoteDriftError } from "../schema/schema-errors.ts";
-import { SchemaStateStore } from "../schema/schema-state.service.ts";
+import { assertNoUngeneratedDraft } from "../schema/declarations-ahead.ts";
+import { SchemaDeclarationsAheadError, SchemaRemoteDriftError } from "../schema/schema-errors.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
+import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
 import { MigrationRunner } from "./migration-runner.service.ts";
 
 export type PushMigrationsInput = {
   readonly yes: boolean;
-  readonly allowDataLoss: boolean;
   readonly projectRef?: string;
   readonly allowRemote: boolean;
   readonly dbUrl?: string;
+  readonly skipVerify: boolean;
 };
 
 export const pushMigrations = Effect.fn("migrations.push")(function* (input: PushMigrationsInput) {
@@ -23,52 +23,60 @@ export const pushMigrations = Effect.fn("migrations.push")(function* (input: Pus
   const repository = yield* MigrationRepository;
   const runner = yield* MigrationRunner;
   const engine = yield* PgDeltaSchemaEngine;
-  const state = yield* SchemaStateStore;
+  const workspace = yield* SchemaWorkspace;
 
-  yield* assertDeclarationsNotAhead();
+  yield* assertNoUngeneratedDraft();
 
   const remote = yield* targets.resolve(
     input.dbUrl !== undefined ? { kind: "url", url: input.dbUrl } : { kind: "linked" },
   );
   const localFiles = yield* repository.listLocal;
-  const checkpoint = yield* state.readCheckpoint;
-  const generated = new Set(
-    checkpoint._tag === "Some" ? (checkpoint.value.generatedMigrationVersions ?? []) : [],
-  );
-  const destructiveVersions = new Set(
-    checkpoint._tag === "Some" ? (checkpoint.value.destructiveMigrationVersions ?? []) : [],
-  );
+  const declarations = yield* workspace.readDeclarationFiles;
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const remotePool = yield* acquireDatabasePool(remote.connectionString);
       const remoteHistory = yield* runner.listRemote(remotePool);
       const remoteVersions = new Set(remoteHistory.map((row) => row.version));
-      const pending = localFiles.filter((file) => !remoteVersions.has(file.version));
-      const unclassified = pending.some((file) => !generated.has(file.version));
-      const pendingDestructive = pending.some((file) => destructiveVersions.has(file.version));
-      const destructive = unclassified || pendingDestructive;
 
       yield* authorizeMutation({
         target: remote,
-        destructive,
         flags: {
           yes: input.yes,
-          allowDataLoss: input.allowDataLoss,
           allowRemote: input.allowRemote,
           ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
         },
         command: "migrations push",
       });
 
-      const localTarget = yield* targets.resolve({ kind: "local" }).pipe(Effect.option);
-      if (localTarget._tag === "Some") {
-        const shadow = yield* engine.provisionShadow;
-        const sourcePool = yield* acquireDatabasePool(shadow.url);
+      if (!input.skipVerify) {
+        if (declarations.length > 0) {
+          const sourceShadow = yield* engine.provisionShadow;
+          const desiredShadow = yield* engine.provisionShadow;
+          const sourcePool = yield* acquireDatabasePool(sourceShadow.url);
+          const desiredPool = yield* acquireDatabasePool(desiredShadow.url);
+          yield* runner.applyPending(sourcePool, localFiles);
+          const ahead = yield* engine.planFiles({
+            targetPool: sourcePool,
+            shadowPool: desiredPool,
+            files: declarations,
+            allowDrops: true,
+          });
+          if (ahead.changes) {
+            return yield* new SchemaDeclarationsAheadError({
+              detail: "Declarations are ahead of the local migration files.",
+              suggestion:
+                "Run `supabase schema generate --name <feature>` before `supabase migrations push`.",
+            });
+          }
+        }
+
+        const driftShadow = yield* engine.provisionShadow;
+        const replayPool = yield* acquireDatabasePool(driftShadow.url);
         const replayed = localFiles.filter((file) => remoteVersions.has(file.version));
-        yield* runner.applyPending(sourcePool, replayed);
+        yield* runner.applyPending(replayPool, replayed);
         const drift = yield* engine.diffPools({
-          sourcePool,
+          sourcePool: replayPool,
           desiredPool: remotePool,
           allowDrops: true,
         });
