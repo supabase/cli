@@ -23,7 +23,7 @@ disabling safe compaction.
 | `<workdir>/supabase/.temp/edge-runtime-version`                             | plain text | legacy opt-out's edge-runtime image tag                                                                                                                                                                                                                                                                                                                   |
 | `<workdir>/supabase/schemas/**/*.sql` (default declarative dir)             | SQL        | always — must exist (else error)                                                                                                                                                                                                                                                                                                                          |
 | `<workdir>/supabase/migrations/*.sql`                                       | SQL        | bundled engine applies them to a live shadow; legacy opt-out resolves a migrations catalog                                                                                                                                                                                                                                                                |
-| `<workdir>/supabase/roles.sql`                                              | SQL        | legacy migrations-catalog cache key (empty when absent)                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/roles.sql`                                              | SQL        | legacy migrations-catalog cache key (empty when absent); separately hashed into the shadow-baseline cache key on every cache-eligible acquire — bundled-engine shadows and the legacy opt-out's catalog miss alike, warm hits included — and applied to a cold shadow's baseline                                                                          |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON       | bundled export metadata, when present                                                                                                                                                                                                                                                                                                                     |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                                   | JSON       | legacy opt-out's migrations/declarative catalog cache                                                                                                                                                                                                                                                                                                     |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar        | warm shadow-cache hit — bundled-engine migrations/declarative shadows, and the legacy opt-out's catalog miss; every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-8 + 14-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
@@ -115,8 +115,19 @@ existing SQL or creates an export manifest.
   overrides it. In a TTY without `--name`/`--yes`, the name is prompted.
 - When no declarative files exist, a TTY offers to generate them (from local) first.
 - The declarative directory is the complete desired state: omitted objects,
-  including extensions, are removals. Use `generate --output <staging-dir>` to
-  review a next-compatible tree without changing config or activating it.
+  including extensions, are removals. Use `generate --output-dir <staging-dir>`
+  to review a next-compatible tree without changing config or activating it.
+- The interactive staged export announces that it snapshots the RUNNING local
+  database (not the migrations state) and offers the same
+  "Reset local database to match migrations first?" prompt as the smart-target
+  local path before exporting. The printed staged-upgrade/adoption commands are
+  rendered for the host platform: POSIX shells get `rm -rf`/`mv`, Windows gets
+  single-line PowerShell (`Remove-Item`/`Move-Item`).
+- When `declarative_schema_path` is unset, the new `supabase/schemas` default is
+  empty, and the former `supabase/database` default still contains `.sql` files
+  or an export manifest, a WARNING on stderr explains the default move and how
+  to keep the existing tree. Read-only probe; never changes behavior or exit
+  codes (a non-interactive run still fails with "no declarative schema found").
 - The migration apply is native (connects to the local DB and records migration
   history). On apply failure a debug bundle is written under
   `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered

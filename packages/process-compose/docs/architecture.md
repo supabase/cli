@@ -264,7 +264,7 @@ protocol from leaking recursively into a service. Contract tests run the same en
 configuration through both the source-file argument path and environment-based self-dispatch path.
 
 The stack daemon has a separate Supabase-owned marker, `SUPABASE_STACK_RUN_DAEMON`; it is documented
-in [the stack detach-mode guide](../../stack/docs/detach-mode.md#compiled-executable-re-entry).
+in [the compiled Bun re-entry section of the stack architecture guide](../../stack/docs/architecture.md#platform-re-entry-compiled-bun).
 
 These contracts exist because compiled-child behavior caused two user-visible incidents:
 

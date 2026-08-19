@@ -26,6 +26,7 @@ function mockSession(opts: {
   let callIndex = 0;
   const session: LegacyDbSession = {
     exec: () => Effect.void,
+    execBatch: () => Effect.void,
     query: (sql): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> =>
       Effect.suspend(() => {
         queries.push(sql);

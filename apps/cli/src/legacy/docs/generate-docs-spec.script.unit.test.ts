@@ -15,8 +15,10 @@ const cliRoot = path.resolve(import.meta.dirname, "../../..");
  */
 describe("generate-docs-spec.ts entrypoint", () => {
   function runScript(args: ReadonlyArray<string>): { stdout: string; stderr: string } {
+    const { FORCE_COLOR: _forceColor, NO_COLOR: _noColor, ...environment } = process.env;
     const result = Bun.spawnSync(["bun", "scripts/generate-docs-spec.ts", ...args], {
       cwd: cliRoot,
+      env: environment,
     });
     expect(result.exitCode).toBe(0);
     return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };

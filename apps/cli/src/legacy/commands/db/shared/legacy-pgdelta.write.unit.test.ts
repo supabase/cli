@@ -64,7 +64,7 @@ describe("legacyWriteDeclarativeSchemas", () => {
       yield* write(
         dir,
         nextOutput([
-          { name: "schemas/z.sql", sql: "select 'z';" },
+          { name: "app/tables/z.sql", sql: "select 'z';" },
           { name: "stale.sql", sql: "select 'remove later';" },
         ]),
       );
@@ -75,13 +75,18 @@ describe("legacyWriteDeclarativeSchemas", () => {
       const written = yield* write(
         dir,
         nextOutput([
-          { name: "schemas/z.sql", sql: "select 'z';" },
-          { name: "schemas/a.sql", sql: "select 'a';" },
+          { name: "app/tables/z.sql", sql: "select 'z';" },
+          { name: "app/tables/a.sql", sql: "select 'a';" },
+          // `_cluster/` is the exporter's reserved root for cluster-level objects
+          // (pg-delta >= 1.0.0-alpha.42's flat path style). Unlike `_custom/`, it is
+          // owned output: it must be written and tracked like any schema directory.
+          { name: "_cluster/roles.sql", sql: "create role app;" },
         ]),
       );
 
       expect(written.preservedUnmanagedFiles).toEqual([]);
       expect(existsSync(join(dir, "stale.sql"))).toBe(false);
+      expect(readFileSync(join(dir, "_cluster", "roles.sql"), "utf8")).toBe("create role app;");
       expect(readFileSync(join(dir, "unmanaged.sql"), "utf8")).toBe("select 'keep me';");
       expect(readFileSync(join(dir, "_custom", "casts.sql"), "utf8")).toBe(
         "create cast (int as text);",
@@ -91,7 +96,7 @@ describe("legacyWriteDeclarativeSchemas", () => {
         redactSecrets: true,
         scope: "database",
         profile: "supabase",
-        files: ["schemas/a.sql", "schemas/z.sql"],
+        files: ["_cluster/roles.sql", "app/tables/a.sql", "app/tables/z.sql"],
       });
     });
   });
@@ -119,10 +124,10 @@ describe("legacyWriteDeclarativeSchemas", () => {
 
   it.effect("does not rewrite unchanged next-engine files or manifests", () => {
     const dir = declarativeDir();
-    const schemaPath = join(dir, "schemas", "public.sql");
+    const schemaPath = join(dir, "public", "schema.sql");
     const manifestPath = join(dir, ".pgdelta-export.json");
     const output = nextOutput([
-      { name: "schemas/public.sql", sql: "create table public.example(id int);" },
+      { name: "public/schema.sql", sql: "create table public.example(id int);" },
     ]);
 
     return write(dir, output).pipe(

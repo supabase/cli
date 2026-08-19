@@ -33,6 +33,7 @@ import {
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
+import { legacyWarnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -135,7 +136,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // `--output` wins, otherwise use the configured declarative path. File I/O
       // resolves relative values from the project workdir while keeping absolute
       // values unchanged.
-      const declarativeDirRel = Option.getOrElse(flags.output, () =>
+      const declarativeDirRel = Option.getOrElse(flags.outputDir, () =>
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );
       const workdir = path.resolve(cliConfig.workdir);
@@ -154,6 +155,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }),
         );
       }
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
@@ -312,11 +314,11 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // from the same merged config and targets the same dir the handler wrote to (also
       // computed from the merged `toml`). Go warms against the in-process merged config
       // identically (`declarative.go:138-154`), so this always runs when `!--no-cache`.
-      // A command-local --output is deliberately not activated in config. The
+      // A command-local --output-dir is deliberately not activated in config. The
       // legacy catalog seam resolves the configured declarative path itself, so
       // warming here would inspect the wrong tree. Skip that optional legacy-only
       // cache warm; the generated output remains complete and usable on its own.
-      if (!flags.noCache && engine.implementation === "legacy" && Option.isNone(flags.output)) {
+      if (!flags.noCache && engine.implementation === "legacy" && Option.isNone(flags.outputDir)) {
         yield* (yield* LegacyDeclarativeSeam).exportCatalog({
           mode: "declarative",
           noCache: flags.noCache,

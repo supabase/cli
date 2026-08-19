@@ -68,13 +68,25 @@ function parse(fileName: string, source: string): ts.SourceFile {
   return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
 }
 
+function hasExportModifier(node: ts.Node): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ===
+      true
+  );
+}
+
 // Extracts the error identifiers a source file defines: the tag literal of
 // every `class X extends <Something>Error("Tag")` heritage call and of every
 // free-standing `TaggedError("Tag")` factory call, plus the class name of
 // every plain `class X extends Error` (untagged classes are fingerprinted by
 // name). A tagged class contributes its tag once — the heritage call is
 // claimed by the class rule so the factory rule does not count it again.
-function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
+function extractErrorTags(
+  source: string,
+  fileName = "scan.ts",
+  options: { readonly exportedOnly?: boolean } = {},
+): Array<string> {
   const tags: Array<string> = [];
   const claimed = new Set<ts.Node>();
 
@@ -86,7 +98,7 @@ function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
           ? stringLiteralText(heritage.arguments[0])
           : undefined;
         if (tag !== undefined) {
-          tags.push(tag);
+          if (!options.exportedOnly || hasExportModifier(node)) tags.push(tag);
           claimed.add(heritage);
         }
       } else if (
@@ -95,7 +107,7 @@ function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
         heritage.text === "Error" &&
         node.name !== undefined
       ) {
-        tags.push(node.name.text);
+        if (!options.exportedOnly || hasExportModifier(node)) tags.push(node.name.text);
       }
     }
 
@@ -115,7 +127,10 @@ function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
   return tags;
 }
 
-function scanErrorTags(root: string): Map<string, Array<string>> {
+function scanErrorTags(
+  root: string,
+  options: { readonly exportedOnly?: boolean } = {},
+): Map<string, Array<string>> {
   const tagsByFile = new Map<string, Array<string>>();
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
@@ -125,7 +140,7 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
         continue;
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      const tags = extractErrorTags(readFileSync(path, "utf8"), path);
+      const tags = extractErrorTags(readFileSync(path, "utf8"), path, options);
       if (tags.length > 0) tagsByFile.set(path, tags);
     }
   };
@@ -291,7 +306,7 @@ describe("workspace package error tags have external adapters", () => {
 
   for (const packageRoot of packageRoots) {
     it(packageRoot, () => {
-      const tagsByFile = scanErrorTags(resolve(repoRoot, packageRoot));
+      const tagsByFile = scanErrorTags(resolve(repoRoot, packageRoot), { exportedOnly: true });
       expect(tagsByFile.size).toBeGreaterThan(0);
       for (const [file, tags] of tagsByFile) {
         for (const tag of tags) {

@@ -130,7 +130,7 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
     buildSchemaExport: async (_pool, input) => {
       state.exportInputs.push(input);
       return {
-        files: [{ name: "schemas/public/tables/items.sql", sql: "create table items();" }],
+        files: [{ name: "public/tables/items.sql", sql: "create table items();" }],
         diagnostics: [fakeDiagnostic("export-warning", "export")],
         manifest: {
           redactSecrets: true,
@@ -509,14 +509,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
             '{"keywordCase":"lower","commaStyle":"leading","indent":4,"maxWidth":100,"alignColumns":true,"alignKeyValues":false,"preserveRoutineBodies":true,"preserveViewBodies":false,"preserveRuleBodies":true,"ignored":"value"}',
         });
         expect(exported.files).toEqual([
-          { name: "schemas/public/tables/items.sql", sql: "create table items();" },
+          { name: "public/tables/items.sql", sql: "create table items();" },
         ]);
         expect(exported.manifest).toEqual({
           redactSecrets: true,
           scope: "database",
           profile: "supabase",
           defaultOwner: "postgres",
-          files: ["schemas/public/tables/items.sql"],
+          files: ["public/tables/items.sql"],
         });
         expect(exported.diagnostics[0]).toMatchObject({
           origin: "export",
