@@ -33,6 +33,7 @@ import {
 } from "./declarative.errors.ts";
 import {
   legacyClassifyDeclarativeLoadCompatibility,
+  legacyCurrentShellPlatform,
   legacyFormatDeclarativeUpgradeGate,
   type LegacyDeclarativeLoadCompatibilityFinding,
   type LegacyDeclarativeUpgradeGateText,
@@ -78,7 +79,11 @@ const formatImplicitExtensionLoadFailure = (
           : `${finding.file}${finding.line === undefined ? "" : `:${finding.line}`}`;
       return `${location} uses ${finding.signature}, but the tree does not declare ${finding.extension}.`;
     }),
-    context: { declarativeDir: run.declarativeDirDisplay, schema: run.schema },
+    context: {
+      declarativeDir: run.declarativeDirDisplay,
+      schema: run.schema,
+      platform: legacyCurrentShellPlatform(),
+    },
   });
 
 /**

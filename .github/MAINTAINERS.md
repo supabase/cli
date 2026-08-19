@@ -48,6 +48,29 @@ function; create it once from **Issues → Labels** if it is missing.
 Applying `open-for-contribution` is currently a **manual step** — do it on the GitHub
 issue directly (from the GitHub UI, or from the Linear-linked issue).
 
+## `run-ci`: full develop CI on stacked or draft PRs
+
+Ready (non-draft) PRs targeting `develop` already get the default suite: Test
+(check / unit+integration / e2e), preview CLI packages, and PR-title lint.
+
+Stacked PRs (base is another PR branch) and drafts do **not** get that suite
+unless they carry the **`run-ci`** label. [`run-ci.yml`](./workflows/run-ci.yml)
+then calls Test and preview-package publish as reusable workflows, including
+while the PR is still a draft.
+
+- Add `run-ci` to start (or resume) the suite; remove it to cancel in-progress
+  `run-ci` runs via that workflow's concurrency group.
+- Other labels do not start or cancel Test / preview. PR-title lint may
+  retrigger because that check is cheap.
+- After a stacked PR is retargeted onto `develop`, push or reopen so the
+  native required checks (`Check code quality`, etc.) populate. The opt-in
+  suite uses different check names (`Test / Check code quality`).
+- This is independent of `run-live-e2e-ci`, which opts into the separate
+  supabox live e2e dispatch.
+
+The `run-ci` label must exist as a repository label; create it from
+**Issues → Labels** if it is missing.
+
 ## Deferred: automatic Linear → GitHub label sync
 
 We considered auto-applying `open-for-contribution` when a Linear issue moves out of

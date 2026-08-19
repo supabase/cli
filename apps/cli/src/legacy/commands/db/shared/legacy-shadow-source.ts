@@ -671,6 +671,18 @@ function legacyMigrateBaseDatabase(
         path,
         absolutePaths,
         (message) => new LegacyDeclarativeShadowDbError({ message }),
+      ).pipe(
+        // A batch runs on its own pooled connection, so failing to acquire it is a
+        // connection failure, not a statement failure: it wears this seam's own error
+        // class (like the `connect` mapping above) and keeps the driver's suggestion.
+        Effect.catchTag("LegacyDbConnectError", (cause) =>
+          Effect.fail(
+            new LegacyDeclarativeShadowDbError({
+              message: cause.message,
+              ...(cause.suggestion === undefined ? {} : { suggestion: cause.suggestion }),
+            }),
+          ),
+        ),
       );
     }),
   );

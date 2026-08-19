@@ -13,11 +13,13 @@ import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
   useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   withLegacyShadowCacheEnabled,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import {
   mockOutput,
@@ -252,6 +254,10 @@ interface SetupOpts {
   readonly fullDumpSql?: string;
   readonly failDumpKind?: "before" | "after" | "full";
   readonly fsFaults?: FsFaultOpts;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -263,6 +269,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     failCreate: opts.failCreateShadow ?? false,
     failRemove: opts.failRemoveShadow ?? false,
   });
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
   const docker = mockSquashDockerRun({
     beforeSql: opts.beforeDumpSql,
     afterSql: opts.afterDumpSql,
@@ -303,6 +314,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
                 ? Effect.fail(new LegacyDbExecError({ message: "boom" }))
                 : Effect.succeed<ReadonlyArray<Record<string, unknown>>>([]);
             }),
+          // A migration file's statements arrive as one batch; replay them through
+          // `exec`/`query` so the call-order log and failure injection still apply.
+          execBatch: (batch) => legacySequentialExecBatch(session)(batch),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -378,7 +392,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    spawner.layer,
+    dockerDaemon?.layer ?? spawner.layer,
     docker.layer,
     debugLogger,
     alwaysReadyHttpClientLayer,
@@ -415,6 +429,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolverCalls,
     debugLogs,
     shadowSpawned: spawner.spawned,
+    dockerDaemon,
     dumpCalls: docker.dumpCalls,
     setupJobCalls: docker.setupJobCalls,
   };
@@ -925,6 +940,7 @@ describe("legacy migration squash", () => {
       seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
       seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");
       const s = setup(tmp.current, {
+        statefulDocker: true,
         beforeDumpSql: BEFORE_SQL,
         afterDumpSql: AFTER_SQL,
         fullDumpSql: FULL_SQL,
@@ -944,10 +960,8 @@ describe("legacy migration squash", () => {
             expect(stderr(cold.out)).toContain("Initialising schema...");
             expect(stderr(cold.out)).toContain("Seeding globals from roles.sql...");
             expect(cold.setupJobCalls.length).toBeGreaterThan(0);
-            expect(cold.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(1);
-            expect(cold.shadowSpawned.filter((c) => c.args[0] === "start").length).toBeGreaterThan(
-              0,
-            );
+            expect(cold.dockerDaemon?.calls("stop")).toHaveLength(1);
+            expect(cold.dockerDaemon?.calls("start").length).toBeGreaterThan(0);
 
             const warm = yield* runSquash();
             // Warm: the restored cluster already carries the baseline, so `SetupDatabase` — and
@@ -956,7 +970,7 @@ describe("legacy migration squash", () => {
             expect(stderr(warm.out)).not.toContain("Initialising schema...");
             expect(stderr(warm.out)).not.toContain("Seeding globals from roles.sql...");
             expect(warm.setupJobCalls).toHaveLength(0);
-            expect(warm.shadowSpawned.filter((c) => c.args[0] === "stop")).toHaveLength(0);
+            expect(warm.dockerDaemon?.calls("stop")).toHaveLength(0);
 
             // Everything downstream of the baseline seam is untouched: both dumps, the
             // migrations, the rewritten target file, and the shadow's own lifecycle.
@@ -966,7 +980,7 @@ describe("legacy migration squash", () => {
             expect(stderr(warm.out)).toContain(
               "Squashed local migrations to supabase/migrations/1_target.sql",
             );
-            expect(warm.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+            expect(warm.dockerDaemon?.calls("rm")).toHaveLength(1);
             const target = join(tmp.current, "supabase", "migrations", "1_target.sql");
             expect(readFileSync(target, "utf8")).toBe(EXPECTED_TARGET);
           }),

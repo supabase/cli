@@ -17,6 +17,7 @@ import {
   legacyApplyProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
+  type LegacyDbTomlValues,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
@@ -230,6 +231,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // merge the matching `[remotes.<ref>]` override. Undefined until a linked ref
       // resolves, so a `migrations` ref resolved before any linked ref uses base.
       let mergedLinkedRef: string | undefined;
+      // The FIRST migrations endpoint resolved wins: the engine provisions a single
+      // migrations shadow/catalog, and resolution-order (like `mergedLinkedRef` above)
+      // says only refs resolved before that point should influence it.
+      let migrationsToml: LegacyDbTomlValues | undefined;
       // The preflight target resolve below validates a changed target flag
       // (`--db-url bad` fails parsing) and is STATEFUL: a changed `--linked`
       // resolves the project ref and merges `[remotes.<ref>]`, so the explicit
@@ -306,6 +311,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               } satisfies LegacyPgDeltaDatabaseEndpoint;
             }
             case "migrations":
+              // Preserve resolution order: the migrations shadow/catalog config must
+              // reflect only refs resolved before THIS endpoint, same contract as the
+              // `projectRef` spread below.
+              migrationsToml ??= cfg;
               return {
                 kind: "migrations",
                 // Preserve resolution order: only refs resolved before this endpoint
@@ -337,7 +346,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       };
       const result = yield* pgDelta.diffExplicit({
         context: explicitCtx,
-        toml: cfg,
+        toml: migrationsToml ?? cfg,
         source,
         desired,
         schema: flags.schema,

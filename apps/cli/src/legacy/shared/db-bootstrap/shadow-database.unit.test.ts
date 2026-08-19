@@ -43,6 +43,10 @@ function fakeSession() {
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
       }),
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql } of statements) calls.push({ kind: "exec", sql });
+      }),
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });

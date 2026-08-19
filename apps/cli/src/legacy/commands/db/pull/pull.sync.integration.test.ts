@@ -20,6 +20,9 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   let upsertCount = 0;
   const session: LegacyDbSession = {
     exec: (sql: string) => Effect.sync(() => void calls.push(sql)),
+    // `legacyUpdateMigrationHistory` owns its transaction envelope statement by
+    // statement; it never batches.
+    execBatch: () => Effect.die("execBatch unused"),
     query: (sql: string) => {
       if (/INSERT INTO supabase_migrations/u.test(sql)) {
         upsertCount += 1;

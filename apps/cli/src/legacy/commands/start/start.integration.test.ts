@@ -22,6 +22,7 @@ import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
@@ -225,6 +226,11 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
   return nameIndex !== -1 ? (args[nameIndex + 1] ?? "unknown") : "unknown";
 }
 
+/** Edge Runtime's own create/cp/start bring-up sits outside `legacyCreateContainer`; its create is recognized by the `_edge_runtime_` container name. */
+function isEdgeRuntimeCreate(args: ReadonlyArray<string>): boolean {
+  return args[0] === "create" && containerNameFromCreateArgs(args).includes("_edge_runtime_");
+}
+
 /**
  * Real `docker create` prints a 64-hex id, never the `--name`. The mock does
  * too, so a caller that carries that opaque id into the health watch fails the
@@ -239,8 +245,10 @@ function fakeContainerId(name: string): string {
 }
 
 function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<string> {
+  // Excludes Edge Runtime's create so this keeps meaning "which services
+  // `legacyCreateContainer` brought up", the premise of the exact-equality assertions below.
   return spawned
-    .filter((s) => s.args[0] === "create")
+    .filter((s) => s.args[0] === "create" && !isEdgeRuntimeCreate(s.args))
     .map((s) => containerNameFromCreateArgs(s.args));
 }
 
@@ -378,6 +386,7 @@ function fakeDbSession() {
         calls.push({ kind: "query", sql });
         return [];
       }),
+    execBatch: (statements) => legacySequentialExecBatch(session)(statements),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -492,8 +501,9 @@ function setup(opts: SetupOpts = {}) {
  * matrix test below. `storage-api` is compound: excluding it also disables
  * ImgProxy (`start.gates.ts`'s `imgproxy: storage && ...` dependency).
  * `edge-runtime` maps to no suffix at all here — it DOES really start now
- * (`legacyStartEdgeRuntimeContainer`, a direct `docker run -d`, never a
- * `docker create`), so `--exclude edge-runtime` is exercised by its own
+ * (`legacyStartEdgeRuntimeContainer`, its own create/cp/start bring-up outside
+ * `legacyCreateContainer`, which `createdContainerNames` excludes), so
+ * `--exclude edge-runtime` is exercised by its own
  * dedicated scenarios below rather than through this `docker create`-based
  * matrix.
  */
@@ -2378,7 +2388,7 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("fresh volume: DB setup + bucket seeding", () => {
-    /** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls) — a plain `docker run --rm ...`, never `-d`, distinct from Edge Runtime's own detached `docker run -d`. */
+    /** The three PG15+ one-shot migrate jobs (`legacyStartSetupLocalDatabase`'s `LegacyDockerRun` calls) — a plain `docker run --rm ...`, distinct from Edge Runtime's own create/cp/start bring-up. */
     function dbSetupJobCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
       return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "--rm");
     }
@@ -2750,20 +2760,31 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("edge runtime", () => {
-    /** Edge Runtime's own bring-up (`legacyStartEdgeRuntimeContainer`) is a direct, detached `docker run -d ...`, never a `docker create`+`docker start` pair like every other service. */
+    /** Edge Runtime's own bring-up (`legacyStartEdgeRuntimeContainer`) is a `docker create` → `docker cp` (main-service archive) → `docker start` sequence; its create is the one naming the `_edge_runtime_` container, distinguishing it from every other service's `legacyCreateContainer` create. */
     function edgeRuntimeRunCalls(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArray<SpawnRecord> {
-      return spawned.filter((s) => s.args[0] === "run" && s.args[1] === "-d");
+      return spawned.filter((s) => isEdgeRuntimeCreate(s.args));
     }
 
-    it.live("starts a real container via docker run -d when enabled and not excluded", () => {
+    it.live("creates and starts a real container when enabled and not excluded", () => {
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
         const runCalls = edgeRuntimeRunCalls(child.spawned);
         expect(runCalls).toHaveLength(1);
-        expect(runCalls[0]?.args).toContain("--name");
         const nameIndex = runCalls[0]?.args.indexOf("--name") ?? -1;
-        expect(runCalls[0]?.args[nameIndex + 1]).toContain("_edge_runtime_");
+        const containerName = runCalls[0]?.args[nameIndex + 1] ?? "";
+        expect(containerName).toContain("_edge_runtime_");
+        // The main service is `docker cp`-streamed in, never a single-file host bind (#6254).
+        const bindValues = (runCalls[0]?.args ?? []).flatMap((arg, index) =>
+          runCalls[0]?.args[index - 1] === "-v" ? [arg] : [],
+        );
+        expect(bindValues.some((bind) => bind.includes(":/root/index.ts"))).toBe(false);
+        expect(child.spawned.map((s) => s.args.slice(0, 3))).toContainEqual([
+          "cp",
+          "-",
+          `${containerName}:/`,
+        ]);
+        expect(child.spawned.map((s) => s.args)).toContainEqual(["start", containerName]);
       }).pipe(Effect.provide(layer));
     });
 
@@ -2776,26 +2797,24 @@ content_path = "./supabase/templates/custom_notice.html"
     });
 
     it.live(
-      "keeps the host-side bind-mount temp files after a successful bring-up (no eager cleanup)",
+      "keeps the host-side staged env artifacts after a successful bring-up (no eager cleanup)",
       () => {
-        // Staged under `<workdir>/supabase/.temp/start-secrets/<container>/main/`
-        // — a deterministic, persistent path (not `os.tmpdir()`), so a later
-        // `stop`/rollback can reclaim it via `legacyCleanupStartSecrets`. See
-        // the "reclaims Edge Runtime's own temp secret artifacts on stop" test
-        // below for that cleanup behavior.
+        // Staged under `<workdir>/supabase/.temp/start-secrets/<container>/` so a later
+        // `stop`/rollback can reclaim it; the bootstrap template is no longer part of it.
         const { layer, child, workdir } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
           const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
-          const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
+          const envFileIndex = runArgs.indexOf("--env-file");
+          const envFilePath = envFileIndex === -1 ? undefined : runArgs[envFileIndex + 1];
+          expect(envFilePath).toBeDefined();
           const stagingRoot = join(workdir, "supabase", ".temp", "start-secrets");
-          const mainTemplateBind = bindValues.find(
-            (bind) => bind.startsWith(stagingRoot) && bind.includes(`${join("main", "index.ts")}:`),
-          );
-          expect(mainTemplateBind).toBeDefined();
-          const hostPath = mainTemplateBind?.split(":")[0] ?? "";
+          expect(envFilePath?.startsWith(stagingRoot)).toBe(true);
           try {
-            expect(existsSync(hostPath)).toBe(true);
+            expect(existsSync(envFilePath ?? "")).toBe(true);
+            // `<stagingRoot>/<container>/env/docker.env` → the staging dir is two levels up.
+            const containerStagingDir = join(envFilePath ?? "", "..", "..");
+            expect(existsSync(join(containerStagingDir, "main"))).toBe(false);
           } finally {
             rmSync(stagingRoot, { recursive: true, force: true });
           }
@@ -4814,9 +4833,7 @@ content_path = "./supabase/templates/custom_notice.html"
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const edgeRuntimeRunCall = child.spawned.find(
-            (s) => s.args[0] === "run" && s.args[1] === "-d",
-          );
+          const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
           const args = edgeRuntimeRunCall?.args ?? [];
           const envFileIndex = args.indexOf("--env-file");
           const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
@@ -4847,9 +4864,7 @@ content_path = "./supabase/templates/custom_notice.html"
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const edgeRuntimeRunCall = child.spawned.find(
-            (s) => s.args[0] === "run" && s.args[1] === "-d",
-          );
+          const edgeRuntimeRunCall = child.spawned.find((s) => isEdgeRuntimeCreate(s.args));
           const args = edgeRuntimeRunCall?.args ?? [];
           const envFileIndex = args.indexOf("--env-file");
           const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
@@ -5491,7 +5506,7 @@ content_path = "./supabase/templates/custom_notice.html"
       });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
-        const runCalls = child.spawned.filter((s) => s.args[0] === "run" && s.args[1] === "-d");
+        const runCalls = child.spawned.filter((s) => isEdgeRuntimeCreate(s.args));
         const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
         expect(entrypointCommand).toContain("--policy=per_worker");
         expect(entrypointCommand).not.toContain("--policy=oneshot");

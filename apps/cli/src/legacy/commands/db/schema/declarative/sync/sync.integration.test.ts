@@ -40,6 +40,7 @@ import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-ap
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
 import {
+  type LegacyDbBatchStatement,
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../../../shared/legacy-db-connection.service.ts";
@@ -187,6 +188,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
   const dbExec: string[] = [];
+  const dbBatches: Array<ReadonlyArray<string>> = [];
   // Go's default `[db] shadow_port` (`legacy-db-config.toml-read.ts`'s
   // `DEFAULT_SHADOW_PORT`) — none of these tests override it. The migrations-
   // catalog resolution's shadow (CLI-1956) now ALSO connects through this same
@@ -205,6 +207,25 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.sync(() => {
                 if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
+        execBatch: (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+          const sql = statements.map((statement) => statement.sql);
+          const failureIndex =
+            opts.applyFails === true
+              ? sql.findIndex((statement) => statement.startsWith("ALTER"))
+              : -1;
+          return failureIndex >= 0
+            ? Effect.fail({
+                _tag: "LegacyDbExecError",
+                message: "boom",
+                statementIndex: failureIndex,
+              } as never)
+            : Effect.sync(() => {
+                if (cfg.port !== SHADOW_PORT) {
+                  dbBatches.push(sql);
+                  dbExec.push(...sql);
+                }
+              });
+        },
         query: (sql: string) =>
           Effect.sync(() => {
             if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
@@ -283,9 +304,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               Effect.sync(() => {
                 declarativeExportCalls.push(input.schema);
                 return {
-                  files: [
-                    { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
-                  ],
+                  files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
                   manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
                 };
               }),
@@ -360,6 +379,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out,
     child,
     dbExec,
+    dbBatches,
     cache,
     telemetry,
     localPostgresImageChecks,
@@ -598,14 +618,35 @@ describe("legacy db schema declarative sync integration", () => {
   });
 
   it.effect("fails when there are no declarative files", () => {
-    const { layer } = setup(tmp.current, { experimental: true });
+    const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect((failError(exit) as { message: string }).message).toContain(
         "no declarative schema found",
       );
-    }).pipe(Effect.provide(layer));
+      // No tree under the former default either — nothing to point at.
+      expect(stripAnsi(s.out.stderrText)).not.toContain("WARNING: found declarative schema files");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("warns when the tree still lives under the former supabase/database default", () => {
+    // Upgrade path: the implicit default moved from supabase/database to
+    // supabase/schemas. A project that generated under the old default and never
+    // set declarative_schema_path must get an explanation, not a bare
+    // "no declarative schema found".
+    const formerDir = join(tmp.current, "supabase", "database");
+    mkdirSync(formerDir, { recursive: true });
+    writeFileSync(join(formerDir, "public.sql"), "create table a();");
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain('declarative_schema_path = "./database"');
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
@@ -1035,6 +1076,26 @@ describe("legacy db schema declarative sync integration", () => {
     },
   );
 
+  it.effect("--apply: batches the migration and history through the native session", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
+      expect(s.dbBatches).toContainEqual([
+        "ALTER TABLE a ADD COLUMN b int",
+        expect.stringContaining("supabase_migrations.schema_migrations"),
+      ]);
+      // No reset on success — the recovery reset's container-remove never ran.
+      expect(legacyLocalResetRemovedContainers(s.child.spawned)).toEqual([]);
+      expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("refuses a known implicit-extension load failure under --yes", () => {
     seedLegacyUuidDeclarative(tmp.current);
     const s = setup(tmp.current, {
@@ -1098,21 +1159,14 @@ describe("legacy db schema declarative sync integration", () => {
       stdinIsTty: true,
       planErrors: [legacyUuidLoadError()],
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(readFileSync(activeMember, "utf8")).toBe(before);
       expect(
         readFileSync(
-          join(
-            tmp.current,
-            "supabase",
-            "schemas-next",
-            "schemas",
-            "public",
-            "tables",
-            "players.sql",
-          ),
+          join(tmp.current, "supabase", "schemas-next", "public", "tables", "players.sql"),
           "utf8",
         ),
       ).toBe("create table players ();");
@@ -1148,6 +1202,7 @@ describe("legacy db schema declarative sync integration", () => {
       stdinIsTty: true,
       planErrors: [legacyUuidLoadError()],
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
 
     return Effect.gen(function* () {
@@ -1269,6 +1324,7 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql: 'DROP EXTENSION "pgcrypto";\n',
       removals: { extensions: ["pgcrypto"], extensionIntents: [] },
       promptSelectResponses: ["stage"],
+      promptConfirmResponses: [false], // decline the staged export's reset offer
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
@@ -1280,6 +1336,35 @@ describe("legacy db schema declarative sync integration", () => {
       expect(stripAnsi(s.out.stderrText)).toContain(
         "rm -rf supabase/schemas && mv supabase/schemas-next supabase/schemas",
       );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("staged export names its live-database source and honors the reset offer", () => {
+    seedDeclarative(tmp.current);
+    // `legacyResetLocalDatabase`'s container-recreate resolves its own project id
+    // from `@supabase/config` — pin it so the recreated container name matches
+    // the spawner route's assumption (same as the apply-failure reset test).
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
+      promptSelectResponses: ["stage"],
+      promptConfirmResponses: [true], // accept the staged export's reset offer
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      // The export source is stated before the snapshot, so stale local drift
+      // cannot silently become the staged declarative tree.
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "Exporting from the running local database (not the migrations state).",
+      );
+      // Accepting the offer really reset the local database before the export.
+      expect(legacyLocalResetRemovedContainers(s.child.spawned)).toContain("supabase_db_test");
+      expect(
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
+      ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1318,31 +1403,6 @@ describe("legacy db schema declarative sync integration", () => {
       expect(output).toContain("Found destructive changes");
     }).pipe(Effect.provide(s.layer));
   });
-
-  it.effect(
-    "--apply: applies the migration natively (BEGIN … statements … COMMIT + history)",
-    () => {
-      seedDeclarative(tmp.current);
-      const s = setup(tmp.current, {
-        experimental: true,
-        diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) }));
-        expect(s.dbExec).toContain("BEGIN");
-        expect(s.dbExec).toContain("ALTER TABLE a ADD COLUMN b int");
-        expect(s.dbExec).toContain("COMMIT");
-        expect(s.dbExec.some((q) => q.includes("supabase_migrations.schema_migrations"))).toBe(
-          true,
-        );
-        // No reset on success — the recovery reset's container-remove never ran.
-        expect(legacyLocalResetRemovedContainers(s.child.spawned)).toEqual([]);
-        expect(s.out.rawChunks.some((c) => c.text.includes("Migration applied successfully"))).toBe(
-          true,
-        );
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
 
   it.effect("--name overrides the migration filename stem", () => {
     seedDeclarative(tmp.current);

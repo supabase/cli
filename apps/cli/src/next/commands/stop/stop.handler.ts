@@ -21,7 +21,6 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
       cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
-      projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
     }).pipe(
       Effect.catchTag("NoRunningStackError", () =>
@@ -34,7 +33,6 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
       cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
-      projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
     }).pipe(
       Effect.catchTag("NoRunningStackError", (error) =>
@@ -51,7 +49,6 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
     cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
     name: flags.stack,
   });
 

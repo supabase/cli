@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   LegacyExperimentalFlag,
@@ -95,7 +95,9 @@ function renderFailureToStderr(exit: Exit.Exit<unknown, unknown>) {
       const out = yield* Output;
       yield* out.fail(normalizeCause(exit.cause));
     }).pipe(
-      Effect.provide(textOutputLayer.pipe(Layer.provide(mockTty({})))),
+      Effect.provide(
+        textOutputLayer.pipe(Layer.provide(Layer.mergeAll(mockTty({}), Stdio.layerTest({})))),
+      ),
       Effect.ensuring(
         Effect.sync(() => {
           process.stderr.write = originalWrite;

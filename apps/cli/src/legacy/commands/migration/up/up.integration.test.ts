@@ -11,6 +11,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -23,7 +24,10 @@ import type {
   LegacyResolvedDbConfig,
 } from "../../../shared/legacy-db-config.types.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyMigrationVaultError } from "../../../shared/legacy-vault.ts";
 import { legacyMigrationUp } from "./up.handler.ts";
 import type { LegacyMigrationUpFlags } from "./up.command.ts";
@@ -69,8 +73,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const connection = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
@@ -94,7 +98,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
 
   // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same

@@ -10,7 +10,7 @@
  * and only the final timeout's failures surface to the caller.
  */
 
-import { Clock, Data, Effect, Result, Schedule, Stream } from "effect";
+import { Clock, Data, Duration, Effect, Result, Schedule, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -514,6 +514,10 @@ export interface LegacyWaitForShadowReadyOptions {
  *    immediately rather than at the end of the budget.
  * 2. a short {@link legacyProbeShadowConnect} — success ⇒ ready, return now.
  *
+ * The round count is not the only bound: the whole wait also carries a wall-clock cap, since a
+ * round that hangs costs its own connect timeout on top of the 1-second delay — see
+ * `boundSeconds` below.
+ *
  * Failure shape is deliberately identical to the health gate's: the same
  * {@link LegacyHealthCheckTimeoutError}, the same `unhealthy` payload, and the
  * same `docker logs` dump teed to stderr on the way out, so a broken shadow
@@ -539,6 +543,11 @@ export function legacyWaitForShadowReady(
   // `legacyStreamContainerLogsOnce` above already makes for its own log-teeing.
   const debug = legacyShadowDebugEnabled();
 
+  // The most recent attempt's failure, kept even once a later attempt succeeds — the debug
+  // summary line reports it either way (see the doc comment below on the completion line), and
+  // the elapsed-time bound below replays it so an expiry fails exactly like an exhausted retry.
+  let lastFailure: LegacyShadowReadyFailure | undefined;
+
   const rawProbe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
     function* () {
       const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
@@ -552,12 +561,15 @@ export function legacyWaitForShadowReady(
       }
       yield* legacyProbeShadowConnect(connConfig);
     },
+  ).pipe(
+    Effect.tapError((failure) =>
+      Effect.sync(() => {
+        lastFailure = failure;
+      }),
+    ),
   );
 
   let attempts = 0;
-  // The most recent attempt's failure reason, kept even once a later attempt succeeds — the
-  // summary line reports it either way (see the doc comment below on the completion line).
-  let lastError: string | undefined;
 
   // Debug-only per-attempt line: `shadow-debug: ready-attempt <n> <ms>ms <ok|error: reason>`.
   // Exploration 1a's key data point — whether a cold attempt burns the full connect timeout.
@@ -569,7 +581,6 @@ export function legacyWaitForShadowReady(
         const start = yield* Clock.currentTimeMillis;
         const outcome = yield* Effect.result(rawProbe);
         const elapsed = (yield* Clock.currentTimeMillis) - start;
-        if (Result.isFailure(outcome)) lastError = outcome.failure.reason;
         yield* Effect.sync(() => {
           globalThis.process.stderr.write(
             `shadow-debug: ready-attempt ${attemptNumber} ${elapsed}ms ${
@@ -587,8 +598,31 @@ export function legacyWaitForShadowReady(
   // `timeoutSeconds` retries after the initial attempt.
   const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
 
+  /**
+   * The wall-clock cap over the WHOLE wait. `Schedule.recurs` counts attempts, not seconds, and
+   * an attempt is not free: a dial that hangs burns its full
+   * {@link LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS} before the next 1-second delay even
+   * starts, so a nominal 30-second budget could run ~90 seconds of real time (review: Codex on
+   * #6184). The cap is the schedule's own total spacing PLUS one attempt's connect allowance, so
+   * it lands strictly after a clean retries-exhausted finish: the retry count still decides every
+   * ordinary run (the last round's probe is never cut short), and this only fires when attempts
+   * themselves overrun.
+   */
+  const boundSeconds = timeoutSeconds + LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
+
   const waited: Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> = probe.pipe(
     Effect.retry({ schedule, while: (failure) => !failure.fatal }),
+    // Expiry re-raises the last attempt's own failure (or, if nothing has failed yet, the first
+    // attempt is still hanging) so it flows into the same handler below — a timed-out wait
+    // reports the same error, the same log dump, and the same stderr text as an exhausted one.
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(boundSeconds),
+      orElse: () =>
+        Effect.fail(
+          lastFailure ??
+            legacyShadowNotReady(`not ready after ${boundSeconds}s: connection attempt hung`),
+        ),
+    }),
     Effect.catch((failure) =>
       Effect.gen(function* () {
         // Go skips this dump on context cancellation (`start.go:215`) — an
@@ -627,7 +661,9 @@ export function legacyWaitForShadowReady(
     const outcome = yield* Effect.result(waited);
     const elapsed = (yield* Clock.currentTimeMillis) - start;
     const lastErrorSegment =
-      lastError === undefined ? "" : ` last-error="${legacyShadowDebugTruncate(lastError)}"`;
+      lastFailure === undefined
+        ? ""
+        : ` last-error="${legacyShadowDebugTruncate(lastFailure.reason)}"`;
     yield* Effect.sync(() => {
       globalThis.process.stderr.write(
         `shadow-debug: ready-wait ${elapsed}ms attempts=${attempts}${lastErrorSegment}\n`,

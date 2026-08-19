@@ -15,6 +15,8 @@ import {
   encodeProjectConfigToToml,
   loadProjectConfig,
   loadProjectConfigFile,
+  projectConfigValueSourceAt,
+  type LoadedProjectConfig,
   saveProjectConfig,
   type LoadProjectConfigOptions,
 } from "./io.ts";
@@ -1411,6 +1413,121 @@ project_id = "${STAGING_REF}"
 [remotes.staging.api]
 enabled = false
 `;
+
+  function originAt(loaded: LoadedProjectConfig | null | undefined, path: ReadonlyArray<string>) {
+    return loaded === null || loaded === undefined
+      ? undefined
+      : projectConfigValueSourceAt(loaded, path);
+  }
+
+  function injectedProjectEnv(values: Readonly<Record<string, string>>) {
+    return {
+      paths: {
+        projectRoot: "",
+        supabaseDir: "",
+        configPath: "",
+        envPath: "",
+        envLocalPath: "",
+      },
+      values,
+      loadedPaths: [],
+      sources: {},
+    };
+  }
+
+  test("tracks the source of effective local, remote, and environment values", async () => {
+    const localCwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+port = 6001
+`);
+    const envCwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+port = "env(API_PORT)"
+`);
+    const remoteCwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "${PREVIEW_REF}"
+[remotes.preview.db]
+port = 6002
+`);
+    const remoteEnvCwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "${PREVIEW_REF}"
+[remotes.preview.db]
+port = "env(REMOTE_DB_PORT)"
+`);
+    const omittedCwd = await writeTomlProject(`project_id = "baseref"
+`);
+
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(localCwd));
+      const envLoaded = await runConfigEffect(
+        loadProjectConfig(envCwd, { projectEnv: injectedProjectEnv({ API_PORT: "6001" }) }),
+      );
+      const remoteLoaded = await runConfigEffect(
+        loadProjectConfig(remoteCwd, { projectRef: PREVIEW_REF }),
+      );
+      const remoteEnvLoaded = await runConfigEffect(
+        loadProjectConfig(remoteEnvCwd, {
+          projectRef: PREVIEW_REF,
+          projectEnv: injectedProjectEnv({ REMOTE_DB_PORT: "6003" }),
+        }),
+      );
+      const omittedLoaded = await runConfigEffect(loadProjectConfig(omittedCwd));
+
+      expect(originAt(loaded, ["api", "port"])).toBe("local");
+      expect(originAt(envLoaded, ["api", "port"])).toBe("environment");
+      expect(originAt(remoteLoaded, ["db", "port"])).toBe("remote");
+      expect(originAt(remoteEnvLoaded, ["db", "port"])).toBe("environment");
+      expect(originAt(omittedLoaded, ["studio", "port"])).toBeUndefined();
+    } finally {
+      await Promise.all(
+        [localCwd, envCwd, remoteCwd, remoteEnvCwd, omittedCwd].map((cwd) =>
+          rm(cwd, { recursive: true, force: true }),
+        ),
+      );
+    }
+  });
+
+  test("tracks environment origins for local and selected-remote array leaves", async () => {
+    const localArrayCwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+schemas = ["env(LOCAL_SCHEMA)"]
+`);
+    const remoteArrayCwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "${PREVIEW_REF}"
+[remotes.preview.api]
+schemas = ["env(REMOTE_SCHEMA)"]
+`);
+
+    try {
+      const localArrayLoaded = await runConfigEffect(
+        loadProjectConfig(localArrayCwd, {
+          projectEnv: injectedProjectEnv({ LOCAL_SCHEMA: "local_schema" }),
+        }),
+      );
+      const remoteArrayLoaded = await runConfigEffect(
+        loadProjectConfig(remoteArrayCwd, {
+          projectRef: PREVIEW_REF,
+          projectEnv: injectedProjectEnv({ REMOTE_SCHEMA: "remote_schema" }),
+        }),
+      );
+
+      expect(originAt(localArrayLoaded, ["api", "schemas"])).toBe("environment");
+      expect(originAt(remoteArrayLoaded, ["api", "schemas"])).toBe("environment");
+    } finally {
+      await Promise.all(
+        [localArrayCwd, remoteArrayCwd].map((cwd) => rm(cwd, { recursive: true, force: true })),
+      );
+    }
+  });
 
   test("merges the matching remote subtree over the base before decode", async () => {
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);

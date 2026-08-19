@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Redacted, Sink, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Predicate, Redacted, Sink, Stream } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
+import type { ChildProcess } from "effect/unstable/process";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -16,6 +17,11 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { afterEach, beforeEach } from "vitest";
 
 import { LegacyCredentials } from "../../src/legacy/auth/legacy-credentials.service.ts";
+import { LegacyDbExecError } from "../../src/legacy/shared/legacy-db-connection.errors.ts";
+import type {
+  LegacyDbBatchStatement,
+  LegacyDbSession,
+} from "../../src/legacy/shared/legacy-db-connection.service.ts";
 import {
   LegacyCredentialDeleteError,
   LegacyDeleteTokenError,
@@ -35,6 +41,10 @@ import {
   LegacyLoginVerificationError,
 } from "../../src/legacy/commands/login/login.errors.ts";
 import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
+import {
+  LEGACY_PGDATA_BASELINE_MARKER_NAME,
+  LEGACY_PGDATA_PATH,
+} from "../../src/legacy/shared/db-bootstrap/pgdata-snapshot.ts";
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
@@ -667,6 +677,36 @@ export function mockLegacyPlatformApiService(
   return { layer, requests };
 }
 
+/**
+ * A `LegacyDbSession.execBatch` fake for mocks that only model statement-level
+ * behavior: it replays a batch's operations one at a time through the mock's own
+ * `exec` (no params) / `query` (params) fakes, and attaches the failing
+ * statement's index the way the real driver does. Mocks stay free of batch
+ * protocol details while `execs`/`queries` recordings and per-suite failure
+ * injection keep working for batched migration files.
+ */
+export function legacySequentialExecBatch(
+  session: Pick<LegacyDbSession, "exec" | "query">,
+): (statements: ReadonlyArray<LegacyDbBatchStatement>) => Effect.Effect<void, LegacyDbExecError> {
+  return (statements) =>
+    Effect.forEach(statements, ({ sql, params }, index) =>
+      (params === undefined ? session.exec(sql) : session.query(sql, params)).pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) =>
+          cause.statementIndex !== undefined
+            ? cause
+            : new LegacyDbExecError({
+                message: cause.message,
+                ...(cause.code === undefined ? {} : { code: cause.code }),
+                ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+                ...(cause.position === undefined ? {} : { position: cause.position }),
+                statementIndex: index,
+              }),
+        ),
+      ),
+    ).pipe(Effect.asVoid);
+}
+
 // ---------------------------------------------------------------------------
 // Temp workdir lifecycle — calls vitest beforeEach/afterEach internally, so
 // the helper must be invoked at module scope (or inside the surrounding
@@ -697,6 +737,33 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
     },
   };
 }
+
+/**
+ * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
+ * restoring whatever was there before — including whatever a surrounding `beforeEach` such as
+ * {@link useLegacyShadowCacheDisabled} put there. Scoping the override to the effect rather than
+ * to a nested `describe` keeps it independent of vitest's hook ordering, so a single test can
+ * opt back INTO a variable its file pins off.
+ */
+export const legacyWithEnv = <A, E, R>(
+  name: string,
+  value: string | undefined,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.env[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+      return previous;
+    }),
+    () => body,
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) delete process.env[name];
+        else process.env[name] = previous;
+      }),
+  );
 
 /**
  * Pins `SUPABASE_SHADOW_CACHE=0` for every test in the calling file, restoring whatever the host
@@ -989,6 +1056,344 @@ export function mockLegacyShadowContainerCliSpawner(
   );
 
   return { layer, spawned };
+}
+
+// ---------------------------------------------------------------------------
+// A minimal, stateful Docker model — the shadow BASELINE CACHE's round trip
+// (`docker stop` -> `docker cp - <id>:PGDATA` (the baseline stamp) ->
+// `docker cp <id>:PGDATA -` -> `docker start`, and the warm
+// `docker cp - <id>:<pgdata parent>` restore) really moves bytes, which
+// `mockLegacyShadowContainerCliSpawner` above deliberately does not model.
+// ---------------------------------------------------------------------------
+
+/**
+ * A real (if tiny) POSIX tar, byte for byte — `legacyValidatePgDataArchive`
+ * (`db-bootstrap/pgdata-snapshot.ts`) walks the header stream and checksum-validates every block
+ * before a warm restore, so the fake export has to be a genuine archive rather than a stand-in
+ * string. Every byte stays ASCII (padding is NUL), which is why the spawner's `TextEncoder` and
+ * the tests' `readFileString` round-trip it unchanged.
+ */
+const legacyFakeTarBlock = (fields: ReadonlyArray<readonly [number, string]>): string => {
+  const block = Array.from({ length: 512 }, () => "\0");
+  for (const [offset, text] of fields) {
+    for (let index = 0; index < text.length; index += 1) {
+      block[offset + index] = text[index] ?? "\0";
+    }
+  }
+  return block.join("");
+};
+
+const legacyFakeTarOctal = (value: number, width: number) =>
+  `${value.toString(8).padStart(width, "0")}\0`;
+
+/** One ustar member: a checksummed 512-byte header plus its NUL-padded content blocks. */
+const legacyFakeTarEntry = (name: string, content: string, typeFlag: "0" | "5"): string => {
+  const header = legacyFakeTarBlock([
+    [0, name],
+    [100, legacyFakeTarOctal(typeFlag === "5" ? 0o755 : 0o600, 7)],
+    [108, legacyFakeTarOctal(0, 7)],
+    [116, legacyFakeTarOctal(0, 7)],
+    [124, legacyFakeTarOctal(content.length, 11)],
+    [136, legacyFakeTarOctal(0, 11)],
+    // The checksum is computed over the header with this field read as 8 spaces.
+    [148, "        "],
+    [156, typeFlag],
+    [257, "ustar\0"],
+    [263, "00"],
+  ]);
+  let checksum = 0;
+  for (let index = 0; index < header.length; index += 1) checksum += header.charCodeAt(index);
+  const padding = "\0".repeat((512 - (content.length % 512)) % 512);
+  return `${header.slice(0, 148)}${legacyFakeTarOctal(checksum, 6)} ${header.slice(156)}${content}${padding}`;
+};
+
+/** Tar's end-of-archive marker: two all-zero blocks. */
+const LEGACY_FAKE_TAR_END = "\0".repeat(1024);
+
+/**
+ * What the fake `docker cp <id>:PGDATA -` emits for a container the export path has NOT stamped —
+ * a real cluster (`data/` + `data/PG_VERSION`) and nothing more. Stands in both for a hand-placed
+ * bare PGDATA archive and for a snapshot taken before the platform baseline ran: it restores,
+ * starts, and answers, so only the missing marker tells it apart from a usable baseline.
+ */
+export const LEGACY_FAKE_UNSTAMPED_PGDATA_TAR = `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${LEGACY_FAKE_TAR_END}`;
+
+/**
+ * The bytes the fake `docker cp <id>:PGDATA -` emits once the export path has stamped the
+ * container — stands in for a real ~90MB PGDATA tar, with the same top-level `data/` member,
+ * `data/PG_VERSION` cluster file, and `data/SUPABASE_BASELINE` marker a real export carries.
+ *
+ * `markerContent` is whatever the export ACTUALLY stamped, carried through rather than fixed: the
+ * marker binds a snapshot to its cache key, so a fake that always emitted the same marker would
+ * make every key-binding assertion pass vacuously — a production regression stamping the wrong key
+ * (or a fixed one) has to show up as a warm-path mismatch here too.
+ */
+export const legacyFakePgDataTar = (markerContent: string): string =>
+  `${legacyFakeTarEntry("data/", "", "5")}${legacyFakeTarEntry("data/PG_VERSION", "17\n", "0")}${legacyFakeTarEntry("data/SUPABASE_BASELINE", markerContent, "0")}${LEGACY_FAKE_TAR_END}`;
+
+/**
+ * The `SUPABASE_BASELINE` member's content inside a `docker cp - <id>:<PGDATA>` stamp payload — a
+ * plain 512-block walk over the archive `legacyPgDataBaselineMarkerTar` built, so the fake export
+ * below can carry the real stamp forward. `undefined` when the payload has no such member, which
+ * is the fake's "this container was never really stamped" signal.
+ */
+const legacyFakeStampedMarkerContent = (stamp: string): string | undefined => {
+  let offset = 0;
+  while (offset + 512 <= stamp.length) {
+    const header = stamp.slice(offset, offset + 512);
+    offset += 512;
+    const name = (header.slice(0, 100).split("\0")[0] ?? "").replace(/^\.\//u, "");
+    if (name.length === 0) return undefined; // the end-of-archive marker
+    const size = Number.parseInt((header.slice(124, 136).split("\0")[0] ?? "").trim(), 8);
+    if (!Number.isInteger(size) || size < 0) return undefined;
+    if (name === LEGACY_PGDATA_BASELINE_MARKER_NAME) return stamp.slice(offset, offset + size);
+    offset += Math.ceil(size / 512) * 512;
+  }
+  return undefined;
+};
+
+/**
+ * A syntactically VALID tar carrying no members at all — what a replaced or truncated cache
+ * artifact looks like to `docker cp -`, which extracts it happily and lets the entrypoint `initdb`
+ * a fresh cluster over the top. The pre-restore marker check is what catches it.
+ */
+export const LEGACY_FAKE_EMPTY_TAR = LEGACY_FAKE_TAR_END;
+
+interface LegacyFakeContainer {
+  readonly labels: Readonly<Record<string, string>>;
+  readonly autoRemove: boolean;
+  running: boolean;
+  /** Whether this container has ever been `docker start`ed — distinguishes a RE-start for `failRestart`. */
+  everStarted?: boolean;
+  /** What a previous `docker cp - <id>:<path>` unpacked into this container, if anything. */
+  restored: string | undefined;
+  /**
+   * What a `docker cp - <id>:<PGDATA>` delivered — the export path's baseline stamp. Its presence
+   * is what makes the fake's copy-OUT emit a marked archive, so a production regression that stops
+   * stamping publishes {@link LEGACY_FAKE_UNSTAMPED_PGDATA_TAR} and every warm-path test notices.
+   */
+  stamp: string | undefined;
+}
+
+/**
+ * Every `docker` call a shadow provision issues, backed by ONE stateful container table:
+ * `create`/`start`/`stop`/`rm` mutate it, and `docker cp` really carries bytes in and out. Use
+ * this instead of {@link mockLegacyShadowContainerCliSpawner} whenever the shadow BASELINE CACHE
+ * is enabled for the test — the cold export's stop/copy-out/start round trip and the warm
+ * restore's copy-in have no meaning against a stateless spawner, and a failed export is
+ * fail-open (a warning, no tar), so a stateless fake makes cache assertions pass vacuously.
+ *
+ * `container inspect supabase_db_<projectId>` reports running-and-healthy (the table only holds
+ * shadows, so the local stack is faked UP rather than looked up) — `--use-pgadmin`'s local-stack
+ * probe is the one caller, and its cache tests need this model for the export round trip.
+ */
+export function mockLegacyDockerDaemonCliSpawner(
+  opts: {
+    readonly failStart?: boolean;
+    /** Fails only RE-starts (a `docker start` after the container has already run once) — the cold export's revive step. */
+    readonly failRestart?: boolean;
+    readonly failCopyOut?: boolean;
+    readonly failCopyIn?: boolean;
+    /** Fails the export path's baseline stamp (`docker cp - <id>:<PGDATA>`) only. */
+    readonly failStamp?: boolean;
+  } = {},
+) {
+  const containers = new Map<string, LegacyFakeContainer>();
+  const spawned: Array<ReadonlyArray<string>> = [];
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  let nextId = 0;
+
+  /**
+   * Drains a `Stream` passed as a command's `stdin` into a string, the way the real
+   * `NodeChildProcessSpawner` runs a user-supplied stdin stream into the child's stdin sink — a
+   * fake that ignored it would never notice the restore tar was not actually delivered.
+   */
+  const readStdin = Effect.fnUntraced(function* (command: ChildProcess.Command) {
+    const configured = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+    // A caller may pass either a bare `CommandInput` or a `StdinConfig` wrapping one.
+    const input = Stream.isStream(configured)
+      ? configured
+      : Predicate.hasProperty(configured, "stream")
+        ? configured.stream
+        : undefined;
+    if (!Stream.isStream(input)) return "";
+    return yield* Stream.runFold(
+      input,
+      () => "",
+      (text: string, chunk) => text + decoder.decode(chunk as Uint8Array, { stream: true }),
+    ).pipe(Effect.orElseSucceed(() => ""));
+  });
+
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = command._tag === "StandardCommand" ? command.args : [];
+      spawned.push(args);
+
+      let exitCode = 0;
+      let stdout = "";
+      let stderr = "";
+
+      if (args[0] === "network" && args[1] === "inspect") {
+        exitCode = 1;
+      } else if (args[0] === "create") {
+        nextId += 1;
+        const id = `shadowcontainer${String(nextId).padStart(2, "0")}`.padEnd(64, "0");
+        const labels: Record<string, string> = {};
+        for (let index = 0; index < args.length; index += 1) {
+          if (args[index] !== "--label") continue;
+          const [key = "", ...rest] = (args[index + 1] ?? "").split("=");
+          labels[key] = rest.join("=");
+        }
+        containers.set(id, {
+          labels,
+          autoRemove: args.includes("--rm"),
+          running: false,
+          restored: undefined,
+          stamp: undefined,
+        });
+        stdout = id;
+      } else if (args[0] === "start") {
+        const container = containers.get(args[1] ?? "");
+        if (
+          opts.failStart === true ||
+          container === undefined ||
+          (opts.failRestart === true && container.everStarted)
+        ) {
+          exitCode = 1;
+        } else {
+          container.running = true;
+          container.everStarted = true;
+        }
+      } else if (args[0] === "stop") {
+        const id = args[1] ?? "";
+        const container = containers.get(id);
+        if (container === undefined) exitCode = 1;
+        else {
+          container.running = false;
+          // Docker destroys an `--rm` container the moment it exits, `docker stop` included —
+          // verified against Docker 29. This is exactly why the cold export path drops `--rm`.
+          if (container.autoRemove) containers.delete(id);
+        }
+      } else if (args[0] === "rm") {
+        containers.delete(args[args.length - 1] ?? "");
+      } else if (args[0] === "cp" && args[1] === "-") {
+        // Three different stdin copies share this form, so each failure switch has to pick out
+        // exactly one: the pgsodium root key goes to `<id>:/`, the export path's baseline stamp to
+        // `<id>:<PGDATA>`, and the warm restore to `<id>:<pgdata parent>`. Otherwise a warm
+        // fallback test would kill the root-key copy and never reach the archive.
+        const [id = "", containerPath = ""] = (args[2] ?? "").split(":");
+        const container = containers.get(id);
+        const received = yield* readStdin(command);
+        const isSecret = containerPath === "" || containerPath === "/";
+        const isStamp = containerPath === LEGACY_PGDATA_PATH;
+        const failed =
+          (isStamp && opts.failStamp === true) ||
+          (!isSecret && !isStamp && opts.failCopyIn === true);
+        if (container === undefined || failed) {
+          exitCode = 1;
+          stderr = "no such container";
+        } else if (isStamp) {
+          container.stamp = received;
+        } else if (!isSecret) {
+          container.restored = `${containerPath}::${received}`;
+        }
+      } else if (args[0] === "cp" && args[2] === "-") {
+        // Export: `docker cp <id>:<containerPath> -`, tar on stdout. What comes out depends on
+        // whether the container was stamped first — that is the whole point of the marker.
+        const [id = ""] = (args[1] ?? "").split(":");
+        const container = containers.get(id);
+        if (opts.failCopyOut === true || container === undefined) {
+          exitCode = 1;
+          stderr = "no such container";
+        } else {
+          // The marker the stamp really delivered rides along into the exported archive; a
+          // container that was never stamped (or whose stamp carried no marker member) exports the
+          // bare cluster the warm path must reject.
+          const marker =
+            container.stamp === undefined
+              ? undefined
+              : legacyFakeStampedMarkerContent(container.stamp);
+          stdout =
+            marker === undefined ? LEGACY_FAKE_UNSTAMPED_PGDATA_TAR : legacyFakePgDataTar(marker);
+        }
+      } else if (args[0] === "container" && args[1] === "inspect") {
+        if ((args[2] ?? "").startsWith("supabase_db_")) {
+          // The local stack's own container — not a shadow this table tracks. Report it
+          // running-and-healthy so `--use-pgadmin`'s local-stack probe passes.
+          stdout = JSON.stringify({
+            Running: true,
+            Status: "running",
+            Health: { Status: "healthy" },
+          });
+        } else {
+          const container = containers.get(args[2] ?? "");
+          exitCode = container === undefined ? 1 : 0;
+          stdout =
+            container === undefined
+              ? ""
+              : JSON.stringify({
+                  Running: container.running,
+                  Status: container.running ? "running" : "exited",
+                  Health: { Status: "healthy" },
+                });
+        }
+      }
+
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        // `docker cp … -` writes the raw archive, every other call a trailing newline.
+        stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(stdout)] : []),
+        stderr: Stream.fromIterable(stderr.length > 0 ? [encoder.encode(stderr)] : []),
+        all: Stream.empty,
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+
+  /**
+   * One readable label per Docker call, so a test can assert the SEQUENCE of meaningful steps
+   * rather than raw argv. `cp` is split four ways because the shadow issues four different copies:
+   * the pgsodium root key every shadow gets (`cp-secret`, `container-lifecycle.ts`), the baseline
+   * marker stamped into PGDATA just before an export (`cp-stamp`), the baseline export (`cp-out`),
+   * and the baseline restore (`cp-in`).
+   */
+  const stepOf = (args: ReadonlyArray<string>): string => {
+    if (args[0] === "network") return "network";
+    if (args[0] === "container" && args[1] === "inspect") return "inspect";
+    if (args[0] === "cp") {
+      if (args[1] === "-") {
+        const dest = args[2] ?? "";
+        const containerPath = dest.slice(dest.indexOf(":") + 1);
+        if (containerPath === "" || containerPath === "/") return "cp-secret";
+        return containerPath === LEGACY_PGDATA_PATH ? "cp-stamp" : "cp-in";
+      }
+      if (args[2] === "-") return "cp-out";
+      return "cp-secret";
+    }
+    return args[0] ?? "";
+  };
+
+  return {
+    /** Ready to merge into a test runtime; `spawner` is the bare handler for direct callers. */
+    layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    spawner,
+    spawned,
+    containers,
+    /** Every argv whose first token is `verb` (`create`/`rm`/`stop`/`start`/`cp`). */
+    calls: (verb: string) => spawned.filter((args) => args[0] === verb),
+    /** Every argv classified as `step` — see {@link stepOf}. */
+    stepCalls: (step: string) => spawned.filter((args) => stepOf(args) === step),
+    /** The full step sequence, with the `network` bookkeeping calls dropped as noise. */
+    steps: () => spawned.map(stepOf).filter((step) => step !== "network"),
+    ids: () => [...containers.keys()],
+  };
 }
 
 // ---------------------------------------------------------------------------

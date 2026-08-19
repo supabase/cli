@@ -1,19 +1,25 @@
-import { BunServices } from "@effect/platform-bun";
-import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
+import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
-import { runDaemon } from "./daemon.ts";
+import { runSupervisor } from "./supervisor.ts";
+import { managedStackManagerLayer as makeManagerLayer } from "./managed/manager.ts";
+import { gitConfigStoreLayer } from "./managed/git.ts";
+import { controlTransportLayer, platformFactory } from "./platform-bun.ts";
 
-export function runBunDaemon(): void {
-  runDaemon(
-    ({ apiPort, releaseApiPort }) =>
-      Layer.mergeAll(
-        BunServices.layer,
-        Layer.unwrap(releaseApiPort.pipe(Effect.as(BunHttpServer.layer({ port: apiPort })))),
-      ),
-    (socketPath) => BunHttpServer.layer({ idleTimeout: 0, unix: socketPath }),
+const managerLayer = (stateRoot: string) =>
+  makeManagerLayer({ stateRoot }).pipe(
+    Layer.provide(Layer.mergeAll(BunFileSystem.layer, gitConfigStoreLayer, controlTransportLayer)),
   );
-}
 
-if (import.meta.main) {
-  runBunDaemon();
-}
+/** Thin Bun child entrypoint shared by managed and ordinary detached starts. */
+export const runBunDaemon = (): void => {
+  void Effect.runPromise(
+    runSupervisor({ platformFactory, managerLayer }).pipe(
+      Effect.provide(BunServices.layer),
+      Effect.provide(BunFileSystem.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    ),
+  );
+};
+
+if (import.meta.main) runBunDaemon();
