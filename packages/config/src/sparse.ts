@@ -25,10 +25,12 @@ type DeepPartial<T> =
 export type SparseProjectConfig = DeepPartial<ProjectConfig>;
 
 /**
- * The root-scope fields shared by a full {@link ProjectConfig} and a decoded
- * `[remotes.*]` block (which has the same sections but no nested `remotes`).
- * Subtraction accepts this shape so a remote block can be subtracted against
- * the merged base config directly, as ADR 0018 prescribes, without a cast.
+ * The root-scope fields of a {@link ProjectConfig}, without the nested
+ * `remotes` record. Subtraction accepts this shape to keep `remotes` out of
+ * its contract: the operands are root-scope *effective* configs — e.g. the
+ * merged base config, or a branch's effective config translated from the
+ * Management API, which has no `remotes` of its own — so neither operand has
+ * to fabricate a `remotes` field to type-check.
  */
 export type BaseProjectConfig = Omit<ProjectConfig, "remotes">;
 
@@ -171,11 +173,22 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * Returns the sparse config `config − baseline`. Directional: a value equal to
  * the baseline's is removed even when it differs from the schema default, and
  * a value differing from the baseline's is kept even when it equals the schema
- * default. A `[remotes.*]` block — config overrides for a specific persistent
- * Supabase branch, bound to it by `project_id` — has the merged base config as
- * its correct baseline, never the default config; see ADR 0018 for why
- * subtracting a remote block against global defaults would silently change
- * what the branch resolves to.
+ * default.
+ *
+ * Both operands must be *effective* configs — values in which every absence
+ * has already been resolved (a decode of a complete document, or of a
+ * raw-merged one). A standalone-decoded `[remotes.*]` block is NOT one:
+ * decoding a sparse fragment materializes global defaults in every section it
+ * omitted, where the block meant to inherit from the base config, so the
+ * overlay would pin the branch to global defaults wherever the base overrides
+ * a field the block omits. To sparsify a branch's config (a `[remotes.*]`
+ * block declares overrides for a specific persistent Supabase branch, bound
+ * to it by `project_id`), subtract its merged effective config — the raw
+ * remote subtree merged over the raw base document *before* decoding, exactly
+ * as `io.ts`'s `mergeRemoteSubtree` does so remote schema defaults never leak
+ * in — against the base effective config, never the default config; see ADR
+ * 0018 for why the default-config baseline silently changes what the branch
+ * resolves to.
  */
 export function subtractProjectConfig(
   config: BaseProjectConfig,

@@ -136,21 +136,28 @@ describe("subtractProjectConfig", () => {
     expect(subtractProjectConfig(config, config)).toEqual({});
   });
 
-  test("accepts a decoded remote block against the merged base config", () => {
-    // The ADR 0018 call shape for CLI-2156: a remote block has the root
-    // sections but no nested `remotes`, and must be accepted without a cast.
-    const config = decodeProjectConfig({
-      api: { max_rows: 500 },
-      remotes: { staging: { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } } },
+  test("sparsifies a branch via its merged effective config, not the decoded block", () => {
+    // The ADR 0018 call shape for CLI-2156/2064: both operands are *effective*
+    // configs, and the branch's is the raw remote subtree merged over the raw
+    // base document BEFORE decoding. Decoding the sparse `[remotes.*]` block
+    // on its own would materialize the global default `db.port = 54322` in
+    // place of the omitted-and-therefore-inherited base override `54399`, and
+    // the overlay would wrongly pin the branch to the global default.
+    const rawBase = { api: { max_rows: 500 }, db: { port: 54399 } };
+    const rawRemote = { project_id: "abcdefghijklmnopqrst", api: { max_rows: 1000 } };
+    const base = decodeProjectConfig(rawBase);
+    const effectiveBranch = decodeProjectConfig({
+      ...rawBase,
+      ...rawRemote,
+      api: { ...rawBase.api, ...rawRemote.api },
     });
-    const base = decodeProjectConfig({ api: { max_rows: 500 } });
-    const staging = config.remotes["staging"];
-    expect(staging).toBeDefined();
-    if (staging === undefined) return;
-    expect(subtractProjectConfig(staging, base)).toEqual({
+    const overlay = subtractProjectConfig(effectiveBranch, base);
+    expect(overlay).toEqual({
       project_id: "abcdefghijklmnopqrst",
       api: { max_rows: 1000 },
     });
+    // The base-only `db.port` override the remote inherits must not surface.
+    expect(overlay).not.toHaveProperty("db");
   });
 
   test("subtraction is directional against the baseline, not the defaults", () => {
