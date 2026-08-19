@@ -20,13 +20,18 @@ interface DockerVectorOptions extends ContainerRuntimeOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
-const vectorConfig = (host: string, port: number, apiKey: string) => `api:
+const vectorConfig = (
+  host: string,
+  port: number,
+  apiKey: string,
+  logSource: "docker_logs" | "internal_logs",
+) => `api:
   enabled: true
   address: 0.0.0.0:9001
 
 sources:
   runtime:
-    type: docker_logs
+    type: ${logSource}
 
 sinks:
   logflare:
@@ -58,7 +63,6 @@ const podmanSocketCandidates = (): ReadonlyArray<string> => {
   const uid = process.getuid?.();
   if (uid !== undefined) candidates.push(`/run/user/${uid}/podman/podman.sock`);
   candidates.push("/run/podman/podman.sock");
-  candidates.push("/var/run/docker.sock");
   return candidates;
 };
 
@@ -78,8 +82,8 @@ const resolveVectorDockerSocket = (runtime: ContainerRuntime): string | undefine
 
 export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
   const containerName = dockerContainerName("vector", opts.identity.key);
-  const dockerSocket = resolveVectorDockerSocket(opts.runtime);
-  const volumes = dockerSocket === undefined ? [] : [`${dockerSocket}:/var/run/docker.sock:ro`];
+  const socketPath = resolveVectorDockerSocket(opts.runtime);
+  const volumes = socketPath === undefined ? [] : [`${socketPath}:/var/run/docker.sock:ro`];
 
   return dockerRunService({
     runtime: opts.runtime,
@@ -89,17 +93,20 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
     networkArgs: dockerNetworkArgs(opts.platformOs, []),
     volumes,
     securityOptions:
-      opts.runtime === "podman" &&
-      dockerSocket !== undefined &&
-      dockerSocket !== "/var/run/docker.sock"
+      opts.runtime === "podman" && socketPath !== undefined && socketPath !== "/var/run/docker.sock"
         ? ["label=disable"]
         : [],
-    env: dockerSocket === undefined ? {} : { DOCKER_HOST: "unix:///var/run/docker.sock" },
+    env: socketPath === undefined ? {} : { DOCKER_HOST: "unix:///var/run/docker.sock" },
     entrypoint: "sh",
     cmd: [
       "-c",
       `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
-${vectorConfig(opts.serviceHost, opts.analyticsPort, opts.analyticsApiKey)}EOF
+${vectorConfig(
+  opts.serviceHost,
+  opts.analyticsPort,
+  opts.analyticsApiKey,
+  socketPath === undefined ? "internal_logs" : "docker_logs",
+)}EOF
 `,
     ],
     dependencies: opts.dependencies,

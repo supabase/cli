@@ -210,6 +210,18 @@ export const localStackLayer = (
             : [...current, nextState];
         });
 
+      const restoreStateIfDownloading = (
+        service: ServiceName,
+        previous: StackServiceState | undefined,
+      ) =>
+        previous === undefined
+          ? Effect.void
+          : SubscriptionRef.update(stateRef, (current) => {
+              const index = current.findIndex((entry) => entry.name === service);
+              if (index === -1 || current[index]?.status !== "Downloading") return current;
+              return current.map((entry, entryIndex) => (entryIndex === index ? previous : entry));
+            });
+
       const syncProjectedStates = (
         orchestrator: Orchestrator["Service"],
         serviceProjection: StackServiceProjectionCatalog,
@@ -374,8 +386,10 @@ export const localStackLayer = (
                         }
                       }
                       if (event instanceof ServiceDownloadFinished) {
-                        const previous = previousStates.get(event.service);
-                        if (previous !== undefined) yield* updateState(previous);
+                        yield* restoreStateIfDownloading(
+                          event.service,
+                          previousStates.get(event.service),
+                        );
                       }
                       return event instanceof PreparationCompleted ? event.artifacts : current;
                     }),
@@ -396,13 +410,7 @@ export const localStackLayer = (
                 Effect.forEach(
                   preparationTargets,
                   (service) => {
-                    const previous = previousStates.get(service);
-                    const current = SubscriptionRef.getUnsafe(stateRef).find(
-                      (entry) => entry.name === service,
-                    );
-                    return previous !== undefined && current?.status === "Downloading"
-                      ? updateState(previous)
-                      : Effect.void;
+                    return restoreStateIfDownloading(service, previousStates.get(service));
                   },
                   { discard: true, concurrency: "unbounded" },
                 ),

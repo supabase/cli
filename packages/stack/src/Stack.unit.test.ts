@@ -1010,46 +1010,85 @@ describe("Stack", () => {
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
-  it.live("lazy activation honors explicitly stopped transitive dependencies", () => {
-    const config: ResolvedStackConfig = {
+  it.live("lazy activation restores dormant state after a stopped transitive dependency", () => {
+    const config = {
       ...defaultConfig,
-      mode: "docker",
-      containerRuntime: "docker",
-      servicePolicies: {
-        ...defaultConfig.servicePolicies,
-        postgrest: "lazy",
-        auth: "lazy",
-        storage: "lazy",
-        imgproxy: "lazy",
-      },
-      storage: {
-        port: defaultPorts.storagePort,
-        dataDir: "/tmp/supabase/storage",
-        fileSizeLimit: "50MiB",
-        s3ProtocolEnabled: true,
-        version: DEFAULT_VERSIONS.storage,
-      },
-      imgproxy: {
-        port: defaultPorts.imgproxyPort,
-        version: DEFAULT_VERSIONS.imgproxy,
-      },
-    };
-    const { layer } = setupLayer(config);
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
+    const resolver = mockBinaryResolver({ downloadedServices: ["postgrest"] });
+    const { layer } = setupLayer(config, noopPortLease(config.ports), undefined, resolver);
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
       const activator = yield* StackServiceActivator;
       yield* stack.start();
-      yield* stack.stopService("imgproxy");
+      yield* stack.stopService("postgres");
 
-      const error = yield* activator.activate("storage").pipe(Effect.flip);
+      const downloading = yield* (yield* stack.stateChanges("postgrest")).pipe(
+        Stream.filter((state) => state.status === "Downloading"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const error = yield* activator.activate("postgrest").pipe(Effect.flip);
 
+      expect((yield* Fiber.join(downloading))._tag).toBe("Some");
       expect(error._tag).toBe("StackBuildError");
       if (error._tag === "StackBuildError") {
-        expect(error.detail).toContain("imgproxy was explicitly stopped");
+        expect(error.detail).toContain("postgres was explicitly stopped");
       }
-      expect((yield* stack.getState("storage")).status).not.toBe("Downloading");
-      expect((yield* stack.getState("imgproxy")).status).not.toBe("Downloading");
+      expect((yield* stack.getState("postgrest")).status).toBe("Dormant");
+      yield* stack.stop();
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("preserves an explicit stop during in-flight lazy activation", () => {
+    const config = {
+      ...defaultConfig,
+      servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+    } satisfies ResolvedStackConfig;
+    const allowDownload = Deferred.makeUnsafe<void>();
+    const resolver = mockBinaryResolver({
+      downloadedServices: ["auth"],
+      beforeResolve: ({ service }) =>
+        service === "auth" ? Deferred.await(allowDownload) : Effect.void,
+    });
+    const { layer } = setupLayer(config, noopPortLease(config.ports), undefined, resolver);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const activator = yield* StackServiceActivator;
+      yield* stack.start();
+
+      const authChanges = yield* stack.stateChanges("auth");
+      const downloading = yield* authChanges.pipe(
+        Stream.filter((state) => state.status === "Downloading"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const stopped = yield* authChanges.pipe(
+        Stream.filter((state) => state.status === "Stopped"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const activation = yield* activator
+        .activate("auth")
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      expect((yield* Fiber.join(downloading))._tag).toBe("Some");
+      yield* stack.stopService("auth");
+      expect((yield* Fiber.join(stopped))._tag).toBe("Some");
+      yield* Deferred.succeed(allowDownload, undefined);
+
+      const activationExit = yield* Fiber.await(activation);
+      expect(Exit.isFailure(activationExit)).toBe(true);
+      if (Exit.isFailure(activationExit)) {
+        const error = Cause.squash(activationExit.cause);
+        expect(error).toMatchObject({ _tag: "StackBuildError" });
+        if (error instanceof StackBuildError) {
+          expect(error.detail).toContain("auth was explicitly stopped");
+        }
+      }
+      expect((yield* stack.getState("auth")).status).toBe("Stopped");
       yield* stack.stop();
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
