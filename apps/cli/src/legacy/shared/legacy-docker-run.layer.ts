@@ -113,6 +113,7 @@ export const legacyDockerRunLayer: Layer.Layer<
         Effect.scoped(
           Effect.gen(function* () {
             const teeStderr = streamOpts.teeStderr ?? false;
+            const captureStderr = streamOpts.captureStderr ?? true;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const resolvedOpts = yield* withResolvedImage(opts);
             const args = buildLegacyDockerArgs(
@@ -142,7 +143,9 @@ export const legacyDockerRunLayer: Layer.Layer<
                 ),
                 Stream.runForEach(handle.stderr, (chunk) =>
                   Effect.sync(() => {
-                    stderrChunks.push(chunk);
+                    // Retained only for the returned string — skipped when the caller
+                    // opts out, so a tee-only consumer stays at constant memory.
+                    if (captureStderr) stderrChunks.push(chunk);
                     if (teeStderr) globalThis.process.stderr.write(chunk);
                   }),
                 ).pipe(Effect.mapError(spawnError)),

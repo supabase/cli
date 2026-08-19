@@ -30,6 +30,7 @@ var (
 	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
 	createIndexPattern = regexp.MustCompile(`^CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY(\s|\z)`)
+	dropIndexPattern   = regexp.MustCompile(`^DROP\s+INDEX\s+CONCURRENTLY(\s|\z)`)
 	reindexPattern     = regexp.MustCompile(`^REINDEX(\s|\().*\sCONCURRENTLY(\s|\z)`)
 	vacuumPattern      = regexp.MustCompile(`^VACUUM(\s|\(|\z)`)
 	alterSystemPattern = regexp.MustCompile(`^ALTER\s+SYSTEM(\s|\z)`)
@@ -80,6 +81,7 @@ func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
 func isPipelineIncompatible(sql string) bool {
 	upper := strings.ToUpper(trimLeadingSQLComments(sql))
 	return createIndexPattern.MatchString(upper) ||
+		dropIndexPattern.MatchString(upper) ||
 		reindexPattern.MatchString(upper) ||
 		vacuumPattern.MatchString(upper) ||
 		alterSystemPattern.MatchString(upper) ||

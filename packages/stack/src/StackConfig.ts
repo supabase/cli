@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { ResolvedFunctionsBundle } from "./functions.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { ResolvedPorts } from "./PortCatalog.ts";
 
 type StackMode = "native" | "auto" | "docker";
 type StackStartupMode = "eager" | "lazy";
@@ -309,7 +309,7 @@ export interface ResolvedStackConfig {
   /** Whether readiness came from the package default or an explicit stack policy. */
   readonly readinessSource: "default" | "configured";
   readonly jwtSecret: string;
-  readonly ports: AllocatedPorts;
+  readonly ports: ResolvedPorts;
   readonly apiPort: number;
   readonly dbPort: number;
   readonly publishableKey: string;

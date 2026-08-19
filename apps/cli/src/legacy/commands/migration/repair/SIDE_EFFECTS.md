@@ -51,8 +51,8 @@ repair-all) `TRUNCATE`, plus `applied` → per-version `UPSERT` from the local f
 > TRUNCATE commits but a later UPSERT fails) could leave the history table in a
 > half-updated state. The TS port wraps the same statements in an explicit
 > `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure leaves the table
-> unchanged. This is a deliberate, safer divergence (`LegacyDbSession` has no batch
-> primitive); the success path produces the same output as before.
+> unchanged. This handler deliberately keeps that safer transaction instead of using
+> the migration apply path's batch primitive; the success path is unchanged.
 
 ### `--output-format json`
 

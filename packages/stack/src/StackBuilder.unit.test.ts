@@ -10,7 +10,7 @@ import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./Stac
 import { STACK_ID_LABEL } from "./StackIdentity.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
 import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
-import type { AllocatedPorts } from "./PortAllocator.ts";
+import type { AllocatedPorts } from "./PortCatalog.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
 import {

@@ -22,9 +22,9 @@ The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartS
 `legacy/shared/legacy-start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
 host disk in the first place, so it has nothing to clean up here. Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
-`writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) still
-land on host disk this way, because that container is a `docker run` this port shells out
-to directly rather than a struct call over the Docker Engine API; without this cleanup that
+`writeDockerEnvFile`/`writeDockerMultilineEnvScript`) still
+land on host disk this way, because that container's bring-up shells out to the docker
+CLI directly rather than a struct call over the Docker Engine API; without this cleanup that
 directory would survive `stop` indefinitely. (Kong's TLS/`kong.yml`, Postgres's pgsodium
 root key, and Supavisor's pooler tenant-script content are delivered via `docker cp`
 straight into the created container instead — as of supabase/cli#6022 they never touch

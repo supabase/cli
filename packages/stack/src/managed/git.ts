@@ -8,6 +8,7 @@ import { claimFileAtomically } from "./atomic-claim.ts";
 import { errorCode } from "./error-code.ts";
 import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { ensureGitCheckoutLocation, readGitCheckoutLocation } from "./identity.ts";
 import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import {
   GIT_CHECKOUT_IDENTITY_VERSION,
@@ -16,12 +17,7 @@ import {
   type GitCheckoutIdentity,
   type UnsupportedGitWorkspaceCause,
 } from "./model.ts";
-import {
-  gitCheckoutIdentityPath,
-  gitConfigPath,
-  gitWorktreeConfigPath,
-  ordinaryWorkspaceIdentityPath,
-} from "./paths.ts";
+import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from "./paths.ts";
 
 const BRANCH_REF_PREFIX = "refs/heads/";
 const COMMON_DIRECTORY_FILE = "commondir";
@@ -41,8 +37,8 @@ const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
  */
 const GIT_DIRECTORY_ENTRIES = [HEAD_FILE, "objects", "refs"] as const;
 
-/** The project identity, shared by every checkout of the same repository. */
-export const GIT_PROJECT_ID_KEY = "supabase.projectId";
+/** The local workspace identity, shared by every checkout of the same repository. */
+export const GIT_WORKSPACE_ID_KEY = "supabase.workspaceId";
 
 /**
  * The branch context identity, keyed by branch so that git owns its lifecycle:
@@ -231,7 +227,7 @@ const locateGitCheckoutRoot = (
     }
   });
 
-export const branchRefExists = (
+const branchRefExists = (
   fs: FileSystem.FileSystem,
   commonDirectory: string,
   ref: string,
@@ -508,51 +504,6 @@ export const inspectWorkspace = (
     ),
   );
 
-/**
- * Read-only check used when a folder identity marker is carried into a Git
- * checkout. `ls-files --error-unmatch` gives a stable three-way result: exit 0
- * means tracked, exit 1 means absent from the index, and every other status is
- * metadata-inaccessible. The index is never modified.
- */
-export const isOrdinaryIdentityMarkerTracked = (
-  workspaceRoot: string,
-): Effect.Effect<boolean, UnsupportedGitWorkspaceError> =>
-  Effect.tryPromise({
-    try: () =>
-      new Promise<boolean>((resolveResult, reject) => {
-        execFile(
-          "git",
-          ["-C", workspaceRoot, "ls-files", "--error-unmatch", "--", ".supabase/identity.json"],
-          { encoding: "utf8" },
-          (error, _stdout, stderr) => {
-            if (error === null) {
-              resolveResult(true);
-              return;
-            }
-            if (error.code === 1) {
-              resolveResult(false);
-              return;
-            }
-            reject(
-              new UnsupportedGitWorkspaceError({
-                path: ordinaryWorkspaceIdentityPath(workspaceRoot),
-                reason: `Git index metadata is inaccessible (${stderr.trim() || String(error.code)})`,
-                workspaceCause: "metadata-inaccessible",
-              }),
-            );
-          },
-        );
-      }),
-    catch: (error: unknown) =>
-      error instanceof UnsupportedGitWorkspaceError
-        ? error
-        : new UnsupportedGitWorkspaceError({
-            path: ordinaryWorkspaceIdentityPath(workspaceRoot),
-            reason: `Git index metadata is inaccessible (${errorCode(error) ?? String(error)})`,
-            workspaceCause: "metadata-inaccessible",
-          }),
-  });
-
 export interface GitConfigStoreShape {
   /** Every value stored at `key`, in file order; empty when it is not set. */
   readonly getAll: (
@@ -579,17 +530,6 @@ export interface GitConfigStoreShape {
     key: string,
     value: string,
   ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
-  /** Replaces exactly one settled value, refusing when the expected value changed. */
-  readonly replaceExpected: (
-    file: string,
-    key: string,
-    expected: string,
-    value: string,
-  ) => Effect.Effect<
-    void,
-    UnsupportedGitWorkspaceError | InvalidManagedIdentityError,
-    FileSystem.FileSystem
-  >;
 }
 
 /**
@@ -658,6 +598,9 @@ const runGitConfig = (
     });
   });
 
+const gitLockRetrySchedule = () =>
+  Schedule.exponential(Duration.millis(10)).pipe(Schedule.upTo({ duration: Duration.millis(400) }));
+
 /**
  * `git config` does not wait for another process' config lock — it refuses
  * immediately — so waiting is this store's job. Every claim in a repository with
@@ -679,9 +622,7 @@ const gitConfig = (
         ),
         {
           while: (error) => error.kind === "retryable",
-          schedule: Schedule.exponential(Duration.millis(10)).pipe(
-            Schedule.upTo({ duration: Duration.millis(400) }),
-          ),
+          schedule: gitLockRetrySchedule(),
         },
       ),
       (error) =>
@@ -711,97 +652,6 @@ const gitConfigWrite = (
   file: string,
 ): Effect.Effect<void, UnsupportedGitWorkspaceError> => Effect.asVoid(gitConfig(args, false, file));
 
-/**
- * Reads one config key without retrying on the config lock.  Conditional
- * replacement uses this while it owns the lock itself; retrying here would
- * wait on the lock held by this very operation.
- */
-const gitConfigOnce = (
-  args: ReadonlyArray<string>,
-  tolerateUnset: boolean,
-  file: string,
-): Effect.Effect<string | undefined, UnsupportedGitWorkspaceError> =>
-  Effect.flatMap(
-    Effect.promise(() => runGitConfig(args, tolerateUnset, file)),
-    (result) => {
-      if (result.kind === "answered") return Effect.succeed(result.stdout);
-      if (result.kind === "unset") return Effect.succeed(undefined);
-      if (result.kind === "failed" && result.status === 128) {
-        return unsupported(
-          file,
-          `Git config is malformed (${result.detail})`,
-          "malformed-metadata",
-        );
-      }
-      return unsupported(
-        file,
-        `Git config is inaccessible (${result.kind === "failed" || result.kind === "retryable" ? result.detail : "unknown failure"})`,
-        "metadata-inaccessible",
-      );
-    },
-  );
-
-/**
- * Holds Git's real config lock while validating and publishing a replacement.
- * The lock itself is acquired with an exclusive create, then a separate copy
- * is edited by Git and atomically renamed over the config before the lock is
- * released.  This keeps ordinary `git config` writers out of the entire
- * read/modify/publish window.
- */
-const gitConfigReplaceExpected = (
-  file: string,
-  key: string,
-  expected: string,
-  value: string,
-): Effect.Effect<
-  void,
-  UnsupportedGitWorkspaceError | InvalidManagedIdentityError,
-  FileSystem.FileSystem
-> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const lockPath = `${file}.lock`;
-    const acquireLock = fs.writeFileString(lockPath, "", { flag: "wx" }).pipe(
-      Effect.retry({
-        while: (error) => error.reason._tag === "AlreadyExists",
-        schedule: Schedule.exponential(Duration.millis(10)).pipe(
-          Schedule.upTo({ duration: Duration.millis(400) }),
-        ),
-      }),
-    );
-    yield* Effect.acquireUseRelease(
-      acquireLock,
-      () =>
-        Effect.gen(function* () {
-          const current = yield* gitConfigOnce(["--file", file, "--get-all", key], true, file);
-          if ((current ?? "").trim() !== expected) {
-            return yield* Effect.fail(
-              new InvalidManagedIdentityError({
-                message: `${key} changed before conditional replacement`,
-              }),
-            );
-          }
-          const original = yield* fs.stat(file);
-          const temporary = yield* fs.makeTempFile({
-            directory: dirname(file),
-            prefix: ".supabase-git-config-",
-          });
-          return yield* Effect.acquireUseRelease(
-            Effect.succeed(temporary),
-            (path) =>
-              Effect.gen(function* () {
-                yield* fs.copyFile(file, path);
-                yield* fs.chmod(path, original.mode);
-                yield* gitConfigWrite(["--file", path, "--replace-all", key, value], path);
-                yield* fs.rename(path, file);
-              }),
-            (path) => fs.remove(path, { force: true }).pipe(Effect.orDie),
-          );
-        }),
-      () => fs.remove(lockPath, { force: true }).pipe(Effect.orDie),
-    );
-  }).pipe(Effect.catchTag("PlatformError", (error) => inaccessiblePlatformError(file, error)));
-
 export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(GitConfigStore, {
   getAll: (file, key) =>
     Effect.map(gitConfig(["--file", file, "--get-all", key], true, file), (stdout) =>
@@ -823,8 +673,6 @@ export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(Gi
   add: (file, key, value) => gitConfigWrite(["--file", file, "--add", key, value], file),
   replace: (file, key, value) =>
     gitConfigWrite(["--file", file, "--replace-all", key, value], file),
-  replaceExpected: (file, key, expected, value) =>
-    gitConfigReplaceExpected(file, key, expected, value),
 });
 
 const requireUuid = (
@@ -985,7 +833,6 @@ const ensureCheckoutIdentity = async (
       `${JSON.stringify(identity, null, 2)}\n`,
       {
         mode: 0o600,
-        temporaryId: createManagedUuid(idFactory, "git checkout identity temporary id"),
       },
     );
   } catch (error: unknown) {
@@ -1015,10 +862,10 @@ const ensureCheckoutIdentity = async (
 };
 
 export interface EnsureGitCheckoutIdentityResult {
-  readonly projectId: string;
+  readonly workspaceId: string;
   readonly checkoutId: string;
-  /** The common git directory, whose config holds the project identity. */
-  readonly projectIdentityLocation: string;
+  /** The common git directory, whose config holds the workspace identity. */
+  readonly workspaceIdentityLocation: string;
   /** This checkout's git directory, which holds its checkout identity. */
   readonly checkoutIdentityLocation: string;
   /**
@@ -1030,20 +877,22 @@ export interface EnsureGitCheckoutIdentityResult {
 }
 
 export interface GitCheckoutIdentityState {
-  readonly projectId: string | undefined;
+  readonly workspaceId: string | undefined;
   readonly checkoutId: string | undefined;
-  readonly projectIdentityLocation: string;
+  /** Last canonical workspace path recorded for explicit move detection. */
+  readonly workspacePath: string | undefined;
+  readonly workspaceIdentityLocation: string;
   readonly checkoutIdentityLocation: string;
 }
 
 /**
- * The project and checkout identities of a git checkout, minting whichever is
+ * The workspace and checkout identities of a git checkout, minting whichever is
  * missing.
  *
  * The two are stored apart because git's own rules are what keep them correct.
- * The project identity is repository-local config, so every linked worktree —
+ * The workspace identity is repository-local config, so every linked worktree —
  * including a bare repository's — reads the same one, and `git clone` copies none
- * of it, which is what makes a fresh clone a new project. The checkout identity
+ * of it, which is what makes a fresh clone a new local workspace. The checkout identity
  * is a file in the checkout's own git directory, which is per-worktree by
  * construction.
  */
@@ -1057,50 +906,23 @@ export const ensureGitCheckoutIdentity = (
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
-      const projectId = yield* ensureConfigId(
+      const workspaceId = yield* ensureConfigId(
         gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
+        GIT_WORKSPACE_ID_KEY,
+        "workspaceId",
         idFactory,
       );
       const checkoutClaim = yield* Effect.tryPromise({
         try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
         catch: asRaised,
       });
+      yield* ensureGitCheckoutLocation(inspection.gitDirectory, inspection.workspaceRoot);
       return {
-        projectId,
+        workspaceId,
         checkoutId: checkoutClaim.checkoutId,
-        projectIdentityLocation: inspection.commonDirectory,
+        workspaceIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
         checkoutIdentityCreated: checkoutClaim.created,
-      };
-    }),
-  );
-
-/** {@link ensureGitCheckoutIdentity} without the claim: absent stays absent. */
-export const readGitCheckoutIdentity = (
-  inspection: GitCheckoutInspection,
-): Effect.Effect<
-  GitCheckoutIdentityState,
-  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
-> =>
-  failsWithIdentity(
-    Effect.gen(function* () {
-      const projectId = yield* readConfigId(
-        gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
-      );
-      const identity = yield* Effect.tryPromise({
-        try: () => readCheckoutIdentity(inspection.gitDirectory),
-        catch: asRaised,
-      });
-      return {
-        projectId,
-        checkoutId: identity?.checkoutId,
-        projectIdentityLocation: inspection.commonDirectory,
-        checkoutIdentityLocation: inspection.gitDirectory,
       };
     }),
   );
@@ -1116,10 +938,10 @@ export const readGitCheckoutIdentityWithFileSystem = (
   failsWithIdentity(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const projectId = yield* readConfigId(
+      const workspaceId = yield* readConfigId(
         gitConfigPath(inspection.commonDirectory),
-        GIT_PROJECT_ID_KEY,
-        "projectId",
+        GIT_WORKSPACE_ID_KEY,
+        "workspaceId",
       );
       const content = yield* fs
         .readFileString(gitCheckoutIdentityPath(inspection.gitDirectory))
@@ -1143,10 +965,12 @@ export const readGitCheckoutIdentityWithFileSystem = (
               try: () => decodeGitCheckoutIdentity(content),
               catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
             });
+      const workspacePath = yield* readGitCheckoutLocation(inspection.gitDirectory);
       return {
-        projectId,
+        workspaceId,
         checkoutId: identity?.checkoutId,
-        projectIdentityLocation: inspection.commonDirectory,
+        workspacePath,
+        workspaceIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
       };
     }),
@@ -1203,35 +1027,4 @@ export const readBranchContextId = (
         "contextId",
       ),
     ),
-  );
-
-/**
- * Replaces the context claim for one branch after its identity transition has
- * been reserved.  The transition owns the expected value and callers reread
- * the key immediately after this write; this helper deliberately does not
- * mint or otherwise merge values.
- */
-export const replaceBranchContextId = (
-  inspection: GitCheckoutInspection,
-  branch: string,
-  expectedContextId: string,
-  contextId: string,
-): Effect.Effect<
-  void,
-  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore | FileSystem.FileSystem
-> =>
-  failsWithIdentity(
-    Effect.gen(function* () {
-      const name = yield* requireBranch(branch);
-      const id = yield* requireUuid(contextId, "contextId");
-      const expected = yield* requireUuid(expectedContextId, "expected contextId");
-      const store = yield* GitConfigStore;
-      yield* store.replaceExpected(
-        gitConfigPath(inspection.commonDirectory),
-        gitBranchContextIdKey(name),
-        expected,
-        id,
-      );
-    }),
   );

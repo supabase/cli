@@ -13,6 +13,7 @@ function fakeSession() {
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: () => Effect.void,
+    execBatch: () => Effect.void,
     query: (sql, params) =>
       Effect.sync(() => {
         queries.push({ sql, params });
@@ -142,4 +143,45 @@ describe("legacyApplySeedFiles scanner buffer size", () => {
       );
     },
   );
+});
+
+describe("legacyApplySeedFiles stepped-down session", () => {
+  it.effect("restores the role right after a reset and before the seed_files upsert", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+    writeFileSync(join(dir, "seed.sql"), "set role r;\nreset role;\ninsert into t values (1);");
+    const calls: Array<string> = [];
+    const session: LegacyDbSession = {
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      exec: (sql) =>
+        Effect.sync(() => {
+          calls.push(sql);
+        }),
+      execBatch: () => Effect.void,
+      query: (sql) =>
+        Effect.sync(() => {
+          calls.push(sql);
+          return [];
+        }),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+    };
+    const out = mockOutput();
+    return run(session, dir, ["seed.sql"], out).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const resetAt = calls.indexOf("reset role");
+          const upsertAt = calls.findIndex((sql) =>
+            sql.includes("INSERT INTO supabase_migrations.seed_files"),
+          );
+          // Injected immediately after the reset, so the following insert (and
+          // everything else in the file) runs as postgres again.
+          expect(calls[resetAt + 1]).toBe("SET SESSION ROLE postgres");
+          expect(upsertAt).toBeGreaterThan(resetAt);
+          expect(out.stderrText).not.toContain("WARN:");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });

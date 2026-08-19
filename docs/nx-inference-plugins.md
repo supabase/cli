@@ -22,8 +22,8 @@ Infers `knip:check` and `knip:fix` targets for any workspace package that has a 
 
 | Target | Command | Cached | Inputs |
 |--------|---------|--------|--------|
-| `knip:check` | `knip-bun` | Yes | Entry files from `knip.entry` (or `default` if none defined), `sharedGlobals`, `knip` package version |
-| `knip:fix` | `knip-bun --fix` | No | — |
+| `knip:check` | `knip-bun --exclude catalogReferences` | Yes | Entry files from `knip.entry` (or `default` if none defined), `sharedGlobals`, `knip` package version |
+| `knip:fix` | `knip-bun --fix --exclude catalogReferences` | No | — |
 
 **Input resolution:** If `knip.entry` lists explicit file patterns (e.g. `["src/index.ts", "src/**/*.test.ts"]`), those patterns are used as the cache inputs instead of the broad `default` named input. This means the cache is only invalidated when those specific files change, rather than on any file change in the project. If no `entry` is defined, it falls back to `["default", "sharedGlobals"]`. In both cases, the `knip` package version is included so a version bump triggers a re-check.
 

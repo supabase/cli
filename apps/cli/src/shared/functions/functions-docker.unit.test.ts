@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildFunctionsDockerRunArgs,
+  containerArchiveBytes,
   localDockerId,
   resolveDockerNetworkMode,
   runChildProcess,
@@ -178,6 +179,42 @@ describe("buildFunctionsDockerRunArgs", () => {
     expect(args).toContain("--label");
     expect(args).toContain("com.supabase.cli.project=My Weird/Project!!");
     expect(args).toContain("com.docker.compose.project=My Weird/Project!!");
+  });
+});
+
+describe("containerArchiveBytes", () => {
+  // Regular-file tar entries parsed straight from the ustar headers.
+  function tarRegularFileEntries(archive: Uint8Array): ReadonlyArray<[string, number]> {
+    const decoder = new TextDecoder();
+    const parseOctal = (field: Uint8Array) =>
+      Number.parseInt(decoder.decode(field).replaceAll("\0", "").trim() || "0", 8);
+    const entries: Array<[string, number]> = [];
+    let offset = 0;
+
+    while (offset + 512 <= archive.byteLength) {
+      const header = archive.subarray(offset, offset + 512);
+      if (header.every((byte) => byte === 0)) break;
+
+      const type = header[156];
+      if (type === 0 || type === 0x30) {
+        const name = decoder.decode(header.subarray(0, 100)).replaceAll("\0", "");
+        entries.push([name, parseOctal(header.subarray(100, 108))]);
+      }
+
+      const size = parseOctal(header.subarray(124, 136));
+      offset += 512 + Math.ceil(size / 512) * 512;
+    }
+
+    return entries;
+  }
+
+  it("strips leading slashes into root-relative tar entries with the contractual 0644 mode", async () => {
+    const archive = await containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
+    // The 0644 mode is contractual — a Bun default change must fail here, not as a
+    // runtime permission error inside the container.
+    expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
+    const files = await new Bun.Archive(archive).files();
+    expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");
   });
 });
 

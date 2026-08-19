@@ -21,6 +21,7 @@ formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/edge-runtime-version`                             | plain text | legacy opt-out's edge-runtime image tag                                                                                                                                                                                                               |
 | `<workdir>/supabase/.temp/postgres-version`                                 | plain text | legacy opt-out's shadow-DB image resolution                                                                                                                                                                                                           |
 | `<workdir>/supabase/migrations/*.sql`                                       | SQL        | smart mode — detect whether migrations exist                                                                                                                                                                                                          |
+| `<workdir>/supabase/roles.sql`                                              | SQL        | legacy opt-out — hashed into the catalog cache key, and on a catalog miss also into the shadow-baseline cache key (on warm hits too, not just cold ones) and applied to a cold shadow's baseline; missing file tolerated (hashed as empty)            |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                                   | JSON       | legacy opt-out's catalog cache                                                                                                                                                                                                                        |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar        | legacy opt-out catalog miss, warm shadow-cache hit — the matching snapshot is streamed into the fresh shadow; every cache-eligible acquire also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU/TTL (`SUPABASE_HOME` overrides the root) |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar        | legacy opt-out catalog miss — abandoned-partial sweep on every cache-eligible acquire; removed when older than an hour                                                                                                                                |
@@ -28,13 +29,14 @@ formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                                                            | Format | When                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation                                                                                                                                                                                   |
-| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | bundled-engine export metadata                                                                                                                                                                                                                 |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                               | JSON   | legacy opt-out's catalog cache                                                                                                                                                                                                                 |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`                                   | tar    | legacy opt-out catalog miss, cache-enabled COLD shadow provision creates the current key's snapshot; a warm hit `touch`es its mtime; LRU/TTL may delete other keys (`SUPABASE_HOME` overrides the root; `--no-cache` neither reads nor writes) |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                            |
+| Path                                                                                            | Format | When                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation                                                                                                                                                                                              |
+| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | bundled-engine export metadata                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                               | JSON   | legacy opt-out's catalog cache                                                                                                                                                                                                                            |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`                                   | tar    | legacy opt-out catalog miss, cache-enabled COLD shadow provision creates the current key's snapshot; a warm hit `touch`es its mtime; LRU/TTL may delete other keys (`SUPABASE_HOME` overrides the root; `--no-cache` neither reads nor writes)            |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial`                     | tar    | legacy opt-out catalog miss, during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than an hour |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                       |
 
 ## Subprocesses / Containers
 
@@ -46,17 +48,18 @@ formatting without disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                                           | Required? |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                                         | no        |
-| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                                              | no        |
-| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the legacy opt-out's shadow baseline cache                              | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; ON by default, set to `false`/`0` to opt out | no        |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                   | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                             | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                    | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                                       | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                | no        |
+| Variable                     | Purpose                                                                                                                                                               | Required? |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                                                                                                                                             | no        |
+| `DB_PASSWORD`                | password for `--linked` / `--db-url`                                                                                                                                  | no        |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the legacy opt-out's shadow baseline cache                                                                                  | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache for the legacy opt-out's catalog-miss shadows; ON by default, set to `false`/`0` to opt out                                                     | no        |
+| `SUPABASE_SHADOW_DEBUG`      | opt-in (default off) shadow phase-timing diagnostics on stderr (`shadow-debug:` lines) for the legacy opt-out's catalog-miss shadows; never touches stdout/exit codes | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                       | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                 | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                        | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                                                                                                                                           | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                    | no        |
 
 ## Exit Codes
 
@@ -90,8 +93,15 @@ always go to stderr, in every `--output-format`. On success:
 - Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
 - `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
   smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
-- `--output <dir>` selects a destination for this invocation without changing
-  config or activating it for later syncs.
+- `--output-dir <dir>` selects a destination for this invocation without changing
+  config or activating it for later syncs (TS-only; deliberately not
+  `--output`/`-o`, which the legacy root reserves for the global machine-format
+  flag — see `docs/go-cli-divergences.md`).
+- When `declarative_schema_path` is unset, the new `supabase/schemas` default is
+  empty, and the former `supabase/database` default still contains `.sql` files
+  or an export manifest, a WARNING on stderr explains the default move and how
+  to keep the existing tree. Read-only probe; never changes behavior or exit
+  codes.
 - Under the legacy opt-out, remote Supabase targets get the embedded pg-delta CA
   bundle written under `supabase/.temp/pgdelta/` and the URL rewritten to
   `sslmode=verify-ca`; the bundled engine uses the shared connection/TLS behavior.

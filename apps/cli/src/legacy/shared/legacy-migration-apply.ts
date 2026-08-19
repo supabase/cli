@@ -2,18 +2,19 @@ import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
-import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import {
   INSERT_MIGRATION_VERSION,
   MIGRATE_FILE_PATTERN,
   legacyCreateMigrationTable,
+  legacySortMigrationPathsByVersion,
 } from "./legacy-migration-history.ts";
 import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
@@ -58,6 +59,7 @@ const BOM_CODE_POINT = 0xfeff;
 // pipeline-incompatible here but wouldn't under that narrower definition. Not worth
 // changing behaviour over — flagging so a future review doesn't rediscover it.
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
+const DROP_INDEX_CONCURRENTLY_PATTERN = /^DROP\s+INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
@@ -94,15 +96,17 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
 
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE
- * [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
- * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the `BEGIN`/`COMMIT`
- * that wraps a migration, so `execMigrationBatch` runs them standalone.
+ * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
+ * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`. Such statements fail with SQLSTATE 25001
+ * inside the implicit transaction
+ * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
   return (
     CREATE_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
+    DROP_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     REINDEX_CONCURRENTLY_PATTERN.test(upper) ||
     VACUUM_PATTERN.test(upper) ||
     ALTER_SYSTEM_PATTERN.test(upper) ||
@@ -123,10 +127,33 @@ export const legacyHasTransactionControl = (sql: string): boolean => {
   return TRANSACTION_CONTROL_PATTERN.test(upper);
 };
 
-/** A buffered statement awaiting the next batch flush; `version` is the history insert. */
-type LegacyBatchItem =
-  | { readonly kind: "exec"; readonly sql: string }
-  | { readonly kind: "version" };
+const ROLE_REVERT_PATTERN =
+  /^(?:RESET\s+ROLE|RESET\s+SESSION\s+AUTHORIZATION|SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(?:NONE|DEFAULT)|SET\s+SESSION\s+AUTHORIZATION\s+DEFAULT|DISCARD\s+ALL)(?:\s|;|$)/u;
+
+// PostgreSQL's `check_role` compares the quoted value case-sensitively against
+// "none", so the quoted spellings are matched before the uppercase fold —
+// `SET ROLE "NONE"` selects a real role named `NONE`, never a reset.
+const QUOTED_ROLE_VALUE_PATTERN =
+  /^SET\s+(?:SESSION\s+)?ROLE(?:\s+TO\s+|\s*=\s*|\s+)(['"])(.*?)\1(?:\s|;|$)/iu;
+
+/**
+ * Whether a top-level statement reverts a stepped-down session to its login role
+ * (`RESET ROLE`, the generic-`SET` spellings of `role`'s reset, `RESET SESSION
+ * AUTHORIZATION` and friends, `DISCARD ALL`). File runners re-assert `postgres`
+ * right after each match, so the rest of the file keeps `current_user = postgres`
+ * as on a password session (supabase/cli#6236); reverts a lexical check cannot
+ * see (dynamic SQL, `SET LOCAL ROLE NONE` — deliberately unmatched, since a
+ * session-scoped restore would override its transaction scope) are backstopped
+ * by the trailing restore before any CLI-owned write. `RESET ALL` is
+ * deliberately absent — `role` carries `GUC_NO_RESET_ALL`.
+ */
+export const legacyRevertsToLoginRole = (sql: string): boolean => {
+  const trimmed = legacyTrimLeadingSqlComments(sql);
+  return (
+    ROLE_REVERT_PATTERN.test(trimmed.toUpperCase()) ||
+    QUOTED_ROLE_VALUE_PATTERN.exec(trimmed)?.[2] === "none"
+  );
+};
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
@@ -504,20 +531,28 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
 
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
- * Statements run
- * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
+ * Statements run inside an implicitly transactional extended-protocol batch,
+ * except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
  * cannot run in a transaction block: the open batch is flushed (committed), the
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history
  * insert goes in the final batch, so the migration is recorded only after every
- * statement succeeds. A file with no such statements is a single `BEGIN`/`COMMIT`.
+ * statement succeeds. On a stepped-down session ({@link LegacyDbSession.restoreRoleSql})
+ * the `postgres` role is re-asserted immediately after each top-level role-reverting
+ * statement ({@link legacyRevertsToLoginRole}) and again at the end of the file before
+ * the history insert (supabase/cli#6236), so the whole file behaves as on a password
+ * session and leaves the session role-clean for whatever runs next. Injected restores
+ * never shift `At statement: N` and are never recorded in the history row.
+ * A file with no such statements uses one batch and one Sync.
  * Pg-delta files whose first line is `-- pg-delta: transaction=false` instead run
  * every statement sequentially without a CLI-owned transaction. This keeps their
  * session preamble, nontransactional action, and cleanup on the same connection.
  *
  * Does NOT create the history table and does not unconditionally `RESET ALL` —
  * those are the migration-apply path's responsibility, so ordinary role/globals
- * files (`legacySeedGlobals`) stay reset-free. The one exception is best-effort
+ * files (`legacySeedGlobals`) stay reset-free. (The role re-assert above is not
+ * session hygiene but a connection-layer invariant, so it applies to every file
+ * runner, globals included.) The one exception is best-effort
  * cleanup after a failed pg-delta no-transaction file. When `forceNoVersion` is set
  * the history insert is skipped regardless of filename.
  *
@@ -533,7 +568,7 @@ const execMigrationBatch = <E>(
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     // Receives an already-read/parsed file (the read
     // happens earlier, which wraps the open
@@ -598,6 +633,8 @@ const execMigrationBatch = <E>(
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
 
+      const restoreRole = session.restoreRoleSql;
+
       const executeSequentially = (cleanup: string) =>
         Effect.gen(function* () {
           for (const [index, statement] of statements.entries()) {
@@ -605,6 +642,25 @@ const execMigrationBatch = <E>(
               .exec(statement)
               .pipe(
                 Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
+              );
+            if (restoreRole !== undefined && legacyRevertsToLoginRole(statement)) {
+              yield* session
+                .exec(restoreRole)
+                .pipe(
+                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, restoreRole)),
+                );
+            }
+          }
+          if (
+            restoreRole !== undefined &&
+            !(statements.length > 0 && legacyRevertsToLoginRole(statements[statements.length - 1]!))
+          ) {
+            yield* session
+              .exec(restoreRole)
+              .pipe(
+                Effect.mapError((cause) =>
+                  legacyFormatExecBatchError(cause, statements.length, restoreRole),
+                ),
               );
           }
           if (version.length > 0) {
@@ -616,7 +672,18 @@ const execMigrationBatch = <E>(
                 ),
               );
           }
-        }).pipe(Effect.tapError(() => session.exec(cleanup).pipe(Effect.ignore)));
+        }).pipe(
+          Effect.tapError(() =>
+            Effect.gen(function* () {
+              yield* session.exec(cleanup).pipe(Effect.ignore);
+              // Sequential statements ran outside a CLI transaction, so a failed
+              // file's `RESET ROLE` survives the cleanup; restore best-effort.
+              if (restoreRole !== undefined) {
+                yield* session.exec(restoreRole).pipe(Effect.ignore);
+              }
+            }),
+          ),
+        );
 
       // The pg-delta directive is file-level execution metadata. Run the complete
       // sequence on this session without adding transaction boundaries so session
@@ -637,62 +704,92 @@ const execMigrationBatch = <E>(
       // `executed` is the global statement index of the next statement to run, so the
       // error context stays accurate across flushed batches and standalone statements
       // (Go threads the same counter through `ExecBatch`).
-      let pending: ReadonlyArray<LegacyBatchItem> = [];
+      let pending: Array<string> = [];
       let executed = 0;
 
-      const flushBatch = Effect.gen(function* () {
-        if (pending.length === 0) return;
-        const items = pending;
-        pending = [];
-        const base = executed;
-        const body = Effect.gen(function* () {
-          for (const [offset, item] of items.entries()) {
-            const index = base + offset;
-            if (item.kind === "version") {
-              // Go defaults to the version-insert statement when all listed statements succeed.
-              yield* session
-                .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-                .pipe(
-                  Effect.mapError((cause) =>
-                    legacyFormatExecBatchError(cause, index, INSERT_MIGRATION_VERSION),
-                  ),
-                );
-            } else {
-              yield* session
-                .exec(item.sql)
-                .pipe(
-                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, item.sql)),
-                );
+      const flushBatch = (final: boolean) =>
+        Effect.gen(function* () {
+          const recordVersion = final && version.length > 0;
+          const trailingRestore = final ? restoreRole : undefined;
+          if (pending.length === 0 && !recordVersion && trailingRestore === undefined) return;
+          const batchStatements = pending;
+          const operations: Array<LegacyDbBatchStatement> = [];
+          // Injected role restores don't count toward `At statement: N`; track how
+          // many precede each op so failures keep the file's own numbering (a
+          // mid-file restore inherits its host statement's index; the trailing
+          // restore and the history insert report the file's statement count).
+          const injectedBefore: Array<number> = [];
+          let injected = 0;
+          let lastOpIsInjectedRestore = false;
+          for (const sql of batchStatements) {
+            operations.push({ sql });
+            injectedBefore.push(injected);
+            lastOpIsInjectedRestore = false;
+            if (restoreRole !== undefined && legacyRevertsToLoginRole(sql)) {
+              injected += 1;
+              operations.push({ sql: restoreRole });
+              injectedBefore.push(injected);
+              lastOpIsInjectedRestore = true;
             }
           }
-          yield* session.exec("COMMIT");
+          if (trailingRestore !== undefined && !lastOpIsInjectedRestore) {
+            operations.push({ sql: trailingRestore });
+            injectedBefore.push(injected);
+            injected += 1;
+          }
+          if (recordVersion) {
+            operations.push({
+              sql: INSERT_MIGRATION_VERSION,
+              params: [version, name, statements],
+            });
+            injectedBefore.push(injected);
+          }
+          const base = executed;
+          yield* session.execBatch(operations).pipe(
+            Effect.mapError((cause) => {
+              // Acquiring the batch's connection failed: there is no failing
+              // statement to name, so the connect error (and its suggestion) is
+              // surfaced verbatim instead of being rendered as `At statement: N`.
+              if (cause instanceof LegacyDbConnectError) return cause;
+              // `statementIndex` is set by every batch failure the driver raises; a
+              // session that omits it can only have failed before the first statement.
+              const raw = cause.statementIndex ?? 0;
+              const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
+              return legacyFormatExecBatchError(
+                cause,
+                globalIndex,
+                operations[raw]?.sql ?? statements[globalIndex] ?? INSERT_MIGRATION_VERSION,
+              );
+            }),
+          );
+          pending = [];
+          executed += batchStatements.length;
         });
-        yield* session.exec("BEGIN");
-        yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-        executed += items.length;
-      });
 
       for (const statement of statements) {
         if (legacyIsPipelineIncompatible(statement)) {
           // Flush the open batch, then run the incompatible statement on its own (no
           // surrounding transaction) so PostgreSQL accepts it.
-          yield* flushBatch;
+          yield* flushBatch(false);
           const index = executed;
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
           executed += 1;
         } else {
-          pending = [...pending, { kind: "exec", sql: statement }];
+          pending.push(statement);
         }
       }
-      if (version.length > 0) {
-        pending = [...pending, { kind: "version" }];
-      }
-      yield* flushBatch;
+      yield* flushBatch(true);
     }).pipe(
       Effect.mapError((error) =>
-        mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
+        // A batch connection failure is not an execution failure: it keeps its own
+        // error class (and `suggestion`) all the way out, exactly like the connect
+        // failure a caller would have seen from `connect` itself, instead of being
+        // relabeled as this file's statement-execution failure.
+        error instanceof LegacyDbConnectError
+          ? error
+          : mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
       ),
     );
   });
@@ -728,7 +825,7 @@ export const legacyApplyMigrationFile = <E>(
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string, dbError?: LegacyDbExecError) => E,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
@@ -756,14 +853,19 @@ export const legacyApplyMigrations = <E>(
   path: Path.Path,
   pending: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     if (pending.length === 0) return;
     yield* legacyCreateMigrationTable(session).pipe(
       Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
-    for (const migrationPath of pending) {
+    // Sorted by version, not by file name: `db push` has applied in version
+    // order since supabase/cli#6038, so callers that hand over a name-ordered
+    // listing (`db reset`, the shadow-database replay) would otherwise apply the
+    // same files in the opposite order (#6036). Idempotent for callers that
+    // already sorted.
+    for (const migrationPath of legacySortMigrationPathsByVersion(pending)) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
       // Reset connection state per migration before running the batch.
       yield* resetConnectionState(session, mapError);
@@ -784,7 +886,7 @@ export const legacySeedGlobals = <E>(
   path: Path.Path,
   globals: ReadonlyArray<string>,
   mapError: (message: string) => E,
-): Effect.Effect<void, E, Output> =>
+): Effect.Effect<void, E | LegacyDbConnectError, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
     for (const globalPath of globals) {
@@ -820,7 +922,7 @@ export const legacyExecSqlFile = <E>(
   mapError: (message: string, phase: "read" | "exec") => E,
   displayPath?: string,
   projectEnv?: Readonly<Record<string, string>>,
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
 
 /**
@@ -830,7 +932,9 @@ export const legacyExecSqlFile = <E>(
  * relative, verbatim when absolute) via the shared glob
  * ({@link legacySqlFilesGlob}), then runs each matched file's statements with
  * {@link legacyExecSqlFile} in glob order — no history table, no history row, and no
- * `RESET ALL` between files: connection state is never reset here.
+ * `RESET ALL` between files: connection state is never reset here (a stepped-down
+ * session's role re-assert at each file's end is the one exception — see
+ * {@link LegacyDbSession.restoreRoleSql}).
  *
  * Callers gate the call on the three-conjunct condition (`--experimental` + no resolved
  * version + pg-delta NOT enabled) themselves — this function only performs
@@ -867,7 +971,7 @@ export const legacyApplySchemaFiles = <E>(
   schemaPaths: ReadonlyArray<string>,
   mapError: (message: string, suggestion?: string) => E,
   projectEnv: Readonly<Record<string, string>> = {},
-): Effect.Effect<void, E> =>
+): Effect.Effect<void, E | LegacyDbConnectError> =>
   Effect.gen(function* () {
     const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
     if (files.length === 0) {

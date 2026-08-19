@@ -1772,7 +1772,9 @@ interface LegacyResolvedAuthHook {
 }
 
 export type LegacyResolvedAuthHooks = {
-  readonly [K in (typeof LEGACY_HOOK_TYPE_TO_CAMEL)[keyof typeof LEGACY_HOOK_TYPE_TO_CAMEL]]: LegacyResolvedAuthHook;
+  readonly [
+    K in (typeof LEGACY_HOOK_TYPE_TO_CAMEL)[keyof typeof LEGACY_HOOK_TYPE_TO_CAMEL]
+  ]: LegacyResolvedAuthHook;
 };
 
 /**

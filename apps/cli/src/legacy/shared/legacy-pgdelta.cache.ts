@@ -770,7 +770,9 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
-  shadowCacheOpts: LegacyShadowCacheOpts = {},
+  // No default: every caller must declare its provisioner's effective webhooks policy, or the
+  // key records config-following while the baseline forced `pg_net` on (review: Codex on #6184).
+  shadowCacheOpts: LegacyShadowCacheOpts,
 ) =>
   Effect.gen(function* () {
     const { spawner, localInputs } = built;
@@ -888,6 +890,10 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
+    // `legacyProvisionMigrationsShadow` migrates via `legacyMigrateShadowDatabase`, which forces
+    // `pg_net` on — the key must record that, not the config-following default (no `bypassCache`:
+    // `db diff` has no `--no-cache` on this path).
+    { webhooks: "enabled" },
   );
 });
 

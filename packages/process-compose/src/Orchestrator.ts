@@ -472,12 +472,12 @@ export class Orchestrator extends Context.Service<
                   // (code is null, only signal is set), so we catch and treat it
                   // as exit code 143 (128 + SIGTERM).
                   const waitForExit = handle.exitCode.pipe(
-                    Effect.map(
-                      (code): SpawnResult => ({ _tag: "ProcessExit", exitCode: Number(code) }),
-                    ),
-                    Effect.catch(
-                      (): Effect.Effect<SpawnResult> =>
-                        Effect.succeed({ _tag: "ProcessExit", exitCode: 143 }),
+                    Effect.map((code): SpawnResult => ({
+                      _tag: "ProcessExit",
+                      exitCode: Number(code),
+                    })),
+                    Effect.catch((): Effect.Effect<SpawnResult> =>
+                      Effect.succeed({ _tag: "ProcessExit", exitCode: 143 }),
                     ),
                   );
                   const waitForObservedOneShotExit =
@@ -486,9 +486,8 @@ export class Orchestrator extends Context.Service<
                           Effect.andThen(
                             waitForExit.pipe(
                               Effect.timeout(Duration.millis(100)),
-                              Effect.catch(
-                                (): Effect.Effect<SpawnResult> =>
-                                  Effect.succeed({ _tag: "ProcessExit", exitCode: 0 }),
+                              Effect.catch((): Effect.Effect<SpawnResult> =>
+                                Effect.succeed({ _tag: "ProcessExit", exitCode: 0 }),
                               ),
                             ),
                           ),
