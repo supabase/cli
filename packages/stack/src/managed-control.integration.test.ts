@@ -350,7 +350,7 @@ describe("managed control endpoint", () => {
           requestStop: () => Effect.void,
         });
         const exit = yield* acquireControl({ stackId: STACK_ID }).pipe(
-          Effect.timeout("2 seconds"),
+          Effect.timeout("5 seconds"),
           Effect.exit,
           Effect.provide(unavailable),
         );

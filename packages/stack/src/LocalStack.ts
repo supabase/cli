@@ -210,6 +210,17 @@ export const localStackLayer = (
             : [...current, nextState];
         });
 
+      const markDownloading = (service: ServiceName) =>
+        SubscriptionRef.update(stateRef, (current) => {
+          const index = current.findIndex((entry) => entry.name === service);
+          if (index === -1 || current[index]?.status === "Downloading") return current;
+          return current.map((entry, entryIndex) =>
+            entryIndex === index
+              ? new StackServiceState({ ...entry, status: "Downloading" })
+              : entry,
+          );
+        });
+
       const restoreStateIfDownloading = (
         service: ServiceName,
         previous: StackServiceState | undefined,
@@ -376,14 +387,7 @@ export const localStackLayer = (
                   (current, event) =>
                     Effect.gen(function* () {
                       if (event instanceof ServiceDownloadStarted) {
-                        const state = SubscriptionRef.getUnsafe(stateRef).find(
-                          (entry) => entry.name === event.service,
-                        );
-                        if (state !== undefined && state.status !== "Downloading") {
-                          yield* updateState(
-                            new StackServiceState({ ...state, status: "Downloading" }),
-                          );
-                        }
+                        yield* markDownloading(event.service);
                       }
                       if (event instanceof ServiceDownloadFinished) {
                         yield* restoreStateIfDownloading(

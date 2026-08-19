@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants } from "node:fs";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
@@ -48,10 +48,19 @@ sinks:
     uri: "http://${host}:${port}/api/logs?source_name=docker.logs.local"
 `;
 
+const canAccessSocket = (socket: string): boolean => {
+  try {
+    accessSync(socket, constants.R_OK | constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const unixSocketFromEnv = (value: string | undefined): string | undefined => {
   if (value === undefined || !value.startsWith("unix://")) return undefined;
   const socket = value.slice("unix://".length);
-  return socket.length > 0 && existsSync(socket) ? socket : undefined;
+  return socket.length > 0 && canAccessSocket(socket) ? socket : undefined;
 };
 
 const podmanSocketCandidates = (): ReadonlyArray<string> => {
@@ -72,12 +81,12 @@ const resolveVectorDockerSocket = (runtime: ContainerRuntime): string | undefine
     if (explicitPodmanSocket !== undefined) return explicitPodmanSocket;
     const explicitDockerSocket = unixSocketFromEnv(process.env.DOCKER_HOST);
     if (explicitDockerSocket !== undefined) return explicitDockerSocket;
-    return podmanSocketCandidates().find((socket) => existsSync(socket));
+    return podmanSocketCandidates().find(canAccessSocket);
   }
 
   const explicitDockerSocket = unixSocketFromEnv(process.env.DOCKER_HOST);
   if (explicitDockerSocket !== undefined) return explicitDockerSocket;
-  return existsSync("/var/run/docker.sock") ? "/var/run/docker.sock" : undefined;
+  return canAccessSocket("/var/run/docker.sock") ? "/var/run/docker.sock" : undefined;
 };
 
 export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
@@ -92,10 +101,7 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, []),
     volumes,
-    securityOptions:
-      opts.runtime === "podman" && socketPath !== undefined && socketPath !== "/var/run/docker.sock"
-        ? ["label=disable"]
-        : [],
+    securityOptions: opts.runtime === "podman" && socketPath !== undefined ? ["label=disable"] : [],
     env: socketPath === undefined ? {} : { DOCKER_HOST: "unix:///var/run/docker.sock" },
     entrypoint: "sh",
     cmd: [
