@@ -176,6 +176,8 @@ const fakeBatchServer = (
     readonly emptyAt?: number;
     /** Never answer an extended-protocol frame, so a batch hangs until interrupted. */
     readonly stall?: boolean;
+    /** Drop the connection on the first Sync, so a batch dies mid-flight. */
+    readonly destroyOnFirstSync?: boolean;
   } = {},
 ): Promise<{
   readonly port: number;
@@ -268,6 +270,10 @@ const fakeBatchServer = (
             }
           } else if (type === "S") {
             state.syncs += 1;
+            if (options.destroyOnFirstSync === true && state.syncs === 1) {
+              socket.destroy();
+              return;
+            }
             if (options.failOnSync === true && !failed) {
               socket.write(
                 errorResponse({
@@ -648,6 +654,28 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
             }),
           ),
         ),
+      );
+    }),
+  );
+
+  it.live("fails a batch whose connection drops after it was written, then recovers", () =>
+    // Guards the driver path that already worked: a socket dropped after the batch was
+    // written must surface as a batch failure, and its client must not be recycled.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstSync: true }));
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          const error = yield* session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
+            Effect.flip,
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("execBatch never settled after the connection died"),
+            }),
+          );
+          expect(error._tag).toBe("LegacyDbExecError");
+          expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
+          yield* session.execBatch([{ sql: "SELECT 3" }]);
+        }),
       );
     }),
   );

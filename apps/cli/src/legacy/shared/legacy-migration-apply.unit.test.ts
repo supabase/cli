@@ -11,7 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
+import { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
@@ -43,6 +43,7 @@ function fakeSession(
     failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
     restoreRoleSql?: string;
+    batchConnectionLost?: string;
   } = {},
 ) {
   const calls: Array<{
@@ -65,6 +66,9 @@ function fakeSession(
         sql: statements.map(({ sql }) => sql).join(";\n"),
         statements,
       });
+      if (opts.batchConnectionLost !== undefined) {
+        return Effect.fail(new LegacyDbConnectError({ message: opts.batchConnectionLost }));
+      }
       const statementIndex = opts.failAfterBatch
         ? statements.length
         : statements.findIndex(({ sql }) =>
@@ -211,6 +215,30 @@ describe("legacyApplyMigrationFile", () => {
             expect(msg).toContain("At statement: 0");
             expect(msg).toContain("ALTER TABLE a ADD COLUMN b int");
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("surfaces a lost batch connection verbatim, never as a failing statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_lost.sql");
+    writeFileSync(file, "ALTER TABLE a ADD COLUMN b int;");
+    const { session } = fakeSession({
+      batchConnectionLost: "connection to the database was lost before the batch could be sent",
+    });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(LegacyDbConnectError);
+          expect(error.message).toBe(
+            "connection to the database was lost before the batch could be sent",
+          );
+          const rendered = JSON.stringify(error);
+          expect(rendered).not.toContain("At statement:");
+          expect(rendered).not.toContain("ALTER TABLE a ADD COLUMN b int");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

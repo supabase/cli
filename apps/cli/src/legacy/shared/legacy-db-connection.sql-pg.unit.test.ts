@@ -1,14 +1,19 @@
 import { EventEmitter } from "node:events";
 import { Effect, Exit } from "effect";
 import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
+import type * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
+import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import {
   legacyAcquireProbedPool,
+  legacyBatchFailureError,
   legacyBuildConnectionUrl,
   legacyBuildPoolConfig,
   legacyBuildRawPgConfig,
   legacyInstallPoolErrorSwallow,
+  LegacyPgBatchQuery,
+  legacyShouldDiscardBatchClient,
   legacyPoolStepDownVerify,
   legacyIsTerminalConnectError,
   legacyIsUnixSocketHost,
@@ -322,6 +327,22 @@ describe("legacyBuildRawPgConfig", () => {
     const c = legacyBuildRawPgConfig({ ...base }, "h", 5432, undefined, 5);
     expect("ssl" in c).toBe(false);
   });
+
+  it("enables TCP keepalive with pgconn's five-minute idle delay on both config forms", () => {
+    const discrete = legacyBuildRawPgConfig({ ...base }, "db.example.com", 5432, false, 10);
+    expect(discrete.keepAlive).toBe(true);
+    expect(discrete.keepAliveInitialDelayMillis).toBe(300_000);
+
+    const url = legacyBuildRawPgConfig(
+      { ...base, options: "reference=abc" },
+      "db.example.com",
+      6543,
+      false,
+      2,
+    );
+    expect(url.keepAlive).toBe(true);
+    expect(url.keepAliveInitialDelayMillis).toBe(300_000);
+  });
 });
 
 describe("legacyBuildPoolConfig", () => {
@@ -350,6 +371,12 @@ describe("legacyBuildPoolConfig", () => {
     expect(c.idleTimeoutMillis).toBe(0);
     expect(c.max).toBe(1);
     expect(c.ssl).toBe(false);
+  });
+
+  it("carries the raw client's TCP keepalive through to every pooled connection", () => {
+    const c = legacyBuildPoolConfig({ ...base }, "127.0.0.1", 54322, false, 2, false);
+    expect(c.keepAlive).toBe(true);
+    expect(c.keepAliveInitialDelayMillis).toBe(300_000);
   });
 
   it("installs the step-down verify hook only when required", () => {
@@ -559,5 +586,161 @@ describe("legacyToExecError (pg server-error extraction)", () => {
     expect(error.code).toBe("ECONNRESET");
     expect(error.detail).toBeUndefined();
     expect(error.position).toBeUndefined();
+  });
+});
+
+describe("LegacyPgBatchQuery.submit", () => {
+  const fakeConnection = (writable: boolean) => {
+    const frames: Array<string> = [];
+    const record = (frame: string) => () => {
+      frames.push(frame);
+    };
+    return {
+      frames,
+      connection: {
+        stream: { writable, cork: record("cork"), uncork: record("uncork") },
+        parse: record("parse"),
+        bind: record("bind"),
+        describe: record("describe"),
+        execute: record("execute"),
+        sync: record("sync"),
+      } as unknown as Pg.Connection,
+    };
+  };
+
+  it("refuses to write a batch onto a stream that is no longer writable", () => {
+    const { connection, frames } = fakeConnection(false);
+    const batch = new LegacyPgBatchQuery([{ sql: "select 1" }], () => {});
+
+    const error = batch.submit(connection);
+
+    expect(error?.message).toBe(
+      "connection to the database was lost before the batch could be sent",
+    );
+    expect(batch.submitted).toBe(false);
+    expect(batch.poisoned).toBe(false);
+    expect(frames).toEqual([]);
+  });
+
+  it("writes parse/bind/describe/execute per statement and one sync while writable", () => {
+    const { connection, frames } = fakeConnection(true);
+    const batch = new LegacyPgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
+
+    expect(batch.submit(connection)).toBeNull();
+
+    expect(frames).toEqual([
+      "cork",
+      "parse",
+      "bind",
+      "describe",
+      "execute",
+      "parse",
+      "bind",
+      "describe",
+      "execute",
+      "sync",
+      "uncork",
+    ]);
+    expect(batch.submitted).toBe(true);
+  });
+});
+
+describe("legacyBatchFailureError", () => {
+  it("reports an unsent batch as a lost connection rather than a statement failure", () => {
+    const error = legacyBatchFailureError(
+      new Error("connection to the database was lost before the batch could be sent"),
+      { completed: 0, submitted: false, poisoned: false },
+    );
+
+    expect(error._tag).toBe("LegacyDbConnectError");
+    expect(error.message).toBe(
+      "connection to the database was lost before the batch could be sent",
+    );
+    expect(error[ErrorActionabilityId]).toMatchObject({ error_category: "db_connection" });
+  });
+
+  it("keeps the driver's own reason when pg refused the batch before submit", () => {
+    const error = legacyBatchFailureError(
+      new Error("Client has encountered a connection error and is not queryable"),
+      { completed: 0, submitted: false, poisoned: false },
+    );
+
+    expect(error._tag).toBe("LegacyDbConnectError");
+    expect(error.message).toBe(
+      "connection to the database was lost before the batch could be sent: " +
+        "Client has encountered a connection error and is not queryable",
+    );
+  });
+
+  it("reports a batch that never reached the driver the same way", () => {
+    const error = legacyBatchFailureError(new Error("client was closed"), undefined);
+
+    expect(error._tag).toBe("LegacyDbConnectError");
+    expect(error.message).toContain(
+      "connection to the database was lost before the batch could be sent",
+    );
+  });
+
+  it("keeps a partially written batch on the statement path", () => {
+    const error = legacyBatchFailureError(new Error("serialization blew up"), {
+      completed: 1,
+      submitted: false,
+      poisoned: true,
+    });
+
+    expect(error._tag).toBe("LegacyDbExecError");
+  });
+
+  it("keeps server-error mapping and the completed count for a statement failure", () => {
+    const error = legacyBatchFailureError(
+      new SqlError({
+        reason: new SqlSyntaxError({
+          cause: Object.assign(new Error('type "ltree" does not exist'), {
+            severity: "ERROR",
+            code: "42704",
+            detail: "Some detail line.",
+            position: "25",
+          }),
+          message: "Failed to execute statement",
+          operation: "execute",
+        }),
+      }),
+      { completed: 3, submitted: true, poisoned: false },
+    );
+
+    expect(error._tag).toBe("LegacyDbExecError");
+    expect(error).toMatchObject({
+      message: 'ERROR: type "ltree" does not exist (SQLSTATE 42704)',
+      code: "42704",
+      detail: "Some detail line.",
+      position: 25,
+      statementIndex: 3,
+    });
+  });
+});
+
+describe("legacyShouldDiscardBatchClient", () => {
+  it("discards a client whose batch never reached the wire", () => {
+    expect(legacyShouldDiscardBatchClient({ submitted: false }, Exit.succeed(undefined))).toBe(
+      true,
+    );
+  });
+
+  it("returns a client to the pool once its batch was written, error or not", () => {
+    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.succeed(undefined))).toBe(
+      false,
+    );
+    expect(
+      legacyShouldDiscardBatchClient({ submitted: true }, Exit.fail(new Error("server said no"))),
+    ).toBe(false);
+  });
+
+  it("discards a client whose batch was interrupted or died mid-flight", () => {
+    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.interrupt(1))).toBe(true);
+    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.die("boom"))).toBe(true);
+  });
+
+  it("keeps a client that was checked out but never used", () => {
+    expect(legacyShouldDiscardBatchClient(undefined, Exit.succeed(undefined))).toBe(false);
   });
 });

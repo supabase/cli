@@ -230,3 +230,11 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   pull."). An in-sync database is a finding, not a failure to troubleshoot, so the
   debug hint sent users chasing a non-existent bug. Message text and exit code — the
   parts scripts depend on — are unchanged.
+- A migration batch that never reached the wire (the connection died before or during
+  submit) fails as a connection error carrying the driver's reason, with no
+  `At statement: N` line and no statement echo. Go's `formatError`
+  (`apps/cli-go/pkg/migration/file.go:126-147`) renders every `ExecBatch` failure —
+  dead connection included — as `<err>\nAt statement: N\n<sql>`. Naming a statement
+  that provably never ran sent users debugging their own SQL for a transport failure,
+  so the TS shell reports the connectivity failure instead. A batch that was written
+  keeps Go's rendering unchanged.
