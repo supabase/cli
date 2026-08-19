@@ -19,3 +19,26 @@ export class LegacyFeedbackEmptyMessageError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+/** The server-enforced feedback length cap, mirrored client-side. */
+export const LEGACY_FEEDBACK_MESSAGE_LIMIT = 1000;
+
+export function legacyFeedbackTooLongMessage(length: number): string {
+  return (
+    `Feedback message is ${length} characters; ` +
+    `the limit is ${LEGACY_FEEDBACK_MESSAGE_LIMIT}. Please shorten it and try again.`
+  );
+}
+
+/**
+ * Message over the documented server-side limit — checked client-side so a
+ * user mistake fails fast with a friendly message instead of surfacing as a
+ * PostgREST error classified as a backend failure.
+ */
+export class LegacyFeedbackMessageTooLongError extends Data.TaggedError(
+  "LegacyFeedbackMessageTooLongError",
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}

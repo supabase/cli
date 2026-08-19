@@ -12,7 +12,13 @@ import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import type { LegacyFeedbackAddArgs } from "./add.command.ts";
-import { LEGACY_FEEDBACK_EMPTY_MESSAGE, LegacyFeedbackEmptyMessageError } from "./add.errors.ts";
+import {
+  LEGACY_FEEDBACK_EMPTY_MESSAGE,
+  LEGACY_FEEDBACK_MESSAGE_LIMIT,
+  LegacyFeedbackEmptyMessageError,
+  LegacyFeedbackMessageTooLongError,
+  legacyFeedbackTooLongMessage,
+} from "./add.errors.ts";
 
 // Resolution order: positional words → piped stdin (non-TTY) → interactive
 // prompt (TTY, text mode only — json/stream-json layers report
@@ -65,6 +71,20 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
   // finalizer every legacy command runs.
   yield* Effect.gen(function* () {
     const message = yield* legacyResolveFeedbackMessage(args);
+    // The backend enforces the 1000-character limit; mirroring it client-side
+    // keeps a user mistake from surfacing as a cryptic PostgREST error
+    // classified as a backend failure (same reason `feedback delete`
+    // pre-validates the token's UUID shape). Counted in code points to match
+    // Postgres `char_length`, so the client never rejects a message the
+    // server would accept.
+    const messageLength = [...message].length;
+    if (messageLength > LEGACY_FEEDBACK_MESSAGE_LIMIT) {
+      return yield* Effect.fail(
+        new LegacyFeedbackMessageTooLongError({
+          message: legacyFeedbackTooLongMessage(messageLength),
+        }),
+      );
+    }
     // `--agent yes|no` overrides detection (`auto`), same as root's output
     // selection and `db query`. When the override says "not an agent", the
     // detected tool name is suppressed too so the payload cannot contradict

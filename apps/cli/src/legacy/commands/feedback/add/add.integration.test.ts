@@ -28,7 +28,7 @@ import {
 import { legacyInvalidOutputFormatMessage } from "../../../shared/legacy-go-output-flag.ts";
 import { LEGACY_FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { legacyFeedbackAddHandler } from "./add.command.ts";
-import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./add.errors.ts";
+import { LEGACY_FEEDBACK_EMPTY_MESSAGE, legacyFeedbackTooLongMessage } from "./add.errors.ts";
 import { legacyFeedbackAdd } from "./add.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-feedback-add-int-");
@@ -373,6 +373,33 @@ describe("legacy feedback add", () => {
         message: LEGACY_FEEDBACK_EMPTY_MESSAGE,
       });
       expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a message over the 1000 character limit before any request", () => {
+    const { layer, submitter } = setupLegacyFeedback();
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAdd({ message: ["x".repeat(1001)] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "LegacyFeedbackMessageTooLongError",
+        message: legacyFeedbackTooLongMessage(1001),
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts a message at exactly the limit, counted in code points", () => {
+    // 1000 astral-plane characters are 2000 UTF-16 units; Postgres
+    // `char_length` counts code points, so the client-side check must too or
+    // it would reject a message the server accepts.
+    const message = "🦆".repeat(1000);
+    const { layer, submitter } = setupLegacyFeedback();
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: [message] });
+
+      expect(submitter.submissions).toHaveLength(1);
+      expect(submitter.submissions[0]?.message).toBe(message);
     }).pipe(Effect.provide(layer));
   });
 

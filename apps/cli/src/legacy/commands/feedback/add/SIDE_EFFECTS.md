@@ -50,6 +50,7 @@ every command.
 | ---- | ----------------------------------------------------------------------------------- |
 | `0`  | success                                                                             |
 | `1`  | no message from args, piped stdin, or an interactive prompt                         |
+| `1`  | message over the 1000-character limit (checked client-side, no request sent)        |
 | `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                   |
 | `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run) |
 
