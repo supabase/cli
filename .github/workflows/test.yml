@@ -2,6 +2,9 @@ name: Test
 
 # Release-notes PRs (head ref `release-notes/*`) only add markdown under
 # `release-notes/` and are published via approval — skip the full CI suite.
+#
+# Default path: ready (non-draft) PRs targeting `develop`, plus the merge queue.
+# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
 on:
   pull_request:
     types:
@@ -9,6 +12,7 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - converted_to_draft
     branches:
       - develop
   merge_group:
@@ -16,13 +20,23 @@ on:
       - checks_requested
     branches:
       - develop
+  workflow_call:
+    inputs:
+      force:
+        description: Run the suite even when the PR is a draft (used by run-ci.yml)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   actions: read
 
+# Literal prefix: called workflows inherit github.workflow from the caller
+# (`run-ci`), which would cancel the caller and the preview call. `inputs.force`
+# keeps a skipped native Test run on a develop draft from cancelling the
+# forced run-ci call.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: test.yml-${{ github.event.pull_request.number || github.head_ref || github.ref }}-${{ inputs.force && 'run-ci' || 'direct' }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +44,7 @@ jobs:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
+        inputs.force ||
         github.event.pull_request.draft == false)
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -53,6 +68,7 @@ jobs:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
+        inputs.force ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -76,6 +92,7 @@ jobs:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
+        inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -90,8 +107,17 @@ jobs:
           fetch-depth: 0
 
       - name: Set base and head SHAs for affected
-        if: github.event_name == 'pull_request'
+        if: github.event.pull_request && !inputs.force
         uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
+
+      # Reusable calls inherit the caller's github context (event_name stays
+      # pull_request). Use the PR payload directly so we do not depend on
+      # nx-set-shas understanding the caller event.
+      - name: Set base and head SHAs for run-ci reusable call
+        if: inputs.force && github.event.pull_request
+        run: |
+          echo "NX_BASE=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
+          echo "NX_HEAD=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
 
       - name: Set base and head SHAs for merge queue affected
         if: github.event_name == 'merge_group'
@@ -173,6 +199,7 @@ jobs:
       always() &&
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
+        inputs.force ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
     needs: test-e2e

@@ -2,6 +2,9 @@ name: Publish Preview CLI Packages
 
 # Release-notes PRs (head ref `release-notes/*`) are markdown-only and are not
 # meant to produce installable preview packages.
+#
+# Default path: ready (non-draft) PRs targeting `develop`.
+# `run-ci.yml` calls this workflow for drafts and stacked / non-develop PRs.
 on:
   pull_request:
     types:
@@ -9,22 +12,32 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+      - converted_to_draft
     branches:
       - develop
+  workflow_call:
+    inputs:
+      force:
+        description: Publish even when the PR is a draft (used by run-ci.yml)
+        type: boolean
+        default: false
 
 permissions:
   actions: read
   contents: read
 
+# Literal prefix: called workflows inherit github.workflow from the caller
+# (`run-ci`). `inputs.force` separates this call from a skipped native run on
+# a develop draft.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref }}
+  group: publish-preview-cli-packages.yml-${{ github.event.pull_request.number || github.head_ref }}-${{ inputs.force && 'run-ci' || 'direct' }}
   cancel-in-progress: true
 
 jobs:
   build:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      github.event.pull_request.draft == false
+      (inputs.force || github.event.pull_request.draft == false)
     name: Build preview CLI packages
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
@@ -37,7 +50,7 @@ jobs:
     needs: build
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      github.event.pull_request.draft == false &&
+      (inputs.force || github.event.pull_request.draft == false) &&
       needs.build.result == 'success'
     name: Publish preview package
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -121,7 +134,7 @@ jobs:
     needs: publish
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      github.event.pull_request.draft == false &&
+      (inputs.force || github.event.pull_request.draft == false) &&
       needs.publish.result == 'success'
     name: Post preview command comment
     runs-on: ubuntu-latest
