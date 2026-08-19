@@ -1,10 +1,10 @@
 export default {
-  fetch(request: Request): Response {
+  fetch(request) {
     const { pathname } = new URL(request.url);
     return Response.json({
-      worker: "hello-deno",
+      worker: "hello-node",
       path: pathname,
-      greeting: Deno.env.get("GREETING") ?? null,
+      greeting: process.env.GREETING ?? null,
     });
   },
 };

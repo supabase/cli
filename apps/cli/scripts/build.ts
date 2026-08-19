@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { workerStacks } from "../src/shared/workers/worker-stacks.ts";
+import { workerStacksDefine } from "./worker-stacks-define.ts";
 import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -99,12 +99,10 @@ const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE
   await bundleServeMainTemplate(),
 )}`;
 // Baked in so `workers new` can scaffold from a binary with no `stacks/`
-// directory beside it. Injected at every `bun build` site below — a target that
-// misses it produces a binary that scaffolds empty files, which no test or dev
-// run would catch.
-const workerStacksDefine = `--define=SUPABASE_WORKER_STACKS=${JSON.stringify(
-  JSON.stringify(workerStacks()),
-)}`;
+// directory beside it. Computed once, before any target is compiled, so an
+// incomplete stacks directory fails the build rather than shipping a binary
+// that scaffolds nothing.
+const stacksDefine = workerStacksDefine();
 const posthogBuildDefines = [
   `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
   `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
@@ -159,7 +157,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
     `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
     `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
     serveMainTemplateDefine,
-    workerStacksDefine,
+    stacksDefine,
     ...posthogBuildDefines,
     `--outfile=${outfile}`,
   ]);
@@ -309,7 +307,7 @@ async function buildMuslBinaries() {
         `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
         `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
         serveMainTemplateDefine,
-        workerStacksDefine,
+        stacksDefine,
         ...posthogBuildDefines,
         `--outfile=${outfile}`,
       ]);

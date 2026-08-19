@@ -22,13 +22,11 @@ const MARKERS: ReadonlyArray<{
   // An explicit Dockerfile always wins: it is a deliberate signal, not an
   // inference.
   { runtime: "dockerfile", files: ["Dockerfile"] },
-  // Deno and Bun are checked before plain `package.json` because either can
-  // still have one (editor tooling, a stray dependency) while a plain Node
-  // project has no `deno.json`/`bun.lock`.
+  // Deno is checked before plain `package.json` because a Deno project can
+  // still have one (editor tooling, a stray dependency) while a Node project
+  // has no `deno.json`.
   { runtime: "deno", files: ["deno.json", "deno.jsonc", "deno.lock"] },
-  { runtime: "bun", files: ["bun.lockb", "bun.lock"] },
   { runtime: "node", files: ["package.json"] },
-  { runtime: "python", files: ["requirements.txt", "pyproject.toml", "Pipfile"] },
 ];
 
 export const classifyWorkerDir = Effect.fnUntraced(function* (dir: string) {

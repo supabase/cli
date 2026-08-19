@@ -1,5 +1,3 @@
-FROM node:24-alpine
-WORKDIR /app
-COPY . .
-EXPOSE 8080
-CMD ["node", "server.js"]
+FROM public.ecr.aws/docker/library/node:22-alpine
+COPY server.mjs /srv/server.mjs
+CMD ["node", "/srv/server.mjs"]

@@ -338,7 +338,7 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
           ["source", sourceDisplay],
           ["runtime", runtime],
           ["size", `${size} · ${vcpuForSize(size)} vCPU`],
-          ["access", runtime === "sandbox" ? "private (no HTTP endpoint)" : "public"],
+          ["access", "public"],
           ["next", `supabase workers push ${name}`],
         ]),
       );

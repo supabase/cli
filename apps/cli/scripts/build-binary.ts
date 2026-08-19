@@ -2,7 +2,7 @@ import { $ } from "bun";
 import process from "node:process";
 
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
-import { workerStacks } from "../src/shared/workers/worker-stacks.ts";
+import { workerStacksDefine } from "./worker-stacks-define.ts";
 
 /**
  * Compile a single CLI shell to a standalone binary, embedding the pre-bundled
@@ -24,8 +24,5 @@ const outfile = `dist/supabase-${shell}`;
 const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
   await bundleServeMainTemplate(),
 )}`;
-const stacksDefineArg = `--define=SUPABASE_WORKER_STACKS=${JSON.stringify(
-  JSON.stringify(workerStacks()),
-)}`;
 
-await $`bun build ${entrypoint} --compile ${defineArg} ${stacksDefineArg} --outfile ${outfile}`;
+await $`bun build ${entrypoint} --compile ${defineArg} ${workerStacksDefine()} --outfile ${outfile}`;

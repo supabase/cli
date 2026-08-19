@@ -17,6 +17,7 @@ describe("parseWorkerRuntime", () => {
 
   test("rejects anything outside the catalog", () => {
     expect(parseWorkerRuntime("rust")).toBeUndefined();
+    expect(parseWorkerRuntime("sandbox")).toBeUndefined();
     expect(parseWorkerRuntime("")).toBeUndefined();
   });
 });
@@ -45,10 +46,10 @@ describe("sizes", () => {
 });
 
 describe("exposureFor", () => {
-  test("is public for everything that serves HTTP and private for a bare sandbox", () => {
+  test("is public for every runtime offered today", () => {
     expect(exposureFor("node")).toBe("public");
+    expect(exposureFor("deno")).toBe("public");
     expect(exposureFor("dockerfile")).toBe("public");
-    expect(exposureFor("sandbox")).toBe("private");
   });
 });
 

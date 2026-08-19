@@ -151,59 +151,6 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("skips packaging entirely for a bare sandbox and reports no URL", () => {
-    const repo = project({
-      "supabase/config.toml": `project_id = "demo"\n\n[workers.box]\nruntime = "sandbox"\n`,
-    });
-    const { layer, out, http } = setupLegacyWorkers({
-      workdir: repo.dir,
-      routes: {
-        [`POST ${workersRoute("/box/deploy")}`]: {
-          status: 202,
-          body: {
-            data: workerResource({
-              name: "box",
-              runtime: "sandbox",
-              exposure: "private",
-              buildState: "building",
-            }),
-          },
-        },
-        [`GET ${workersRoute("/box")}`]: {
-          status: 200,
-          body: {
-            data: workerResource({
-              name: "box",
-              runtime: "sandbox",
-              exposure: "private",
-              buildState: "active",
-            }),
-          },
-        },
-      },
-    });
-
-    return Effect.gen(function* () {
-      yield* push({ names: ["box"] });
-
-      expect(http.routeKeys).toEqual([
-        `POST ${workersRoute("/box/deploy")}`,
-        `GET ${workersRoute("/box")}`,
-      ]);
-
-      const deploy = http.requests[0];
-      expect(JSON.parse(deploy?.body ?? "{}").data.attributes).toEqual({
-        spec: {
-          runtime: "sandbox",
-          size: "2gb-1vcpu",
-          exposure: "private",
-          instances: 1,
-        },
-      });
-      expect(out.stdoutText).toContain("private (no HTTP endpoint)");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
-  });
-
   it.live("guesses the runtime for a directory with no config entry and says so", () => {
     const repo = project({
       "supabase/config.toml": `project_id = "demo"\n`,

@@ -10,7 +10,12 @@
  */
 
 /** A worker's runtime: its own Dockerfile, or one of the catalog base images. */
-export const WORKER_RUNTIMES = ["dockerfile", "node", "bun", "deno", "python", "sandbox"] as const;
+/**
+ * Kept in step with the directories under `./stacks/` — a runtime offered here
+ * with no starter files there would scaffold an empty worker, which
+ * `assertCompleteWorkerStacks` refuses.
+ */
+export const WORKER_RUNTIMES = ["dockerfile", "node", "deno"] as const;
 
 export type WorkerRuntime = (typeof WORKER_RUNTIMES)[number];
 
@@ -39,12 +44,9 @@ export function parseWorkerRuntime(value: string): WorkerRuntime | undefined {
 
 /** One-line description of each runtime, for `--runtime`'s prompt and help. */
 export const WORKER_RUNTIME_DESCRIPTIONS: Record<WorkerRuntime, string> = {
-  dockerfile: "Build the directory's own Dockerfile.",
-  node: "Node.js runtime (Web-standard fetch handler).",
-  bun: "Bun runtime (Web-standard fetch handler).",
-  deno: "Deno runtime (Web-standard fetch handler).",
-  python: "Python runtime (ASGI app).",
-  sandbox: "Bare sandbox environment; no HTTP handler.",
+  dockerfile: "Build the directory's own Dockerfile; it serves plain HTTP on $PORT.",
+  node: "Node.js catalog runtime (Web-standard fetch handler).",
+  deno: "Deno catalog runtime (Web-standard fetch handler).",
 };
 
 /**
@@ -95,12 +97,15 @@ export function formatApiSize(apiSize: string): string {
 }
 
 /**
- * `spec.exposure`: whether the worker is reachable over HTTP. Every catalog
- * runtime and every Dockerfile build serves traffic; a bare `sandbox` has no
- * HTTP handler at all, so it is deployed private and reached another way.
+ * `spec.exposure`: whether the worker is reachable over HTTP.
+ *
+ * Every runtime offered today serves traffic, so this is always `public` — it
+ * stays a named function because `exposure` is a required field of the deploy
+ * spec, and a runtime that does not serve HTTP (the API also accepts a bare
+ * sandbox) would answer differently here rather than at each call site.
  */
-export function exposureFor(runtime: WorkerRuntime): "public" | "private" {
-  return runtime === "sandbox" ? "private" : "public";
+export function exposureFor(_runtime: WorkerRuntime): "public" | "private" {
+  return "public";
 }
 
 /**

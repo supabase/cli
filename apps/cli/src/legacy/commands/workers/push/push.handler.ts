@@ -136,12 +136,9 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     sourceDir: worker.sourceDir,
   });
 
-  // A bare sandbox has no code to package, so it is the one runtime that does
-  // not need a source directory on disk at all.
-  const needsContext = runtime !== "sandbox";
   const sourceDisplay = displayPath(project.projectRoot, worker.sourceDir);
 
-  if (needsContext) {
+  {
     const stat = yield* fs.stat(worker.sourceDir).pipe(Effect.option);
     if (stat._tag === "None" || stat.value.type !== "Directory") {
       return yield* Effect.fail(
@@ -171,8 +168,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   // does not recognize is a config mistake worth naming.
   const size = yield* resolveSize({ name, recorded: worker.entry?.size });
 
-  let contextUploadId: string | undefined;
-  if (needsContext) {
+  let contextUploadId: string;
+  {
     const packaging = yield* output.task(`Packaging ${sourceDisplay}...`);
     const packaged = yield* packageWorkerDirectory(worker.sourceDir).pipe(
       Effect.tapError(() => packaging.fail()),
@@ -190,8 +187,6 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
     yield* uploading.succeed("Uploaded the build context.");
     contextUploadId = slot.uploadId;
-  } else {
-    yield* output.raw("Bare sandbox — no code is baked in.\n");
   }
 
   const spec: WorkerDeploySpec = {

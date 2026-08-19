@@ -56,9 +56,7 @@ describe("legacy workers new", () => {
       yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
       const workerDir = join(repo.dir, "supabase", "workers", "api");
-      expect(existsSync(join(workerDir, "index.js"))).toBe(true);
-      expect(existsSync(join(workerDir, "package.json"))).toBe(true);
-
+      expect(existsSync(join(workerDir, "index.mjs"))).toBe(true);
       expect(repo.config()).toBe(
         `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
       );
@@ -87,7 +85,7 @@ describe("legacy workers new", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
-      promptSelectResponses: ["python", "4gb"],
+      promptSelectResponses: ["node", "4gb"],
     });
 
     return Effect.gen(function* () {
@@ -97,9 +95,9 @@ describe("legacy workers new", () => {
         "Which runtime should this worker use?",
         "Which instance size should this worker use?",
       ]);
-      expect(repo.config()).toContain('runtime = "python"');
+      expect(repo.config()).toContain('runtime = "node"');
       expect(repo.config()).toContain('size = "4gb"');
-      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "main.py"))).toBe(true);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -122,16 +120,16 @@ describe("legacy workers new", () => {
 
     return Effect.gen(function* () {
       yield* legacyWorkersNew(
-        flags({ name: Option.some("api"), runtime: Option.some("bun"), size: Option.some("4gb") }),
+        flags({ name: Option.some("api"), runtime: Option.some("deno"), size: Option.some("4gb") }),
       );
       // The second run gives no runtime or size at all: the recorded ones answer for it.
       yield* legacyWorkersNew(flags({ name: Option.some("api"), force: true }));
 
       expect(out.promptSelectCalls).toHaveLength(0);
-      expect(repo.config()).toContain('runtime = "bun"');
+      expect(repo.config()).toContain('runtime = "deno"');
       expect(repo.config()).toContain('size = "4gb"');
       expect(out.stdoutText).toContain("Reusing the existing");
-      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.ts"))).toBe(true);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "main.ts"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -148,7 +146,7 @@ describe("legacy workers new", () => {
         }),
       );
 
-      expect(existsSync(join(repo.dir, "packages", "api", "index.js"))).toBe(true);
+      expect(existsSync(join(repo.dir, "packages", "api", "index.mjs"))).toBe(true);
       expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
       expect(repo.config()).toContain('source = "packages/api"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
@@ -201,7 +199,7 @@ describe("legacy workers new", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
-      expect(existsSync(join(repo.dir, "supabase", "services", "api", "index.js"))).toBe(true);
+      expect(existsSync(join(repo.dir, "supabase", "services", "api", "index.mjs"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -212,7 +210,7 @@ describe("legacy workers new", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersNew(flags({ name: Option.some("api"), runtime: Option.some("node") }));
 
-      expect(existsSync(join(created.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
+      expect(existsSync(join(created.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
       expect(readFileSync(join(created.dir, "supabase", "config.toml"), "utf8")).toBe(
         `[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
       );
@@ -246,7 +244,7 @@ describe("legacy workers new", () => {
       );
 
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "leftover.txt"))).toBe(false);
-      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
