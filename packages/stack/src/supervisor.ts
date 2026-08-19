@@ -436,6 +436,17 @@ const runManaged = (
           : Effect.fail(error),
       ),
     );
+    if (initialAcquisition._tag === "Attached") {
+      const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
+      const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
+      if (revalidatedStackId !== stackId) {
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: "Workspace identity changed before supervisor attach",
+          }),
+        );
+      }
+    }
     if (acquisition._tag === "Attached") {
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();

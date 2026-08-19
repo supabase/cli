@@ -23,12 +23,12 @@ import {
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
-  controlEndpoint,
+  controlEndpointCandidates,
   ControlTransport,
   probeControl,
   type ControlAcquisition,
-  type ControlOwnerStatus,
   type ControlOwnership,
+  type ControlProbe,
 } from "./control.ts";
 import {
   discoverEnvironment,
@@ -41,10 +41,15 @@ import {
   type WorkspaceDiscovery,
 } from "./environment.ts";
 import { GitConfigStore, inspectWorkspace } from "./git.ts";
-import { updateGitCheckoutLocationOwned } from "./identity.ts";
+import {
+  canonicalizeManagedWorkspacePathWithFileSystem,
+  readOrdinaryWorkspaceIdentityWithFileSystem,
+  updateGitCheckoutLocationOwned,
+} from "./identity.ts";
 import {
   ManagedExactPortOccupiedError,
   InvalidManagedStackNameError,
+  InvalidManagedIdentityError,
   ManagedPortAllocationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
@@ -215,7 +220,7 @@ export interface ManagedStackManagerShape {
   ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
   readonly probeControl: (
     stackId: string,
-  ) => Effect.Effect<ControlOwnerStatus | undefined, ManagedStackManagerError>;
+  ) => Effect.Effect<ControlProbe | undefined, ManagedStackManagerError>;
   readonly readStack: (
     request: ReadStackRequest,
   ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
@@ -374,10 +379,17 @@ const conflictError = (
     ownerKey: owner.ports.find((candidate) => candidate.port === assignment.port)?.key,
   });
 
+interface ManagedStackManagerOptions {
+  readonly stateRoot: string;
+  /** Test seam: disable well-known default ports for automatic allocation. */
+  readonly preferCatalogDefaults?: boolean;
+}
+
 const makeManager = (
-  stateRoot: string,
+  options: ManagedStackManagerOptions,
 ): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
   Effect.gen(function* () {
+    const { stateRoot, preferCatalogDefaults = true } = options;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     const gitConfig = yield* GitConfigStore;
@@ -391,6 +403,59 @@ const makeManager = (
       );
     const store = yield* makeStackStore(stateRoot);
     const lifecycleLock = Semaphore.makeUnsafe(1);
+
+    const validateOrdinaryWorkspaceIdentity = (
+      discovery: WorkspaceDiscovery,
+    ): Effect.Effect<void, ManagedStackManagerError> =>
+      Effect.gen(function* () {
+        if (discovery.workspace.kind !== "folder") return;
+        const listings = yield* store.list();
+        const matching = listings
+          .filter(isHealthyDocument)
+          .map((listing) => listing.document)
+          .filter(
+            (document) =>
+              document.identity.workspaceId === discovery.identity.workspaceId &&
+              document.identity.checkoutId === discovery.identity.checkoutId &&
+              document.identity.contextId === discovery.identity.contextId &&
+              document.identity.localProjectKey === discovery.identity.localProjectKey,
+          );
+        for (const document of matching) {
+          const persistedPath = document.workspace.path;
+          const persistedInfo = yield* fileSystem
+            .stat(persistedPath)
+            .pipe(
+              Effect.catchTag("PlatformError", (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+              ),
+            );
+          if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
+          const canonicalPersistedPath = yield* provideDependencies(
+            canonicalizeManagedWorkspacePathWithFileSystem(persistedPath),
+          );
+          if (canonicalPersistedPath === discovery.workspace.path) continue;
+          const persistedInspection = yield* provideDependencies(
+            inspectWorkspace(canonicalPersistedPath),
+          );
+          if (persistedInspection.kind !== "ordinary-folder") continue;
+          const marker = yield* provideDependencies(
+            readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPersistedPath),
+          );
+          if (
+            marker !== undefined &&
+            marker.workspaceId === discovery.identity.workspaceId &&
+            marker.checkoutId === discovery.identity.checkoutId &&
+            marker.contextId === discovery.identity.contextId
+          ) {
+            return yield* Effect.fail(
+              new InvalidManagedIdentityError({
+                message:
+                  "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
+              }),
+            );
+          }
+        }
+      });
 
     const allocateManagedPorts = (
       ownership: ControlOwnership,
@@ -411,6 +476,7 @@ const makeManager = (
             disabledFields: request.portDocument.disabledFields,
             intents: resolvePortIntents(request.portDocument),
             persisted,
+            preferCatalogDefaults,
           });
           const requests = portRequests(plan);
           const exactRequests = requests.filter((item) => item.selection.kind === "exact");
@@ -446,7 +512,9 @@ const makeManager = (
             );
           }
           const strictReserved = new Set<number>();
-          const exactReserved = new Set<number>([(yield* controlEndpoint(request.stackId)).port]);
+          const exactReserved = new Set<number>(
+            (yield* controlEndpointCandidates(request.stackId)).map(({ port }) => port),
+          );
           const owners = new Map<
             number,
             ReadonlyArray<{
@@ -455,7 +523,9 @@ const makeManager = (
             }>
           >();
           for (const listing of listings.filter(isHealthyDocument)) {
-            exactReserved.add((yield* controlEndpoint(listing.document.id)).port);
+            for (const candidate of yield* controlEndpointCandidates(listing.document.id)) {
+              exactReserved.add(candidate.port);
+            }
             if (listing.document.id === request.stackId) continue;
             for (const assignment of listing.document.ports) {
               const liveExact =
@@ -626,12 +696,14 @@ const makeManager = (
       Effect.gen(function* () {
         const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
           return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
         if (existing === undefined) return undefined;
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         const drift = stackDrift(existing, request.portDocument);
         return drift.length === 0 ? existing : { ...existing, drift };
       });
@@ -646,6 +718,7 @@ const makeManager = (
       Effect.gen(function* () {
         const stackName = yield* validateManagedStackName(request.stackName ?? "default");
         const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+        yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
           return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
         }
@@ -664,13 +737,19 @@ const makeManager = (
                   ),
             ),
             Effect.retry({
-              schedule: Schedule.spaced("20 millis").pipe(Schedule.upTo({ times: 250 })),
+              // A held repair fence means another process is actively
+              // repairing this workspace; wait out a realistic repair
+              // (Git operations included) instead of failing after ~5s.
+              schedule: Schedule.spaced("20 millis").pipe(
+                Schedule.upTo({ duration: "30 seconds" }),
+              ),
               while: (error) => error instanceof ManagedWorkspaceRepairConflictError,
             }),
           ),
         );
         return yield* Effect.gen(function* () {
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
+          yield* validateOrdinaryWorkspaceIdentity(refreshed);
           if (refreshed.state === "needsRepair") {
             return yield* Effect.fail(workspaceRepairConflict(refreshed.reason));
           }
@@ -948,8 +1027,18 @@ const makeManager = (
 
     return {
       stateRoot: store.stateRoot,
-      discoverWorkspace: (path) => provideDependencies(discoverEnvironment(path)),
-      ensureWorkspace: (path) => provideDependencies(ensureEnvironment(path)),
+      discoverWorkspace: (path) =>
+        Effect.gen(function* () {
+          const discovery = yield* provideDependencies(discoverEnvironment(path));
+          yield* validateOrdinaryWorkspaceIdentity(discovery);
+          return discovery;
+        }),
+      ensureWorkspace: (path) =>
+        Effect.gen(function* () {
+          const discovery = yield* provideDependencies(ensureEnvironment(path));
+          yield* validateOrdinaryWorkspaceIdentity(discovery);
+          return discovery;
+        }),
       acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
       probeControl: (stackId) => provideDependencies(probeControl(stackId)),
       readStack,
@@ -965,11 +1054,12 @@ const makeManager = (
   });
 
 /** Internal manager layer. Platform layers provide filesystem, Git, and control transport. */
-export const managedStackManagerLayer = (options: {
-  readonly stateRoot: string;
-}): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
-  Layer.effect(ManagedStackManager, makeManager(options.stateRoot));
+export const managedStackManagerLayer = (
+  options: ManagedStackManagerOptions,
+): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
+  Layer.effect(ManagedStackManager, makeManager(options));
 
 export const makeManagedStackManager = (
   stateRoot: string,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> => makeManager(stateRoot);
+): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
+  makeManager({ stateRoot });

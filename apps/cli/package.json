@@ -43,7 +43,7 @@
     "jose": "^6.2.8"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.227",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.228",
     "@anthropic-ai/sdk": "^0.116.0",
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
@@ -65,7 +65,7 @@
     "@types/pg-copy-streams": "^1.2.5",
     "@types/react": "^19.2.18",
     "@typescript/native-preview": "catalog:",
-    "@vercel/detect-agent": "^1.2.4",
+    "@vercel/detect-agent": "^1.2.5",
     "@vitest/coverage-istanbul": "catalog:",
     "dotenv": "^17.4.2",
     "effect": "catalog:",
@@ -82,7 +82,7 @@
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.9",
-    "smol-toml": "^1.7.1",
+    "smol-toml": "^1.8.0",
     "tldts": "catalog:",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "catalog:",

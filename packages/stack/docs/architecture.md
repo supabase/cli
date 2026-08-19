@@ -104,9 +104,10 @@ runtime logs, and `runtime/` for supervisor-owned runtime files. The
 `ManagedStackManager` is the only component that writes `stack.json`.
 
 Control ownership is the liveness and mutation authority. `acquireControl`
-returns `Owned` for the process that bound the deterministic endpoint or
-`Attached` for a live owner. An attached caller uses the owner's endpoint for
-runtime requests; it never edits the document directly.
+returns `Owned` for the process that bound one of the deterministic endpoint
+candidates or `Attached` for a live owner found on any candidate. An attached
+caller uses the owner's actual endpoint for runtime requests; it never edits
+the document directly.
 
 ### Start and attach
 
@@ -124,8 +125,8 @@ runtime requests; it never edits the document directly.
    `stack.start()` over the control transport when service startup is needed.
 
 `connectManagedStack` reads the document, probes the deterministic endpoint
-without binding it, and returns a `RemoteStack` only when the owner reports a
-ready running state. Read-only status and discovery therefore do not claim an
+candidates without binding them, and returns a `RemoteStack` against the
+owner's actual endpoint only when the owner reports a ready running state. Read-only status and discovery therefore do not claim an
 endpoint; mutating operations acquire control ownership.
 
 ### Update, stop, and delete
@@ -203,14 +204,18 @@ persisted endpoint, or another stack's reservation under the normal exact-port
 rules. A persisted automatic assignment in the control range is invalid and
 fails loudly rather than being silently migrated.
 
-The control endpoint is derived from the stack id and served on loopback. A
-persisted endpoint is accepted only when it matches that derivation. A rare
-hash collision or unrelated listener makes control acquisition fail with a
-typed conflict; a read-only probe treats the address as non-live and never
-claims it. An exact service port can still equal the future endpoint of an
-identity that has never started, so that low-probability conflict is rejected
-when ownership is acquired rather than forbidding every explicit port in the
-reserved range.
+The control endpoint is derived from the stack id and served on loopback. The
+derivation yields a short deterministic candidate sequence rather than a
+single port: an owner binds the first free candidate, skipping candidates
+occupied by other stacks or unrelated listeners, and readers scan the same
+sequence and match the published `ownershipId`. A hash collision between two
+stack ids therefore degrades to the collided stack binding its next candidate
+instead of failing. Acquisition fails with a typed conflict only when every
+candidate is occupied by a foreign listener; a read-only probe treats an
+address with no matching owner as non-live and never claims it. An exact
+service port can still equal a candidate of an identity that has never
+started, so every stack's full candidate set is reserved against exact-port
+requests rather than forbidding every explicit port in the reserved range.
 
 This is deliberately a small single-user localhost mechanism. The control
 protocol has no token authentication; ownership, endpoint identity, and

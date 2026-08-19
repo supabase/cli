@@ -1,0 +1,67 @@
+name: run-ci
+
+# Opt-in full develop CI for PRs that Test.yml / preview do not already cover:
+# stacked PRs (base is not develop) and drafts. Ready develop PRs stay on the
+# existing workflows so required check names and concurrency are unchanged.
+#
+# Add the `run-ci` label to start the suite; remove it to cancel in-progress
+# runs via this workflow's concurrency group. Other labels do not retrigger.
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+      - unlabeled
+      - converted_to_draft
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+# Unrelated label events still start a run; give them a unique group so they
+# cannot cancel an in-progress suite. Removing `run-ci` stays on the main
+# group and cancels via cancel-in-progress.
+concurrency:
+  group: >-
+    run-ci.yml-${{ github.event.pull_request.number || github.ref }}${{
+      ((github.event.action == 'labeled' || github.event.action == 'unlabeled')
+        && github.event.label.name != 'run-ci'
+        && format('-noop-{0}', github.run_id))
+      || ''
+    }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      contains(github.event.pull_request.labels.*.name, 'run-ci') &&
+      (github.event.pull_request.draft || github.base_ref != 'develop') &&
+      ((github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled') ||
+        github.event.label.name == 'run-ci')
+    uses: ./.github/workflows/test.yml
+    with:
+      force: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+  preview:
+    name: Preview packages
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      contains(github.event.pull_request.labels.*.name, 'run-ci') &&
+      (github.event.pull_request.draft || github.base_ref != 'develop') &&
+      ((github.event.action != 'labeled' &&
+          github.event.action != 'unlabeled') ||
+        github.event.label.name == 'run-ci')
+    uses: ./.github/workflows/publish-preview-cli-packages.yml
+    with:
+      force: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}

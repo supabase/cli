@@ -3,7 +3,7 @@ import { NodeServices } from "@effect/platform-node";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
-import { chmod, readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
@@ -283,13 +283,18 @@ describe("Stack", () => {
       ).toBe("StackBuildError");
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
+      // Replace the workspace directory with a plain file so the config write
+      // fails for any user — permission bits alone are bypassed by root.
       const runtimeDirectory = join(runtimeRoot, "edge-runtime");
-      yield* Effect.promise(() => chmod(runtimeDirectory, 0o500));
+      yield* Effect.promise(async () => {
+        await rm(runtimeDirectory, { recursive: true, force: true });
+        await writeFile(runtimeDirectory, "");
+      });
       const failedBundle = functionsBundle(runtimeRoot, "failed-secret");
       const error = yield* stack.reloadFunctions({ functions: failedBundle }).pipe(Effect.flip);
       expect(error._tag).toBe("StackBuildError");
 
-      yield* Effect.promise(() => chmod(runtimeDirectory, 0o700));
+      yield* Effect.promise(() => rm(runtimeDirectory));
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
@@ -304,12 +309,7 @@ describe("Stack", () => {
       ).toBe(false);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.promise(async () => {
-          await chmod(join(runtimeRoot, "edge-runtime"), 0o700).catch(() => {});
-          await rm(runtimeRoot, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
       Effect.timeout("5 seconds"),
     );
   });
@@ -1607,14 +1607,10 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       yield* stack.start();
-      const authChanges = yield* stack.stateChanges("auth");
-      const stopped = yield* authChanges.pipe(
-        Stream.filter((state) => state.status === "Stopped"),
-        Stream.runHead,
-        Effect.forkChild({ startImmediately: true }),
-      );
+      // `stopService` settles the public projection before returning, so the
+      // stopped state is observable immediately without stream coordination.
       yield* stack.stopService("auth");
-      expect((yield* Fiber.join(stopped))._tag).toBe("Some");
+      expect((yield* stack.getState("auth")).status).toBe("Stopped");
 
       yield* stack.stop();
       yield* stack.start();

@@ -1056,6 +1056,7 @@ const connect = (
     };
 
     const session: LegacyDbSession = {
+      ...(stepDownRequired ? { restoreRoleSql: SET_SESSION_ROLE } : {}),
       exec: (sql) => client.unsafe(sql).pipe(Effect.asVoid, Effect.mapError(legacyToExecError)),
       execBatch,
       query: (sql, params) =>
