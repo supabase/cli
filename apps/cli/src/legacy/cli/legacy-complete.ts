@@ -1258,7 +1258,7 @@ function legacyHelpArgumentCandidates(
   }
 
   const resolved = commandChain[commandChain.length - 1] ?? root;
-  const visibleSubcommands = legacyFlattenSubcommands(resolved).filter((sub) => !sub.hidden);
+  const visibleSubcommands = legacyFlattenSubcommands(resolved).filter((sub) => !sub.unlisted);
   const candidates: Array<LegacyCompletionCandidate> = visibleSubcommands.map((sub) => ({
     name: sub.name,
     description: sub.shortDescription ?? sub.description,
@@ -1483,7 +1483,9 @@ export function legacyClassifyCompletion(
   // `len(finalArgs) == 0` gate) — including the directive it would otherwise
   // set, which stays at `Default` in that case (`completions.go:489,499-522`).
   if (leftoverArgs.length === 0) {
-    const visibleSubcommands = legacyFlattenSubcommands(finalCommand).filter((sub) => !sub.hidden);
+    const visibleSubcommands = legacyFlattenSubcommands(finalCommand).filter(
+      (sub) => !sub.unlisted,
+    );
     if (visibleSubcommands.length > 0) {
       directive = LegacyCompletionDirective.NoFileComp;
       const subcommandCandidates: Array<LegacyCompletionCandidate> = visibleSubcommands.map(

@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { buildGraph } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
-import { chmod, readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
@@ -247,13 +247,18 @@ describe("Stack", () => {
       ).toBe("StackBuildError");
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
+      // Replace the workspace directory with a plain file so the config write
+      // fails for any user — permission bits alone are bypassed by root.
       const runtimeDirectory = join(runtimeRoot, "edge-runtime");
-      yield* Effect.promise(() => chmod(runtimeDirectory, 0o500));
+      yield* Effect.promise(async () => {
+        await rm(runtimeDirectory, { recursive: true, force: true });
+        await writeFile(runtimeDirectory, "");
+      });
       const failedBundle = functionsBundle(runtimeRoot, "failed-secret");
       const error = yield* stack.reloadFunctions({ functions: failedBundle }).pipe(Effect.flip);
       expect(error._tag).toBe("StackBuildError");
 
-      yield* Effect.promise(() => chmod(runtimeDirectory, 0o700));
+      yield* Effect.promise(() => rm(runtimeDirectory));
       yield* stack.reloadFunctions();
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
@@ -268,12 +273,7 @@ describe("Stack", () => {
       ).toBe(false);
     }).pipe(
       Effect.provide(layer),
-      Effect.ensuring(
-        Effect.promise(async () => {
-          await chmod(join(runtimeRoot, "edge-runtime"), 0o700).catch(() => {});
-          await rm(runtimeRoot, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.promise(() => rm(runtimeRoot, { recursive: true, force: true }))),
       Effect.timeout("5 seconds"),
     );
   });
@@ -787,13 +787,9 @@ describe("Stack", () => {
             .pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(authSpawnStarted);
 
-          const activationCompleted = yield* Effect.race(
-            activator.activate("postgres").pipe(Effect.as(true)),
-            Effect.sleep("200 millis").pipe(Effect.as(false)),
-          );
+          yield* activator.activate("postgres");
 
           yield* Fiber.interrupt(manualStart);
-          expect(activationCompleted).toBe(true);
           yield* stack.stop();
         }).pipe(Effect.provide(layer));
       }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
@@ -837,14 +833,10 @@ describe("Stack", () => {
         const starting = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(postgresReleaseStarted);
 
-        const mailpitBeganConcurrently = yield* Effect.race(
-          Deferred.await(mailpitReleaseStarted).pipe(Effect.as(true)),
-          Effect.sleep("200 millis").pipe(Effect.as(false)),
-        );
+        yield* Deferred.await(mailpitReleaseStarted);
         yield* Deferred.succeed(allowPostgresRelease, undefined);
         yield* Fiber.interrupt(starting);
 
-        expect(mailpitBeganConcurrently).toBe(true);
         yield* stack.stop();
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
@@ -881,7 +873,6 @@ describe("Stack", () => {
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Fiber.join(disposeFiber);
         yield* Deferred.succeed(allowSpawn, undefined);
-        yield* Effect.sleep("20 millis");
         yield* Fiber.interrupt(activationFiber);
 
         expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
@@ -1096,16 +1087,9 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       yield* stack.start();
-      // `stopService` applies its transition through the orchestrator's event queue and
-      // the projection sync, so await the projected `Stopped` state off the event
-      // stream (subscribed before the trigger) instead of sleeping through the hops.
-      const stoppedFiber = yield* stack.allStateChanges().pipe(
-        Stream.filter((state) => state.name === "auth" && state.status === "Stopped"),
-        Stream.runHead,
-        Effect.forkChild({ startImmediately: true }),
-      );
+      // `stopService` settles the public projection before returning, so the
+      // stopped state is observable immediately without stream coordination.
       yield* stack.stopService("auth");
-      expect((yield* Fiber.join(stoppedFiber))._tag).toBe("Some");
       expect((yield* stack.getState("auth")).status).toBe("Stopped");
 
       yield* stack.stop();
@@ -1118,12 +1102,16 @@ describe("Stack", () => {
 
   it.live("releases only the ports in a lazy service dependency closure", () => {
     const released = new Set<PortField>();
+    const authReleaseStarted = Deferred.makeUnsafe<void>();
     const lease: PortLease = {
       ports: defaultPorts,
       reserve: () => Effect.void,
       release: (fields) =>
-        Effect.sync(() => {
-          for (const field of fields) released.add(field);
+        Effect.gen(function* () {
+          for (const field of fields) {
+            released.add(field);
+            if (field === "authPort") yield* Deferred.succeed(authReleaseStarted, undefined);
+          }
         }),
       releaseAll: Effect.void,
     };
@@ -1140,7 +1128,7 @@ describe("Stack", () => {
       const startFiber = yield* stack
         .startService("auth")
         .pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Effect.sleep("50 millis");
+      yield* Deferred.await(authReleaseStarted);
       expect(released.has("authPort")).toBe(true);
       expect(released.has("postgrestPort")).toBe(false);
 

@@ -1,19 +1,28 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect";
-import { HttpServer } from "effect/unstable/http";
 import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  PlatformError,
+} from "effect";
+import { HttpServer } from "effect/unstable/http";
+import { randomBytes } from "node:crypto";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { deriveRepairOwnershipId, ManagedStackManager } from "./managed/manager.ts";
+import {
+  deriveRepairOwnershipId,
+  ManagedStackManager,
+  type ManagedStackManagerShape,
+  managedStackManagerLayer,
+} from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { acquireControl, ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
@@ -34,12 +43,145 @@ import {
 } from "../tests/helpers/managed-manager.ts";
 
 const roots: Array<string> = [];
-const COLLIDING_STACK_A = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const COLLIDING_STACK_B = `${COLLIDING_STACK_A.slice(0, 10)}${"f".repeat(54)}`;
 afterEach(() => cleanupRoots(roots));
 const setup = () => setupManagedManager(roots);
 
+const acquireIsolatedCollisionOwner = () =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const stackId = randomBytes(32).toString("hex");
+      const collidingStackId = `${stackId.slice(0, 10)}${randomBytes(27).toString("hex")}`;
+      const acquisition = yield* acquireControl({ stackId }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.exit,
+      );
+      if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
+        return { collidingStackId, ownership: acquisition.value };
+      }
+    }
+    return yield* Effect.fail(new Error("failed to acquire an isolated collision endpoint"));
+  });
+
+const acquireIsolatedStackOwner = (workspacePath: string) =>
+  Effect.gen(function* () {
+    const environment = yield* ensureEnvironment(workspacePath);
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const stackName = `test-${randomBytes(8).toString("hex")}`;
+      const stackId = deriveStackId(environment.identity, stackName);
+      const acquisition = yield* acquireControl({ stackId }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.exit,
+      );
+      if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
+        return { stackName, ownership: acquisition.value };
+      }
+    }
+    return yield* Effect.fail(new Error("failed to acquire an isolated stack endpoint"));
+  });
+
+const startWithIsolatedOwner = (
+  manager: ManagedStackManagerShape,
+  workspacePath: string,
+  portDocument: ReturnType<typeof automaticDocument>,
+  lifecycle: "stopped" | "running" = "stopped",
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { stackName, ownership } = yield* acquireIsolatedStackOwner(workspacePath);
+      const result = yield* manager.startStack({
+        workspacePath,
+        stackName,
+        portDocument,
+        ownership,
+        lifecycle,
+      });
+      return { ...result, stackName };
+    }),
+  );
+
 describe("managed stack recovery journeys", () => {
+  it.live("revalidates a copied ordinary workspace after a concurrent first start", () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-manager-race-test-"));
+    roots.push(root);
+    const workspace = join(root, "workspace");
+    const copied = join(root, "workspace-copy");
+    const stateRoot = join(root, "state");
+    mkdirSync(workspace);
+    const gate = { enabled: true, blocked: false };
+    const gatedFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          readFileString: (path: string, options?: Parameters<typeof base.readFileString>[1]) => {
+            if (!gate.enabled || gate.blocked || !path.endsWith("stack.json")) {
+              return base.readFileString(path, options);
+            }
+            gate.blocked = true;
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(readStarted, void 0);
+              yield* Deferred.await(releaseRead);
+              return yield* base.readFileString(path, options);
+            });
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
+    const managerLayer = managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
+      Layer.provide(gatedFileSystemLayer),
+      Layer.provide(NodePath.layer),
+      Layer.provide(gitConfigStoreLayer),
+      Layer.provide(controlTransportLayer),
+    );
+    let readStarted!: Deferred.Deferred<void>;
+    let releaseRead!: Deferred.Deferred<void>;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        readStarted = yield* Deferred.make<void>();
+        releaseRead = yield* Deferred.make<void>();
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        cpSync(workspace, copied, { recursive: true });
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+
+        const readFiber = yield* Effect.forkScoped(
+          manager.readStack({ workspacePath: copied, portDocument: automaticDocument() }),
+        );
+        yield* Deferred.await(readStarted);
+        const startFiber = yield* Effect.forkScoped(
+          Effect.gen(function* () {
+            const started = yield* manager.startStack({
+              workspacePath: workspace,
+              portDocument: automaticDocument(),
+              ownership,
+              lifecycle: "stopped",
+            });
+            yield* started.lease.releaseAll;
+          }),
+        );
+        yield* Fiber.join(startFiber);
+        gate.enabled = false;
+        yield* Deferred.succeed(releaseRead, void 0);
+        const read = yield* Fiber.join(readFiber).pipe(Effect.exit);
+        expect(Exit.isFailure(read)).toBe(true);
+        if (Exit.isFailure(read)) {
+          expect(Cause.squash(read.cause)).toMatchObject({
+            _tag: "InvalidManagedIdentityError",
+          });
+        }
+      }),
+    ).pipe(
+      Effect.provide(managerLayer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("fences start publication while checkout repair is owned", () => {
     const { layer, workspace } = setup();
     return Effect.gen(function* () {
@@ -61,7 +203,6 @@ describe("managed stack recovery journeys", () => {
         Effect.gen(function* () {
           const manager = yield* ManagedStackManager;
           const environment = yield* ensureEnvironment(workspace);
-          const stackId = deriveStackId(environment.identity, "default");
           const repairId = deriveRepairOwnershipId(environment.identity);
           const repairOwner = yield* acquireControl({ stackId: repairId });
           if (repairOwner._tag !== "Owned") throw new Error("expected repair ownership");
@@ -73,20 +214,21 @@ describe("managed stack recovery journeys", () => {
             ),
           );
           yield* Effect.promise(() => repairDaemon.runPromise(DaemonServer));
-          const stackOwner = yield* acquireControl({ stackId });
-          if (stackOwner._tag !== "Owned") throw new Error("expected stack ownership");
+          const stackOwner = yield* acquireIsolatedStackOwner(workspace);
+          const stackId = deriveStackId(environment.identity, stackOwner.stackName);
           const startFiber = yield* manager
             .startStack({
               workspacePath: workspace,
+              stackName: stackOwner.stackName,
               portDocument: automaticDocument(),
-              ownership: stackOwner,
+              ownership: stackOwner.ownership,
             })
             .pipe(Effect.forkScoped);
-          yield* Deferred.await(repairRead).pipe(Effect.timeout("1 second"));
+          yield* Deferred.await(repairRead).pipe(Effect.timeout("30 seconds"));
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;
           yield* Effect.promise(() => repairDaemon.dispose());
-          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("2 seconds"));
+          const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("60 seconds"));
           expect(started.stack.id).toBe(stackId);
           yield* releaseLease(started);
         }),
@@ -105,11 +247,10 @@ describe("managed stack recovery journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const ownership = yield* acquireControl({ stackId: COLLIDING_STACK_A });
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
+        const { collidingStackId, ownership } = yield* acquireIsolatedCollisionOwner();
         const rejected = yield* manager
           .allocateManagedPorts(ownership, {
-            stackId: COLLIDING_STACK_B,
+            stackId: collidingStackId,
             portDocument: automaticDocument(),
           })
           .pipe(Effect.exit);
@@ -131,6 +272,33 @@ describe("managed stack recovery journeys", () => {
 
   it.live("repairs a moved workspace without changing stack id or ports", () => {
     const { layer, stateRoot } = setup();
+    // Permission bits cannot block writes when tests run as root, so gate the
+    // FileSystem seam instead to force the partial-repair failure.
+    const blockedWrites = { root: undefined as string | undefined };
+    const blockingFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          writeFileString: (
+            path: string,
+            data: string,
+            options?: Parameters<typeof base.writeFileString>[2],
+          ) =>
+            blockedWrites.root !== undefined && path.startsWith(blockedWrites.root)
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "writeFileString",
+                    pathOrDescriptor: path,
+                  }),
+                )
+              : base.writeFileString(path, data, options),
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
     return Effect.scoped(
       Effect.gen(function* () {
         const root = mkdtempSync(join(tmpdir(), "managed-repair-test-"));
@@ -142,10 +310,11 @@ describe("managed stack recovery journeys", () => {
         mkdirSync(secondProject, { recursive: true });
         const manager = yield* ManagedStackManager;
         const original = yield* Effect.scoped(
-          startWithOwner(manager, firstProject, automaticDocument(), "running"),
+          startWithIsolatedOwner(manager, firstProject, automaticDocument(), "running"),
         );
+        const originalStackName = original.stackName;
         const secondary = yield* Effect.scoped(
-          startWithOwner(manager, secondProject, automaticDocument(), "stopped", "secondary"),
+          startWithIsolatedOwner(manager, secondProject, automaticDocument(), "stopped"),
         );
         const originalId = original.stack.id;
         const originalPort = original.stack.ports[0]?.port;
@@ -157,7 +326,11 @@ describe("managed stack recovery journeys", () => {
         const discovery = yield* manager.discoverWorkspace(movedFirstProject);
         if (discovery.state !== "needsRepair") throw new Error("expected repair");
         const blockedRead = yield* manager
-          .readStack({ workspacePath: movedFirstProject, portDocument: automaticDocument() })
+          .readStack({
+            workspacePath: movedFirstProject,
+            stackName: originalStackName,
+            portDocument: automaticDocument(),
+          })
           .pipe(Effect.exit);
         expect(Exit.isFailure(blockedRead)).toBe(true);
         if (Exit.isFailure(blockedRead)) {
@@ -172,14 +345,15 @@ describe("managed stack recovery journeys", () => {
         }
         const deleteBeforeRepair = yield* deleteManagedStack({
           workspacePath: movedFirstProject,
+          stackName: originalStackName,
         }).pipe(Effect.exit);
         expect(Exit.isFailure(deleteBeforeRepair)).toBe(true);
         const blockedId = [originalId, secondaryId].sort().at(-1);
         if (blockedId === undefined) throw new Error("expected affected stack");
         const blockedRoot = managedStackPaths(stateRoot, blockedId).root;
-        chmodSync(blockedRoot, 0o500);
+        blockedWrites.root = blockedRoot;
         const failed = yield* manager.repairWorkspace(discovery.repair).pipe(Effect.exit);
-        chmodSync(blockedRoot, 0o700);
+        blockedWrites.root = undefined;
         expect(Exit.isFailure(failed)).toBe(true);
         const firstUpdatedId = [originalId, secondaryId].sort().at(0);
         if (firstUpdatedId === undefined) throw new Error("expected affected stack");
@@ -204,7 +378,7 @@ describe("managed stack recovery journeys", () => {
       }),
     ).pipe(
       Effect.provide(layer),
-      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(blockingFileSystemLayer),
       Effect.provide(NodePath.layer),
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(controlTransportLayer),

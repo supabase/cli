@@ -541,21 +541,9 @@ describe("DaemonServer", () => {
       const interrupt = gatedRuntime.runFork(Fiber.interrupt(first));
       await gatedRuntime.runPromise(Deferred.succeed(releaseStop, void 0));
 
-      const interrupted = await Promise.race([
-        gatedRuntime.runPromise(Fiber.join(interrupt)).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
-      ]);
-      expect(interrupted).toBe(true);
-      const second = await Promise.race([
-        gatedRuntime.runPromise(daemon.beginShutdown).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
-      ]);
-      expect(second).toBe(true);
-      const completed = await Promise.race([
-        gatedRuntime.runPromise(daemon.awaitShutdown).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
-      ]);
-      expect(completed).toBe(true);
+      await gatedRuntime.runPromise(Fiber.join(interrupt));
+      await gatedRuntime.runPromise(daemon.beginShutdown);
+      await gatedRuntime.runPromise(daemon.awaitShutdown);
       expect(gatedMock.stopCalls).toBe(1);
     } finally {
       await gatedRuntime.dispose();

@@ -19,7 +19,7 @@ export interface FormattedCliErrors {
 }
 
 export function cliErrorCode(error: CliError.CliError): string {
-  return error._tag === "UnknownSubcomand" ? "UnknownSubcommand" : error._tag;
+  return error._tag;
 }
 
 interface CommandWithHelpDoc extends Command.Command.Any {
@@ -97,7 +97,7 @@ function collectDescendants(
   const visit = (current: Command.Command.Any, path: ReadonlyArray<string>) => {
     for (const group of current.subcommands) {
       for (const child of group.commands) {
-        if (child.hidden) continue;
+        if (child.unlisted) continue;
 
         const childPath = [...path, child.name];
         const helpDoc = helpDocFor(child, childPath);
@@ -320,7 +320,7 @@ export function formatCliErrorsForDisplay(
       }
     }
 
-    if (error._tag === "UnknownSubcomand" && suppressedUnknownSubcommands.has(error.subcommand)) {
+    if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
       changed = true;
       continue;
     }

@@ -74,7 +74,7 @@ const liveStatus = (
 ): Effect.Effect<boolean, ManagedStackManagerError, never> =>
   manager
     .probeControl(document.id)
-    .pipe(Effect.map((status) => status?.state === "running" && status.ready));
+    .pipe(Effect.map((probe) => probe?.status.state === "running" && probe.status.ready));
 
 export const listStacks = (opts: {
   readonly cacheRoot: string;

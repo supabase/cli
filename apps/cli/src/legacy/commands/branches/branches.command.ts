@@ -19,6 +19,6 @@ export const legacyBranchesCommand = Command.make("branches").pipe(
     legacyBranchesPauseCommand,
     legacyBranchesUnpauseCommand,
     legacyBranchesDeleteCommand,
-    legacyBranchesDisableCommand.pipe(Command.withHidden),
+    legacyBranchesDisableCommand.pipe(Command.unlisted),
   ]),
 );

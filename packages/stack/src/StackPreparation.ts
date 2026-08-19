@@ -278,24 +278,20 @@ const resolveServiceWithMetadata = (
       resolveDockerImageForService(spawner, service, version, {
         onDownloadStart,
       }).pipe(
-        Effect.map(
-          (image): ServiceResolution => ({
-            type: "docker",
-            image,
-          }),
-        ),
+        Effect.map((image): ServiceResolution => ({
+          type: "docker",
+          image,
+        })),
       ),
     ),
     Effect.catchTag("DownloadError", () =>
       resolveDockerImageForService(spawner, service, version, {
         onDownloadStart,
       }).pipe(
-        Effect.map(
-          (image): ServiceResolution => ({
-            type: "docker",
-            image,
-          }),
-        ),
+        Effect.map((image): ServiceResolution => ({
+          type: "docker",
+          image,
+        })),
       ),
     ),
   );

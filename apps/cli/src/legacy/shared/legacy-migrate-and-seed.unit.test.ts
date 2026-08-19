@@ -22,10 +22,16 @@ const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 function fakeSession() {
   const execs: Array<string> = [];
+  // A file's statements travel as one batch, so both entry points record into
+  // `execs` — the assertions below only care about which SQL reached the database.
   const session: LegacyDbSession = {
     exec: (sql) =>
       Effect.sync(() => {
         execs.push(sql);
+      }),
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql } of statements) execs.push(sql);
       }),
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
@@ -35,16 +41,20 @@ function fakeSession() {
   return { session, execs };
 }
 
-/** Every statement fails except the `BEGIN`/`COMMIT`/`ROLLBACK` transaction control Go wraps it in. */
+/** Every statement fails, whether it runs standalone or inside a batch. */
 function failingExecSession(): { session: LegacyDbSession; execs: Array<string> } {
   const execs: Array<string> = [];
-  const TRANSACTION_CONTROL = new Set(["BEGIN", "COMMIT", "ROLLBACK"]);
+  const syntaxError = () => new LegacyDbExecError({ message: "syntax error" });
   const session: LegacyDbSession = {
     exec: (sql) => {
       execs.push(sql);
-      return TRANSACTION_CONTROL.has(sql)
-        ? Effect.sync(() => {})
-        : Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+      return Effect.fail(syntaxError());
+    },
+    execBatch: (statements) => {
+      for (const { sql } of statements) execs.push(sql);
+      // The batch dies on its first statement, like a server ErrorResponse before
+      // any command completed.
+      return Effect.fail(new LegacyDbExecError({ message: "syntax error", statementIndex: 0 }));
     },
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
@@ -55,8 +65,11 @@ function failingExecSession(): { session: LegacyDbSession; execs: Array<string> 
 }
 
 function pgNetFailureSession(error: LegacyDbExecError): LegacyDbSession {
+  const failsOnPgNet = (sql: string): boolean => sql.includes("net.http_post");
   return {
-    exec: (sql) => (sql.includes("net.http_post") ? Effect.fail(error) : Effect.void),
+    exec: (sql) => (failsOnPgNet(sql) ? Effect.fail(error) : Effect.void),
+    execBatch: (statements) =>
+      statements.some(({ sql }) => failsOnPgNet(sql)) ? Effect.fail(error) : Effect.void,
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),

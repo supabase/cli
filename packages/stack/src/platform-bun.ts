@@ -82,6 +82,10 @@ const controlTransport: ControlTransport["Service"] = {
       try: async () => {
         const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
           signal: AbortSignal.timeout(500),
+          // One-shot connection: a pooled keep-alive connection would let a
+          // closed listener keep answering status probes while the probes
+          // themselves keep the connection alive.
+          headers: { connection: "close" },
         });
         if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
         return await response.json();
@@ -107,6 +111,7 @@ const controlTransport: ControlTransport["Service"] = {
         const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
           signal: AbortSignal.timeout(500),
+          headers: { connection: "close" },
         });
         if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
       },

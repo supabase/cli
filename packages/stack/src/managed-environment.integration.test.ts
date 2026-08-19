@@ -3,7 +3,14 @@ import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { afterEach, describe, expect } from "vitest";
 import { cpSync, renameSync } from "node:fs";
-import { git, makeRepository, temporaryRoots } from "../tests/helpers/git-workspace.ts";
+import { join } from "node:path";
+import {
+  git,
+  makeBareRepository,
+  makeRepository,
+  storedConfigValue,
+  temporaryRoots,
+} from "../tests/helpers/git-workspace.ts";
 import {
   discoverEnvironment,
   deriveStackId,
@@ -77,6 +84,36 @@ describe("managed environment identity", () => {
         expect(deriveStackId(first.identity, "default")).not.toBe(
           deriveStackId(second.identity, "default"),
         );
+      }),
+    ).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("keeps bare-clone worktree identity stable across repeated discovery", () =>
+    withGitWorkspace((workspace) =>
+      Effect.gen(function* () {
+        const bare = makeBareRepository(workspace.root, workspace.primary);
+        const firstPath = join(workspace.root, "bare-first");
+        const secondPath = join(workspace.root, "bare-second");
+        git(bare, "worktree", "add", "-q", firstPath, "-b", "feature/first", "main");
+        git(bare, "worktree", "add", "-q", secondPath, "-b", "feature/second", "main");
+
+        // Git enables worktree-scoped config itself and relocates core.bare when
+        // sparse-checkout is initialized; the fixture must exercise that path.
+        git(firstPath, "sparse-checkout", "set", ".");
+        expect(git(bare, "config", "--get", "extensions.worktreeConfig").trim()).toBe("true");
+        expect(storedConfigValue(join(bare, "config"), "core.bare")).toBeUndefined();
+        expect(storedConfigValue(join(bare, "config.worktree"), "core.bare")).toBe("true");
+
+        const first = yield* ensureEnvironment(firstPath);
+        const second = yield* ensureEnvironment(secondPath);
+        const firstAgain = yield* discoverEnvironment(firstPath);
+
+        expect(first.workspace.checkoutKind).toBe("bare");
+        expect(second.workspace.checkoutKind).toBe("bare");
+        expect(first.identity.workspaceId).toBe(second.identity.workspaceId);
+        expect(first.identity.checkoutId).not.toBe(second.identity.checkoutId);
+        expect(first.identity.contextId).not.toBe(second.identity.contextId);
+        expect(firstAgain).toEqual(first);
       }),
     ).pipe(Effect.provide(gitLayer)),
   );

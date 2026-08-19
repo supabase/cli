@@ -793,6 +793,9 @@ export const localStackLayer = (
             ).toReversed()) {
               yield* runtime.orchestrator.stopService(target);
             }
+            // Settle the public projection before returning so callers observe
+            // the stop immediately, matching the start/restart/waitReady paths.
+            yield* syncRuntimeProjectedStates(runtime);
           }).pipe(withLifecycleLock),
         restartService: (name) =>
           Effect.gen(function* () {

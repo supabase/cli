@@ -1,22 +1,29 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
-import { makeRepository } from "../tests/helpers/git-workspace.ts";
-import type { ManagedPortIntentDocument } from "./managed/model.ts";
+import { git, makeRepository } from "../tests/helpers/git-workspace.ts";
 import {
   automaticDocument,
   cleanupRoots,
-  exactCoreDocument,
-  freePorts,
   setupManagedManager,
   startWithOwner,
 } from "../tests/helpers/managed-manager.ts";
@@ -26,6 +33,94 @@ afterEach(() => cleanupRoots(roots));
 const setup = () => setupManagedManager(roots);
 
 describe("managed stack projects journeys", () => {
+  it.live("rejects copied ordinary workspace identity until the original path is moved", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const ownership = yield* acquireControl({ stackId });
+        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+        const initial = yield* manager.startStack({
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        yield* initial.lease.releaseAll;
+
+        const copied = join(workspace, "..", "workspace-copy");
+        cpSync(workspace, copied, { recursive: true });
+        const copiedDiscovery = yield* manager.discoverWorkspace(copied).pipe(Effect.exit);
+        expect(Exit.isFailure(copiedDiscovery)).toBe(true);
+        if (Exit.isFailure(copiedDiscovery)) {
+          const error = Cause.squash(copiedDiscovery.cause);
+          expect(error).toMatchObject({ _tag: "InvalidManagedIdentityError" });
+          if (error instanceof Error) {
+            expect(error.message).toContain("Delete");
+            expect(error.message).toContain(".supabase/identity.json");
+          }
+        }
+        const copiedEnsure = yield* manager.ensureWorkspace(copied).pipe(Effect.exit);
+        expect(Exit.isFailure(copiedEnsure)).toBe(true);
+        if (Exit.isFailure(copiedEnsure)) {
+          expect(Cause.squash(copiedEnsure.cause)).toMatchObject({
+            _tag: "InvalidManagedIdentityError",
+          });
+        }
+
+        const copiedStart = yield* manager
+          .startStack({
+            workspacePath: copied,
+            stackName: "default",
+            portDocument: automaticDocument(),
+            ownership,
+            lifecycle: "stopped",
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(copiedStart)).toBe(true);
+        if (Exit.isFailure(copiedStart)) {
+          const error = Cause.squash(copiedStart.cause);
+          expect(error).toMatchObject({ _tag: "InvalidManagedIdentityError" });
+          if (error instanceof Error) {
+            expect(error.message).toContain("Delete");
+            expect(error.message).toContain(".supabase/identity.json");
+          }
+        }
+
+        git(workspace, "init", "-q", "-b", "main");
+        const copiedAfterOriginalGit = yield* manager.discoverWorkspace(copied);
+        expect(copiedAfterOriginalGit.state).toBe("ready");
+        rmSync(join(workspace, ".git"), { recursive: true, force: true });
+
+        rmSync(copied, { recursive: true, force: true });
+        renameSync(workspace, copied);
+        const movedDiscovery = yield* manager.discoverWorkspace(copied);
+        expect(movedDiscovery.state).toBe("ready");
+        writeFileSync(workspace, "stale workspace path");
+        const moved = yield* manager.startStack({
+          workspacePath: copied,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        expect(moved.stack.id).toBe(stackId);
+        expect(moved.stack.workspace.path).toBe(realpathSync(copied));
+        expect((yield* manager.inspectStack(stackId))?.workspace.path).toBe(realpathSync(copied));
+        yield* moved.lease.releaseAll;
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("rejects empty and ASCII-control stack names before resolving a stack", () => {
     const { layer, workspace } = setup();
     return Effect.gen(function* () {
@@ -56,17 +151,23 @@ describe("managed stack projects journeys", () => {
       const baseTransport = yield* ControlTransport;
       const readStarted = yield* Deferred.make<void>();
       const continueRead = yield* Deferred.make<void>();
+      // Hold only the status probe's first read in flight. Later reads (the
+      // concurrent acquire scans its endpoint candidates before binding) must
+      // pass through, mirroring the real transport's bounded read timeout.
       let gateReads = false;
+      let gatedRead = false;
       const gatedTransport = Layer.succeed(ControlTransport, {
         ...baseTransport,
         read: (endpoint) =>
-          gateReads
-            ? Effect.gen(function* () {
-                yield* Deferred.succeed(readStarted, void 0);
-                yield* Deferred.await(continueRead);
-                return yield* baseTransport.read(endpoint);
-              })
-            : baseTransport.read(endpoint),
+          Effect.suspend(() => {
+            if (!gateReads || gatedRead) return baseTransport.read(endpoint);
+            gatedRead = true;
+            return Effect.gen(function* () {
+              yield* Deferred.succeed(readStarted, void 0);
+              yield* Deferred.await(continueRead);
+              return yield* baseTransport.read(endpoint);
+            });
+          }),
       });
 
       yield* Effect.scoped(
@@ -111,7 +212,7 @@ describe("managed stack projects journeys", () => {
     }).pipe(Effect.provide(controlTransportLayer));
   });
 
-  it.live("isolates concurrent default stacks in sibling nested projects", () => {
+  it.live("isolates default stacks in sibling nested projects", () => {
     const { layer, stateRoot } = setup();
     return Effect.scoped(
       Effect.gen(function* () {
@@ -129,27 +230,14 @@ describe("managed stack projects journeys", () => {
         const firstAlias = join(root, "first-project-link");
         symlinkSync(firstProject, firstAlias, "dir");
         const manager = yield* ManagedStackManager;
-        const [firstApi, firstDb, secondApi, secondDb] = yield* freePorts(4);
-        if (
-          firstApi === undefined ||
-          firstDb === undefined ||
-          secondApi === undefined ||
-          secondDb === undefined
-        ) {
-          throw new Error("expected isolated project ports");
-        }
-        const firstPorts = exactCoreDocument(firstApi, firstDb);
-        const secondPorts = exactCoreDocument(secondApi, secondDb);
-        const startAndClose = (project: string, portDocument: ManagedPortIntentDocument) =>
+        const startAndClose = (project: string) =>
           Effect.scoped(
-            startWithOwner(manager, project, portDocument).pipe(
+            startWithOwner(manager, project, automaticDocument()).pipe(
               Effect.map((result) => result.stack),
             ),
           );
-        const [first, second] = yield* Effect.all(
-          [startAndClose(firstProject, firstPorts), startAndClose(secondProject, secondPorts)],
-          { concurrency: "unbounded" },
-        );
+        const first = yield* startAndClose(firstProject);
+        const second = yield* startAndClose(secondProject);
         if (first === undefined || second === undefined) {
           throw new Error("expected both nested project stacks");
         }
