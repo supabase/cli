@@ -145,7 +145,7 @@ describe("pullMigrations", () => {
       const result = yield* pullMigrations({}).pipe(Effect.provide(layer));
       expect(result.mutatedFiles).toBe(true);
       expect(result.nextActions.join("\n")).toContain(
-        "supabase migration repair --status applied 20260819120000",
+        "supabase migration repair --project-ref abcdefghijklmnop --status applied 20260819120000",
       );
     });
   });

@@ -4,7 +4,11 @@ import { MigrationRepository } from "../migrations/migration-repository.service.
 import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { formatMigrationRepairCommand } from "../migrations/migration-repair-suggest.ts";
 import { digestVersions } from "./schema-digest.ts";
-import { SchemaDraftConflictError, SchemaEngineError } from "./schema-errors.ts";
+import {
+  SchemaBaselineMigrationsExistError,
+  SchemaDraftConflictError,
+  SchemaEngineError,
+} from "./schema-errors.ts";
 import { formatPlanSummary } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
@@ -28,6 +32,14 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
   const declarations = yield* workspace.readDeclarationFiles;
   const localMigrations = yield* migrations.listLocal;
   const name = input.name ?? (input.baseline ? "initial_schema" : "schema");
+
+  if (input.baseline && localMigrations.length > 0) {
+    return yield* new SchemaBaselineMigrationsExistError({
+      detail: `--baseline cannot run because ${workspace.migrationsDirDisplay} already has files.`,
+      suggestion:
+        "supabase schema generate --dry-run to preview, or supabase schema generate --name <feature> to add a change. --baseline is only for empty migration history.",
+    });
+  }
 
   return yield* state.withLock(
     Effect.scoped(

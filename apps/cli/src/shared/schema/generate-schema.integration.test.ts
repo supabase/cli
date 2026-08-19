@@ -1,12 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { generateSchema } from "./generate-schema.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
+import { SchemaBaselineMigrationsExistError } from "./schema-errors.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaDraftJournal, SchemaPlanView } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
@@ -80,10 +81,19 @@ const draftJournal: SchemaDraftJournal = {
   plans: [],
 };
 
-function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: boolean } = {}) {
+function setup(
+  opts: {
+    changes?: boolean;
+    journal?: SchemaDraftJournal;
+    write?: boolean;
+    localMigrations?: "seeded" | "empty";
+  } = {},
+) {
   const out = mockOutput({ interactive: false });
   let cleared = false;
   let planCalls = 0;
+  let wrote = false;
+  let shadowProvisions = 0;
   const layer = Layer.mergeAll(
     out.layer,
     Layer.succeed(
@@ -118,30 +128,40 @@ function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: 
     Layer.succeed(
       MigrationRepository,
       MigrationRepository.of({
-        listLocal: Effect.succeed([
-          {
-            version: "20260101000000",
-            name: "init",
-            fileName: "20260101000000_init.sql",
-            absolutePath: "/tmp/migrations/20260101000000_init.sql",
-            content: "select 1;",
-            transactional: true,
-          },
-        ]),
-        createEmpty: () => Effect.die("unused"),
-        writeGenerated: () =>
-          opts.write === true
-            ? Effect.succeed([
+        listLocal: Effect.succeed(
+          opts.localMigrations === "empty"
+            ? []
+            : [
                 {
-                  version: "20260101000001",
-                  name: "schema",
-                  fileName: "20260101000001_schema.sql",
-                  absolutePath: "/tmp/migrations/20260101000001_schema.sql",
-                  content: "create table t (id int);",
+                  version: "20260101000000",
+                  name: "init",
+                  fileName: "20260101000000_init.sql",
+                  absolutePath: "/tmp/migrations/20260101000000_init.sql",
+                  content: "select 1;",
                   transactional: true,
                 },
-              ])
-            : Effect.die("unused"),
+              ],
+        ),
+        createEmpty: () => Effect.die("unused"),
+        writeGenerated: () =>
+          Effect.sync(() => {
+            wrote = true;
+          }).pipe(
+            Effect.andThen(
+              opts.write === true
+                ? Effect.succeed([
+                    {
+                      version: "20260101000001",
+                      name: "schema",
+                      fileName: "20260101000001_schema.sql",
+                      absolutePath: "/tmp/migrations/20260101000001_schema.sql",
+                      content: "create table t (id int);",
+                      transactional: true,
+                    },
+                  ])
+                : Effect.die("unused"),
+            ),
+          ),
         remove: () => Effect.die("unused"),
       }),
     ),
@@ -167,8 +187,11 @@ function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: 
           }),
         diffPools: () => Effect.die("unused"),
         applyPlan: () => Effect.die("unused"),
-        provisionShadow: Effect.succeed({
-          url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+        provisionShadow: Effect.sync(() => {
+          shadowProvisions += 1;
+          return {
+            url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+          };
         }),
       }),
     ),
@@ -177,6 +200,12 @@ function setup(opts: { changes?: boolean; journal?: SchemaDraftJournal; write?: 
     layer,
     get cleared() {
       return cleared;
+    },
+    get wrote() {
+      return wrote;
+    },
+    get shadowProvisions() {
+      return shadowProvisions;
     },
   };
 }
@@ -237,7 +266,7 @@ describe("generateSchema", () => {
   });
 
   it.live("suggests migration repair after writing a baseline", () => {
-    const ctx = setup({ write: true });
+    const ctx = setup({ write: true, localMigrations: "empty" });
     return Effect.gen(function* () {
       const result = yield* generateSchema({ dryRun: false, baseline: true }).pipe(
         Effect.provide(ctx.layer),
@@ -245,6 +274,45 @@ describe("generateSchema", () => {
       expect(result.nextActions.join("\n")).toContain(
         "supabase migration repair --status applied 20260101000001",
       );
+    });
+  });
+
+  it.live("fails closed when --baseline runs against existing migration files", () => {
+    const ctx = setup();
+    return Effect.gen(function* () {
+      const exit = yield* generateSchema({ dryRun: false, baseline: true }).pipe(
+        Effect.provide(ctx.layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(failure._tag).toBe("Some");
+      if (failure._tag === "Some") {
+        expect(failure.value).toBeInstanceOf(SchemaBaselineMigrationsExistError);
+        expect(failure.value._tag).toBe("SchemaBaselineMigrationsExistError");
+      }
+      expect(ctx.wrote).toBe(false);
+      expect(ctx.shadowProvisions).toBe(0);
+      expect(ctx.cleared).toBe(false);
+    });
+  });
+
+  it.live("fails closed when dry-run --baseline runs against existing migration files", () => {
+    const ctx = setup();
+    return Effect.gen(function* () {
+      const exit = yield* generateSchema({ dryRun: true, baseline: true }).pipe(
+        Effect.provide(ctx.layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(failure._tag).toBe("Some");
+      if (failure._tag === "Some") {
+        expect(failure.value).toBeInstanceOf(SchemaBaselineMigrationsExistError);
+        expect(failure.value._tag).toBe("SchemaBaselineMigrationsExistError");
+      }
+      expect(ctx.wrote).toBe(false);
+      expect(ctx.shadowProvisions).toBe(0);
     });
   });
 });

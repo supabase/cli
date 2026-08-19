@@ -233,7 +233,7 @@ describe("pushMigrations", () => {
     return Effect.gen(function* () {
       const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("supabase migrations pull");
+      expect(JSON.stringify(exit)).toContain("supabase migrations pull --from linked");
       expect(ctx.shadowProvisions).toBe(1);
     });
   });
@@ -266,7 +266,7 @@ describe("pushMigrations", () => {
       expect(JSON.stringify(exit)).toContain(
         "supabase migration repair --project-ref abcdefghijklmnop --status reverted 19990101000000",
       );
-      expect(JSON.stringify(exit)).toContain("supabase migrations pull");
+      expect(JSON.stringify(exit)).toContain("supabase migrations pull --from linked");
     });
   });
 

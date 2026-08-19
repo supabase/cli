@@ -86,6 +86,12 @@ describe("repairFlagsForTarget", () => {
     });
   });
 
+  test("picks up projectRef from a linked target without opts", () => {
+    expect(repairFlagsForTarget(linked)).toEqual({
+      projectRef: "abcdefghijklmnop",
+    });
+  });
+
   test("uses a same-url placeholder for explicit --db-url / --from targets", () => {
     expect(repairFlagsForTarget(url)).toEqual({ dbUrlSame: true });
   });
@@ -127,8 +133,38 @@ describe("formatHistoryConflict", () => {
 describe("suggestRemoteDriftRepair", () => {
   test("suggests pull when nothing matches", () => {
     expect(suggestRemoteDriftRepair({ remoteOnly: [], matchingPrefix: [] })).toBe(
-      "supabase migrations pull",
+      "supabase migrations pull --from linked",
     );
+  });
+
+  test("suggests local pull when the target is local", () => {
+    expect(
+      suggestRemoteDriftRepair({
+        remoteOnly: [],
+        matchingPrefix: [],
+        flags: { local: true },
+      }),
+    ).toBe("supabase migrations pull --from local");
+  });
+
+  test("suggests env-url pull without echoing the connection string", () => {
+    expect(
+      suggestRemoteDriftRepair({
+        remoteOnly: [],
+        matchingPrefix: [],
+        flags: { dbUrlEnvVar: "DATABASE_URL" },
+      }),
+    ).toBe('supabase migrations pull --from "$DATABASE_URL"');
+  });
+
+  test("suggests a same-url placeholder for flag URL targets", () => {
+    expect(
+      suggestRemoteDriftRepair({
+        remoteOnly: [],
+        matchingPrefix: [],
+        flags: { dbUrlSame: true },
+      }),
+    ).toBe("supabase migrations pull --from <same-url>");
   });
 
   test("suggests reverted then applied", () => {

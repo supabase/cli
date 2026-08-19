@@ -15,7 +15,7 @@ const flags = {
   ),
   baseline: Flag.boolean("baseline").pipe(
     Flag.withDescription(
-      "Generate a baseline migration from an empty replay (existing-database onboarding).",
+      "Generate a baseline migration from an empty replay (existing-database onboarding). Refuses if migration files already exist.",
     ),
   ),
 } as const;

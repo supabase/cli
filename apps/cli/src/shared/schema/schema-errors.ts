@@ -135,6 +135,14 @@ export class SchemaMigrationNameError extends SchemaCliError("SchemaMigrationNam
   }
 }
 
+export class SchemaBaselineMigrationsExistError extends SchemaCliError(
+  "SchemaBaselineMigrationsExistError",
+) {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 export class SchemaHistoryConflictError extends SchemaCliError("SchemaHistoryConflictError") {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.migrationDrift;

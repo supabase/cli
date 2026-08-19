@@ -21,7 +21,8 @@ export function repairFlagsForTarget(
     }
     return { dbUrlSame: true };
   }
-  return opts.projectRef !== undefined ? { projectRef: opts.projectRef } : {};
+  const projectRef = opts.projectRef ?? target.projectRef;
+  return projectRef !== undefined ? { projectRef } : {};
 }
 
 export function formatMigrationRepairCommand(input: {
@@ -84,7 +85,15 @@ export function suggestRemoteDriftRepair(input: {
       }),
     );
   } else {
-    lines.push("supabase migrations pull");
+    const from =
+      input.flags?.local === true
+        ? "--from local"
+        : input.flags?.dbUrlEnvVar !== undefined
+          ? `--from "$${input.flags.dbUrlEnvVar}"`
+          : input.flags?.dbUrlSame === true
+            ? "--from <same-url>"
+            : "--from linked";
+    lines.push(`supabase migrations pull ${from}`);
   }
   return lines.join("\n");
 }
