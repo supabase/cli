@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
 import { Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import type { DatabaseTarget } from "../database/database-target.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { SchemaLocalStackNotRunningError } from "../schema/schema-errors.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
@@ -81,17 +82,31 @@ const ungeneratedJournal: SchemaDraftJournal = {
   plans: [],
 };
 
+const pendingFile = {
+  version: "20260101000000",
+  name: "init",
+  fileName: "20260101000000_init.sql",
+  absolutePath: "/tmp/migrations/20260101000000_init.sql",
+  content: "select 1;",
+  transactional: true,
+};
+
 function setup(
   opts: {
     declarations?: boolean;
     ahead?: boolean;
     localRunning?: boolean;
     drift?: boolean;
+    driftResults?: ReadonlyArray<boolean>;
     journal?: SchemaDraftJournal;
+    files?: ReadonlyArray<typeof pendingFile>;
+    history?: ReadonlyArray<{ version: string; name: string }>;
+    target?: DatabaseTarget;
   } = {},
 ) {
   const out = mockOutput({ interactive: false });
   let shadowProvisions = 0;
+  let diffCalls = 0;
   const layer = Layer.mergeAll(
     out.layer,
     Layer.succeed(
@@ -135,14 +150,14 @@ function setup(
               }),
             );
           }
-          return Effect.succeed(linked);
+          return Effect.succeed(opts.target ?? linked);
         },
       }),
     ),
     Layer.succeed(
       MigrationRepository,
       MigrationRepository.of({
-        listLocal: Effect.succeed([]),
+        listLocal: Effect.succeed(opts.files ?? []),
         createEmpty: () => Effect.die("unused"),
         writeGenerated: () => Effect.die("unused"),
         remove: () => Effect.die("unused"),
@@ -151,7 +166,7 @@ function setup(
     Layer.succeed(
       MigrationRunner,
       MigrationRunner.of({
-        listRemote: () => Effect.succeed([]),
+        listRemote: () => Effect.succeed(opts.history ?? []),
         applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
         markApplied: () => Effect.die("unused"),
       }),
@@ -161,7 +176,14 @@ function setup(
       PgDeltaSchemaEngine.of({
         exportSchema: () => Effect.die("unused"),
         planFiles: () => Effect.succeed(planView(opts.ahead === true)),
-        diffPools: () => Effect.succeed(planView(opts.drift === true)),
+        diffPools: () => {
+          const changes =
+            opts.driftResults !== undefined
+              ? opts.driftResults[diffCalls] === true
+              : opts.drift === true;
+          diffCalls += 1;
+          return Effect.succeed(planView(changes));
+        },
         applyPlan: () => Effect.die("unused"),
         provisionShadow: Effect.sync(() => {
           shadowProvisions += 1;
@@ -211,7 +233,40 @@ describe("pushMigrations", () => {
     return Effect.gen(function* () {
       const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("supabase migrations pull");
       expect(ctx.shadowProvisions).toBe(1);
+    });
+  });
+
+  it.live("suggests migration repair when a pending prefix already matches the remote", () => {
+    const { layer } = setup({
+      declarations: false,
+      driftResults: [true, false],
+      files: [pendingFile],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "supabase migration repair --project-ref abcdefghijklmnop --status applied 20260101000000",
+      );
+    });
+  });
+
+  it.live("suggests reverted repair for remote-only versions", () => {
+    const { layer } = setup({
+      declarations: false,
+      driftResults: [true, true],
+      files: [pendingFile],
+      history: [{ version: "19990101000000", name: "other" }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "supabase migration repair --project-ref abcdefghijklmnop --status reverted 19990101000000",
+      );
+      expect(JSON.stringify(exit)).toContain("supabase migrations pull");
     });
   });
 
@@ -226,6 +281,45 @@ describe("pushMigrations", () => {
       const result = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer));
       expect(result.mutatedDatabase).toBe(false);
       expect(ctx.shadowProvisions).toBe(3);
+    });
+  });
+
+  it.live("still refuses an ungenerated draft when --skip-verify is set", () => {
+    const { layer } = setup({ journal: ungeneratedJournal });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations({ ...pushFlags, skipVerify: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    });
+  });
+
+  it.live("prefills target-aware repair when skip-verify hits remote-only history", () => {
+    const { layer } = setup({
+      files: [pendingFile],
+      history: [{ version: "19990101000000", name: "other" }],
+      target: {
+        kind: "url",
+        identity: "connection-string",
+        connectionString: "postgresql://postgres:secret@db.example/postgres",
+        disposable: false,
+        durable: true,
+        connectionVerified: false,
+        connectionSource: "flag",
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* pushMigrations({
+        yes: true,
+        allowRemote: true,
+        skipVerify: true,
+        dbUrl: "postgresql://postgres:secret@db.example/postgres",
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "supabase migration repair --db-url <same-url> --status reverted 19990101000000",
+      );
     });
   });
 

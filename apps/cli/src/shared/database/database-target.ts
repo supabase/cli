@@ -13,7 +13,18 @@ export type DatabaseTarget = {
   readonly durable: boolean;
   readonly connectionVerified: boolean;
   readonly projectRef?: string;
+  readonly connectionSource?: "env" | "flag";
 };
+
+export function envDatabaseUrl(): string | undefined {
+  return process.env["SUPABASE_DB_URL"] ?? process.env["DATABASE_URL"];
+}
+
+export function envDatabaseUrlVarName(): "SUPABASE_DB_URL" | "DATABASE_URL" | undefined {
+  if (process.env["SUPABASE_DB_URL"] !== undefined) return "SUPABASE_DB_URL";
+  if (process.env["DATABASE_URL"] !== undefined) return "DATABASE_URL";
+  return undefined;
+}
 
 export function parseTargetSelector(value: string): DatabaseTargetSelector {
   if (value === "local") return { kind: "local" };

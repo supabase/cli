@@ -32,14 +32,17 @@ export const applyMigrations = Effect.fn("migrations.apply")(function* () {
       const result = yield* applyLocalPending(pool, local);
       const recorded = result.recorded ?? [];
       const mutatedDatabase = result.applied.length > 0 || recorded.length > 0;
+      const parts = [
+        ...(recorded.length > 0
+          ? [`Recorded ${recorded.length} already-applied migration(s): ${recorded.join(", ")}`]
+          : []),
+        ...(result.applied.length > 0
+          ? [`Applied ${result.applied.length} migration(s): ${result.applied.join(", ")}`]
+          : []),
+      ];
       return {
         status: "clean",
-        message:
-          recorded.length > 0
-            ? `Recorded ${recorded.length} already-applied migration(s): ${recorded.join(", ")}`
-            : result.applied.length === 0
-              ? "No pending migrations."
-              : `Applied ${result.applied.length} migration(s): ${result.applied.join(", ")}`,
+        message: parts.length > 0 ? parts.join(". ") : "No pending migrations.",
         data: {
           status: "clean",
           applied: result.applied,

@@ -5,7 +5,7 @@ import {
   SchemaDestructiveAuthError,
   SchemaProjectRefMismatchError,
 } from "../schema/schema-errors.ts";
-import type { DatabaseTarget } from "./database-target.ts";
+import { envDatabaseUrlVarName, type DatabaseTarget } from "./database-target.ts";
 import { Output } from "../output/output.service.ts";
 
 export type MutationAuthFlags = {
@@ -27,9 +27,16 @@ export const authorizeMutation = Effect.fnUntraced(function* (input: {
 
   if (target.kind === "url") {
     if (!flags.allowRemote) {
+      const envVar = target.connectionSource === "env" ? envDatabaseUrlVarName() : undefined;
       return yield* new SchemaAllowRemoteRequiredError({
-        detail: "This connection string cannot be identity-verified.",
-        suggestion: `Re-run ${command} with --allow-remote to acknowledge the unverifiable target.`,
+        detail:
+          envVar !== undefined
+            ? `This connection string cannot be identity-verified because ${envVar} is set.`
+            : "This connection string cannot be identity-verified.",
+        suggestion:
+          envVar !== undefined
+            ? `Unset ${envVar} to use the linked project connection, or re-run ${command} with --allow-remote if this URL is the intended durable target.`
+            : `Re-run ${command} with --allow-remote to acknowledge the unverifiable target.`,
       });
     }
     return;

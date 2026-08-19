@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import type { Pool } from "pg";
 import { SchemaEngineError, SchemaHistoryConflictError } from "../schema/schema-errors.ts";
 import type { MigrationFile } from "./migration-file.ts";
+import { formatHistoryConflict } from "./migration-repair-suggest.ts";
 import {
   MigrationRunner,
   type MigrationApplyResult,
@@ -94,12 +95,12 @@ export const migrationRunnerLayer = Layer.succeed(
           (row) => !local.some((file) => file.version === row.version),
         );
         if (remoteOnly.length > 0 && pending.length > 0) {
-          return yield* new SchemaHistoryConflictError({
-            detail: `Local and remote migration histories have diverged (remote-only: ${remoteOnly
-              .map((row) => row.version)
-              .join(", ")}; pending: ${pending.map((file) => file.version).join(", ")}).`,
-            suggestion: "Run `supabase migrations pull` or repair history before applying.",
-          });
+          return yield* new SchemaHistoryConflictError(
+            formatHistoryConflict({
+              remoteOnly: remoteOnly.map((row) => row.version),
+              pending: pending.map((file) => file.version),
+            }),
+          );
         }
         const applied: Array<string> = [];
         for (const file of pending) {

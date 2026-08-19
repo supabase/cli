@@ -3,10 +3,20 @@ import { acquireDatabasePool } from "../database/database-pool.ts";
 import { authorizeMutation } from "../database/destructive-auth.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { assertNoUngeneratedDraft } from "../schema/declarations-ahead.ts";
-import { SchemaDeclarationsAheadError, SchemaRemoteDriftError } from "../schema/schema-errors.ts";
+import {
+  SchemaDeclarationsAheadError,
+  SchemaHistoryConflictError,
+  SchemaRemoteDriftError,
+} from "../schema/schema-errors.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
+import { findMatchingPendingPrefix } from "./matching-pending-prefix.ts";
+import {
+  formatHistoryConflict,
+  repairFlagsForTarget,
+  suggestRemoteDriftRepair,
+} from "./migration-repair-suggest.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
 import { MigrationRunner } from "./migration-runner.service.ts";
 
@@ -64,9 +74,9 @@ export const pushMigrations = Effect.fn("migrations.push")(function* (input: Pus
           });
           if (ahead.changes) {
             return yield* new SchemaDeclarationsAheadError({
-              detail: "Declarations are ahead of the local migration files.",
+              detail: "Declarations and local migration files have diverged.",
               suggestion:
-                "Run `supabase schema generate --name <feature>` before `supabase migrations push`.",
+                "Update `supabase/schemas` to include hand-written migration changes, or run `supabase schema generate --name <feature>` if declarations are the intended state.",
             });
           }
         }
@@ -81,11 +91,45 @@ export const pushMigrations = Effect.fn("migrations.push")(function* (input: Pus
           allowDrops: true,
         });
         if (drift.changes) {
+          const remoteOnly = remoteHistory
+            .filter((row) => !localFiles.some((file) => file.version === row.version))
+            .map((row) => row.version);
+          const pending = localFiles.filter((file) => !remoteVersions.has(file.version));
+          const matchingPrefix = yield* findMatchingPendingPrefix(
+            replayPool,
+            remotePool,
+            replayed,
+            pending,
+          );
           return yield* new SchemaRemoteDriftError({
             detail: "Remote database shape has drifted from migration replay.",
-            suggestion: "Run `supabase migrations pull` and reconcile before pushing.",
+            suggestion: suggestRemoteDriftRepair({
+              remoteOnly,
+              matchingPrefix: matchingPrefix.map((file) => file.version),
+              flags: repairFlagsForTarget(remote, {
+                ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+                ...(input.dbUrl !== undefined ? { dbUrl: input.dbUrl } : {}),
+              }),
+            }),
           });
         }
+      }
+
+      const pending = localFiles.filter((file) => !remoteVersions.has(file.version));
+      const remoteOnly = remoteHistory.filter(
+        (row) => !localFiles.some((file) => file.version === row.version),
+      );
+      if (remoteOnly.length > 0 && pending.length > 0) {
+        return yield* new SchemaHistoryConflictError(
+          formatHistoryConflict({
+            remoteOnly: remoteOnly.map((row) => row.version),
+            pending: pending.map((file) => file.version),
+            flags: repairFlagsForTarget(remote, {
+              ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+              ...(input.dbUrl !== undefined ? { dbUrl: input.dbUrl } : {}),
+            }),
+          }),
+        );
       }
 
       const result = yield* runner.applyPending(remotePool, localFiles);

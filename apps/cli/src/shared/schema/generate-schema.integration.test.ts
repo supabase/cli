@@ -232,6 +232,19 @@ describe("generateSchema", () => {
       expect(result.mutatedFiles).toBe(true);
       expect(result.mutatedDatabase).toBe(false);
       expect(ctx.cleared).toBe(true);
+      expect(result.nextActions.join("\n")).not.toContain("migration repair");
+    });
+  });
+
+  it.live("suggests migration repair after writing a baseline", () => {
+    const ctx = setup({ write: true });
+    return Effect.gen(function* () {
+      const result = yield* generateSchema({ dryRun: false, baseline: true }).pipe(
+        Effect.provide(ctx.layer),
+      );
+      expect(result.nextActions.join("\n")).toContain(
+        "supabase migration repair --status applied 20260101000001",
+      );
     });
   });
 });

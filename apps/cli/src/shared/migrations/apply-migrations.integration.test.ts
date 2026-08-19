@@ -69,16 +69,35 @@ function planView(changes: boolean): SchemaPlanView {
   };
 }
 
+const laterFile = {
+  version: "20260101000001",
+  name: "next",
+  fileName: "20260101000001_next.sql",
+  absolutePath: "/tmp/migrations/20260101000001_next.sql",
+  content: "select 2;",
+  transactional: true,
+};
+
 function setup(
   journal: SchemaDraftJournal | undefined,
   opts: {
     history?: ReadonlyArray<{ version: string; name: string }>;
     catalogMatch?: boolean;
+    catalogMatches?: ReadonlyArray<boolean>;
+    files?: ReadonlyArray<{
+      version: string;
+      name: string;
+      fileName: string;
+      absolutePath: string;
+      content: string;
+      transactional: boolean;
+    }>;
   } = {},
 ) {
   const out = mockOutput({ interactive: false });
   let applyPending = 0;
   let marked = 0;
+  let diffCalls = 0;
   return {
     get applyPending() {
       return applyPending;
@@ -114,16 +133,18 @@ function setup(
       Layer.succeed(
         MigrationRepository,
         MigrationRepository.of({
-          listLocal: Effect.succeed([
-            {
-              version: "20260101000000",
-              name: "init",
-              fileName: "20260101000000_init.sql",
-              absolutePath: "/tmp/migrations/20260101000000_init.sql",
-              content: "select 1;",
-              transactional: true,
-            },
-          ]),
+          listLocal: Effect.succeed(
+            opts.files ?? [
+              {
+                version: "20260101000000",
+                name: "init",
+                fileName: "20260101000000_init.sql",
+                absolutePath: "/tmp/migrations/20260101000000_init.sql",
+                content: "select 1;",
+                transactional: true,
+              },
+            ],
+          ),
           createEmpty: () => Effect.die("unused"),
           writeGenerated: () => Effect.die("unused"),
           remove: () => Effect.die("unused"),
@@ -149,7 +170,14 @@ function setup(
         PgDeltaSchemaEngine.of({
           exportSchema: () => Effect.die("unused"),
           planFiles: () => Effect.die("unused"),
-          diffPools: () => Effect.succeed(planView(opts.catalogMatch !== true)),
+          diffPools: () => {
+            const match =
+              opts.catalogMatches !== undefined
+                ? opts.catalogMatches[diffCalls] === true
+                : opts.catalogMatch === true;
+            diffCalls += 1;
+            return Effect.succeed(planView(!match));
+          },
           applyPlan: () => Effect.die("unused"),
           provisionShadow: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
@@ -188,6 +216,44 @@ describe("applyMigrations", () => {
       expect(result.mutatedDatabase).toBe(true);
       expect(result.message).toContain("Recorded");
       expect(ctx.marked).toBe(1);
+    });
+  });
+
+  it.live("records a matching prefix then runs the remaining pending SQL", () => {
+    const ctx = setup(undefined, {
+      files: [
+        {
+          version: "20260101000000",
+          name: "init",
+          fileName: "20260101000000_init.sql",
+          absolutePath: "/tmp/migrations/20260101000000_init.sql",
+          content: "select 1;",
+          transactional: true,
+        },
+        laterFile,
+      ],
+      catalogMatches: [true, false],
+    });
+    return Effect.gen(function* () {
+      const result = yield* applyMigrations().pipe(Effect.provide(ctx.layer));
+      expect(result.message).toContain("Recorded");
+      expect(ctx.marked).toBe(1);
+      expect(ctx.applyPending).toBe(3);
+    });
+  });
+
+  it.live("fails closed when history has remote-only versions and pending files", () => {
+    const ctx = setup(undefined, {
+      history: [{ version: "19990101000000", name: "other" }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* applyMigrations().pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "supabase migration repair --local --status reverted 19990101000000",
+      );
+      expect(ctx.applyPending).toBe(0);
+      expect(ctx.marked).toBe(0);
     });
   });
 

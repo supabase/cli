@@ -14,6 +14,10 @@ import {
   noLocalDatabaseFallbackLayer,
   type LocalDatabaseFallback,
 } from "../database/local-database-fallback.service.ts";
+import {
+  failClosedLinkedRemoteConnectorLayer,
+  LinkedRemoteConnector,
+} from "../database/linked-remote-connector.service.ts";
 import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { databaseTargetLayer } from "./database-target.layer.ts";
 import { nativeIsolatedShadowLayer } from "./native-isolated-shadow.layer.ts";
@@ -45,6 +49,7 @@ export type SchemaRuntimeOptions = ProjectCommandRuntimeOptions & {
     never,
     FileSystem.FileSystem | Path.Path | ProjectHome
   >;
+  readonly linkedRemoteConnector?: Layer.Layer<LinkedRemoteConnector, unknown, unknown>;
 };
 
 export const schemaRuntimeLayer = (
@@ -52,6 +57,7 @@ export const schemaRuntimeLayer = (
   options?: SchemaRuntimeOptions,
 ) => {
   const linkState = options?.projectLinkState ?? projectLinkStateLayer;
+  const linkedRemote = options?.linkedRemoteConnector ?? failClosedLinkedRemoteConnectorLayer;
   const schemaEngineLive = pgDeltaSchemaEngineLayer.pipe(
     Layer.provide(nativeIsolatedShadowLayer),
     Layer.provide(FetchHttpClient.layer),
@@ -69,7 +75,9 @@ export const schemaRuntimeLayer = (
         Layer.provide(options?.localDatabaseFallback ?? noLocalDatabaseFallbackLayer),
         Layer.provide(linkState),
         Layer.provide(unixHttpClientLayer),
+        Layer.provide(linkedRemote),
       ),
+      linkedRemote,
       linkState,
       projectLocalServiceVersionsLayer,
       unixHttpClientLayer,

@@ -5,6 +5,7 @@ import { parseTargetSelector } from "../database/database-target.ts";
 import { formatPlanSummary } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
+import { formatMigrationRepairCommand, repairFlagsForTarget } from "./migration-repair-suggest.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
 import { MigrationRunner } from "./migration-runner.service.ts";
 
@@ -68,6 +69,15 @@ export const pullMigrations = Effect.fn("migrations.pull")(function* (input: Pul
         plan,
       });
 
+      const repair = formatMigrationRepairCommand({
+        status: "applied",
+        versions: written.map((file) => file.version),
+        flags: repairFlagsForTarget(remote),
+      });
+      const nextActions = [
+        `Record the pulled version on the remote without re-applying: ${repair}`,
+      ];
+
       return {
         status: "generated",
         message: `${summary}\nWrote ${written.map((file) => file.fileName).join(", ")}`,
@@ -78,9 +88,9 @@ export const pullMigrations = Effect.fn("migrations.pull")(function* (input: Pul
           hazards: plan.hazards,
           mutated_files: true,
           mutated_database: false,
-          next_actions: ["Review the pulled migration, then apply it locally if needed."],
+          next_actions: nextActions,
         },
-        nextActions: ["Review the pulled migration, then apply it locally if needed."],
+        nextActions,
         mutatedDatabase: false,
         mutatedFiles: true,
       } satisfies SchemaCommandResult;

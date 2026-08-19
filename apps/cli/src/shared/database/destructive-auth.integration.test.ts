@@ -109,6 +109,33 @@ describe("authorizeMutation", () => {
         command: "migrations push",
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("--allow-remote");
     }).pipe(Effect.provide(Layer.mergeAll(out.layer)));
+  });
+
+  it.live("tells the user to unset DATABASE_URL when the URL came from env", () => {
+    const previous = process.env["DATABASE_URL"];
+    process.env["DATABASE_URL"] = "postgresql://postgres:secret@other.example/postgres";
+    const out = mockOutput({ interactive: false });
+    return Effect.gen(function* () {
+      const exit = yield* authorizeMutation({
+        target: { ...url, connectionSource: "env" },
+        flags: { yes: true, allowRemote: false },
+        command: "migrations push",
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Unset DATABASE_URL");
+    }).pipe(
+      Effect.provide(Layer.mergeAll(out.layer)),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) {
+            delete process.env["DATABASE_URL"];
+          } else {
+            process.env["DATABASE_URL"] = previous;
+          }
+        }),
+      ),
+    );
   });
 });

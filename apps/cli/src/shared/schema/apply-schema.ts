@@ -4,6 +4,7 @@ import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { authorizeMutation } from "../database/destructive-auth.ts";
 import { applyLocalPending } from "../migrations/apply-local-pending.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
+import type { MigrationApplyResult } from "../migrations/migration-runner.service.ts";
 import { digestUtf8, digestVersions } from "./schema-digest.ts";
 import {
   SchemaDraftConflictError,
@@ -51,6 +52,10 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
           existingJournal._tag === "Some" &&
           existingJournal.value.declarativelyAhead &&
           existingJournal.value.generated !== true;
+        const pendingResult: MigrationApplyResult =
+          ungeneratedDraft === true
+            ? { applied: [], recorded: [], skipped: [] }
+            : yield* applyLocalPending(pool, localMigrations);
         if (ungeneratedDraft) {
           const currentHead = digestVersions(localMigrations.map((file) => file.version));
           if (currentHead !== existingJournal.value.startingMigrationHeadDigest) {
@@ -60,8 +65,6 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
                 "Run `supabase schema generate`, reset the local database, or discard the draft.",
             });
           }
-        } else {
-          yield* applyLocalPending(pool, localMigrations);
         }
 
         const shadow = yield* engine.provisionShadow;
@@ -85,18 +88,33 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
         });
 
         if (!plan.changes) {
+          const recorded = pendingResult.recorded ?? [];
+          const mutatedDatabase = pendingResult.applied.length > 0 || recorded.length > 0;
+          const parts = [
+            ...(recorded.length > 0
+              ? [`Recorded ${recorded.length} already-applied migration(s): ${recorded.join(", ")}`]
+              : []),
+            ...(pendingResult.applied.length > 0
+              ? [
+                  `Applied ${pendingResult.applied.length} migration(s): ${pendingResult.applied.join(", ")}`,
+                ]
+              : []),
+          ];
           return {
             status: "clean",
-            message: "Local database already matches declarations.",
+            message:
+              parts.length > 0 ? parts.join(". ") : "Local database already matches declarations.",
             data: {
               status: "clean",
               target: target.identity,
               plan_id: plan.planId,
-              mutated_database: false,
+              applied: pendingResult.applied,
+              recorded,
+              mutated_database: mutatedDatabase,
               mutated_files: false,
             },
             nextActions: [],
-            mutatedDatabase: false,
+            mutatedDatabase,
             mutatedFiles: false,
           } satisfies SchemaCommandResult;
         }

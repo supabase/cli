@@ -21,8 +21,8 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 | # | Decision |
 | - | -------- |
 | 1 | No tracked schema checkpoint sidecar. Export ownership stays in `.pgdelta-export.json`. Draft journal: `.supabase/schema-draft.json` (gitignored). Existing `.schema-checkpoint.json` files are ignored. |
-| 2 | After a successful non-dry `schema generate` (including no-op when `M` already equals `D`), the draft journal is cleared. Local history is never written at generate time. `migrations apply` runs pending SQL, or inserts missing `supabase_migrations` rows when the live catalog already matches full file replay. Catalog match is schema-shape only — a pending DML-only file can be recorded without executing. Local `db reset` clears the journal. Reset is optional rebuild, not required to apply additive files. |
-| 3 | `schema generate --baseline --name <name>` is the existing-database onboarding step. Registering that baseline as already applied on a remote is a separate, explicit migration-history operation (not pull). |
+| 2 | After a successful non-dry `schema generate` (including no-op when `M` already equals `D`), the draft journal is cleared. Local history is never written at generate time. `migrations apply` runs pending SQL, or inserts missing `supabase_migrations` rows for the longest pending prefix whose replay already matches the live catalog. Catalog match is schema-shape only — a pending DML-only file can be recorded without executing. Local `db reset` clears the journal immediately after the database is recreated. Reset is optional rebuild, not required to apply additive files. |
+| 3 | `schema generate --baseline --name <name>` is the existing-database onboarding step. Registering that baseline as already applied on a remote is a separate, explicit history operation: `supabase migration repair --status applied <versions>`. It is not pull, and the CLI does not auto-repair. Push/pull/baseline generate emit copy-pasteable repair (or pull) commands. |
 | 4 | Manual migration changes during an active ungenerated draft fail closed with generate / reset / discard. No automatic rebase. |
 | 5 | Push does not classify pending files as destructive. Generate still fail-closes on ambiguous rename / coverage gaps. |
 | 6 | Only a running local stack owned by this project is verified-disposable. Every remote/URL target is durable. No environment classification yet. |
@@ -61,8 +61,8 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 | `migrations list` | files ↔ history | None |
 | `migrations diff` | M → live | Preview (optional `--file`) |
 | `migrations apply` | pending files → L | Local DB + `supabase_migrations` |
-| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift unless `--skip-verify` |
-| `migrations pull` | R − M → files | Migration files |
+| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift unless `--skip-verify`. Drift errors prefill `migration repair` / `migrations pull`. |
+| `migrations pull` | R − M → files | Migration files; next action is `migration repair --status applied` for the written versions |
 
 ### Aliases (next only, deprecation notice on stderr)
 
@@ -83,6 +83,8 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 - Target identity comes from stack ownership or linked project-ref, never hostname heuristics.
 - `--yes` never bypasses the target gate or live verify (unless `--skip-verify`).
 - Durable identity: interactive confirm-by-typing-ref; non-interactive `--yes` or matching `--project-ref`.
+- `DATABASE_URL` / `SUPABASE_DB_URL` (and `--db-url`) are unverifiable URL targets: no `projectRef`, mutations require `--allow-remote`. An env URL is enough even when the project is not linked. Unset those env vars to use the linked project connection.
+- Linked sockets (no env URL) come from the TypeScript linked resolver (`legacyResolveLinkedConn`) on the stable CLI. Next/alpha stays fail-closed unless an env URL + `--allow-remote` is supplied.
 - Raw URL targets: `--allow-remote` instead of ref assertion.
 - Local `schema apply`: auto-approve modeled hazards. Ambiguous rename / coverage gap / unknown metadata still fail closed.
 - `--skip-verify` skips push’s isolated-shadow declarations-ahead and remote-drift checks. Identity flags unchanged.

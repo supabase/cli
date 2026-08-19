@@ -210,6 +210,8 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     setup: { ...setup, experimental },
   });
 
+  yield* clearDraftJournalFile(fs, path, workdir);
+
   // Seed objects from supabase/buckets when storage is up (Go gates buckets on
   // an existing, healthy storage container). Reuses the ported seed-buckets
   // local path; its summary is suppressed (reset emits its own result).
@@ -252,8 +254,6 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
       ),
     );
   }
-
-  yield* clearDraftJournalFile(fs, path, workdir);
 
   // "Finished supabase db reset on branch <branch>." (both Aqua).
   const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");

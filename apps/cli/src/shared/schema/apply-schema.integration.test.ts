@@ -215,6 +215,7 @@ describe("applySchema", () => {
     return Effect.gen(function* () {
       const result = yield* applySchema(flags).pipe(Effect.provide(ctx.layer));
       expect(result.status).toBe("clean");
+      expect(result.message).toContain("Recorded");
       expect(ctx.marked).toBe(1);
     });
   });

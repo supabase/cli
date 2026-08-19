@@ -2,6 +2,7 @@ import { Clock, Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { MigrationRunner } from "../migrations/migration-runner.service.ts";
+import { formatMigrationRepairCommand } from "../migrations/migration-repair-suggest.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { SchemaDraftConflictError, SchemaEngineError } from "./schema-errors.ts";
 import { formatPlanSummary } from "./schema-output.ts";
@@ -134,6 +135,20 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
 
           yield* state.clearJournal;
 
+          const nextActions = [
+            "Review the migration files, commit them, then deploy with migrations push.",
+            ...(input.baseline
+              ? [
+                  `If the remote already has this schema, record it without re-applying: ${formatMigrationRepairCommand(
+                    {
+                      status: "applied",
+                      versions: written.map((file) => file.version),
+                    },
+                  )}`,
+                ]
+              : []),
+          ];
+
           return {
             status: "generated",
             message: `${summary}\nWrote ${written.map((file) => file.fileName).join(", ")}`,
@@ -144,13 +159,9 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
               files_written: written.map((file) => file.fileName),
               mutated_database: false,
               mutated_files: true,
-              next_actions: [
-                "Review the migration files, commit them, then deploy with migrations push.",
-              ],
+              next_actions: nextActions,
             },
-            nextActions: [
-              "Review the migration files, commit them, then deploy with migrations push.",
-            ],
+            nextActions,
             mutatedDatabase: false,
             mutatedFiles: true,
           } satisfies SchemaCommandResult;
