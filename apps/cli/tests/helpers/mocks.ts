@@ -5,18 +5,8 @@ import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
 import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
-import {
-  NoRunningStackError,
-  StateNotFoundError,
-  Stack,
-  StackServiceState,
-  StateManager,
-  StackMetadataNotFoundError,
-  type StackInfo,
-  type StackMetadata,
-  type StackState,
-} from "@supabase/stack/effect";
-import { UnixHttpClient } from "@supabase/stack/testing";
+import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
+import { HttpTransportClient } from "@supabase/stack/testing";
 import { Api } from "../../src/next/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
 import { Credentials } from "../../src/next/auth/credentials.service.ts";
@@ -894,87 +884,8 @@ function mockProjectHome(
       projectLinkPath: `${projectHomeDir}/project.json`,
       projectLocalVersionsPath: `${projectHomeDir}/local-versions.json`,
       ensureProjectHomeDir: Effect.void,
-      stackDir: (name: string) => `${projectHomeDir}/stacks/${name}`,
-      stackStatePath: (name: string) => `${projectHomeDir}/stacks/${name}/state.json`,
-      stackMetadataPath: (name: string) => `${projectHomeDir}/stacks/${name}/stack.json`,
-      stackDataDir: (name: string) => `${projectHomeDir}/stacks/${name}/data`,
-      stackLogsDir: (name: string) => `${projectHomeDir}/stacks/${name}/logs`,
     }),
   );
-}
-
-export function mockStateManager(
-  opts: {
-    states?: ReadonlyArray<StackState>;
-    metadata?: ReadonlyArray<{ name: string; metadata: StackMetadata }>;
-  } = {},
-): Layer.Layer<StateManager> {
-  const states = new Map((opts.states ?? []).map((state) => [state.name, state] as const));
-  const metadata = new Map((opts.metadata ?? []).map((entry) => [entry.name, entry.metadata]));
-
-  return Layer.succeed(StateManager, {
-    stackDir: (name: string) => `/test/project/.supabase/stacks/${name}`,
-    dataDir: (name: string) => `/test/project/.supabase/stacks/${name}/data`,
-    runtimeDir: (name: string) => `/tmp/supabase/${name}`,
-    metadataFile: (name: string) => `/test/project/.supabase/stacks/${name}/stack.json`,
-    stackExists: (name: string) => Effect.succeed(states.has(name) || metadata.has(name)),
-    write: (state: StackState) =>
-      Effect.sync(() => {
-        states.set(state.name, state);
-      }),
-    claim: (state: StackState) =>
-      Effect.sync(() => {
-        states.set(state.name, state);
-      }),
-    read: (name: string) =>
-      Effect.gen(function* () {
-        const state = states.get(name);
-        if (state === undefined) {
-          return yield* Effect.fail(new StateNotFoundError({ name }));
-        }
-        return state;
-      }),
-    scan: () => Effect.sync(() => Array.from(states.values())),
-    writeMetadata: (name: string, value: StackMetadata) =>
-      Effect.sync(() => {
-        metadata.set(name, value);
-      }),
-    updateMetadata: (name: string, update: (value: StackMetadata) => StackMetadata) =>
-      Effect.gen(function* () {
-        const value = metadata.get(name);
-        if (value === undefined) {
-          return yield* Effect.fail(new StackMetadataNotFoundError({ name }));
-        }
-        metadata.set(name, update(value));
-      }),
-    readMetadata: (name: string) =>
-      Effect.gen(function* () {
-        const value = metadata.get(name);
-        if (value === undefined) {
-          return yield* Effect.fail(new StackMetadataNotFoundError({ name }));
-        }
-        return value;
-      }),
-    scanMetadata: () => Effect.sync(() => new Map(metadata)),
-    remove: (name: string) =>
-      Effect.sync(() => {
-        states.delete(name);
-      }),
-    deleteStack: (name: string) =>
-      Effect.sync(() => {
-        states.delete(name);
-        metadata.delete(name);
-      }),
-    resolve: (cwd: string) =>
-      Effect.gen(function* () {
-        const state = Array.from(states.values())[0];
-        if (state === undefined) {
-          return yield* Effect.fail(new NoRunningStackError({ cwd }));
-        }
-        return state;
-      }),
-    isAlive: () => Effect.succeed(true),
-  });
 }
 
 export function mockProjectLinkState(
@@ -1084,7 +995,6 @@ export function emptyEnv() {
   const projectHomeLayer = mockProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
   const projectLocalServiceVersionsLayer = mockProjectLocalServiceVersions();
-  const stateManagerLayer = mockStateManager();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
@@ -1093,15 +1003,14 @@ export function emptyEnv() {
     projectHomeLayer,
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
-    stateManagerLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,
     cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
-    Layer.succeed(UnixHttpClient, {
-      request: () => Effect.die("unexpected UnixHttpClient access in tests"),
+    Layer.succeed(HttpTransportClient, {
+      request: () => Effect.die("unexpected HttpTransportClient access in tests"),
     }),
   );
 }
@@ -1111,14 +1020,12 @@ export function withEnv(env: Record<string, string>) {
   const projectContextLayer = mockProjectContext();
   const envLayer = processEnvLayer(env);
   const projectHomeLayer = mockProjectHome();
-  const stateManagerLayer = mockStateManager();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
     projectContextLayer,
     projectHomeLayer,
-    stateManagerLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,

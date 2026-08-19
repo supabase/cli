@@ -23,12 +23,15 @@
  *     containing a newline (`docker env-file` is a line-oriented format that
  *     cannot represent one) — a second env-delivery mechanism the shared spec
  *     has no concept of.
- *   - `docker run -d` (one atomic call) vs. `docker create` + `docker start`
- *     (two calls) is a structural argv difference, not a flag-mapping detail.
+ *   - Edge Runtime's `docker create` → `docker cp` → `docker start` sequence
+ *     (`shared/functions/serve.ts`) superficially resembles
+ *     `legacyCreateContainer`'s, but its `docker cp` payload is the bundled
+ *     main-service template (not `secretFiles`), so the shared spec's
+ *     secret-file contract does not map onto it.
  *
- * So this module keeps `startEdgeRuntimeContainer`'s direct `docker run -d`
- * exactly as `functions serve` already spawns it (see that module's own doc
- * comment), and exposes {@link legacyStartEdgeRuntimeContainer} as a direct
+ * So this module keeps `startEdgeRuntimeContainer`'s own create/cp/start
+ * bring-up exactly as `functions serve` already spawns it (see that module's
+ * own doc comment), and exposes {@link legacyStartEdgeRuntimeContainer} as a direct
  * bring-up `Effect` for `start.handler.ts` to call from its own bring-up loop
  * — NOT a spec for `legacyCreateContainer` to create. `start.handler.ts`'s
  * wiring must special-case Edge Runtime's bring-up call, the same way it
@@ -121,7 +124,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
 
 /**
  * Bring up the Edge Runtime container for `start`, delegating the entire
- * `docker run` argv/env assembly to `shared/functions/serve.ts`'s
+ * create/cp/start argv/env assembly to `shared/functions/serve.ts`'s
  * `startEdgeRuntimeContainer` (already ported for `functions serve`) with
  * `start`'s own already-resolved config/secrets in place of that command's
  * independent config-loading pipeline. `start.handler.ts`'s bring-up loop
@@ -136,27 +139,27 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * shape as the existing `postgrest` gateway). `watchSpecs` is
  * `functions serve`-only file-watch plumbing and can be ignored here.
  *
- * `cleanup` (removing the temp env-file/multiline-env-script/serve-main-
- * template files this call writes to the host) is intentionally left to the
+ * `cleanup` (removing the temp env-file/multiline-env-script files this call
+ * writes to the host) is intentionally left to the
  * caller, and the caller must NOT invoke it on a successful bring-up. Unlike
  * every other `start` service (`legacyCreateContainer`'s `restartPolicy:
  * "unless-stopped"`), Edge Runtime's bring-up sets NO Docker restart policy
  * at all — its lifecycle is deliberately reconciled at the CLI level, not
- * the Docker daemon level — so this container's own `docker run`
+ * the Docker daemon level — so this container's own bring-up
  * (`shared/functions/serve.ts`) intentionally omits `--restart` too. Its
  * bind-mounted host paths must
  * still exist for as long as the container itself can be reattached to
  * (e.g. a plain `docker start` by the user, or discovery by a later CLI
- * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles`, which
- * `container-lifecycle.ts`'s `legacyCreateContainer` now streams straight
- * into the container instead of staging on host disk (see
- * `legacyCopyStartSecretFilesIntoContainer`'s doc comment), Edge Runtime's own
- * bind-mounted env-file/multiline-env-script/serve-main-template artifacts
- * still need this host persistence, since `docker run -d` bind-mounts them
- * rather than copying their content in. `startEdgeRuntimeContainer` (`shared/functions/
+ * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles` and Edge
+ * Runtime's own bootstrap template, which are `docker cp`-streamed straight
+ * into the created container instead of staged on host disk (see
+ * `legacyCopyStartSecretFilesIntoContainer`'s doc comment and
+ * `startEdgeRuntimeContainer`'s own delivery comment), Edge Runtime's
+ * bind-mounted multiline-env-script artifacts still need this host
+ * persistence. `startEdgeRuntimeContainer` (`shared/functions/
  * serve.ts`) already runs `cleanup` internally on any failed or interrupted
  * bring-up (`Effect.onError`, covering the whole staging-write-through-
- * `docker run` window, not just a non-zero exit code), so the caller only
+ * `docker start` window, not just a non-zero exit code), so the caller only
  * needs to leave the returned `cleanup` unused on success.
  */
 export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRuntime")(function* (

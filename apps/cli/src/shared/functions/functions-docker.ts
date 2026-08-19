@@ -82,6 +82,26 @@ export function toDockerPath(hostPath: string) {
   return normalized.replace(/^[A-Za-z]:/, "");
 }
 
+/**
+ * In-memory tar bytes for `docker cp - <container>:/` delivery, which needs no
+ * daemon-visible host path. Keys are absolute container paths; leading slashes
+ * are stripped into the tar entry names since the archive extracts at the
+ * container root. `Bun.Archive` exposes no per-entry mode option, so entries
+ * carry its `0644` default.
+ */
+export function containerArchiveBytes(
+  files: Readonly<Record<string, string>>,
+): Promise<Uint8Array> {
+  return new Bun.Archive(
+    Object.fromEntries(
+      Object.entries(files).map(([containerPath, content]) => [
+        containerPath.replace(/^\/+/, ""),
+        content,
+      ]),
+    ),
+  ).bytes();
+}
+
 export interface FunctionsDockerRunSpec {
   /** Already registry/pull-resolved image reference. */
   readonly image: string;
@@ -175,6 +195,8 @@ export const runChildProcess = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   opts: {
+    /** Streamed to the child's stdin (e.g. a `docker cp -` tar archive); defaults to no stdin. */
+    readonly stdin?: Stream.Stream<Uint8Array>;
     readonly stdout?: "pipe" | "ignore";
     readonly stderr?: "pipe" | "ignore";
     readonly env?: Readonly<Record<string, string>>;
@@ -189,7 +211,7 @@ export const runChildProcess = Effect.fnUntraced(function* (
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawnContainerCli(spawner, [...args], {
-        stdin: "ignore",
+        stdin: opts.stdin ?? "ignore",
         stdout: opts.stdout ?? "pipe",
         stderr: opts.stderr ?? "pipe",
         env: opts.env,

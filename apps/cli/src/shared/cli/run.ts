@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
-import { unixHttpClientLayer } from "@supabase/stack/effect";
+import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
@@ -734,7 +734,7 @@ function cliProgramFor(
     Effect.provide(projectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
-    Effect.provide(unixHttpClientLayer),
+    Effect.provide(httpTransportClientLayer),
     Effect.provide(fallbackCommandLayer),
     Effect.provide(Layer.succeed(CliArgs, { args })),
     Effect.provide(BunServices.layer),
@@ -793,7 +793,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     Effect.provide(processControlLayer),
     Effect.provide(runtimeInfoLayer),
     Effect.provide(ttyLayer),
-    Effect.provide(unixHttpClientLayer),
+    Effect.provide(httpTransportClientLayer),
     Effect.provide(BunServices.layer),
   );
 
@@ -876,7 +876,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),
-      Effect.provide(unixHttpClientLayer),
+      Effect.provide(httpTransportClientLayer),
       Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
       Effect.provide(successTrailerLayer),

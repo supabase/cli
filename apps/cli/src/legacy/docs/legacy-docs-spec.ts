@@ -279,7 +279,7 @@ function legacyDocsVisibleChildren(
   command: Command.Command.Any,
 ): ReadonlyArray<Command.Command.Any> {
   return legacyFlattenSubcommands(command)
-    .filter((child) => !child.hidden)
+    .filter((child) => !child.unlisted)
     .toSorted((a, b) => legacyDocsCompare(a.name, b.name));
 }
 

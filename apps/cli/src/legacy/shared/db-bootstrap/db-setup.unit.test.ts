@@ -63,6 +63,14 @@ function fakeSession() {
       Effect.sync(() => {
         calls.push({ kind: "exec", sql });
       }),
+    // A batched file records the same way a statement-at-a-time run would, so the
+    // fingerprint assertions below read the SQL regardless of how it was sent.
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql, params } of statements) {
+          calls.push(params === undefined ? { kind: "exec", sql } : { kind: "query", sql, params });
+        }
+      }),
     query: (sql, params) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql, params });
@@ -773,6 +781,43 @@ describe("legacyRunFreshDbSetup", () => {
     });
 
     it.effect(
+      "skips the legacy catalog when an empty shell value shadows a project .env false (godotenv parity)",
+      () => {
+        // godotenv.Load never replaces a shell value, including an empty one, so
+        // an empty `SUPABASE_USE_PG_DELTA_NEXT` in the shell must suppress the
+        // `supabase/.env` fallback below and resolve to the next implementation —
+        // matching the engine-selector layer's own precedence rather than
+        // `toml.envLookup`'s (which treats an empty shell value as unset).
+        const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+        process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
+        const workdir = makeWorkdir();
+        writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
+        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
+        return run(
+          baseInput(workdir, session, { majorVersion: 14 }),
+          out,
+          docker,
+          edgeRuntime,
+        ).pipe(
+          Effect.map(() => {
+            expect(edgeRuntime.calls).toHaveLength(0);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+              else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.effect(
       "caches the migrations catalog when SUPABASE_EXPERIMENTAL_PG_DELTA is enabled via project .env",
       () => {
         const workdir = makeWorkdir();
@@ -961,6 +1006,10 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
       exec: (sql) =>
         Effect.sync(() => {
           execSql.push(sql);
+        }),
+      execBatch: (statements) =>
+        Effect.sync(() => {
+          for (const { sql } of statements) execSql.push(sql);
         }),
       query: (sql) =>
         sql.includes("supabase_migrations.schema_migrations")

@@ -9,7 +9,9 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
+  legacyWithEnv,
   mockLegacyCliConfig,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
@@ -38,7 +40,10 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../shared/legacy-db-connection.service.ts";
 import {
   LegacyDockerRun,
   type LegacyDockerRunOpts,
@@ -129,6 +134,10 @@ interface SetupOpts {
   // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
   // instead of silently falling back to `opts.resolvedRef ?? LEGACY_VALID_REF`.
   readonly linkedFails?: boolean;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -141,6 +150,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // A real docker-spawner fake backs container create/start/health-inspect/cleanup.
   const shadowSpawner = mockLegacyShadowContainerCliSpawner();
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
 
   const engineCalls: Array<{
     operation: "diff" | "export";
@@ -247,7 +261,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           );
         }
         return Effect.succeed({
-          files: [{ name: "schemas/public/t.sql", sql: "create table t ();" }],
+          files: [{ name: "public/t.sql", sql: "create table t ();" }],
           manifest: {
             redactSecrets: true,
             scope: "database",
@@ -330,19 +344,30 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // ALSO issues a parameterized `INSERT_MIGRATION_VERSION` query, into its own
   // separate in-shadow history table).
   const TARGET_PORT = 5432;
-  const makeSession = (isShadow: boolean) => ({
-    exec: (sql: string) => Effect.sync(() => void execLog.push(sql)),
-    query: (sql: string, params?: ReadonlyArray<unknown>) => {
+  const makeSession = (isShadow: boolean): LegacyDbSession => {
+    const exec = (sql: string) => Effect.sync(() => void execLog.push(sql));
+    const query = (sql: string, params?: ReadonlyArray<unknown>) => {
       if (/SELECT version/u.test(sql)) {
         return Effect.succeed((opts.remoteVersions ?? []).map((v) => ({ version: v })));
       }
       if (!isShadow && params !== undefined) historyUpserts.push(params);
       return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
-    },
-    extensionExists: () => Effect.die("extensionExists unused"),
-    copyToCsv: () => Effect.die("copyToCsv unused"),
-    queryRaw: () => Effect.die("queryRaw unused"),
-  });
+    };
+    return {
+      exec,
+      query,
+      // A migration batch carries exactly the statements (and the parameterized
+      // history insert) the sequential path would run, so route each operation
+      // through the same recording.
+      execBatch: (statements) =>
+        Effect.forEach(statements, ({ sql, params }) =>
+          params === undefined ? exec(sql) : query(sql, params),
+        ).pipe(Effect.asVoid),
+      extensionExists: () => Effect.die("extensionExists unused"),
+      copyToCsv: () => Effect.die("copyToCsv unused"),
+      queryRaw: () => Effect.die("queryRaw unused"),
+    };
+  };
   const targetSession = makeSession(false);
   const shadowSession = makeSession(true);
   const dbConnection = Layer.succeed(LegacyDbConnection, {
@@ -440,7 +465,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     dbConnection,
-    shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
@@ -477,6 +502,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dumpCalls,
     engineCalls,
     shadowSpawned: shadowSpawner.spawned,
+    dockerDaemon,
     get edgeRunCount() {
       return edgeRunCount;
     },
@@ -867,9 +893,7 @@ describe("legacy db pull", () => {
       // (established output contract).
       expect(err).toContain(`Declarative schema written to ${join("supabase", "schemas")}\n`);
       expect(err).not.toContain(tmp.current);
-      expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
-      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(
         JSON.parse(
           readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
@@ -878,7 +902,7 @@ describe("legacy db pull", () => {
         formatVersion: 1,
         redactSecrets: true,
         scope: "database",
-        files: ["schemas/public/t.sql"],
+        files: ["public/t.sql"],
       });
       // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
       // up a platform baseline or `contrib_regression` template. The only connects are
@@ -1063,9 +1087,7 @@ describe("legacy db pull", () => {
       expect(s.engineCalls[0]?.operation).toBe("export");
       // Reaching the declarative write (rather than a migration file / history
       // upsert) proves the declarative export path ran.
-      expect(
-        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
-      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "public", "t.sql"))).toBe(true);
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
@@ -1173,6 +1195,29 @@ describe("legacy db pull", () => {
       );
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "an initial pull surfaces a crashed migra script instead of the dump-only migration",
+    () => {
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpStdout: "create table dumped ();\n",
+        edgeFailFirstWith:
+          "error diffing schema: error running script:\nTypeError: Cannot read properties of undefined (reading 'constraints')\nPGDELTA_SCRIPT_ERROR\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit)
+          ? exit.cause.reasons.find((reason) => reason._tag === "Fail")?.error
+          : undefined;
+        const message = (error as { message?: string } | undefined)?.message ?? "";
+        expect(message).toContain("Cannot read properties of undefined");
+        expect(message).not.toContain("No schema changes found");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
     // An empty dump + empty diff leaves the file empty → in sync.
@@ -2270,5 +2315,70 @@ describe("legacy db pull", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  describe("shadow baseline cache", () => {
+    /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
+    const publishedTars = () => {
+      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
+    };
+
+    /**
+     * Runs `db pull` with the shadow baseline cache ENABLED (this file pins it off for every
+     * other test) and its artifacts isolated under the temp root, against the stateful Docker
+     * model the export/restore round trip needs.
+     *
+     * Each run gets its OWN workdir so the migration file the previous pull wrote cannot shift
+     * the second run's behaviour — the cache key is global and deliberately workdir-independent,
+     * so two worktrees with identical settings still collide on the same tar.
+     */
+    const runCached = (implementation: "legacy" | "next") => {
+      const workdir = join(tmp.current, `${implementation}-worktree`);
+      seedMigration(workdir, "20240101000000");
+      writeFileSync(
+        join(workdir, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = true\n",
+      );
+      const s = setup(workdir, {
+        statefulDocker: true,
+        engineImplementation: implementation,
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table t ();" }]),
+        yes: true,
+      });
+      return legacyWithEnv(
+        "SUPABASE_HOME",
+        join(tmp.current, "_supabase_home"),
+        legacyWithEnv(
+          "SUPABASE_SHADOW_CACHE",
+          "1",
+          legacyDbPull(flags()).pipe(Effect.provide(s.layer)),
+        ),
+      ).pipe(Effect.as(s));
+    };
+
+    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
+    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // to the SAME tar and silently restored each other's cluster. The handler now forks the
+    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
+    // the contract, this covers `db pull`'s call site.
+    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+      return Effect.gen(function* () {
+        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
+        const legacyRun = yield* runCached("legacy");
+        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const legacyTars = publishedTars();
+        expect(legacyTars).toHaveLength(1);
+
+        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // and publish its OWN baseline rather than restore the forced-on one above.
+        const nextRun = yield* runCached("next");
+        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        expect(publishedTars()).toHaveLength(2);
+        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+      });
+    });
   });
 });

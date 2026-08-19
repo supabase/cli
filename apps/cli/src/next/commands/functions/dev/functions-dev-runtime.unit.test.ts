@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer, Queue, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Queue, Stream } from "effect";
 import { join } from "node:path";
 import {
   FileWatcher,
@@ -9,6 +9,15 @@ import { watchPaths } from "./functions-dev-runtime.ts";
 
 function makeFakeFileWatcher() {
   const queues = new Map<string, Queue.Enqueue<ReadonlyArray<FileWatchEvent>>>();
+  const registrations = new Map<string, Deferred.Deferred<void>>();
+  const registrationFor = (path: string) => {
+    let latch = registrations.get(path);
+    if (latch === undefined) {
+      latch = Deferred.makeUnsafe<void>();
+      registrations.set(path, latch);
+    }
+    return latch;
+  };
 
   const layer = Layer.succeed(
     FileWatcher,
@@ -17,20 +26,18 @@ function makeFakeFileWatcher() {
         Stream.callback<ReadonlyArray<FileWatchEvent>>((queue) =>
           Effect.sync(() => {
             queues.set(path, queue);
-          }),
+          }).pipe(Effect.andThen(Deferred.succeed(registrationFor(path), undefined))),
         ),
     }),
   );
 
-  const awaitWatch = Effect.fnUntraced(function* (expectedPath: string) {
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if (queues.has(expectedPath)) {
-        return;
-      }
-      yield* Effect.sleep("1 millis");
-    }
-    throw new Error(`No watcher registered for ${expectedPath}`);
-  });
+  const awaitWatch = (expectedPath: string) =>
+    Deferred.await(registrationFor(expectedPath)).pipe(
+      Effect.timeoutOrElse({
+        duration: "2 seconds",
+        orElse: () => Effect.die(new Error(`No watcher registered for ${expectedPath}`)),
+      }),
+    );
 
   const emit = (path: string, events: ReadonlyArray<FileWatchEvent>) =>
     Effect.sync(() => {
@@ -59,7 +66,7 @@ describe("functions dev runtime", () => {
             emitted = true;
           }),
         ),
-        Effect.timeout(Duration.seconds(1)),
+        Effect.timeout(Duration.seconds(5)),
         Effect.provide(watcher.layer),
         Effect.forkChild({ startImmediately: true }),
       );
@@ -84,7 +91,7 @@ describe("functions dev runtime", () => {
       ]).pipe(
         Stream.take(1),
         Stream.runCollect,
-        Effect.timeout(Duration.seconds(1)),
+        Effect.timeout(Duration.seconds(5)),
         Effect.provide(watcher.layer),
         Effect.forkChild({ startImmediately: true }),
       );

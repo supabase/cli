@@ -335,8 +335,8 @@ export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session
 // SQLSTATE-42704 extension hint, `At statement: <index>`) real migration files
 // get — NOT a real SQL transaction: `DROP`/`CREATE DATABASE` cannot run inside a
 // `BEGIN`/`COMMIT` block at all, so these stay bare, sequential, UNWRAPPED
-// `session.exec` calls (the pgconn network-pipeline batching `ExecBatch` uses
-// instead has no TS equivalent and no observable difference here). Each
+// `session.exec` calls instead of using the TS batch primitive, whose single Sync
+// would group them in an implicit transaction. Each
 // statement's index matches its position in this list, mirroring Go's
 // `m.Statements` indexing.
 const RESET_RECREATE_DATABASES_STATEMENTS = [

@@ -56,6 +56,7 @@ import {
 } from "../declarative.errors.ts";
 import {
   legacyClassifyDeclarativeCompatibilityGap,
+  legacyCurrentShellPlatform,
   legacyFormatDeclarativeGapEvidence,
   legacyFormatDeclarativeUpgradeGate,
   legacyFormatStagedExportAdoption,
@@ -63,6 +64,7 @@ import {
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
+import { legacyWarnFormerDeclarativeDefault } from "../declarative.former-default.ts";
 import { legacyAppendExtensionDeclarations } from "../declarative.extension-repair.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
@@ -189,6 +191,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         dnsResolver,
       };
       const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
@@ -347,6 +350,33 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         }
         yield* ensureLocalPostgresImageCurrent;
         yield* seam.ensureLocalDatabaseStarted();
+        // The staged export snapshots the RUNNING local database verbatim — not a
+        // shadow built from migrations, which is what the failed plan compared. Say
+        // so, and offer the same reset the smart-target local path offers, so stale
+        // Studio-made drift does not silently become the staged declarative tree.
+        // This path is only reachable interactively (both prompts above gate on a
+        // TTY without --yes), so the prompt always really asks.
+        yield* output.raw(
+          `Exporting from the running local database (not the migrations state). Review ${stagedDirRel} before adopting it.\n`,
+          "stderr",
+        );
+        const shouldReset = yield* legacyPromptYesNo(
+          output,
+          yes,
+          "Reset local database to match migrations first? (local data will be lost)",
+          false,
+        );
+        if (shouldReset) {
+          yield* legacyResetLocalDatabase().pipe(
+            Effect.mapError(
+              (error) =>
+                new LegacyDeclarativeApplyError({
+                  message: `database reset failed: ${error.message}`,
+                  suggestion: legacyReadErrorSuggestion(error),
+                }),
+            ),
+          );
+        }
         const generated = yield* legacyGenerateDeclarativeOutput(
           { ...run, declarativeDir: stagedDir },
           toml,
@@ -360,6 +390,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             ...legacyFormatStagedExportAdoption({
               declarativeDir: declarativeDirRel,
               schema: flags.schema,
+              platform: legacyCurrentShellPlatform(),
             }),
             "",
           ].join("\n"),
@@ -499,7 +530,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // instead of the "rerun with --debug" footer.
         const gate = legacyFormatDeclarativeUpgradeGate({
           evidence: legacyFormatDeclarativeGapEvidence(compatibility),
-          context: { declarativeDir: declarativeDirRel, schema: flags.schema },
+          context: {
+            declarativeDir: declarativeDirRel,
+            schema: flags.schema,
+            platform: legacyCurrentShellPlatform(),
+          },
         });
         if (!tty.stdinIsTty || yes) {
           return yield* Effect.fail(

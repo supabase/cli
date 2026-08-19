@@ -6,7 +6,7 @@ import {
   postgrestAssetName,
   type PlatformInfo,
 } from "./Platform.ts";
-import type { PortField } from "./PortAllocator.ts";
+import type { PortField } from "./PortCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
 type ArtifactOwnership = "supabase" | "upstream";
@@ -108,7 +108,7 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.158",
+    defaultVersion: "17.6.1.159",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "postgres" },
@@ -201,7 +201,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.124.4",
+    defaultVersion: "2.129.0",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
     activation: { startup: "eager", activates: [], owns: [] },
@@ -210,7 +210,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.69.0",
+    defaultVersion: "1.69.11",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
     activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
@@ -248,7 +248,7 @@ export const SERVICE_CATALOG = {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.08.10-sha-5b68af1",
+    defaultVersion: "2026.08.17-sha-0c1da8f",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "studio" } },
     activation: { startup: "eager", activates: ["analytics"], owns: [] },

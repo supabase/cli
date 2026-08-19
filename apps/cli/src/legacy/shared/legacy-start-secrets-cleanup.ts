@@ -22,10 +22,10 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * comment), so a bind mount's host-side path never has to be resolved by a
  * remote Docker daemon. This module remains load-bearing for Edge Runtime's
  * OWN, still-host-persisted staging under the exact same tree
- * (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer` — a `docker run
- * -d`, not `docker create`+`docker start`, which bind-mounts its env-file/
- * multiline-env-script/serve-main-template artifacts rather than copying
- * their content in) — this function has no way to distinguish which
+ * (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer`, whose env-file
+ * and bind-mounted multiline-env-script artifacts stay on host disk; only its
+ * bootstrap template is `docker cp`-streamed in) — this function has no way
+ * to distinguish which
  * producer staged a given container's directory, nor does it need to: a
  * directory that was never staged in the first place is a harmless no-op (see
  * below).

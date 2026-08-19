@@ -224,7 +224,13 @@ const legacyPlanMainDbBaseline = <E>(
       // The exact `roles.sql` bytes this key was hashed from — the seed runs THESE rather than
       // re-reading the file, so the published snapshot cannot disagree with its own key.
       rolesSql: peek.keyInputs.rolesSql,
-      snapshotBaseline: legacyExportMainDbBaseline(spawner, input, tarPath, skipIfPublished),
+      snapshotBaseline: legacyExportMainDbBaseline(
+        spawner,
+        input,
+        peek.key,
+        tarPath,
+        skipIfPublished,
+      ),
     });
 
     if (peek.state === "cold") {
@@ -463,12 +469,14 @@ const legacyMainDbCacheInput = <E>(
 const legacyExportMainDbBaseline = <E>(
   spawner: Spawner,
   input: LegacyMainDbBaselineInput<E>,
+  key: string,
   tarPath: string,
   skipIfPublished: boolean,
 ): Effect.Effect<void, LegacyDbSetupError, Output | LegacyDbConnection> =>
   legacyExportBaselineSnapshot(spawner, input, {
     containerId: input.dbContainerId,
     tarPath,
+    key,
     skipIfPublished,
     connConfig: input.connConfig,
     healthTimeoutSeconds: input.healthTimeoutSeconds,

@@ -400,6 +400,16 @@ export function parseLegacyConnectionString(
   return parseKeywordValueDsn(trimmed, env);
 }
 
+/**
+ * Layers a project `.env*` lookup under the shell environment: shell presence wins
+ * over the project file, matching Go's `LoadConfig`-before-`pgconn.ParseConfig` order.
+ */
+export function legacyLayeredParseEnv(
+  projectEnv: Readonly<Record<string, string>>,
+): LegacyParseEnv {
+  return (name) => process.env[name] ?? projectEnv[name];
+}
+
 export type LegacyPoolerConfigResult =
   | { readonly _tag: "ok"; readonly conn: LegacyPgConnInput }
   | { readonly _tag: "invalid"; readonly reason: string };

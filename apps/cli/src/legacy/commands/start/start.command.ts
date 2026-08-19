@@ -48,7 +48,7 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // are not listed here: they come from `BunServices`/`processControlLayer`/
 // `runtimeInfoLayer` in the root runtime (`shared/cli/run.ts`), the same way
 // `stop`/`status` rely on the former. `HttpClient.HttpClient` is NOT provided by the
-// root runtime — `BunServices.layer` never supplies it, and `unixHttpClientLayer` is a
+// root runtime — `BunServices.layer` never supplies it, and `httpTransportClientLayer` is a
 // different service tag entirely — so it's composed here via `legacyHttpClientLayer`,
 // the same `FetchHttpClient`-backed layer `db reset`/`seed buckets` use, needed for the
 // health-check probes (`legacyWaitForHealthyServices`) and `legacySeedBucketsRun`.

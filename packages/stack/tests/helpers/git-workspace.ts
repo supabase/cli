@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -18,6 +18,7 @@ const GIT_ENV = {
   ...process.env,
   // Isolated from the developer's own git configuration, which could otherwise
   // decide the initial branch name or sign the fixture commits.
+  HOME: devNull,
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
   GIT_AUTHOR_NAME: "Managed Stack Test",

@@ -15,8 +15,14 @@ const config = {
   overwrite: Flag.boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
   ),
-  output: Flag.string("output").pipe(
-    Flag.withAlias("o"),
+  // Deliberately NOT named `--output`/`-o`: the legacy root reserves those for
+  // the global machine-format flag (`LegacyOutputFlag`, `json|yaml|toml|env|…`),
+  // and a leaf string flag would shadow it — `generate -o json` would write a
+  // directory named `json` instead of being a (Go-ignored) format request.
+  // `db diff`'s local `--output`/`-o` shadowing is different: Go itself
+  // registers it (`cmd/db.go:222`), so parity fixes that name; this flag is
+  // TS-only and free to avoid the collision.
+  outputDir: Flag.string("output-dir").pipe(
     Flag.withDescription(
       "Write the generated declarative schema to this directory without changing the configured declarative schema path.",
     ),
@@ -74,7 +80,7 @@ export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.I
 
 export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
-    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
+    "Exports a live database into the complete declarative schema tree. This replaces declarative files only; it does not create migration files or update migration history. Use --output-dir to stage an export without changing the configured declarative path. In non-interactive use, pass --local, --linked, or --db-url explicitly.",
   ),
   Command.withShortDescription("Generate declarative schema from a database"),
   Command.withHandler((flags) =>
@@ -108,7 +114,7 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
             "no-cache": merged.noCache,
             "strict-coverage": merged.strictCoverage,
             overwrite: merged.overwrite,
-            output: merged.output,
+            "output-dir": merged.outputDir,
             reset: merged.reset,
             schema: merged.schema,
             "db-url": merged.dbUrl,
@@ -123,7 +129,7 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
           // (StringVarP) (`cmd/db_schema_declarative.go:495,500`); telemetry reports
           // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
           // shorthands so `generate -s public -p secret` logs `schema`/`password`.
-          aliases: { o: "output", s: "schema", p: "password" },
+          aliases: { s: "schema", p: "password" },
         }),
         withJsonErrorHandling,
       );

@@ -27,6 +27,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
   useLegacyShadowCacheDisabled,
+  legacySequentialExecBatch,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
@@ -41,7 +42,10 @@ import { LegacyPlatformApi } from "../../../../../auth/legacy-platform-api.servi
 import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-api-factory.service.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  LegacyDbConnection,
+} from "../../../../../shared/legacy-db-connection.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
@@ -113,8 +117,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         exec: (sql: string) =>
           Effect.sync(() => {
             dbExec.push(sql);
@@ -127,7 +131,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode, projectRef }) => {
@@ -230,9 +239,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               Effect.die("planDeclarativeSchema not used in generate tests"),
             exportDeclarativeSchema: () =>
               Effect.succeed({
-                files: [
-                  { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
-                ],
+                files: [{ name: "public/tables/players.sql", sql: "create table players ();" }],
                 manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
               }),
           }),
@@ -299,7 +306,7 @@ const flags = (
   noCache: over.noCache ?? false,
   strictCoverage: over.strictCoverage ?? false,
   overwrite: over.overwrite ?? false,
-  output: over.output ?? Option.none(),
+  outputDir: over.outputDir ?? Option.none(),
   reset: over.reset ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
@@ -463,6 +470,22 @@ describe("legacy db schema declarative generate integration", () => {
     },
   );
 
+  it.effect("warns when the tree still lives under the former supabase/database default", () => {
+    // Upgrade path: the implicit default moved from supabase/database to
+    // supabase/schemas; a project relying on the old default must be told before
+    // a fresh tree is generated somewhere its existing files are not.
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "database", "public.sql"), "create table a();");
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "WARNING: found declarative schema files in supabase/database, but the default declarative directory is now supabase/schemas.",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain('declarative_schema_path = "./database"');
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit --local: provisions a raw shadow, exports, and writes files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
@@ -498,7 +521,7 @@ describe("legacy db schema declarative generate integration", () => {
   });
 
   it.effect(
-    "--output writes a complete next export relative to the project without activating it",
+    "--output-dir writes a complete next export relative to the project without activating it",
     () => {
       mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
@@ -514,21 +537,18 @@ describe("legacy db schema declarative generate integration", () => {
       const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
       return Effect.gen(function* () {
         yield* legacyDbSchemaDeclarativeGenerate(
-          flags({ local: Option.some(true), output: Option.some(destination) }),
+          flags({ local: Option.some(true), outputDir: Option.some(destination) }),
         );
 
         expect(
-          readFileSync(
-            join(tmp.current, destination, "schemas", "public", "tables", "players.sql"),
-            "utf8",
-          ),
+          readFileSync(join(tmp.current, destination, "public", "tables", "players.sql"), "utf8"),
         ).toBe("create table players ();");
         expect(
           JSON.parse(readFileSync(join(tmp.current, destination, ".pgdelta-export.json"), "utf8")),
         ).toMatchObject({
           formatVersion: 1,
           profile: "supabase",
-          files: ["schemas/public/tables/players.sql"],
+          files: ["public/tables/players.sql"],
         });
         expect(
           readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
@@ -544,7 +564,7 @@ describe("legacy db schema declarative generate integration", () => {
     },
   );
 
-  it.effect("--output protects a non-empty destination without --overwrite", () => {
+  it.effect("--output-dir protects a non-empty destination without --overwrite", () => {
     const destination = join(tmp.current, "staged-schema");
     mkdirSync(destination, { recursive: true });
     writeFileSync(join(destination, "keep.sql"), "select 'keep';");
@@ -555,7 +575,7 @@ describe("legacy db schema declarative generate integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(
-        flags({ local: Option.some(true), output: Option.some(destination) }),
+        flags({ local: Option.some(true), outputDir: Option.some(destination) }),
       );
       expect(readFileSync(join(destination, "keep.sql"), "utf8")).toBe("select 'keep';");
       expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(false);
@@ -572,7 +592,7 @@ describe("legacy db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       for (const output of ["", ".", "..", dirname(projectDir)]) {
         const exit = yield* legacyDbSchemaDeclarativeGenerate(
-          flags({ local: Option.some(true), output: Option.some(output), overwrite: true }),
+          flags({ local: Option.some(true), outputDir: Option.some(output), overwrite: true }),
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)).toMatchObject({
@@ -586,11 +606,11 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--output does not warm the configured legacy declarative tree", () => {
+  it.effect("--output-dir does not warm the configured legacy declarative tree", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(
-        flags({ local: Option.some(true), output: Option.some("staged-schema") }),
+        flags({ local: Option.some(true), outputDir: Option.some("staged-schema") }),
       );
       expect(s.seamCalls).toEqual([]);
       expect(
@@ -1199,7 +1219,7 @@ describe("legacy db schema declarative generate integration", () => {
         formatVersion: 1,
         redactSecrets: true,
         scope: "database",
-        files: ["schemas/public/tables/players.sql"],
+        files: ["public/tables/players.sql"],
       });
       expect(s.seamCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));

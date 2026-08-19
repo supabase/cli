@@ -18,6 +18,7 @@ const mig = (version: string) => `supabase/migrations/${version}_test.sql`;
 /** Minimal session whose `query` fails with the given error. */
 const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
   exec: () => Effect.die("unused"),
+  execBatch: () => Effect.die("unused"),
   query: () => Effect.fail(error),
   extensionExists: () => Effect.die("unused"),
   copyToCsv: () => Effect.die("unused"),
@@ -54,6 +55,17 @@ describe("legacyReconcileMigrations", () => {
   it("reports a conflict with an extra local migration", () => {
     const result = legacyReconcileMigrations([], ["20240102000000"]);
     expect(result.kind).toBe("conflict");
+  });
+
+  it("is in sync when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
+    // Local versions arrive in file-name order, where `20260420010000_b.sql`
+    // precedes `20260420_a.sql` ('0' < '_') — the reverse of the `ORDER BY
+    // version` order `schema_migrations` is read back in. Unsorted, the walk
+    // desynchronises into a conflict whose repair suggestion asks for the same
+    // version to be marked both reverted and applied.
+    expect(
+      legacyReconcileMigrations(["20260420", "20260420010000"], ["20260420010000", "20260420"]),
+    ).toEqual({ kind: "in-sync" });
   });
 
   it("skips versions that do not parse as integers", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
+import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,19 @@ import { link } from "./link.handler.ts";
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-link-command-"));
 }
+
+const runGit = (cwd: string, args: ReadonlyArray<string>): Promise<void> =>
+  new Promise((resolve, reject) => {
+    execFile("git", args, { cwd }, (error) => (error === null ? resolve() : reject(error)));
+  });
+
+const initializeRepository = async (projectRoot: string): Promise<void> => {
+  await mkdir(projectRoot, { recursive: true });
+  await runGit(projectRoot, ["init", "--initial-branch=main"]);
+  await runGit(projectRoot, ["config", "user.email", "stack-tests@supabase.local"]);
+  await runGit(projectRoot, ["config", "user.name", "Stack Tests"]);
+  await runGit(projectRoot, ["commit", "--allow-empty", "-m", "initial"]);
+};
 
 function buildLayer(opts: {
   cwd: string;
@@ -134,7 +148,7 @@ describe("link handler", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
       yield* Effect.tryPromise(() =>
         writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig),
       );
@@ -220,7 +234,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -252,7 +266,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -350,7 +364,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -433,7 +447,7 @@ describe("link handler", () => {
     const newProjectRef = "qrstabcdefghijklmnop";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -556,7 +570,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,

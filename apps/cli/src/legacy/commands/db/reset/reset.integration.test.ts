@@ -31,6 +31,7 @@ import {
   useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   withLegacyShadowCacheEnabled,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
@@ -66,6 +67,7 @@ import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.t
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
+  type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyDbReset } from "./reset.handler.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
@@ -175,8 +177,8 @@ function mockConnection(
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   let replicationCallIndex = 0;
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -224,7 +226,12 @@ function mockConnection(
               return Effect.succeed([]);
             },
           ),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   return {
     layer,

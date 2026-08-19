@@ -1,4 +1,4 @@
-import { DEFAULT_MANAGED_STACK_NAME, unixHttpClientLayer } from "@supabase/stack/effect";
+import { DEFAULT_MANAGED_STACK_NAME, httpTransportClientLayer } from "@supabase/stack/effect";
 import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
@@ -52,6 +52,6 @@ export const functionsDevCommand = Command.make("dev", flags).pipe(
         commandRuntimeLayer(["functions", "dev"]),
         parcelFileWatcherLayer,
       ),
-    ).pipe(Layer.provide(unixHttpClientLayer)),
+    ).pipe(Layer.provide(httpTransportClientLayer)),
   ),
 );
