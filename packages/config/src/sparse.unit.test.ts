@@ -103,6 +103,22 @@ describe("omitDefaultValues", () => {
     expect(sparse.api).toEqual({ max_rows: 500 });
   });
 
+  test("preserves a record entry named __proto__ as an own data property", () => {
+    // Both smol-toml (`[functions.__proto__]`) and JSON.parse produce an own
+    // `__proto__` key, and the schema decode preserves it — so the subtraction
+    // walk must define it as an own data property rather than let a plain
+    // `result[key] = value` assignment hit the legacy prototype setter and
+    // silently drop the function from the sparse output.
+    const raw: unknown = JSON.parse('{"functions": {"__proto__": {"verify_jwt": false}}}');
+    const sparse = omitDefaultValues(decodeProjectConfig(raw));
+    const functions = sparse.functions ?? {};
+    expect(Object.hasOwn(functions, "__proto__")).toBe(true);
+    const entry = Object.getOwnPropertyDescriptor(functions, "__proto__")?.value;
+    expect(entry).toMatchObject({ verify_jwt: false });
+    // The walk must not have poisoned the container's prototype either.
+    expect(Object.getPrototypeOf(functions)).toBe(Object.prototype);
+  });
+
   test("does not mutate its input", () => {
     const config = decodeProjectConfig({
       api: { max_rows: 500 },

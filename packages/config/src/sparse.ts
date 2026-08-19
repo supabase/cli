@@ -69,6 +69,22 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Defines `key` as an own data property. Record keys come from user config
+ * files, and both smol-toml and `JSON.parse` produce an own `__proto__` key
+ * (a valid function name or remote label) that a plain `target[key] = value`
+ * assignment would feed to the legacy prototype setter, silently dropping the
+ * entry — or, for object values, swapping the target's prototype.
+ */
+export function setOwnProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
 function isEqualValue(left: unknown, right: unknown): boolean {
   if (Array.isArray(left) && Array.isArray(right)) {
     if (left.length !== right.length) {
@@ -93,7 +109,7 @@ function isEqualValue(left: unknown, right: unknown): boolean {
     }
 
     for (const key of leftKeys) {
-      if (!(key in right) || !isEqualValue(left[key], right[key])) {
+      if (!Object.hasOwn(right, key) || !isEqualValue(left[key], right[key])) {
         return false;
       }
     }
@@ -111,7 +127,10 @@ function isEqualValue(left: unknown, right: unknown): boolean {
  * arrays are removed wholesale on equality, never subtracted element-wise. A
  * key with no counterpart in the baseline is kept verbatim — which is exactly
  * how `remotes` and other record entries pass through untouched when the
- * baseline is the default config.
+ * baseline is the default config. Symmetrically, a baseline-only key is
+ * ignored by design: subtraction reports what `value` declares, and in
+ * overlay semantics absence means *inherit*, so a missing key is not a
+ * removal.
  *
  * Shared with `io.ts`, which subtracts *encoded* documents before writing
  * minimal config files; the typed entry points below operate on decoded
@@ -132,10 +151,13 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      const subtracted = subtractValue(child, baselineObject[key]);
+      const subtracted = subtractValue(
+        child,
+        Object.hasOwn(baselineObject, key) ? baselineObject[key] : undefined,
+      );
 
       if (subtracted !== undefined) {
-        result[key] = subtracted;
+        setOwnProperty(result, key, subtracted);
       }
     }
 
@@ -178,6 +200,16 @@ export function subtractProjectConfig(
  * blocks (per-persistent-branch overrides) pass through untouched (the
  * default config has none), and undefaulted `optionalKey` fields always
  * survive when present.
+ *
+ * The result is sparse at the root scope only: record-keyed entries
+ * (`functions.*`, `remotes.*`) survive whole, with every per-entry decoding
+ * default materialized — decoding fills them in, and the default config's
+ * empty records offer no per-entry baseline to subtract. This cancels out in
+ * a diff (both sides carry the same materialized defaults), but a consumer
+ * rendering the result directly must strip entry-level defaults itself. For a
+ * remote block that is necessarily the consumer's job — its correct baseline
+ * is the merged base config (ADR 0018); for function entries, `io.ts`'s
+ * `stripFunctionRecordDefaults` is the encoded-path precedent.
  */
 export function omitDefaultValues(config: BaseProjectConfig): SparseProjectConfig {
   return subtractProjectConfig(config, getDefaultProjectConfig());

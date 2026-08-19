@@ -45,6 +45,7 @@ All functions are pure and synchronous, operating on decoded config values, with
 - Fields declared `optionalKey` without a `default` annotation can never be pruned; if a platform default exists for such a field, it must be added to the schema before subtraction can see it.
 - A user's explicitly-written default value (`max_rows = 1000` typed by hand) is indistinguishable from an omitted one and will be pruned; intent is not preserved.
 - Callers must know the remote-block baseline rule; misusing the default config as a remote block's baseline reintroduces the override-erasure bug this ADR exists to prevent.
+- `omitDefaultValues` output is sparse at the root scope only: record-keyed entries (`functions.*`, `remotes.*`) pass through whole with their per-entry decoding defaults materialized, since the default config's empty records offer no per-entry baseline. This cancels out in a diff (both sides carry the same materialized defaults), but a consumer rendering the sparse config directly must strip entry-level defaults itself, as the encoded write path does with `stripFunctionRecordDefaults`.
 
 ## Alternatives Considered
 
