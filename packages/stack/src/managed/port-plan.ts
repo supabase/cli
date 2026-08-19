@@ -49,6 +49,12 @@ export interface ManagedPortPlanInput {
   readonly disabledFields?: ReadonlyArray<PortField>;
   readonly intents: ReadonlyArray<ManagedPortRequest>;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
+  /**
+   * Seed automatic selections with the catalog's well-known default ports.
+   * Tests disable this so parallel suites do not contend on the same
+   * defaults, which sticky reuse later re-reserves exactly.
+   */
+  readonly preferCatalogDefaults?: boolean;
 }
 
 const automaticSelection = (preferred: number | undefined): PortSelection =>
@@ -57,6 +63,8 @@ const automaticSelection = (preferred: number | undefined): PortSelection =>
 /** Build sticky durable selections and runtime-only requests from resolved intent. */
 export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan => {
   const persisted = input.persisted ?? [];
+  const preferredFor = (entry: (typeof PORT_CATALOG)[PortField]): number | undefined =>
+    (input.preferCatalogDefaults ?? true) ? entry.preferred : undefined;
   const persistedByKey = new Map(persisted.map((assignment) => [assignment.key, assignment]));
   const intentsByField = new Map(input.intents.map((request) => [request.field, request]));
   const activeKeys = new Set<ManagedPortAssignment["key"]>();
@@ -91,7 +99,7 @@ export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan =
           field,
           key: entry.configKey,
           intent,
-          selection: automaticSelection(entry.preferred),
+          selection: automaticSelection(preferredFor(entry)),
           newlyAllocatedAutomatic: true,
         });
       }
@@ -99,7 +107,7 @@ export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan =
     }
 
     if (entry.persistence === "runtime") {
-      runtimeOnly.push({ field, selection: automaticSelection(entry.preferred) });
+      runtimeOnly.push({ field, selection: automaticSelection(preferredFor(entry)) });
     }
   }
 

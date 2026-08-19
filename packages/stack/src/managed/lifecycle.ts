@@ -9,13 +9,13 @@ import { HttpTransportClient, HttpTransportClientError } from "../HttpTransportC
 import type { ManagedStackDocument } from "./document.ts";
 import {
   ManagedStackAttachedError,
-  ManagedStackControlRequiredError,
   ManagedStackManager,
+  ManagedWorkspaceRepairConflictError,
   workspaceRepairConflict,
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
 } from "./manager.ts";
-import { ControlTransportError, controlEndpoint, type ControlEndpoint } from "./control.ts";
+import { ControlTransportError } from "./control.ts";
 import {
   ManagedStackNotStoppedError,
   type ManagedPortIntentDocument,
@@ -70,28 +70,11 @@ export const resolveManagedDocument = (
     return document === undefined ? yield* Effect.fail(noRunningStack(input)) : document;
   });
 
-const runtimeEndpoint = (
-  document: ManagedStackDocument,
-  input: ManagedLifecycleInput,
-): Effect.Effect<ControlEndpoint, NoRunningStackError | ManagedStackControlRequiredError> =>
-  Effect.gen(function* () {
-    if (
-      (document.lifecycle !== "running" && document.lifecycle !== "starting") ||
-      (document.lifecycle === "running" && document.runtime?.controlEndpoint === undefined)
-    ) {
-      return yield* Effect.fail(noRunningStack(input));
-    }
-    const endpoint = yield* controlEndpoint(document.id).pipe(
-      Effect.mapError(() => new ManagedStackControlRequiredError({ stackId: document.id })),
-    );
-    return endpoint;
-  });
-
 class ManagedStopPending extends Data.TaggedError("ManagedStopPending")<{}> {}
 class ManagedStopOwnerTerminal extends Data.TaggedError("ManagedStopOwnerTerminal")<{}> {}
 class ManagedDeletePending extends Data.TaggedError("ManagedDeletePending")<{}> {}
 
-/** Connect to the deterministic endpoint persisted by the managed supervisor. */
+/** Connect to the control endpoint the managed supervisor actually bound. */
 export const connectManagedStack = (
   input: ManagedLifecycleInput,
 ): Effect.Effect<
@@ -101,14 +84,19 @@ export const connectManagedStack = (
 > =>
   Effect.gen(function* () {
     const document = yield* resolveManagedDocument(input);
-    const manager = yield* ManagedStackManager;
-    const status = yield* manager.probeControl(document.id);
-    if (status?.state !== "running" || !status.ready) {
+    if (
+      (document.lifecycle !== "running" && document.lifecycle !== "starting") ||
+      (document.lifecycle === "running" && document.runtime?.controlEndpoint === undefined)
+    ) {
       return yield* Effect.fail(noRunningStack(input));
     }
-    const endpoint = yield* runtimeEndpoint(document, input);
+    const manager = yield* ManagedStackManager;
+    const probe = yield* manager.probeControl(document.id);
+    if (probe === undefined || probe.status.state !== "running" || !probe.status.ready) {
+      return yield* Effect.fail(noRunningStack(input));
+    }
     const client = yield* HttpTransportClient;
-    return RemoteStack.layer(endpoint).pipe(
+    return RemoteStack.layer(probe.endpoint).pipe(
       Layer.provide(Layer.succeed(HttpTransportClient, client)),
     );
   });
@@ -127,6 +115,14 @@ export const stopManagedStack = (
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
       const acquisition = yield* manager.acquireControl(stackId);
+      const revalidatedStackId = yield* stackIdForInput(manager, input);
+      if (revalidatedStackId !== stackId) {
+        return yield* Effect.fail(
+          new ManagedWorkspaceRepairConflictError({
+            reason: "Workspace identity changed before stop",
+          }),
+        );
+      }
       if (acquisition._tag === "Owned") {
         if (
           document.lifecycle === "running" ||
@@ -273,6 +269,14 @@ export const deleteManagedStack = (
           ),
           Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
+        const revalidatedStackId = yield* stackIdForInput(manager, input);
+        if (revalidatedStackId !== stackId) {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed before delete",
+            }),
+          );
+        }
         const result = yield* manager.deleteStack(stackId, acquisition);
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),

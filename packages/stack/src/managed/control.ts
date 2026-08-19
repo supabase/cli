@@ -69,7 +69,7 @@ export class ControlAddressConflictError extends Data.TaggedError("ControlAddres
   readonly cause: unknown;
 }> {
   override get message(): string {
-    return `Control endpoint ${this.endpoint.url} is occupied by a non-Supabase listener`;
+    return `Control endpoint ${this.endpoint.url} is occupied by another listener`;
   }
 }
 
@@ -148,19 +148,40 @@ const ownershipBytes = (ownershipId: string): ReadonlyArray<number> => {
   return bytes;
 };
 
-/** Derives a deterministic loopback address and reserved port from a stack id. */
-export const controlEndpoint = (
+/**
+ * Number of deterministic endpoints derived per ownership id. Two ids can
+ * hash to the same primary port, so owners fall through to the next
+ * candidate and readers scan the same sequence, matching on `ownershipId`.
+ */
+export const CONTROL_CANDIDATE_COUNT = 8;
+
+const CONTROL_RANGE_SIZE = CONTROL_PORT_RANGE.max - CONTROL_PORT_RANGE.min + 1;
+
+const endpointForValue = (value: number): ControlEndpoint => {
+  const port = CONTROL_PORT_RANGE.min + (value % CONTROL_RANGE_SIZE);
+  const host = "127.0.0.1";
+  return { hostname: host, port, url: `http://${host}:${port}` };
+};
+
+/** Derives the deterministic loopback endpoint candidates for a stack id. */
+export const controlEndpointCandidates = (
   ownershipId: string,
-): Effect.Effect<ControlEndpoint, InvalidControlOwnershipIdError> => {
+): Effect.Effect<ReadonlyArray<ControlEndpoint>, InvalidControlOwnershipIdError> => {
   if (!CONTROL_ID_PATTERN.test(ownershipId)) return invalidId(ownershipId);
   const bytes = ownershipBytes(ownershipId);
   const value = (bytes[3]! << 8) | bytes[4]!;
-  const port =
-    CONTROL_PORT_RANGE.min + (value % (CONTROL_PORT_RANGE.max - CONTROL_PORT_RANGE.min + 1));
-  const host = "127.0.0.1";
-  const url = `http://${host}:${port}`;
-  return Effect.succeed({ hostname: host, port, url });
+  return Effect.succeed(
+    Array.from({ length: CONTROL_CANDIDATE_COUNT }, (_, offset) =>
+      endpointForValue(value + offset),
+    ),
+  );
 };
+
+/** Derives the primary deterministic endpoint (first candidate) for a stack id. */
+export const controlEndpoint = (
+  ownershipId: string,
+): Effect.Effect<ControlEndpoint, InvalidControlOwnershipIdError> =>
+  Effect.map(controlEndpointCandidates(ownershipId), (candidates) => candidates[0]!);
 
 const decodeOwnerStatus = (
   endpoint: ControlEndpoint,
@@ -224,21 +245,39 @@ const readOwnerStatus = (
     ),
   );
 
-/** Reads an existing owner without ever claiming its deterministic endpoint. */
+/** A located owner: its published status and the candidate it bound. */
+export interface ControlProbe {
+  readonly status: ControlOwnerStatus;
+  readonly endpoint: ControlEndpoint;
+}
+
+/** Reads an existing owner wherever it bound, without claiming an endpoint. */
 export const probeControl = (
   ownershipId: string,
-): Effect.Effect<
-  ControlOwnerStatus | undefined,
-  InvalidControlOwnershipIdError,
-  ControlTransport
-> =>
+): Effect.Effect<ControlProbe | undefined, InvalidControlOwnershipIdError, ControlTransport> =>
   Effect.gen(function* () {
-    const endpoint = yield* controlEndpoint(ownershipId);
+    const candidates = yield* controlEndpointCandidates(ownershipId);
     const transport = yield* ControlTransport;
-    return yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
-      Effect.catch(() => Effect.succeed(undefined)),
-    );
+    for (const endpoint of candidates) {
+      const status = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      if (status !== undefined) return { status, endpoint };
+    }
+    return undefined;
   });
+
+const makeAttached = (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+  transport: ControlTransportShape,
+): ControlAttached => ({
+  _tag: "Attached",
+  ownershipId,
+  endpoint,
+  ownerStatus: readOwnerStatus(endpoint, ownershipId, transport),
+  requestStop: transport.requestStop(endpoint),
+});
 
 const attach = (
   endpoint: ControlEndpoint,
@@ -252,13 +291,7 @@ const attach = (
   | ControlAddressConflictError
 > =>
   readOwnerStatus(endpoint, ownershipId, transport).pipe(
-    Effect.map(() => ({
-      _tag: "Attached" as const,
-      ownershipId,
-      endpoint,
-      ownerStatus: readOwnerStatus(endpoint, ownershipId, transport),
-      requestStop: transport.requestStop(endpoint),
-    })),
+    Effect.map(() => makeAttached(endpoint, ownershipId, transport)),
   );
 
 const makeOwned = (
@@ -295,8 +328,33 @@ const makeOwned = (
   });
 };
 
-const acquireAtEndpoint = (
-  endpoint: ControlEndpoint,
+/**
+ * Finds the candidate a live owner of `ownershipId` bound, if any. Foreign
+ * owners, non-Supabase listeners, and free ports are skipped; a protocol
+ * mismatch fails closed because a newer owner of this very stack may be
+ * publishing there, and claiming another candidate beside it would split
+ * ownership across versions.
+ */
+const scanForOwner = (
+  candidates: ReadonlyArray<ControlEndpoint>,
+  ownershipId: string,
+  transport: ControlTransportShape,
+): Effect.Effect<ControlEndpoint | undefined, ControlProtocolMismatchError> =>
+  Effect.gen(function* () {
+    for (const endpoint of candidates) {
+      const found = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+        Effect.map(() => true),
+        Effect.catchTag("ControlTransportError", () => Effect.succeed(false)),
+        Effect.catchTag("ControlProtocolError", () => Effect.succeed(false)),
+        Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(false)),
+      );
+      if (found) return endpoint;
+    }
+    return undefined;
+  });
+
+const acquireAtCandidates = (
+  candidates: ReadonlyArray<ControlEndpoint>,
   ownershipId: string,
   status: ControlOwnerStatus,
   transport: ControlTransportShape,
@@ -321,53 +379,98 @@ const acquireAtEndpoint = (
     | ControlUnavailableError,
     import("effect/Scope").Scope
   > = Effect.gen(function* () {
-    const bound = yield* transport
-      .bind(
-        endpoint,
-        () => Ref.getUnsafe(statusRef),
-        () => {
-          Effect.runSync(Deferred.succeed(stopRequested, void 0));
-        },
-      )
-      .pipe(Effect.result);
-    if (Result.isSuccess(bound)) {
-      const owned = yield* makeOwned(
+    // An existing owner may hold any candidate: an earlier occupant can have
+    // freed a lower port since the owner bound. Attach before claiming one so
+    // a stack never ends up with two owners on different candidates. The scan
+    // read doubles as the attach handshake, so an owner is read exactly once.
+    const ownerEndpoint = yield* scanForOwner(candidates, ownershipId, transport);
+    if (ownerEndpoint !== undefined) {
+      return makeAttached(ownerEndpoint, ownershipId, transport);
+    }
+    let pending: ControlUnavailableError | undefined;
+    let conflict: ControlAddressConflictError | undefined;
+    for (const endpoint of candidates) {
+      const bound = yield* transport
+        .bind(
+          endpoint,
+          () => Ref.getUnsafe(statusRef),
+          () => {
+            Effect.runSync(Deferred.succeed(stopRequested, void 0));
+          },
+        )
+        .pipe(Effect.result);
+      if (Result.isSuccess(bound)) {
+        const owned = yield* makeOwned(
+          endpoint,
+          ownershipId,
+          bound.success,
+          statusRef,
+          stopRequested,
+        );
+        yield* Effect.addFinalizer(() => owned.close);
+        return owned;
+      }
+      const error = bound.failure;
+      if (error.reason !== "in-use") return yield* Effect.fail(error);
+      // The address was taken between the scan and the bind: attach if the
+      // occupant is our owner, retry the walk if it is not serving yet, and
+      // move to the next candidate if it belongs to someone else.
+      const attached: ControlAcquisition | undefined = yield* attach(
         endpoint,
         ownershipId,
-        bound.success,
-        statusRef,
-        stopRequested,
+        transport,
+      ).pipe(
+        Effect.map((acquisition): ControlAcquisition | undefined => acquisition),
+        Effect.catchTag("ControlAddressConflictError", (cause) =>
+          Effect.sync(() => {
+            conflict = cause;
+            return undefined;
+          }),
+        ),
+        Effect.catchTag("ControlProtocolError", (cause) =>
+          Effect.sync(() => {
+            conflict = new ControlAddressConflictError({ endpoint, cause });
+            return undefined;
+          }),
+        ),
+        Effect.catchTag("ControlTransportError", (cause) =>
+          cause.reason === "unreachable"
+            ? Effect.sync(() => {
+                pending = unavailable(endpoint, cause);
+                return undefined;
+              })
+            : Effect.fail(cause),
+        ),
       );
-      yield* Effect.addFinalizer(() => owned.close);
-      return owned;
+      if (attached !== undefined) return attached;
     }
-    const error = bound.failure;
-    if (error.reason !== "in-use") return yield* Effect.fail(error);
-    return yield* attach(endpoint, ownershipId, transport).pipe(
-      Effect.mapError((cause) =>
-        cause._tag === "ControlTransportError" && cause.reason === "unreachable"
-          ? unavailable(endpoint, cause)
-          : cause._tag === "ControlProtocolError"
-            ? new ControlAddressConflictError({ endpoint, cause })
-            : cause,
-      ),
+    if (pending !== undefined) return yield* Effect.fail(pending);
+    return yield* Effect.fail(
+      conflict ??
+        new ControlAddressConflictError({
+          endpoint: candidates[0]!,
+          cause: new Error("Every control endpoint candidate is occupied"),
+        }),
     );
   });
 
   return attempt.pipe(
     Effect.retry({
-      // Leave explicit margin inside the parent's 35-second startup handshake,
-      // even when every owner probe consumes its 500 ms transport timeout.
-      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 30 })),
+      // Bound by duration, not attempts: an attempt's own reads can each
+      // consume the 500 ms transport timeout, and a count-based budget would
+      // stretch a single acquire far past the parent's startup handshake.
+      schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "1500 millis" })),
       while: (error) => error._tag === "ControlUnavailableError",
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>
-      Effect.fail(new ControlAddressConflictError({ endpoint, cause: error.cause })),
+      Effect.fail(
+        new ControlAddressConflictError({ endpoint: error.endpoint, cause: error.cause }),
+      ),
     ),
   );
 };
 
-/** Acquires the deterministic loopback listener or attaches to its owner. */
+/** Acquires a deterministic loopback listener or attaches to its owner. */
 export const acquireControl = (
   input: ControlOwnershipInput,
 ): Effect.Effect<
@@ -381,10 +484,10 @@ export const acquireControl = (
   ControlTransport | import("effect/Scope").Scope
 > =>
   Effect.gen(function* () {
-    const endpoint = yield* controlEndpoint(input.stackId);
+    const candidates = yield* controlEndpointCandidates(input.stackId);
     const transport = yield* ControlTransport;
-    return yield* acquireAtEndpoint(
-      endpoint,
+    return yield* acquireAtCandidates(
+      candidates,
       input.stackId,
       defaultStatus(input.stackId, input.initialStatus),
       transport,

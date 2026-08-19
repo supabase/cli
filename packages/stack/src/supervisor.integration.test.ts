@@ -4,16 +4,20 @@ import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import {
+  cpSync,
+  chmodSync,
   existsSync,
+  type FSWatcher,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
+  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
@@ -26,6 +30,7 @@ import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
+import { git } from "../tests/helpers/git-workspace.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -34,6 +39,7 @@ const errorChildEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-error-child.ts", import.meta.url),
 );
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
+const FILE_WAIT_TIMEOUT_MS = 30_000;
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
@@ -48,30 +54,109 @@ const workspace = async (): Promise<{
   readonly stateRoot: string;
   readonly stackId: string;
 }> => {
-  const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
-  const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
-  mkdirSync(join(root, ".supabase"), { recursive: true });
-  const identity: EnvironmentIdentity = {
-    workspaceId: randomUUID(),
-    checkoutId: randomUUID(),
-    contextId: randomUUID(),
-    localProjectKey: ".",
-  };
-  writeFileSync(
-    join(root, ".supabase", "identity.json"),
-    `${JSON.stringify(
-      {
-        version: 1,
-        workspaceId: identity.workspaceId,
-        checkoutId: identity.checkoutId,
-        contextId: identity.contextId,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return { root, stateRoot, stackId: deriveStackId(identity, "default") };
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
+    const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
+    const identity: EnvironmentIdentity = {
+      workspaceId: randomUUID(),
+      checkoutId: randomUUID(),
+      contextId: randomUUID(),
+      localProjectKey: ".",
+    };
+    const stackId = deriveStackId(identity, "default");
+    const endpoint = await Effect.runPromise(controlEndpoint(stackId));
+    if (!(await canBind(endpoint.port))) {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(stateRoot, { recursive: true, force: true });
+      continue;
+    }
+    mkdirSync(join(root, ".supabase"), { recursive: true });
+    writeFileSync(
+      join(root, ".supabase", "identity.json"),
+      `${JSON.stringify(
+        {
+          version: 1,
+          workspaceId: identity.workspaceId,
+          checkoutId: identity.checkoutId,
+          contextId: identity.contextId,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return { root, stateRoot, stackId };
+  }
+  throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
 };
+
+/**
+ * Watches a directory, re-arming on ENOENT watcher errors: the runtime's
+ * directory watcher can report ENOENT when a watched entry (for example an
+ * atomic-write temp file) vanishes mid-scan. Callers keep their own timeout
+ * as the guard. Returns a close function.
+ */
+const watchDirectoryWithRetry = (
+  directory: string,
+  onEvent: () => void,
+  onError: (cause: unknown) => void,
+): (() => void) => {
+  let watcher: FSWatcher | undefined;
+  let closed = false;
+  const arm = () => {
+    if (closed) return;
+    try {
+      watcher = watch(directory, () => onEvent());
+      watcher.once("error", (cause) => {
+        watcher?.close();
+        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+          arm();
+          onEvent();
+          return;
+        }
+        onError(cause);
+      });
+    } catch (cause) {
+      onError(cause);
+    }
+  };
+  arm();
+  return () => {
+    closed = true;
+    watcher?.close();
+  };
+};
+
+const waitForFile = (path: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (existsSync(path)) {
+      resolve();
+      return;
+    }
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let stopWatching: (() => void) | undefined;
+    const settle = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      stopWatching?.();
+      continuation();
+    };
+    stopWatching = watchDirectoryWithRetry(
+      dirname(path),
+      () => {
+        if (existsSync(path)) settle(resolve);
+      },
+      (cause) => settle(() => reject(cause instanceof Error ? cause : new Error(String(cause)))),
+    );
+    timeout = setTimeout(
+      () => settle(() => reject(new Error(`timed out waiting for file ${path}`))),
+      FILE_WAIT_TIMEOUT_MS,
+    );
+    if (existsSync(path)) {
+      settle(resolve);
+    }
+  });
 
 const messageFor = (
   roots: {
@@ -199,6 +284,7 @@ const spawnChild = (
     child.once("error", onError);
     child.once("exit", onExit);
   });
+  void started.catch(() => undefined);
   void attachedBeforeReady.catch(() => undefined);
   child.send(input);
   return { child, started, attachedBeforeReady };
@@ -294,12 +380,36 @@ const canBind = (port: number): Promise<boolean> =>
     });
   });
 
-const listenStartingOwner = async (
+const bindFakeOwner = async (
+  endpoint: ControlEndpoint,
+  makeServer: () => ReturnType<typeof createHttpServer>,
+): Promise<ReturnType<typeof createHttpServer>> => {
+  const deadline = Date.now() + 10_000;
+  do {
+    const server = makeServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(endpoint.port, endpoint.hostname, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+      return server;
+    } catch {
+      server.close();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  } while (Date.now() < deadline);
+  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+};
+
+const listenStartingOwner = (
   endpoint: ControlEndpoint,
   ownershipId: string,
-): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const server = createHttpServer((request, response) => {
+): Promise<ReturnType<typeof createHttpServer>> =>
+  bindFakeOwner(endpoint, () =>
+    createHttpServer((request, response) => {
       if (request.method === "GET" && request.url === "/owner") {
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
@@ -314,31 +424,17 @@ const listenStartingOwner = async (
       }
       response.writeHead(404);
       response.end();
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
-};
+    }),
+  );
 
-const listenOwnerSequence = async (
+const listenOwnerSequence = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   states: ReadonlyArray<"starting" | "stopping">,
   onRead: (state: "starting" | "stopping") => void = () => undefined,
-): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  closeAfterSequence = true,
+): Promise<ReturnType<typeof createHttpServer>> =>
+  bindFakeOwner(endpoint, () => {
     let reads = 0;
     const server = createHttpServer((request, response) => {
       if (request.method !== "GET" || request.url !== "/owner") {
@@ -358,25 +454,36 @@ const listenOwnerSequence = async (
           ready: false,
         }),
         () => {
-          if (reads >= states.length) server.close();
+          if (closeAfterSequence && reads >= states.length) server.close();
         },
       );
     });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
+    return server;
+  });
+
+const listenStoppingOwner = async (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+): Promise<{
+  readonly server: ReturnType<typeof createHttpServer>;
+  readonly release: () => void;
+}> => {
+  const server = await listenOwnerSequence(
+    endpoint,
+    ownershipId,
+    ["stopping"],
+    () => undefined,
+    false,
+  );
+  let released = false;
+  return {
+    server,
+    release: () => {
+      if (released) return;
+      released = true;
       server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+    },
+  };
 };
 
 const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
@@ -408,21 +515,58 @@ const readStackDocument = (roots: {
   return undefined;
 };
 
-const waitForStackDocument = async (
-  roots: { readonly stateRoot: string },
-  lifecycle: string,
-): Promise<{
+type StackDocument = {
   readonly id: string;
   readonly lifecycle: string;
   readonly ports: ReadonlyArray<{ port: number }>;
-}> => {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const document = readStackDocument(roots);
-    if (document?.lifecycle === lifecycle) return document;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`timed out waiting for stack document lifecycle ${lifecycle}`);
+  readonly launch?: { readonly mode: string; readonly versions: Record<string, string> };
+};
+
+const waitForStackDocument = async (
+  roots: { readonly stateRoot: string; readonly stackId: string },
+  lifecycle: string,
+): Promise<StackDocument> => {
+  const documentPath = managedStackDocumentPath(roots.stateRoot, roots.stackId);
+  const stackDirectory = dirname(documentPath);
+  await waitForFile(dirname(stackDirectory));
+  await waitForFile(stackDirectory);
+  await waitForFile(documentPath);
+  const readDocument = (): StackDocument | undefined => {
+    try {
+      return JSON.parse(readFileSync(documentPath, "utf8")) as StackDocument;
+    } catch {
+      return undefined;
+    }
+  };
+  const existing = readDocument();
+  if (existing?.lifecycle === lifecycle) return existing;
+
+  return new Promise((resolve, reject) => {
+    let stopWatching: (() => void) | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const settle = (continuation: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout !== undefined) clearTimeout(timeout);
+      stopWatching?.();
+      continuation();
+    };
+    const check = () => {
+      const document = readDocument();
+      if (document?.lifecycle === lifecycle) {
+        settle(() => resolve(document));
+      }
+    };
+    const fail = (cause: unknown) =>
+      settle(() => reject(cause instanceof Error ? cause : new Error(String(cause))));
+    stopWatching = watchDirectoryWithRetry(stackDirectory, check, fail);
+    timeout = setTimeout(
+      () => fail(new Error(`timed out waiting for stack document lifecycle ${lifecycle}`)),
+      FILE_WAIT_TIMEOUT_MS,
+    );
+    check();
+  });
 };
 
 describe("detached supervisor child journeys", () => {
@@ -633,10 +777,7 @@ describe("detached supervisor child journeys", () => {
     });
     void child.started.catch(() => undefined);
     try {
-      const deadline = Date.now() + 2_000;
-      while (!existsSync(ensureReady) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(ensureReady);
       expect(existsSync(ensureReady)).toBe(true);
       const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
       const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
@@ -647,6 +788,97 @@ describe("detached supervisor child journeys", () => {
       expect(readStackDocument(roots)).toBeUndefined();
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("rejects an attached contender whose copied workspace collides after owner validation", async () => {
+    const roots = await workspace();
+    const copied = `${roots.root}-copy`;
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const owner = spawnChild(messageFor(roots), {
+      environment: {
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      expect(existsSync(ensureReady)).toBe(true);
+
+      cpSync(roots.root, copied, { recursive: true });
+      contender = spawnChild(messageFor(roots, { workspacePath: copied }));
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      const started = await owner.started;
+      expect(started.attached).not.toBe(true);
+      await expect(contender.started).rejects.toThrow(
+        /ordinary workspace identity.*\.supabase\/identity\.json/,
+      );
+      await remoteStop(started.endpoint);
+      await waitForExit(owner.child);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      rmSync(copied, { recursive: true, force: true });
+      cleanupRoots(roots);
+    }
+  });
+
+  test("rejects a copied contender after dead-owner takeover before Docker cleanup", async () => {
+    const roots = await workspace();
+    const copied = `${roots.root}-copy`;
+    const dockerBin = join(roots.root, "fake-docker-bin");
+    const dockerSentinel = join(roots.root, "docker-called");
+    mkdirSync(dockerBin);
+    const docker = join(dockerBin, "docker");
+    writeFileSync(docker, `#!/bin/sh\nprintf called >> ${dockerSentinel}\n`);
+    chmodSync(docker, 0o755);
+    const owner = spawnChild(messageFor(roots), { testMode: "hold-start" });
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
+    let releaseFakeOwner: (() => void) | undefined;
+    try {
+      const starting = await waitForStackDocument(roots, "starting");
+      const endpoint = await Effect.runPromise(controlEndpoint(starting.id));
+      const stop = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      expect(stop.status).toBe(202);
+      await waitForExit(owner.child);
+      expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
+
+      cpSync(roots.root, copied, { recursive: true });
+      const originalGit = join(roots.root, ".git");
+      git(roots.root, "init", "-q", "-b", "main");
+      git(roots.root, "commit", "-q", "--allow-empty", "-m", "init");
+      const stoppingOwner = await listenStoppingOwner(endpoint, starting.id);
+      fakeOwner = stoppingOwner.server;
+      releaseFakeOwner = stoppingOwner.release;
+      contender = spawnChild(messageFor(roots, { workspacePath: copied }), {
+        environment: { PATH: `${dockerBin}:${process.env.PATH ?? ""}` },
+      });
+      await contender.attachedBeforeReady;
+
+      rmSync(originalGit, { recursive: true, force: true });
+      const documentPath = managedStackDocumentPath(roots.stateRoot, starting.id);
+      const document = JSON.parse(readFileSync(documentPath, "utf8")) as Record<string, unknown>;
+      writeFileSync(documentPath, JSON.stringify({ ...document, lifecycle: "running" }));
+      releaseFakeOwner?.();
+      releaseFakeOwner = undefined;
+      fakeOwner = undefined;
+
+      await expect(contender.started).rejects.toThrow(
+        /ordinary workspace identity.*\.supabase\/identity\.json/,
+      );
+      expect(existsSync(dockerSentinel)).toBe(false);
+    } finally {
+      fakeOwner?.close();
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      rmSync(copied, { recursive: true, force: true });
       cleanupRoots(roots);
     }
   });
@@ -836,23 +1068,36 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("bounds attached-owner recovery to one startup deadline", { timeout: 10_000 }, async () => {
+  test("bounds attached-owner recovery to one startup deadline", { timeout: 30_000 }, async () => {
     const roots = await workspace();
     const input = messageFor(roots);
-    const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
-    const owner = spawnChild(input, { testMode: "hold-start", environment });
+    const attachedReady = join(roots.root, "attached-before-ready-ready");
+    const attachedRelease = join(roots.root, "attached-before-ready-release");
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" },
+    });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
     try {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
-      contender = spawnChild(input, { testMode: "hold-start", environment });
+      contender = spawnChild(input, {
+        testMode: "hold-start",
+        environment: {
+          SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400",
+          SUPABASE_STACK_TEST_ATTACHED_READY_FILE: attachedReady,
+          SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE: attachedRelease,
+        },
+      });
       void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
+      await waitForFile(attachedReady);
 
       await kill(owner.child);
       fakeOwner = await listenStartingOwner(endpoint, document.id);
+      writeFileSync(attachedRelease, "release");
       await expect(contender.started).rejects.toMatchObject({
         message: expect.stringContaining("Timed out resolving attached supervisor owner"),
       });

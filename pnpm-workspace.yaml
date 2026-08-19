@@ -26,7 +26,7 @@ catalog:
   "@typescript/native-preview": "7.0.0-dev.20260707.2"
   "@vitest/coverage-istanbul": "^4.1.10"
   "effect": "4.0.0-beta.107"
-  "knip": "^6.32.1"
+  "knip": "^6.32.2"
   "nx": "^23.1.1"
   "oxfmt": "^0.63.0"
   "oxlint": "^1.78.0"
