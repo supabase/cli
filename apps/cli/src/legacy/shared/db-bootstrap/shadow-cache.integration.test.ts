@@ -46,7 +46,11 @@ import {
 } from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
-import type { LegacyShadowDbSetupInput, LegacyShadowSetupInput } from "./shadow-database.ts";
+import type {
+  LegacyShadowDbSetupInput,
+  LegacyShadowSetupInput,
+  LegacyShadowWebhooksPolicy,
+} from "./shadow-database.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultConfig: ProjectConfig = decodeConfig({});
@@ -128,7 +132,9 @@ function fakeCluster(opts: { readonly failConnect?: boolean } = {}) {
 // Inputs
 // ---------------------------------------------------------------------------
 
-const shadowSetup = (): LegacyShadowDbSetupInput<never> => ({
+const shadowSetup = (
+  webhooks: LegacyShadowWebhooksPolicy = "config",
+): LegacyShadowDbSetupInput<never> => ({
   majorVersion: 17,
   config: defaultConfig,
   dbUrl: "postgresql://postgres:postgres@127.0.0.1:54320/postgres",
@@ -147,6 +153,7 @@ const shadowSetup = (): LegacyShadowDbSetupInput<never> => ({
   projectEnvValues: undefined,
   debug: false,
   webhooksEnabled: false,
+  webhooks,
   apiAutoExposeNewTables: Option.some(true),
   vault: [],
 });
@@ -154,7 +161,11 @@ const shadowSetup = (): LegacyShadowDbSetupInput<never> => ({
 const shadowInput = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  overrides: { readonly shadowPort?: number; readonly jwtExpiry?: number } = {},
+  overrides: {
+    readonly shadowPort?: number;
+    readonly jwtExpiry?: number;
+    readonly webhooks?: LegacyShadowWebhooksPolicy;
+  } = {},
 ): LegacyShadowSetupInput<never> => ({
   db: { major_version: 17, settings: {} },
   experimental: defaultConfig.experimental,
@@ -173,7 +184,7 @@ const shadowInput = (
   path,
   hostname: "127.0.0.1",
   healthTimeoutSeconds: 2,
-  setup: shadowSetup(),
+  setup: shadowSetup(overrides.webhooks),
 });
 
 const shadowCacheDir = (path: Path.Path) => legacyShadowBaselineCacheDir(path);
@@ -698,24 +709,23 @@ describe("legacyAcquireShadowDatabase", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const input = shadowInput(fs, path);
-        // `shadowSetup.webhooksEnabled` is false, so `"config"` (next migrate) and
-        // `"disabled"` (next declarative) bake the same cluster; `"enabled"` (legacy
-        // migrate) does not and must not restore that tar.
-        yield* coldRun(docker, input, { webhooks: "config" });
+        // `setup.webhooksEnabled` is false, so `"config"` (next migrate) and `"disabled"`
+        // (next declarative) bake the same cluster; `"enabled"` (legacy migrate) does not and
+        // must not restore that tar.
+        const viaConfig = shadowInput(fs, path, { webhooks: "config" });
+        yield* coldRun(docker, viaConfig);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
-        const forcedOn = yield* coldRun(docker, input, { webhooks: "enabled" });
+        const forcedOn = yield* coldRun(docker, shadowInput(fs, path, { webhooks: "enabled" }));
         expect(forcedOn.baselinePresent).toBe(false);
         expect(yield* soleTarName(fs, path)).toHaveLength(2);
 
-        const warmConfig = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
-          webhooks: "config",
-        });
+        const warmConfig = yield* legacyAcquireShadowDatabase(docker.spawner, viaConfig);
         expect(warmConfig.baselinePresent).toBe(true);
-        const warmDisabled = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
-          webhooks: "disabled",
-        });
+        const warmDisabled = yield* legacyAcquireShadowDatabase(
+          docker.spawner,
+          shadowInput(fs, path, { webhooks: "disabled" }),
+        );
         expect(warmDisabled.baselinePresent).toBe(true);
         expect(yield* soleTarName(fs, path)).toHaveLength(2);
         yield* legacyRemoveShadowDatabase(docker.spawner, warmConfig.containerId);
@@ -1114,10 +1124,16 @@ describe("legacyPeekShadowBaseline", () => {
         }
 
         // The handoff precondition: with config webhooks OFF, the migrations ("config") and
-        // declarative ("disabled") opts hash to the SAME key; forcing webhooks on re-keys.
-        const viaConfig = yield* legacyPeekShadowBaseline(input, { webhooks: "config" });
-        const viaDisabled = yield* legacyPeekShadowBaseline(input, { webhooks: "disabled" });
-        const viaEnabled = yield* legacyPeekShadowBaseline(input, { webhooks: "enabled" });
+        // declarative ("disabled") inputs hash to the SAME key; forcing webhooks on re-keys.
+        const viaConfig = yield* legacyPeekShadowBaseline(
+          shadowInput(fs, path, { webhooks: "config" }),
+        );
+        const viaDisabled = yield* legacyPeekShadowBaseline(
+          shadowInput(fs, path, { webhooks: "disabled" }),
+        );
+        const viaEnabled = yield* legacyPeekShadowBaseline(
+          shadowInput(fs, path, { webhooks: "enabled" }),
+        );
         if (
           viaConfig.state !== "uncachable" &&
           viaDisabled.state !== "uncachable" &&

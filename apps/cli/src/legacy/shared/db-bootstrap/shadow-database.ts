@@ -449,6 +449,12 @@ function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<
  * `legacy-shadow-source.ts` would drag its whole pg-delta/migra/declarative stack into a
  * command that has no diff engine at all.
  *
+ * `webhooks` is the one policy the caller must decide rather than read out of config — it lands
+ * on `setup.webhooks`, which is both what the baseline provisioners apply and what the shadow
+ * baseline cache keys on (see {@link LegacyShadowDbSetupInput.webhooks}). Callers building a
+ * `legacyPrepareShadowSource` input take it from `legacyShadowSourceWebhooksPolicy`
+ * (`legacy-shadow-source.ts`) so the engine's real policy is named in exactly one place.
+ *
  * On `db diff --linked`/`db pull` (linked), the caller passes its own resolved ref straight
  * through to `legacyBuildLocalDbContainerInputs` (its own `projectRef` parameter — see
  * that function's doc comment), which threads it into `legacyLoadLocalProjectContext` ->
@@ -473,6 +479,7 @@ export function legacyShadowRunInputFromLocalContainerInputs(
     readonly baseline: { readonly apiAutoExposeNewTables: Option.Option<boolean> };
     readonly vault: ReadonlyArray<LegacyVaultSecret>;
   },
+  webhooks: LegacyShadowWebhooksPolicy,
   fs: FileSystem.FileSystem,
   path: Path.Path,
 ): LegacyShadowSetupInput<LegacyDbConfigLoadError> {
@@ -503,6 +510,9 @@ export function legacyShadowRunInputFromLocalContainerInputs(
       majorVersion: localInputs.setup.majorVersion,
       config: localInputs.setup.config,
       webhooksEnabled: toml.webhooksEnabled,
+      // The caller's own engine policy, stated once: every baseline provisioner reads it, and
+      // so does the cache key — see {@link LegacyShadowDbSetupInput.webhooks}.
+      webhooks,
       // NOT `localInputs.setup.dbUrl` — that carries the REGULAR local container's own
       // hardcoded-"postgres" password (`legacy-local-config-values.ts`'s `DEFAULT_DB_PASSWORD`),
       // for a DIFFERENT container. The shadow's own one-shot setup jobs
@@ -670,9 +680,32 @@ const legacyCreateShadowTemplateDatabase = (
  */
 export type LegacyShadowDbSetupInput<E> = Omit<LegacyFreshDbSetupInput<E>, "experimental"> & {
   readonly webhooksEnabled: LegacySetupDatabaseInput["webhooksEnabled"];
+  /**
+   * The Webhooks/`pg_net` POLICY this shadow's platform baseline runs under — the single source
+   * of truth for it. Every baseline provisioner here ({@link legacySetupShadowDatabase},
+   * {@link legacyMigrateShadowDatabase}, {@link legacyOpenShadowBaselineSession}) passes exactly
+   * this value to {@link legacySetupDatabase}, AND `shadow-cache.ts` hashes exactly this value
+   * (as the effective boolean, resolved against {@link webhooksEnabled} by
+   * `legacyEffectiveShadowWebhooksEnabled`) into the shadow-baseline cache key. One field rather
+   * than a provisioner argument plus a cache option, so a published snapshot's key can never
+   * describe a different baseline than the one actually provisioned — the drift class three of
+   * five call sites had accumulated back when the policy was a per-call-site
+   * `LegacyShadowCacheOpts.webhooks` the `use` phase's provisioner was merely trusted to match.
+   *
+   * Required, with no default: a caller must state its engine's real policy — see
+   * `legacy-shadow-source.ts`'s `legacyShadowSourceWebhooksPolicy` for the per-engine answer.
+   */
+  readonly webhooks: LegacyShadowWebhooksPolicy;
   readonly apiAutoExposeNewTables: LegacySetupDatabaseInput["apiAutoExposeNewTables"];
   readonly vault: LegacySetupDatabaseInput["vault"];
 };
+
+/**
+ * The Webhooks/`pg_net` policy a shadow baseline can run under — {@link LegacySetupDatabaseOptions}'s
+ * own `webhooks` field with its optionality removed, since a shadow always states one explicitly
+ * ({@link LegacyShadowDbSetupInput.webhooks}).
+ */
+export type LegacyShadowWebhooksPolicy = NonNullable<LegacySetupDatabaseOptions["webhooks"]>;
 
 /** Common caller-supplied plumbing for {@link legacySetupShadowDatabase}/{@link legacyMigrateShadowDatabase}. */
 interface LegacyShadowSetupRunInput<E> {
@@ -751,15 +784,18 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
  * container, and returns a second session opened against the restarted one.
  *
  * Shared by all three baseline-running shadow compositions — {@link legacySetupShadowDatabase}
- * and {@link migrateShadowDatabase} here, plus `migration squash`'s own dump/apply/dump sequence
- * (`migration/squash/squash.handler.ts`), which needs the baseline WITHOUT the template database
- * (see {@link legacySetupShadowConn}'s own doc comment) and keeps the session open across its
- * mid-sequence `pg_dump`s.
+ * and {@link legacyMigrateShadowDatabase} here, plus `migration squash`'s own dump/apply/dump
+ * sequence (`migration/squash/squash.handler.ts`), which needs the baseline WITHOUT the template
+ * database (see {@link legacySetupShadowConn}'s own doc comment) and keeps the session open
+ * across its mid-sequence `pg_dump`s.
+ *
+ * The Webhooks/`pg_net` policy {@link legacySetupDatabase} runs under is NOT a parameter: it is
+ * read off `input.setup.webhooks`, the same field the shadow baseline cache keys on — see
+ * {@link LegacyShadowDbSetupInput.webhooks}.
  */
 export const legacyOpenShadowBaselineSession = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupRunInput<E>,
-  options: LegacySetupDatabaseOptions = {},
   baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
 ): Effect.Effect<
   LegacyDbSession,
@@ -777,7 +813,7 @@ export const legacyOpenShadowBaselineSession = <E>(
           yield* legacySetupDatabase(
             spawner,
             legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
-            options,
+            { webhooks: input.setup.webhooks },
           ).pipe(
             // The baseline's batched SQL files check their own connection out of the pool;
             // failing to acquire one is a shadow CONNECT failure, like
@@ -798,7 +834,7 @@ export const legacyOpenShadowBaselineSession = <E>(
       yield* legacySetupDatabase(
         spawner,
         legacyBuildShadowSetupDatabaseInput(input, session, resolved),
-        options,
+        { webhooks: input.setup.webhooks },
       ).pipe(
         // Same pooled-connection failure mapping as the snapshotting branch above.
         Effect.catchTag("LegacyDbConnectError", (cause) =>
@@ -819,12 +855,14 @@ export const legacyOpenShadowBaselineSession = <E>(
  * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}. A warm shadow-cache hit skips the
  * prelude + `SetupDatabase` (the restored cluster already has them) and only recreates
  * `contrib_regression`; a cache-enabled COLD provision snapshots between the baseline and the
- * template, matching {@link migrateShadowDatabase}.
+ * template, matching {@link legacyMigrateShadowDatabase}.
+ *
+ * The baseline's Webhooks/`pg_net` policy comes from `input.setup.webhooks` — see
+ * {@link LegacyShadowDbSetupInput.webhooks}.
  */
 export const legacySetupShadowDatabase = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupRunInput<E>,
-  options: LegacySetupDatabaseOptions = {},
   baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
 ): Effect.Effect<
   void,
@@ -833,7 +871,7 @@ export const legacySetupShadowDatabase = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const session = yield* legacyOpenShadowBaselineSession(spawner, input, options, baseline);
+      const session = yield* legacyOpenShadowBaselineSession(spawner, input, baseline);
       yield* legacyCreateShadowTemplateDatabase(session);
     }),
   );
@@ -915,11 +953,16 @@ export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
  * The one structural divergence from Go is confined to the SNAPSHOTTING cold branch and is owned
  * by {@link legacyOpenShadowBaselineSession} — see its doc comment. The SQL every path issues is
  * unchanged.
+ *
+ * ONE function for every migrate-shadow caller, legacy engine and pg-delta next alike: the
+ * per-engine Webhooks/`pg_net` difference (legacy forces it on, next follows config) is not a
+ * behavior of this function but a value on `input.setup.webhooks`, chosen by the caller via
+ * `legacyShadowSourceWebhooksPolicy` (`legacy-shadow-source.ts`) and hashed into the shadow
+ * baseline cache key — see {@link LegacyShadowDbSetupInput.webhooks}.
  */
-const migrateShadowDatabase = <E>(
+export const legacyMigrateShadowDatabase = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupRunInput<E>,
-  setupOptions: LegacySetupDatabaseOptions,
   baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
 ): Effect.Effect<
   void,
@@ -939,12 +982,7 @@ const migrateShadowDatabase = <E>(
         ),
       );
 
-      const session = yield* legacyOpenShadowBaselineSession(
-        spawner,
-        input,
-        setupOptions,
-        baseline,
-      );
+      const session = yield* legacyOpenShadowBaselineSession(spawner, input, baseline);
       yield* legacyCreateShadowTemplateDatabase(session);
       yield* legacyApplyMigrations(
         session,
@@ -962,33 +1000,3 @@ const migrateShadowDatabase = <E>(
       );
     }),
   );
-
-/**
- * Migrates a shadow for migra and the legacy pg-delta engine. Those Go-backed
- * workflows historically include `pg_net` in the platform baseline regardless of
- * project config, so preserve that baseline while sharing the native TS setup path.
- */
-export const legacyMigrateShadowDatabase = <E>(
-  spawner: Spawner,
-  input: LegacyShadowSetupRunInput<E>,
-  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
-): Effect.Effect<
-  void,
-  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
-  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
-> => migrateShadowDatabase(spawner, input, { webhooks: "enabled" }, baseline);
-
-/**
- * Migrates a shadow for the in-process pg-delta engine. Unlike the legacy engine,
- * extension activation follows project config through `legacySetupDatabase`'s
- * default options.
- */
-export const legacyMigrateNextShadowDatabase = <E>(
-  spawner: Spawner,
-  input: LegacyShadowSetupRunInput<E>,
-  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
-): Effect.Effect<
-  void,
-  LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
-  Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
-> => migrateShadowDatabase(spawner, input, {}, baseline);

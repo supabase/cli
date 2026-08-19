@@ -149,7 +149,7 @@ shadow; the cache key hashes the cluster recipe (including the effective Webhook
 policy), not the published port, so worktrees and repeated syncs with the same settings share
 a warm hit. The migrations shadow follows project config; the declarative shadow forces
 `pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
-platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
+platform baseline on both shadows (`legacyMigrateShadowDatabase` /
 `legacySetupShadowDatabase` are baseline-state-aware). Artifact:
 `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
 the root), keyed by a hash of every input baked into the cluster (including the effective

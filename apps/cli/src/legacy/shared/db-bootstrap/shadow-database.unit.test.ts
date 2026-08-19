@@ -23,7 +23,6 @@ import {
   legacyConnectShadowDatabase,
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
-  legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacySetupShadowConn,
   legacySetupShadowDatabase,
@@ -420,6 +419,9 @@ function baseShadowSetup<E = never>(
     majorVersion: 17,
     config: defaultConfig,
     webhooksEnabled: false,
+    // The engine policy every baseline provisioner reads (and the cache keys on) — default to
+    // the config-following one, and let a scenario state its own.
+    webhooks: "config",
     dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
     jwks: Effect.succeed('{"keys":[]}') as Effect.Effect<string, E>,
@@ -441,7 +443,8 @@ function baseShadowSetup<E = never>(
   };
 }
 
-function migrateNextShadow(webhooksEnabled: boolean) {
+/** A migrate-shadow run under the config-following policy pg-delta next's shadows state. */
+function migrateConfigFollowingShadow(webhooksEnabled: boolean) {
   const { session, calls } = fakeSession();
   const workdir = tempRoot.current;
   const mock = mockSpawner();
@@ -449,7 +452,7 @@ function migrateNextShadow(webhooksEnabled: boolean) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.join(workdir, "supabase", "migrations"), { recursive: true });
-    yield* legacyMigrateNextShadowDatabase(mock.spawner, {
+    yield* legacyMigrateShadowDatabase(mock.spawner, {
       fs,
       path,
       workdir,
@@ -463,7 +466,7 @@ function migrateNextShadow(webhooksEnabled: boolean) {
         password: "postgres",
         database: "postgres",
       },
-      setup: baseShadowSetup({ webhooksEnabled }),
+      setup: baseShadowSetup({ webhooksEnabled, webhooks: "config" }),
     });
   }).pipe(
     Effect.provide(
@@ -599,7 +602,9 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
             password: "postgres",
             database: "postgres",
           },
-          setup: baseShadowSetup(),
+          // The legacy engine's forced-on baseline (`legacyShadowSourceWebhooksPolicy`), which
+          // installs `pg_net` even though `webhooksEnabled` is false.
+          setup: baseShadowSetup({ webhooks: "enabled" }),
         });
         expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
         expect(calls.some((c) => c.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(true);
@@ -618,8 +623,8 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
     },
   );
 
-  it.effect("next migrated shadows keep pg_net activation config-gated", () => {
-    const { calls, effect } = migrateNextShadow(false);
+  it.effect("config-following migrated shadows keep pg_net activation config-gated", () => {
+    const { calls, effect } = migrateConfigFollowingShadow(false);
     return effect.pipe(
       Effect.tap(() =>
         Effect.sync(() => {
@@ -630,9 +635,9 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   });
 
   it.effect(
-    "next migrated shadows install pg_net when effective Webhooks config is enabled",
+    "config-following migrated shadows install pg_net when effective Webhooks config is enabled",
     () => {
-      const { calls, effect } = migrateNextShadow(true);
+      const { calls, effect } = migrateConfigFollowingShadow(true);
       return effect.pipe(
         Effect.tap(() =>
           Effect.sync(() => {
@@ -653,33 +658,31 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* legacySetupShadowDatabase(
-          mock.spawner,
-          {
-            fs,
-            path,
-            workdir,
-            projectId: "proj",
-            container: "shadow-container-id-0123456789abcdef",
-            networkId: "supabase_network_proj",
-            connConfig: {
-              host: "127.0.0.1",
-              port: 54320,
-              user: "postgres",
-              password: "postgres",
-              database: "postgres",
-            },
-            setup: baseShadowSetup({
-              majorVersion: 14,
-              realtimeEnabledForSetup: true,
-              jwks: Effect.sync(() => {
-                jwksEvaluated = true;
-                return '{"keys":[]}';
-              }),
-            }),
+        yield* legacySetupShadowDatabase(mock.spawner, {
+          fs,
+          path,
+          workdir,
+          projectId: "proj",
+          container: "shadow-container-id-0123456789abcdef",
+          networkId: "supabase_network_proj",
+          connConfig: {
+            host: "127.0.0.1",
+            port: 54320,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
           },
-          { webhooks: "disabled" },
-        );
+          setup: baseShadowSetup({
+            majorVersion: 14,
+            realtimeEnabledForSetup: true,
+            // pg-delta next's declarative shadow policy.
+            webhooks: "disabled",
+            jwks: Effect.sync(() => {
+              jwksEvaluated = true;
+              return '{"keys":[]}';
+            }),
+          }),
+        });
         expect(jwksEvaluated).toBe(false);
         expect(calls.some((call) => call.sql === "drop extension if exists pg_net")).toBe(true);
       }).pipe(
@@ -776,7 +779,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
               }),
             }),
           },
-          {},
           {
             baselinePresent: true,
             snapshotRequired: false,

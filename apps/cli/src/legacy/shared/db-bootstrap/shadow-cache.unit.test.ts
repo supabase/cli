@@ -72,8 +72,6 @@ describe("legacyEffectiveShadowWebhooksEnabled", () => {
     expect(legacyEffectiveShadowWebhooksEnabled("disabled", false)).toBe(false);
     expect(legacyEffectiveShadowWebhooksEnabled("config", true)).toBe(true);
     expect(legacyEffectiveShadowWebhooksEnabled("config", false)).toBe(false);
-    expect(legacyEffectiveShadowWebhooksEnabled(undefined, true)).toBe(true);
-    expect(legacyEffectiveShadowWebhooksEnabled(undefined, false)).toBe(false);
   });
 });
 

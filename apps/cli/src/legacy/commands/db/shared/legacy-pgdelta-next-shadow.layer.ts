@@ -34,10 +34,11 @@ import {
 } from "./legacy-pgdelta-next-shadow.plan.ts";
 import {
   legacyConnectShadowDatabase,
-  legacyMigrateNextShadowDatabase,
+  legacyMigrateShadowDatabase,
   legacyRemoveShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
   legacySetupShadowDatabase,
+  type LegacyShadowWebhooksPolicy,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
@@ -223,10 +224,18 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return { localInputs, image } satisfies NativeShadowBase;
       }).pipe(Effect.provide(runtime));
 
+    /**
+     * `webhooks` is the baseline policy the shadow this input describes is really provisioned
+     * under — `"config"` for a migrations shadow (next follows project config), `"disabled"` for
+     * a declarative one. It lands on `base.setup.webhooks`, which is both what the provisioner
+     * applies and what the shadow baseline cache keys on, so the two shadows' snapshots can only
+     * share a key when their effective policies genuinely agree.
+     */
     const buildNativeInput = (
       request: LegacyPgDeltaNextShadowInput,
       built: NativeShadowBase,
       port: number,
+      webhooks: LegacyShadowWebhooksPolicy,
     ): NativeShadowInput => ({
       spawner,
       localInputs: built.localInputs,
@@ -234,6 +243,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         built.localInputs,
         built.image,
         { ...request.toml, shadowPort: port },
+        webhooks,
         fs,
         path,
       ),
@@ -292,7 +302,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         if (!seamWillRun) yield* onBaselineSeam;
         yield* awaitShadowReady(input, seamHandle);
         const setup = setupRunInput(input, seamHandle);
-        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, seamHandle);
+        yield* legacyMigrateShadowDatabase(input.spawner, setup, seamHandle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
         } satisfies LegacyPgDeltaNextMigrationsShadow;
@@ -307,7 +317,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         const handle = yield* acquireShadow(input, opts);
         yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
-        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" }, handle);
+        yield* legacySetupShadowDatabase(input.spawner, setup, handle);
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* legacyConnectShadowDatabase(setup.connConfig);
@@ -324,29 +334,25 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
-    const cacheOpts = (
-      opts: LegacyPgDeltaNextShadowInput,
-      webhooks: NonNullable<LegacyShadowCacheOpts["webhooks"]>,
-    ): LegacyShadowCacheOpts => ({
-      webhooks,
-      ...(opts.bypassCache === true ? { bypassCache: true } : {}),
-    });
+    /** The only per-invocation cache control left here — the Webhooks policy rides on the input's own `setup.webhooks` (see {@link buildNativeInput}). */
+    const cacheOpts = (opts: LegacyPgDeltaNextShadowInput): LegacyShadowCacheOpts =>
+      opts.bypassCache === true ? { bypassCache: true } : {};
 
     return LegacyPgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
         Effect.gen(function* () {
           const port = yield* nextPort();
           const built = yield* buildNativeBase(opts);
-          const input = buildNativeInput(opts, built, port);
-          return yield* provisionMigrations(input, cacheOpts(opts, "config"));
+          const input = buildNativeInput(opts, built, port, "config");
+          return yield* provisionMigrations(input, cacheOpts(opts));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
           const migrationsPort = yield* nextPort();
           const declarativePort = yield* nextPort(migrationsPort);
           const built = yield* buildNativeBase(opts);
-          const migrationsInput = buildNativeInput(opts, built, migrationsPort);
-          const declarativeInput = buildNativeInput(opts, built, declarativePort);
+          const migrationsInput = buildNativeInput(opts, built, migrationsPort, "config");
+          const declarativeInput = buildNativeInput(opts, built, declarativePort, "disabled");
           // The two shadows are independent — anonymous containers on the distinct host ports
           // allocated above, per-invocation scoped temp dirs, and a race-tolerant network
           // ensure — so warm provisions run fully concurrently. How much can safely overlap
@@ -356,8 +362,8 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           // cache-key inputs once; passing them back through `precomputedKeyInputs` keeps the
           // acquire from repeating a live JWKS discovery request.
           const [migrationsPeek, declarativePeek] = yield* Effect.all([
-            legacyPeekShadowBaseline(migrationsInput.base, cacheOpts(opts, "config")),
-            legacyPeekShadowBaseline(declarativeInput.base, cacheOpts(opts, "disabled")),
+            legacyPeekShadowBaseline(migrationsInput.base, cacheOpts(opts)),
+            legacyPeekShadowBaseline(declarativeInput.base, cacheOpts(opts)),
           ]);
           const withPeek = (
             cache: LegacyShadowCacheOpts,
@@ -382,11 +388,9 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           // always carry the SAME value and cannot diverge; a delayed acquire keeps the
           // command-start JWKS, well inside the staleness the snapshot cache accepts by design
           // (a warm hit serves a tar up to 14 days old under its matching key).
-          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
+          const migrationsOpts = withPeek(cacheOpts(opts), migrationsPeek);
           const declarativeOpts =
-            strategy === "parallel"
-              ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
-              : cacheOpts(opts, "disabled");
+            strategy === "parallel" ? withPeek(cacheOpts(opts), declarativePeek) : cacheOpts(opts);
 
           // In the concurrent strategies the declarative fiber's writes are buffered and
           // flushed after the join, so nothing can land between two of the migrations fiber's

@@ -34,6 +34,7 @@ import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-ca
 import {
   legacyMigrateShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
+  type LegacyShadowWebhooksPolicy,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -62,7 +63,10 @@ import {
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
-import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
+import {
+  legacyPrepareShadowSource,
+  legacyShadowSourceWebhooksPolicy,
+} from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
 import {
@@ -581,13 +585,18 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // Shared by both branches below (pgAdmin's `shadowBase` and the migra/pg-delta
     // `shadowInput`'s own spread) — resolving the image is the actual provisioning work each
     // branch's own "Creating shadow database..." banner announces, so every call site still
-    // emits its banner FIRST and only then invokes this.
-    const resolveShadowRunInput = Effect.fnUntraced(function* () {
+    // emits its banner FIRST and only then invokes this. `webhooks` is each branch's own
+    // baseline policy, which lands on `setup.webhooks` — the single field the provisioner
+    // applies and the shadow baseline cache keys on.
+    const resolveShadowRunInput = Effect.fnUntraced(function* (
+      webhooks: LegacyShadowWebhooksPolicy,
+    ) {
       const resolvedShadowImage = yield* localInputs.resolvePostgresImage;
       return legacyShadowRunInputFromLocalContainerInputs(
         localInputs,
         resolvedShadowImage,
         cfg,
+        webhooks,
         fs,
         path,
       );
@@ -629,7 +638,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         );
       }
       yield* emitStatus("Creating shadow database...");
-      const shadowBase = yield* resolveShadowRunInput();
+      // Forced-on `pg_net`, the baseline `legacyMigrateShadowDatabase` has always run for the
+      // legacy engine — same policy the native branch's legacy-engine runs use, so the two
+      // share snapshots rather than keying a second, pgAdmin-only set.
+      const shadowBase = yield* resolveShadowRunInput("enabled");
       const shadowConnConfig: LegacyPgConnInput = {
         host: shadowBase.hostname,
         port: shadowBase.shadowPort,
@@ -642,57 +654,49 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `shadow-cache.ts`) — see that call site's comment for the full rationale. The migrate
       // step is untouched: it still receives the whole local migration set through the SAME
       // `legacyMigrateShadowDatabase`, only now told (via `handle`) whether the cluster already
-      // carries the platform baseline. `webhooks: "enabled"` matches that function's own forced
-      // `pg_net` baseline, so this shares the snapshots the native branch below keys for the SAME
-      // forced-on baseline (its legacy-engine runs) rather than a second, pgAdmin-only set. It
-      // deliberately does NOT share with next's config-following migrate — see that branch's own
-      // `migrationMode`-conditional `webhooks` opt.
-      const sql = yield* legacyWithShadowDatabase(
-        spawner,
-        shadowBase,
-        (handle) =>
-          Effect.gen(function* () {
-            yield* legacyWaitForShadowReady(spawner, handle.containerId, shadowConnConfig, {
-              timeoutSeconds: shadowBase.healthTimeoutSeconds,
-              image: shadowBase.image,
-            });
-            yield* legacyMigrateShadowDatabase(
-              spawner,
-              {
-                fs,
-                path,
-                workdir: cliConfig.workdir,
-                projectId: shadowBase.projectId,
-                container: handle.containerId,
-                networkId: shadowBase.networkId,
-                connConfig: shadowConnConfig,
-                setup: shadowBase.setup,
-              },
-              handle,
-            );
-            yield* emitStatus("Diffing local database with current migrations...");
-            return yield* legacyDiffSchemaPgAdmin({
-              // `source`/`target` are INVERTED relative to the migra/pg-delta path below:
-              // `source` is the USER'S db, `target` is the SHADOW.
-              source: targetUrl,
-              // Deliberately hardcoded, not built via `legacyToPostgresURL`: this ignores
-              // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design — not a bug to fix.
-              target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
-              schema: flags.schema,
+      // carries the platform baseline.
+      const sql = yield* legacyWithShadowDatabase(spawner, shadowBase, (handle) =>
+        Effect.gen(function* () {
+          yield* legacyWaitForShadowReady(spawner, handle.containerId, shadowConnConfig, {
+            timeoutSeconds: shadowBase.healthTimeoutSeconds,
+            image: shadowBase.image,
+          });
+          yield* legacyMigrateShadowDatabase(
+            spawner,
+            {
+              fs,
+              path,
+              workdir: cliConfig.workdir,
               projectId: shadowBase.projectId,
+              container: handle.containerId,
               networkId: shadowBase.networkId,
-              extraHosts: shadowBase.extraHosts,
-              emitStatus,
-            });
-          }),
-        { webhooks: "enabled" },
+              connConfig: shadowConnConfig,
+              setup: shadowBase.setup,
+            },
+            handle,
+          );
+          yield* emitStatus("Diffing local database with current migrations...");
+          return yield* legacyDiffSchemaPgAdmin({
+            // `source`/`target` are INVERTED relative to the migra/pg-delta path below:
+            // `source` is the USER'S db, `target` is the SHADOW.
+            source: targetUrl,
+            // Deliberately hardcoded, not built via `legacyToPostgresURL`: this ignores
+            // `SUPABASE_SERVICES_HOSTNAME`/`[db] password` by design — not a bug to fix.
+            target: `postgresql://postgres:postgres@127.0.0.1:${shadowBase.shadowPort}/postgres`,
+            schema: flags.schema,
+            projectId: shadowBase.projectId,
+            networkId: shadowBase.networkId,
+            extraHosts: shadowBase.extraHosts,
+            emitStatus,
+          });
+        }),
       );
       diffResult = { sql, files: undefined };
     } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
       const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext ? "pgdelta-next" : "legacy";
       const shadowInput = {
-        ...(yield* resolveShadowRunInput()),
+        ...(yield* resolveShadowRunInput(legacyShadowSourceWebhooksPolicy(migrationMode))),
         targetLocal: resolved.isLocal,
         usePgDelta: useDelta,
         migrationMode,
@@ -711,65 +715,56 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
       // create/remove pair; otherwise a key-matching PGDATA snapshot is restored into the fresh
       // container in a few seconds instead of cold-provisioning the baseline in ~15s).
-      // The `webhooks` policy MUST describe the baseline the `use` callback below actually
-      // provisions, because that is what the cache key hashes: `legacyPrepareShadowSource`
-      // dispatches on `migrationMode`, running `legacyMigrateShadowDatabase` (forced `pg_net`) for
-      // the legacy engine but `legacyMigrateNextShadowDatabase` (config-following) for pg-delta
-      // next. Hardcoding `"enabled"` for both would make a next-mode cold run on a
-      // webhooks-disabled project publish a `pg_net`-less cluster under the
-      // `webhooks_enabled=true` key that the pgAdmin branch above (whose baseline really is
-      // forced-on) could then warm-restore, and vice versa.
-      diffResult = yield* legacyWithShadowDatabase(
-        spawner,
-        shadowInput,
-        (handle) =>
-          Effect.gen(function* () {
-            const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-            const target = shadow.targetUrlOverride ?? targetUrl;
-            yield* output.raw(
-              flags.schema.length > 0
-                ? `Diffing schemas: ${flags.schema.join(",")}\n`
-                : "Diffing schemas...\n",
-              "stderr",
-            );
-            if (useDelta) {
-              const result = yield* pgDelta.diffDatabase({
-                context: ctx,
-                source: {
-                  kind: "database",
-                  ref: shadow.sourceUrl,
-                  connectOptions: { isLocal: true, dnsResolver: "native" },
+      // The engine's Webhooks policy rides on `shadowInput.setup.webhooks` above, which is both
+      // what `legacyPrepareShadowSource`'s baseline applies and what the cache key hashes — the
+      // two cannot describe different clusters.
+      diffResult = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+        Effect.gen(function* () {
+          const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+          const target = shadow.targetUrlOverride ?? targetUrl;
+          yield* output.raw(
+            flags.schema.length > 0
+              ? `Diffing schemas: ${flags.schema.join(",")}\n`
+              : "Diffing schemas...\n",
+            "stderr",
+          );
+          if (useDelta) {
+            const result = yield* pgDelta.diffDatabase({
+              context: ctx,
+              source: {
+                kind: "database",
+                ref: shadow.sourceUrl,
+                connectOptions: { isLocal: true, dnsResolver: "native" },
+              },
+              target: {
+                kind: "database",
+                ref: target,
+                ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
+                connectOptions: {
+                  isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
+                  dnsResolver,
                 },
-                target: {
-                  kind: "database",
-                  ref: target,
-                  ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
-                  connectOptions: {
-                    isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
-                    dnsResolver,
-                  },
-                },
-                schema: flags.schema,
-                formatOptions,
-                debug: legacyIsPgDeltaDebugEnabled(),
-                strictCoverage: flags.strictCoverage,
-              });
-              // Keep the per-unit plan files so a multi-unit plan can be written as one
-              // migration file each; `sql` stays the flattened join for stdout review +
-              // machine payloads.
-              return { sql: result.sql, files: result.files, hazards: result.hazards };
-            }
-            const sql = yield* legacyDiffMigra(ctx, {
-              source: shadow.sourceUrl,
-              target,
+              },
               schema: flags.schema,
-              connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+              formatOptions,
+              debug: legacyIsPgDeltaDebugEnabled(),
+              strictCoverage: flags.strictCoverage,
             });
-            // The migra engine has no execution-aware plan units, so it always writes a
-            // single migration file.
-            return { sql, files: undefined };
-          }),
-        migrationMode === "pgdelta-next" ? {} : { webhooks: "enabled" },
+            // Keep the per-unit plan files so a multi-unit plan can be written as one
+            // migration file each; `sql` stays the flattened join for stdout review +
+            // machine payloads.
+            return { sql: result.sql, files: result.files, hazards: result.hazards };
+          }
+          const sql = yield* legacyDiffMigra(ctx, {
+            source: shadow.sourceUrl,
+            target,
+            schema: flags.schema,
+            connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+          });
+          // The migra engine has no execution-aware plan units, so it always writes a
+          // single migration file.
+          return { sql, files: undefined };
+        }),
       );
     }
     const out = diffResult.sql;

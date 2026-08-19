@@ -73,9 +73,10 @@ Two squash-specific points:
   one-shot realtime/storage/auth migrate jobs do not run — and then resumes at exactly the same
   seam as a cold run: the before-migration `auth`/`storage` dump, the migrations up to the target,
   the after-migration dump, and the full dump are all unchanged.
-- Squash's `SetupDatabase` follows `config.toml` for Webhooks/`pg_net`, unlike `db diff`/`db
-pull`'s forced-on `legacyMigrateShadowDatabase` baseline. That effective policy is part of the
-  cache key, so squash keys to its own tars and can never warm-restore a `pg_net`-forced cluster.
+- Squash's `SetupDatabase` follows `config.toml` for Webhooks/`pg_net` (its shadow input states
+  `webhooks: "config"`), unlike `db diff`/`db pull`'s forced-on legacy-engine baseline. That one
+  field is both what the baseline applies and what the cache key hashes, so squash keys to its own
+  tars and can never warm-restore a `pg_net`-forced cluster.
 
 ## API Routes
 
