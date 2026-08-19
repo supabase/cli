@@ -92,6 +92,7 @@ interface NativeShadowBase {
 interface ProvisionedDeclarativeShadow {
   readonly declarativeUrl: string;
   readonly restoredFromPgDataSnapshot: boolean;
+  readonly snapshotKey: string | undefined;
 }
 
 /**
@@ -319,6 +320,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return {
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle.baselinePresent,
+          snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 

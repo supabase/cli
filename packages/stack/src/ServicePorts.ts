@@ -1,14 +1,36 @@
-import type { PortField } from "./PortAllocator.ts";
-import { enabledServicesForConfig } from "./StackBuilder.ts";
+import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
-import type { ResolvedStackConfig } from "./StackConfig.ts";
+import type { StackConfig } from "./StackConfig.ts";
 
-export const allocatedPortFieldsForConfig = (
-  config: ResolvedStackConfig,
-): ReadonlyArray<PortField> => [
-  "apiPort",
-  ...enabledServicesForConfig(config).flatMap((service) => SERVICE_CATALOG[service].portFields),
-];
+export const serviceEnabledForConfig = (
+  config: StackConfig,
+  service: keyof typeof SERVICE_CATALOG,
+) => {
+  if (service === "postgres" || service === "postgrest" || service === "auth") {
+    return config[service === "postgres" ? "postgres" : service] !== false;
+  }
+  if (service === "edge-runtime") {
+    const mode = config.mode ?? "auto";
+    return (
+      !(mode === "native" && config.edgeRuntime === undefined) &&
+      config.edgeRuntime !== false &&
+      (config.edgeRuntime?.enabled ?? true) !== false
+    );
+  }
+  const configKey = SERVICE_CATALOG[service].configKey;
+  if (configKey === "vector") return config.vector !== undefined && config.vector !== false;
+  return config[configKey] !== undefined && config[configKey] !== false;
+};
+
+/** Classifies active services before any ports are resolved. */
+export const portFieldsForConfigInput = (config: StackConfig = {}): ReadonlyArray<PortField> =>
+  PORT_FIELDS.filter(
+    (field) =>
+      field === "apiPort" ||
+      field === "dbPort" ||
+      (PORT_CATALOG[field].service !== undefined &&
+        serviceEnabledForConfig(config, PORT_CATALOG[field].service)),
+  );
 
 export const portFieldsForService = (name: string): ReadonlyArray<PortField> => {
   const service = SERVICE_NAMES.find((candidate) => candidate === name);

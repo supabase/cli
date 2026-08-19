@@ -9,7 +9,11 @@ import {
 } from "./legacy-pgdelta.cache.ts";
 import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import { legacyParseBoolEnv } from "./legacy-diff-engine.ts";
-import { legacyResolvePgDeltaImplementation } from "./legacy-pgdelta-next-flag.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "./legacy-pgdelta-next-flag.ts";
 import {
   LEGACY_ERR_MISSING_LOCAL,
   LEGACY_ERR_MISSING_REMOTE,
@@ -324,7 +328,10 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             toml.pgDelta.enabled ||
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
           const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
-            toml.envLookup("SUPABASE_USE_PG_DELTA_NEXT"),
+            legacyPgDeltaImplementationFlag(
+              process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+              toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+            ),
           );
           const pgDeltaCtx: LegacyPgDeltaContext = {
             // `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` before

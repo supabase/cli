@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Context, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Context, Stream } from "effect";
 import {
   Headers,
   HttpRouter,
@@ -7,10 +7,11 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
-import type { DaemonErrorResponse } from "./DaemonProtocol.ts";
+import type { ControlOwnerStatus, DaemonErrorResponse } from "./DaemonProtocol.ts";
 import { FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
+import { managedStackLaunchSchema, type ManagedStackLaunch } from "./managed/document.ts";
 
 // ---------------------------------------------------------------------------
 // Service
@@ -26,6 +27,18 @@ export class DaemonServer extends Context.Service<
 >()("stack/DaemonServer") {
   static layerWithShutdown = (
     beforeShutdown: Effect.Effect<void> = Effect.void,
+    ownerStatus: Effect.Effect<ControlOwnerStatus> = Effect.succeed({
+      protocolVersion: 1,
+      ownershipId: "unbound",
+      state: "running",
+      ready: true,
+    }),
+    options: {
+      readonly includeOwnerRoute?: boolean;
+      readonly launchUpdate?: (launch: ManagedStackLaunch) => Effect.Effect<void, unknown>;
+      /** Supervisor-owned shutdown callbacks already stop the local stack. */
+      readonly stopOnShutdown?: boolean;
+    } = {},
   ): Layer.Layer<DaemonServer, never, Stack | HttpServer.HttpServer> =>
     Layer.effect(
       this,
@@ -77,14 +90,41 @@ export class DaemonServer extends Context.Service<
             },
             500,
           );
-        const beginShutdown = beforeShutdown.pipe(
-          Effect.ensuring(
-            // The HTTP module has no response-flushed hook. Delay the process
-            // shutdown signal long enough for the final JSON response to leave
-            // the socket.
-            Deferred.succeed(shutdownDeferred, void 0).pipe(
-              Effect.delay("25 millis"),
-              Effect.forkDetach,
+        const shutdownTransaction = Effect.uninterruptible(
+          Effect.gen(function* () {
+            if (options.stopOnShutdown !== false) yield* stack.stop();
+            yield* beforeShutdown;
+          }).pipe(
+            Effect.ensuring(
+              // The HTTP module has no response-flushed hook. Delay the process
+              // shutdown signal long enough for the final JSON response to leave
+              // the socket.
+              Deferred.succeed(shutdownDeferred, void 0).pipe(
+                Effect.delay("25 millis"),
+                Effect.forkDetach,
+              ),
+            ),
+          ),
+        );
+        const shutdownResult = yield* Effect.cached(
+          Effect.uninterruptible(
+            Effect.gen(function* () {
+              const result = yield* Deferred.make<Exit.Exit<void, never>>();
+              yield* shutdownTransaction.pipe(
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(result, exit)),
+                Effect.forkDetach,
+              );
+              return result;
+            }),
+          ),
+        );
+        const beginShutdown = shutdownResult.pipe(
+          Effect.flatMap((result) =>
+            Deferred.await(result).pipe(
+              Effect.flatMap((exit) =>
+                Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
+              ),
             ),
           ),
         );
@@ -115,10 +155,39 @@ export class DaemonServer extends Context.Service<
             },
           );
 
+        const ownerRoutes =
+          options.includeOwnerRoute === false
+            ? []
+            : [
+                HttpRouter.route(
+                  "GET",
+                  "/owner",
+                  ownerStatus.pipe(Effect.map((status) => HttpServerResponse.jsonUnsafe(status))),
+                ),
+              ];
+        const launchUpdate = options.launchUpdate;
         const routes = [
+          ...ownerRoutes,
           // Health check
           HttpRouter.route("GET", "/health", HttpServerResponse.text("OK", { status: 200 })),
 
+          ...(launchUpdate === undefined
+            ? []
+            : [
+                HttpRouter.route(
+                  "POST",
+                  "/managed/launch",
+                  Effect.gen(function* () {
+                    const launch =
+                      yield* HttpServerRequest.schemaBodyJson(managedStackLaunchSchema);
+                    yield* launchUpdate(launch);
+                    return HttpServerResponse.jsonUnsafe({ ok: true });
+                  }),
+                ),
+              ]),
+
+          // Versioned lifecycle ownership/readiness status. The remaining
+          // routes are the existing Stack management transport.
           // Status: connection info + all service states
           HttpRouter.route(
             "GET",
@@ -188,7 +257,6 @@ export class DaemonServer extends Context.Service<
             "POST",
             "/stop",
             Effect.gen(function* () {
-              yield* stack.stop();
               yield* beginShutdown;
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }),

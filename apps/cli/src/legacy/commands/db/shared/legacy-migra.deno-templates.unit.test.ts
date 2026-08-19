@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
   legacyMigraDiffScript,
   legacyMigraDiffShellScript,
@@ -18,5 +19,9 @@ describe("embedded migra templates", () => {
   it("match the Go sources byte-for-byte", () => {
     expect(legacyMigraDiffScript).toBe(readGoTemplate("migra.ts"));
     expect(legacyMigraDiffShellScript).toBe(readGoTemplate("migra.sh"));
+  });
+
+  it("emit the error sentinel from the diff script's failure path", () => {
+    expect(legacyMigraDiffScript).toContain(LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL);
   });
 });
