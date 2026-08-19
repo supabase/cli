@@ -10,7 +10,6 @@ import { legacyMigrationFetchCommand } from "./fetch/fetch.command.ts";
 export const legacyMigrationCommand = Command.make("migration").pipe(
   Command.withDescription("Manage database migration scripts."),
   Command.withShortDescription("Manage database migration scripts"),
-  Command.withAlias("migrations"),
   Command.withSubcommands([
     legacyMigrationListCommand,
     legacyMigrationNewCommand,

@@ -22,6 +22,10 @@ import { stopCommand } from "../commands/stop/stop.command.ts";
 import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
 import { unlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { updateCommand } from "../commands/update/update.command.ts";
+import { schemaCommand } from "../commands/schema/schema.command.ts";
+import { migrationsCommand } from "../commands/migrations/migrations.command.ts";
+import { dbCommand } from "../commands/db/db.command.ts";
+import { migrationCommand } from "../commands/migration/migration.command.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
 import { jsonCliOutputFormatter } from "../../shared/output/json-formatter.ts";
 
@@ -49,6 +53,10 @@ export const nextRoot = Command.make("supabase").pipe(
     statusCommand,
     logsCommand,
     apiCommand,
+    schemaCommand,
+    migrationsCommand,
+    dbCommand,
+    migrationCommand,
   ]),
   Command.provide(
     Layer.unwrap(

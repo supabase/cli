@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This document defines the alpha command structure for the new Supabase CLI.
+This document defines the command structure for the new Supabase CLI.
+
+The `schema` and `migrations` verbs now ship on the stable (legacy) shell as well as next (alpha). Singular `migration` on stable remains the Go-parity group.
 
 For alpha, we will design the command surface from `supabase dev` outward. The goal is not to mirror the old CLI or the Management API. The goal is to give both humans and LLMs one command set that feels obvious, consistent, and reusable.
 
@@ -27,13 +29,13 @@ For alpha, we will use `schema` as the user-facing command group for database sh
 
 For alpha, the declarative schema workflow comes first. `schema` is the default path we will teach, document, and optimize for.
 
-`schema generate` means "turn my declared schema intent into migration files without applying them yet."
+`schema generate` means "turn my declared schema intent into migration files without applying them yet." `--dry-run` previews that same pipeline.
 
-`schema apply` means "apply my declared schema intent to the local database." Under the hood, that may derive or update migration files before applying them, but the public workflow stays schema-first.
+`schema apply` means "apply my declared schema intent to a verified-disposable local database." It does not write migration files.
 
-`schema push` means "sync my declared schema intent to the platform." In practice, that can include deriving or updating migrations and then pushing that result to the platform as one schema-first workflow. It is a platform-sync command, not a local database mutation command.
+There is no `schema push`. Durable remotes change only through `migrations push`.
 
-`schema pull` means "pull schema state from the platform into the local schema representation." It is the reverse platform-sync command.
+`schema pull` means "introspect a database into declarative SQL." The database is authoritative; pull does not merge.
 
 ### `migrations` is the advanced escape hatch
 
@@ -49,7 +51,8 @@ For alpha, `push` and `pull` mean sync with the platform only.
 
 That rule applies across:
 
-- `schema push` / `schema pull`
+- `schema pull`
+- `migrations push` / `migrations pull`
 - `functions push` / `functions pull`
 - `config push` / `config pull`
 - `env push` / `env pull`
@@ -76,7 +79,7 @@ For alpha, we will use `push` and `pull` for platform Edge Function sync.
 
 This keeps the command language consistent across platform-sync asset types:
 
-- `schema push`
+- `migrations push`
 - `functions push`
 - `config push`
 - `env push`
@@ -128,14 +131,13 @@ The public command surface for alpha is:
   - `supabase push`
   - `supabase pull`
 - Schema
-  - `supabase schema diff`
-  - `supabase schema generate`
-  - `supabase schema apply`
-  - `supabase schema push`
   - `supabase schema pull`
+  - `supabase schema generate` (`--dry-run` previews the same pipeline)
+  - `supabase schema apply`
 - Migrations
   - `supabase migrations new`
   - `supabase migrations list`
+  - `supabase migrations diff`
   - `supabase migrations apply`
   - `supabase migrations push`
   - `supabase migrations pull`
@@ -203,7 +205,7 @@ The local workflow should feel like a single command, but it should still be bui
 
 At a high level, it will coordinate:
 
-- `schema push`
+- `migrations push`
 - `functions push`
 - remote config sync
 
@@ -288,7 +290,7 @@ Some users will need more control than the high-level schema workflow provides. 
 
 ### Why platform-only `push` and `pull` improve learnability
 
-Using `push` and `pull` only for platform sync creates one directional vocabulary for the entire CLI. Once a user understands `schema push`, it is natural to understand `functions push`, `config push`, `env push`, and then top-level `push` without wondering whether the command will mutate a local database.
+Using `push` and `pull` only for platform sync creates one directional vocabulary for the entire CLI. Once a user understands `migrations push`, it is natural to understand `functions push`, `config push`, `env push`, and then top-level `push` without wondering whether the command will mutate a local database. There is no `schema push` in V1: durable schema changes go through migration files.
 
 ### Why `apply` is clearer than overloading `push`
 
@@ -315,7 +317,7 @@ The public command surface is:
 
 For database changes specifically, the alpha model is:
 
-- `schema` for declarative authoring, diffing, generation, local apply, and schema-first platform sync
-- `migrations` for direct file-level control, explicit local application, and explicit migration-level platform sync
+- `schema` for declarative authoring, pull, generation (`--dry-run` preview), and local apply
+- `migrations` for file-level control, `diff`, local apply, and the only remote schema path (`push` / `pull`)
 
 `dev` will orchestrate this command tree rather than replace it.

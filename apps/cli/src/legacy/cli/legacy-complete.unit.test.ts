@@ -100,7 +100,7 @@ describe("legacyRespondToComplete", () => {
       // `--debug ""` used to return zero candidates entirely: the leftover-args
       // computation counted `--debug` itself as "positional leftover," gating
       // out subcommand-name completion the way cobra never does for a
-      // persistent flag: `__complete --debug ''` lists all 36 root commands.
+      // persistent flag: `__complete --debug ''` lists all root commands.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "--debug", ""]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("branches");

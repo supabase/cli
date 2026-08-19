@@ -163,6 +163,10 @@ export {
   resolveDaemonConfig,
 } from "./StackConfigResolver.ts";
 
+export type { BinarySpec } from "./BinaryResolver.ts";
+export { resolveNativeBinary } from "./resolve-native-binary.ts";
+export { renderNativePostgresInitScript } from "./services/postgres-init.ts";
+
 export { connectLayer, DaemonStartError } from "./layers.ts";
 export type { ManagedStack } from "./managed-stack.ts";
 export { resolveManagedStack } from "./managed-stack.ts";
