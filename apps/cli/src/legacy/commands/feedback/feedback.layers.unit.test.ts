@@ -51,4 +51,24 @@ describe("legacyFeedbackFetch", () => {
 
     expect(httpLines).toEqual(["GET https://feedback.supabase.co/rest/v1/interfaces_feedback"]);
   });
+
+  it("redacts the delete_token filter from the logged URL but not the request", async () => {
+    const { logger, httpLines } = recordingLogger();
+    const inner = recordingInnerFetch();
+    const fetch = legacyFeedbackFetch({ dnsResolver: "native", logger, innerFetch: inner.fetch });
+
+    // The preview/delete URL carries the capability token as a PostgREST
+    // filter; the debug log must never reproduce it.
+    const url =
+      "https://feedback.supabase.co/rest/v1/interfaces_feedback" +
+      "?select=feedback&delete_token=eq.123e4567-e89b-12d3-a456-426614174000";
+    await fetch(url, { method: "DELETE" });
+
+    expect(httpLines).toEqual([
+      "DELETE https://feedback.supabase.co/rest/v1/interfaces_feedback" +
+        "?select=feedback&delete_token=eq.redacted",
+    ]);
+    // The transport still receives the original, unredacted URL.
+    expect(inner.requests).toEqual([{ url, method: "DELETE" }]);
+  });
 });

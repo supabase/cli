@@ -99,17 +99,26 @@ describe("legacyFeedbackFetch with --dns-resolver https", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves the x-feedback-token capability header through the DoH rewrite on delete", () => {
-    const { layer, requests } = setupLegacyDohTransport(
-      () => new Response(null, { status: 204, headers: { "content-range": "*/1" } }),
-    );
-    return Effect.gen(function* () {
-      const client = yield* FeedbackClient;
-      const result = yield* client.delete(TOKEN);
+  it.live(
+    "preserves the x-feedback-token capability header through the DoH rewrite on delete",
+    () => {
+      const { layer, httpLines, requests } = setupLegacyDohTransport(
+        () => new Response(null, { status: 204, headers: { "content-range": "*/1" } }),
+      );
+      return Effect.gen(function* () {
+        const client = yield* FeedbackClient;
+        const result = yield* client.delete(TOKEN);
 
-      expect(result).toEqual({ deleted: true });
-      expect(requests[0]!.headers.get("x-feedback-token")).toBe(TOKEN);
-      expect(requests[0]!.headers.get("apikey")).toBe(TEST_ENV.key);
-    }).pipe(Effect.provide(layer));
-  });
+        expect(result).toEqual({ deleted: true });
+        expect(requests[0]!.headers.get("x-feedback-token")).toBe(TOKEN);
+        expect(requests[0]!.headers.get("apikey")).toBe(TEST_ENV.key);
+        // The `--debug` log line redacts the capability token; the wire request
+        // above still carries the real filter.
+        expect(httpLines).toHaveLength(1);
+        expect(httpLines[0]).toContain("delete_token=eq.redacted");
+        expect(httpLines[0]).not.toContain(TOKEN);
+        expect(new URL(requests[0]!.url).searchParams.get("delete_token")).toBe(`eq.${TOKEN}`);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

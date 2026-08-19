@@ -32,7 +32,10 @@ routes; extra context against a context-free row is ignored server-side, so
 the CLI always sends whatever resolves. The user-id header is NOT gated on
 telemetry consent (unlike `feedback add`'s submit-side attribution) — it is
 functional auth context, and gating it would strand rows submitted before a
-consent opt-out. Each request times out after 10 s.
+consent opt-out. Each request times out after 10 s. `--debug` logs each
+request line on stderr with the `delete_token` filter redacted
+(`delete_token=eq.redacted`) — the token is a bearer capability and must never
+appear in shareable debug output.
 
 ## Environment Variables
 
