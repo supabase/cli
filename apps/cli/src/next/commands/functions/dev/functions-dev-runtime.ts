@@ -1,22 +1,13 @@
-import {
-  connectLayer,
-  daemonLayer,
-  stackMetadata,
-  Stack,
-  StateManager,
-  type EdgeRuntimeConfig,
-} from "@supabase/stack/effect";
+import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
+import { loadProjectConfig } from "@supabase/config";
 import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
-import { projectStackStateManagerLayer } from "../../../config/project-stack-state-manager.layer.ts";
-import {
-  resolveServiceVersionContext,
-  type ResolvedServiceVersionContext,
-} from "../../../config/service-version-resolution.ts";
+import { resolveServiceVersionContext } from "../../../config/service-version-resolution.ts";
+import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import { toStartStackConfig, withServiceVersions } from "../../../config/stack-config.ts";
 import { ensureProjectStateIgnored } from "../../../config/project-gitignore.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -52,41 +43,35 @@ interface FunctionsDevWatchChange {
 
 type StackService = typeof Stack.Service;
 
-function versionsFromContext(context: ResolvedServiceVersionContext) {
-  return withServiceVersions(toStartStackConfig([], "auto"), context.runtimeVersions);
-}
-
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const stateManager = yield* StateManager;
   const output = yield* Output;
 
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
+  const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const stackConfig = withServiceVersions(
+    toStartStackConfig([], "auto"),
+    serviceVersionContext.runtimeVersions,
+  );
   const stackLayer = yield* daemonLayer({
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
     name: opts.stack,
     edgeRuntime: opts.edgeRuntime,
-    ...versionsFromContext(serviceVersionContext),
+    launch: {
+      mode: "auto",
+      versions: serviceVersionContext.pinnedBaseline,
+      excludedServices: [],
+    },
+    ...stackConfig,
+    portIntents: managedPortIntents(stackConfig, loadedProjectConfig ?? undefined),
   });
-  const state = yield* stateManager.read(opts.stack);
-
-  yield* stateManager.writeMetadata(
-    opts.stack,
-    stackMetadata({
-      ports: state.ports,
-      services: serviceVersionContext.pinnedBaseline,
-      launch: { mode: "auto", excludedServices: [] },
-    }),
-  );
-
   yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
   const stack = yield* Stack.pipe(Effect.provide(stackLayer));
 
@@ -104,7 +89,6 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
-    projectStateRoot: projectHome.projectHomeDir,
     name: opts.stack,
   }).pipe(
     Effect.map(Option.some),
@@ -273,5 +257,4 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
 export const functionsDevRuntimeLayer = Layer.mergeAll(
   projectLinkStateLayer,
   projectLocalServiceVersionsLayer,
-  projectStackStateManagerLayer,
 );

@@ -14,6 +14,13 @@ const projectConfigSchemaKey = "$schema";
 
 export type ConfigFormat = "json" | "toml";
 
+export type ProjectConfigValueSource = "environment" | "local" | "remote";
+
+export interface ProjectConfigValueOrigin {
+  readonly path: ReadonlyArray<string>;
+  readonly source: ProjectConfigValueSource;
+}
+
 export interface LoadedProjectConfig {
   readonly path: string;
   readonly format: ConfigFormat;
@@ -47,7 +54,19 @@ export interface LoadedProjectConfig {
    * result, which has no document to strip from.
    */
   readonly removedDeprecatedExternalProviders?: Readonly<Record<string, unknown>>;
+  /** The source that supplied each explicitly configured effective leaf value. */
+  readonly valueOrigins?: ReadonlyArray<ProjectConfigValueOrigin>;
 }
+
+export const projectConfigValueSourceAt = (
+  loaded: Pick<LoadedProjectConfig, "valueOrigins">,
+  path: ReadonlyArray<string>,
+): ProjectConfigValueSource | undefined =>
+  loaded.valueOrigins?.find(
+    (origin) =>
+      origin.path.length === path.length &&
+      origin.path.every((segment, index) => segment === path[index]),
+  )?.source;
 
 /**
  * When `projectRef` is set, the matching `[remotes.<name>]` block (the one
@@ -189,6 +208,18 @@ function withDbSeedDisabled(document: Record<string, unknown>): Record<string, u
   return { ...document, db: { ...db, seed: { ...seed, enabled: false } } };
 }
 
+function collectLeafPaths(value: unknown, prefix: ReadonlyArray<string> = []): Array<string[]> {
+  if (!isObject(value)) {
+    return [Array.from(prefix)];
+  }
+
+  return Object.entries(value).flatMap(([key, child]) => collectLeafPaths(child, [...prefix, key]));
+}
+
+function pathKey(path: ReadonlyArray<string>): string {
+  return JSON.stringify(path);
+}
+
 /**
  * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]`
  * block, failing on the first duplicate. Mirrors Go's `loadFromFile`
@@ -281,7 +312,11 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
 ) {
   const remotes = rawDocument["remotes"];
   if (!isObject(remotes)) {
-    return { document: rawDocument, appliedRemote: undefined as string | undefined };
+    return {
+      document: rawDocument,
+      appliedRemote: undefined as string | undefined,
+      remoteLeafPaths: [],
+    };
   }
   if (goViperCompat) {
     yield* checkDuplicateRemoteProjectIds(remotes);
@@ -293,9 +328,14 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     return projectRef !== undefined && projectId === projectRef;
   })?.[0];
   if (name === undefined) {
-    return { document: rawDocument, appliedRemote: undefined as string | undefined };
+    return {
+      document: rawDocument,
+      appliedRemote: undefined as string | undefined,
+      remoteLeafPaths: [],
+    };
   }
   const remoteSubtree = remotes[name];
+  const remoteLeafPaths = collectLeafPaths(remoteSubtree);
   let merged = isObject(remoteSubtree)
     ? mergeRemoteSubtree(rawDocument, remoteSubtree)
     : { ...rawDocument };
@@ -303,7 +343,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     merged = withDbSeedDisabled(merged);
   }
   delete merged["remotes"];
-  return { document: merged, appliedRemote: name };
+  return { document: merged, appliedRemote: name, remoteLeafPaths };
 });
 
 function isEqualValue(left: unknown, right: unknown): boolean {
@@ -724,9 +764,13 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
       search: options?.search,
     }));
   const goViperCompat = options?.goViperCompat ?? false;
-  const interpolateDocument = (document: unknown): unknown =>
+  const interpolateDocument = (
+    document: unknown,
+    onResolvedEnv?: (path: ReadonlyArray<string>) => void,
+  ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, ProjectConfigSchema, {
       goViperCompat,
+      onResolvedEnv,
     });
 
   // Interpolated once here purely to give `applyRemoteOverride`'s FORMAT check
@@ -748,6 +792,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // checks only run when `goViperCompat` is set — see `applyRemoteOverride`.
   let documentForDecode: unknown = normalized;
   let appliedRemote: string | undefined;
+  let remoteLeafPaths: Array<string[]> = [];
   if (isObject(normalized)) {
     const resolved = yield* applyRemoteOverride(
       normalized,
@@ -757,6 +802,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     );
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
+    remoteLeafPaths = resolved.remoteLeafPaths;
   }
 
   // The merge above ran on the raw document, so any `env(...)` reference in
@@ -767,8 +813,11 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // made (documentForDecode is just `normalized` again) — a redundant walk on
   // that path, but correctness on the match+`env()` path matters more than
   // avoiding it.
+  const resolvedEnvironmentPaths: Array<string[]> = [];
   documentForDecode = isObject(documentForDecode)
-    ? interpolateDocument(documentForDecode)
+    ? interpolateDocument(documentForDecode, (path) => {
+        resolvedEnvironmentPaths.push(Array.from(path));
+      })
     : documentForDecode;
 
   // Strip Go's deprecated `auth.external.{linkedin,slack}` provider ids from
@@ -799,6 +848,23 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
 
   const config = yield* parseProjectConfig(normalizedForDecode, format, filePath, appliedRemote);
 
+  const localPathKeys = new Set(collectLeafPaths(normalized).map(pathKey));
+  const remotePathKeys = new Set(remoteLeafPaths.map(pathKey));
+  const environmentPathKeys = new Set(resolvedEnvironmentPaths.map(pathKey));
+  const valueOrigins = isObject(normalizedForDecode)
+    ? collectLeafPaths(normalizedForDecode).flatMap((path) => {
+        const key = pathKey(path);
+        const source: ProjectConfigValueSource | undefined = environmentPathKeys.has(key)
+          ? "environment"
+          : remotePathKeys.has(key)
+            ? "remote"
+            : localPathKeys.has(key)
+              ? "local"
+              : undefined;
+        return source === undefined ? [] : [{ path, source }];
+      })
+    : [];
+
   return {
     path: filePath,
     format,
@@ -808,6 +874,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
     appliedRemote,
     removedDeprecatedExternalProviders: removedProviders,
+    valueOrigins,
   } satisfies LoadedProjectConfig;
 });
 

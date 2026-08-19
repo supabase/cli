@@ -120,6 +120,7 @@ try {
     }
   }
   console.error(e);
+  console.error("PGDELTA_SCRIPT_ERROR");
 } finally {
   await Promise.all([clientHead.end(), clientBase.end()]);
 }

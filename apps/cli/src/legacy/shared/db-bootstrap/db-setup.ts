@@ -146,7 +146,11 @@ import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migratio
 import { legacyReadMigrationTable } from "../legacy-migration-history.ts";
 import { legacyStatementInstallsPgNet } from "../legacy-pg-net-guidance.ts";
 import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
-import { legacyResolvePgDeltaImplementation } from "../legacy-pgdelta-next-flag.ts";
+import {
+  LEGACY_PG_DELTA_NEXT_FLAG_NAME,
+  legacyPgDeltaImplementationFlag,
+  legacyResolvePgDeltaImplementation,
+} from "../legacy-pgdelta-next-flag.ts";
 import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError, LegacySeedConfig } from "../legacy-seed.ts";
@@ -192,7 +196,12 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
 
-const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+/**
+ * Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), same as
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}: a webhooks-enabled baseline bakes this
+ * statement into PGDATA, so the digest must re-key whenever this text changes across releases.
+ */
+export const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
 // The historical PG14 dump installs pg_net because later statements grant on
@@ -1102,7 +1111,13 @@ export const legacySetupDatabase = (
   options: LegacySetupDatabaseOptions = {},
 ): Effect.Effect<
   void,
-  LegacyDbSetupError | LegacyMigrationVaultError | LegacyImagePrepullError,
+  | LegacyDbSetupError
+  | LegacyMigrationVaultError
+  | LegacyImagePrepullError
+  // A batched SQL file whose pooled connection cannot be acquired fails with the
+  // driver's own connect error, surfaced verbatim (never relabeled as a setup
+  // failure) like every other connection failure on this path.
+  | LegacyDbConnectError,
   Output | LegacyDockerRun | RuntimeInfo
 > =>
   Effect.gen(function* () {
@@ -1469,7 +1484,10 @@ export const legacyRunFreshDbSetup = <E>(
         (toml.pgDelta.enabled ||
           legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
       const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
-        toml.envLookup("SUPABASE_USE_PG_DELTA_NEXT"),
+        legacyPgDeltaImplementationFlag(
+          process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+          toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+        ),
       );
       const pgDeltaCtx: LegacyPgDeltaContext = {
         projectId: input.projectId,

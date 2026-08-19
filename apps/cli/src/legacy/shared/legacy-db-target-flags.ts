@@ -80,6 +80,8 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "level",
   "fail-on",
   "type",
+  // schema-first migrations diff/list target override (`Flag.string("against")`)
+  "against",
   // migration/db credential flag — `StringVarP(&dbPassword, "password", "p", …)`
   // consumes the next token as the value.
   "password",

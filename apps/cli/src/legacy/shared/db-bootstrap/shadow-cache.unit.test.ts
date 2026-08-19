@@ -108,10 +108,6 @@ describe("legacyShadowCacheKey", () => {
         label: "auto expose new tables",
         inputs: { ...base, autoExposeNewTables: Option.some(true) },
       },
-      {
-        label: "auto expose new tables (explicit false vs unset)",
-        inputs: { ...base, autoExposeNewTables: Option.some(false) },
-      },
       { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
       {
@@ -191,6 +187,21 @@ describe("legacyShadowCacheKey", () => {
       expect(collision, `${mutation.label} must change the cache key`).toBeUndefined();
       seen.set(key, mutation.label);
     }
+  });
+
+  it("collapses auto_expose_new_tables to the behavior legacyApplyApiPrivileges actually takes", () => {
+    // `legacyApplyApiPrivileges` (`db-setup.ts`) returns early ONLY for an explicit `true`; unset
+    // and explicit `false` both exec the revoke SQL, so they bake the identical cluster and must
+    // share a snapshot instead of forcing a ~90MB re-export.
+    const base = baseKeyInputs();
+    const unset = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.none() });
+    const explicitFalse = legacyShadowCacheKey({
+      ...base,
+      autoExposeNewTables: Option.some(false),
+    });
+    const explicitTrue = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.some(true) });
+    expect(explicitFalse).toBe(unset);
+    expect(explicitTrue).not.toBe(unset);
   });
 
   it("excludes a disabled service's image tag entirely", () => {

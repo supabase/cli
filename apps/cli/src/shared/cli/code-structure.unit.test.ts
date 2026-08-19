@@ -163,6 +163,13 @@ describe("code structure", () => {
   });
 
   it("prevents next and legacy from importing each other", () => {
+    // The schema-first commands run in BOTH shells against next's project config services
+    // (`ProjectHome`, `ProjectLinkState`, `CliConfig`, `ProjectContext`); these legacy-side
+    // adapter layers are the deliberate, named bridges for that. Nothing else may cross.
+    const allowedBridges = new Set([
+      "legacy/config/legacy-next-cli-config.layer.ts",
+      "legacy/schema/legacy-schema-project-link-state.layer.ts",
+    ]);
     const violations: Array<string> = [];
 
     for (const [shellDir, otherShellDir] of [
@@ -170,6 +177,9 @@ describe("code structure", () => {
       [legacyDir, nextDir],
     ] as const) {
       for (const filePath of walk(shellDir).filter(isSourceFile)) {
+        if (allowedBridges.has(path.relative(srcDir, filePath))) {
+          continue;
+        }
         for (const specifier of extractRelativeImports(filePath)) {
           const resolved = resolveImport(filePath, specifier);
           if (resolved.startsWith(otherShellDir)) {

@@ -2397,6 +2397,34 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    createWorkerUpload: (
+      input: typeof operationDefinitions.v2CreateWorkerUpload.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateWorkerUpload.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateWorkerUpload">(
+          operationDefinitions.v2CreateWorkerUpload,
+          input,
+        );
+      }),
+    deleteAWorker: (
+      input: typeof operationDefinitions.v2DeleteAWorker.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteAWorker.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteAWorker">(
+          operationDefinitions.v2DeleteAWorker,
+          input,
+        );
+      }),
     deleteLogDrain: (
       input: typeof operationDefinitions.v2DeleteLogDrain.inputSchema.Type,
     ): Effect.Effect<
@@ -2453,6 +2481,31 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    deployAWorker: (
+      input: typeof operationDefinitions.v2DeployAWorker.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeployAWorker.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeployAWorker">(
+          operationDefinitions.v2DeployAWorker,
+          input,
+        );
+      }),
+    getAWorker: (
+      input: typeof operationDefinitions.v2GetAWorker.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetAWorker.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetAWorker">(operationDefinitions.v2GetAWorker, input);
+      }),
     getProjectConfig: (
       input: typeof operationDefinitions.v2GetProjectConfig.inputSchema.Type,
     ): Effect.Effect<
@@ -2464,6 +2517,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v2GetProjectConfig">(
           operationDefinitions.v2GetProjectConfig,
+          input,
+        );
+      }),
+    listAllWorkers: (
+      input: typeof operationDefinitions.v2ListAllWorkers.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListAllWorkers.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListAllWorkers">(
+          operationDefinitions.v2ListAllWorkers,
           input,
         );
       }),
@@ -3301,6 +3368,14 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(
         operationDefinitions.v2CreatePrivateLinkAssociation.inputSchema,
       )(input).pipe(Effect.flatMap((decoded) => api.v2.createPrivateLinkAssociation(decoded)));
+    case "v2CreateWorkerUpload":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateWorkerUpload.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.createWorkerUpload(decoded)));
+    case "v2DeleteAWorker":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteAWorker.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.deleteAWorker(decoded)));
     case "v2DeleteLogDrain":
       return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteLogDrain.inputSchema)(
         input,
@@ -3319,10 +3394,22 @@ export function executeApiClientOperation(
       )(input).pipe(
         Effect.flatMap((decoded) => api.v2.deletePrivateLinkAssociationForDatabase(decoded)),
       );
+    case "v2DeployAWorker":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeployAWorker.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.deployAWorker(decoded)));
+    case "v2GetAWorker":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2GetAWorker.inputSchema)(input).pipe(
+        Effect.flatMap((decoded) => api.v2.getAWorker(decoded)),
+      );
     case "v2GetProjectConfig":
       return Schema.decodeUnknownEffect(operationDefinitions.v2GetProjectConfig.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v2.getProjectConfig(decoded)));
+    case "v2ListAllWorkers":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListAllWorkers.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.listAllWorkers(decoded)));
     case "v2ListLogDrains":
       return Schema.decodeUnknownEffect(operationDefinitions.v2ListLogDrains.inputSchema)(
         input,

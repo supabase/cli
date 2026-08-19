@@ -36,11 +36,6 @@ function setup(opts: { readonly connectorUrl?: string; readonly linked?: boolean
         projectLinkPath: "/tmp/project/.supabase/project.json",
         projectLocalVersionsPath: "/tmp/project/.supabase/local-versions.json",
         ensureProjectHomeDir: Effect.void,
-        stackDir: () => "/tmp/stack",
-        stackStatePath: () => "/tmp/stack/state",
-        stackMetadataPath: () => "/tmp/stack/meta",
-        stackDataDir: () => "/tmp/stack/data",
-        stackLogsDir: () => "/tmp/stack/logs",
       }),
     ),
     Layer.succeed(

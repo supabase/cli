@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { unixHttpClientLayer } from "@supabase/stack/effect";
+import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
 import { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../next/config/project-local-service-versions.layer.ts";
@@ -74,13 +74,13 @@ export const schemaRuntimeLayer = (
       databaseTargetLayer.pipe(
         Layer.provide(options?.localDatabaseFallback ?? noLocalDatabaseFallbackLayer),
         Layer.provide(linkState),
-        Layer.provide(unixHttpClientLayer),
+        Layer.provide(httpTransportClientLayer),
         Layer.provide(linkedRemote),
       ),
       linkedRemote,
       linkState,
       projectLocalServiceVersionsLayer,
-      unixHttpClientLayer,
+      httpTransportClientLayer,
       commandRuntimeLayer(commandPath),
     ),
     options,

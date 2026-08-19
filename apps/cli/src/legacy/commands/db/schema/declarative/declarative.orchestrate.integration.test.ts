@@ -85,6 +85,7 @@ function mockShadowInfra() {
         connectedDatabases.push(cfg.database);
         const session: LegacyDbSession = {
           exec: () => Effect.void,
+          execBatch: () => Effect.void,
           query: () => Effect.succeed([]),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),

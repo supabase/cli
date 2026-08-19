@@ -1,5 +1,11 @@
-import { validateSqlSyntax } from "@supabase/pg-topo";
-import "@supabase/pg-delta/core";
+// Deliberately mirrors production's import shape: @supabase/pg-delta never
+// imports @supabase/pg-topo eagerly. It reaches it only through the literal
+// dynamic `import("@supabase/pg-topo")` inside its bundled
+// dist/frontends/sql-order.js, invoked from `analyzeForShadow`. Calling
+// `analyzeForShadow` here — instead of importing pg-topo directly — proves
+// Bun's `--compile` traces that dynamic import inside pg-delta's dist and
+// still embeds the libpg-query WASM asset it ultimately depends on.
+import { analyzeForShadow } from "@supabase/pg-delta/sql-order";
 
 const embeddedParser = Bun.embeddedFiles.find((file) => file.type === "application/wasm");
 
@@ -17,5 +23,9 @@ if (
   throw new Error("the embedded libpg-query asset is not WebAssembly");
 }
 
-await validateSqlSyntax("select 1");
+const result = await analyzeForShadow([{ name: "0001_select.sql", sql: "select 1;" }]);
+if (result.files.length !== 1) {
+  throw new Error("analyzeForShadow did not reorder the expected statement");
+}
+
 console.log("libpg-query.wasm loaded");

@@ -52,6 +52,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
       connect: () =>
         Effect.succeed({
           exec: () => Effect.void,
+          execBatch: () => Effect.void,
           extensionExists: () => Effect.succeed(false),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
           copyToCsv: () => Effect.succeed(new Uint8Array()),

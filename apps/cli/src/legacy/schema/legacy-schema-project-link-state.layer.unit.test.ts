@@ -28,11 +28,6 @@ function projectHomeLayer(workdir: string, projectHomeDir: string, supabaseDir: 
       projectLinkPath: join(projectHomeDir, "project.json"),
       projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
       ensureProjectHomeDir: Effect.void,
-      stackDir: (name: string) => join(projectHomeDir, "stacks", name),
-      stackStatePath: (name: string) => join(projectHomeDir, "stacks", name, "state.json"),
-      stackMetadataPath: (name: string) => join(projectHomeDir, "stacks", name, "stack.json"),
-      stackDataDir: (name: string) => join(projectHomeDir, "stacks", name, "data"),
-      stackLogsDir: (name: string) => join(projectHomeDir, "stacks", name, "logs"),
     }),
   );
 }

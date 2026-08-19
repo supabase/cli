@@ -13,6 +13,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -28,6 +29,7 @@ import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.t
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
+  type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
@@ -96,8 +98,8 @@ function mockConnection(opts: {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -144,7 +146,12 @@ function mockConnection(opts: {
               return Effect.succeed([]);
             },
           ),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   return {
     layer,
@@ -435,6 +442,40 @@ describe("legacy db push", () => {
       expect(catalogFiles).toHaveLength(1);
     });
   });
+
+  it.live(
+    "skips the legacy catalog when an empty shell value shadows a project .env false (godotenv parity)",
+    () => {
+      // godotenv.Load never replaces a shell value, including an empty one, so
+      // an empty `SUPABASE_USE_PG_DELTA_NEXT` in the shell must suppress the
+      // `supabase/.env` fallback below and resolve to the next implementation —
+      // matching the engine-selector layer's own precedence rather than
+      // `toml.envLookup`'s (which treats an empty shell value as unset).
+      const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+      process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: {
+          ...migrationFile("20240101000000"),
+          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+        },
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(0);
+        expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
+            else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
+          }),
+        ),
+      );
+    },
+  );
 
   it.live("caches the migrations catalog after a successful push when pg-delta is enabled", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {

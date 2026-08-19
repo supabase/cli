@@ -2,8 +2,8 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import {
   connectLayer,
   DEFAULT_MANAGED_STACK_NAME,
+  httpTransportClientLayer,
   Stack,
-  unixHttpClientLayer,
 } from "@supabase/stack/effect";
 import { CliConfig } from "../../next/config/cli-config.service.ts";
 import { ProjectHome } from "../../next/config/project-home.service.ts";
@@ -33,12 +33,20 @@ export const databaseTargetLayer = Layer.effect(
         cwd: runtimeInfo.cwd,
         cacheRoot: cliConfig.supabaseHome,
         projectDir: projectHome.projectRoot,
-        projectStateRoot: projectHome.projectHomeDir,
         name: DEFAULT_MANAGED_STACK_NAME,
       }).pipe(
         Effect.map(Option.some),
         Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
-        Effect.catchTag("InvalidStackStateError", () => Effect.succeed(Option.none())),
+        // Anything else the managed-stack manager reports (unreadable state, control-plane
+        // conflicts) means the local stack cannot be used as a target right now — surface it
+        // in this resolver's own vocabulary instead of leaking the stack package's union.
+        Effect.mapError(
+          (cause) =>
+            new SchemaLocalStackNotRunningError({
+              detail: `Could not resolve the local Supabase stack: ${cause.message}`,
+              suggestion: "Run `supabase start`, then retry.",
+            }),
+        ),
       );
       if (layer._tag === "None") {
         const owned = yield* fallback.resolve;
@@ -61,7 +69,7 @@ export const databaseTargetLayer = Layer.effect(
         connectionVerified: true,
       } satisfies DatabaseTarget;
     }).pipe(
-      Effect.provide(unixHttpClientLayer),
+      Effect.provide(httpTransportClientLayer),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );

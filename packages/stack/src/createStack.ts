@@ -8,8 +8,7 @@ import { toStackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
 import { foregroundLayer } from "./layers.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
-import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
-import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
+import { reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
@@ -79,8 +78,8 @@ export async function createStack(
   let resolved: ResolvedStackConfig;
   try {
     resolved = await resolveConfig(config, {
-      portAllocator: (input, options) =>
-        reservePorts(input, options).pipe(
+      portAllocator: (requests, options) =>
+        reservePortSet(requests, options).pipe(
           Effect.tap((lease) =>
             Effect.sync(() => {
               portLease = lease;
@@ -99,10 +98,6 @@ export async function createStack(
   if (portLease === undefined) {
     throw new Error("Stack port allocation completed without a port lease");
   }
-
-  const activeFields = new Set(allocatedPortFieldsForConfig(resolved));
-  const unusedFields = PORT_FIELDS.filter((field) => !activeFields.has(field));
-  await Effect.runPromise(portLease.release(unusedFields));
 
   try {
     const fullLayer = foregroundLayer(resolved, platformFactory, portLease);
@@ -166,7 +161,9 @@ export async function createStack(
     }
   } catch (error: unknown) {
     await Effect.runPromise(portLease.releaseAll);
-    dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames);
+    await Effect.runPromise(
+      dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames),
+    );
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
   }

@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Duration, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
-// `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly only
-// for the COPY protocol (which `@effect/sql-pg` does not expose). Keep the direct
-// `pg` version constraint in package.json aligned with the one `@effect/sql-pg`
-// resolves, so the COPY path and the pooled path use the same driver.
+// `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly for
+// COPY and extended-protocol migration batches, which `@effect/sql-pg` does not
+// expose. Keep the direct `pg` version constraint in package.json aligned with the
+// one `@effect/sql-pg` resolves so every path uses the same driver.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
@@ -23,6 +23,8 @@ import {
   LegacyDbExecError,
 } from "./legacy-db-connection.errors.ts";
 import {
+  type LegacyDbBatchStatement,
+  type LegacyDbBatchValue,
   type LegacyDbConnectOptions,
   LegacyDbConnection,
   type LegacyDbSession,
@@ -36,12 +38,20 @@ import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 // pg-pool likewise honors a `verify(client, callback)` option — run for every
 // brand-new physical connection before it is handed to a waiting checkout
 // (`pg-pool/index.js` `_acquireClient`) — that `@types/pg` doesn't declare either.
+// The batch path also needs the real PoolClient `connection` and Connection
+// `sendCopyFail` members, which are absent from the public driver types.
 declare module "pg" {
   interface QueryConfig {
     queryMode?: "extended" | "simple";
   }
   interface PoolConfig {
     verify?: (client: import("pg").PoolClient, callback: (err?: Error) => void) => void;
+  }
+  interface PoolClient {
+    readonly connection: import("pg").Client["connection"];
+  }
+  interface Connection {
+    sendCopyFail(message: string): void;
   }
 }
 
@@ -190,6 +200,84 @@ export function legacyToExecError(error: unknown): LegacyDbExecError {
     });
   }
   return new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) });
+}
+
+const legacyEncodeTextArray = (values: ReadonlyArray<string>): string =>
+  `{${values
+    .map((value) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+    .join(",")}}`;
+
+const legacyEncodeBatchValue = (value: LegacyDbBatchValue): string | null =>
+  value === null ? null : typeof value === "string" ? value : legacyEncodeTextArray(value);
+
+class LegacyPgBatchQuery implements Pg.Submittable {
+  readonly statements: ReadonlyArray<{
+    readonly sql: string;
+    readonly params: ReadonlyArray<string | null>;
+  }>;
+  callback: (error: Error | undefined) => void;
+  completed = 0;
+  poisoned = false;
+
+  constructor(
+    statements: ReadonlyArray<LegacyDbBatchStatement>,
+    callback: (error: Error | undefined) => void,
+  ) {
+    this.statements = statements.map(({ sql, params }) => ({
+      sql,
+      params: (params ?? []).map(legacyEncodeBatchValue),
+    }));
+    this.callback = callback;
+  }
+
+  submit(connection: Pg.Connection): Error | null {
+    let started = false;
+    connection.stream.cork?.();
+    try {
+      for (const { sql, params } of this.statements) {
+        started = true;
+        connection.parse({ name: "", text: sql, types: [] }, true);
+        connection.bind({ portal: "", statement: "", values: [...params] }, true);
+        connection.describe({ type: "P", name: "" }, true);
+        connection.execute({ portal: "" }, true);
+      }
+      connection.sync();
+      return null;
+    } catch (error) {
+      this.poisoned = started;
+      return error instanceof Error ? error : new Error(String(error));
+    } finally {
+      connection.stream.uncork?.();
+    }
+  }
+
+  handleRowDescription(): void {}
+
+  handleDataRow(): void {}
+
+  handlePortalSuspended(): void {}
+
+  handleCommandComplete(): void {
+    this.completed += 1;
+  }
+
+  handleEmptyQuery(): void {
+    this.completed += 1;
+  }
+
+  handleCopyInResponse(connection: Pg.Connection): void {
+    connection.sendCopyFail("COPY FROM STDIN is not supported in migration batches");
+  }
+
+  handleCopyData(): void {}
+
+  handleError(error: Error): void {
+    this.callback(error);
+  }
+
+  handleReadyForQuery(): void {
+    this.callback(undefined);
+  }
 }
 
 /**
@@ -873,8 +961,104 @@ const connect = (
       return fresh;
     });
 
+    // Checking a connection out of the pool for a batch is a connection-setup
+    // concern, so it fails with `LegacyDbConnectError` — the same classification
+    // `acquireRawClient` uses above, and for the same reason: the pool may have to
+    // redial (its single connection is discarded after an interrupted or poisoned
+    // batch), and a refused/auth/DNS failure there is not a statement failure. Mapping
+    // it to `LegacyDbExecError` would lose the connect suggestion and make the
+    // migration-apply formatter blame the batch's first statement for a connectivity
+    // problem. Only the batch's own execution (below) raises `LegacyDbExecError`.
+    const acquireBatchClient = Effect.callback<Pg.PoolClient, LegacyDbConnectError>((resume) => {
+      let done = false;
+      try {
+        pool.connect((error, activeClient) => {
+          if (done) {
+            activeClient?.release();
+            return;
+          }
+          done = true;
+          if (error !== undefined) {
+            resume(Effect.fail(legacyToConnectError(cfg, options.isLocal, error)));
+          } else if (activeClient === undefined) {
+            resume(
+              Effect.fail(
+                new LegacyDbConnectError({ message: "failed to acquire batch connection" }),
+              ),
+            );
+          } else {
+            resume(Effect.succeed(activeClient));
+          }
+        });
+      } catch (error) {
+        done = true;
+        resume(Effect.fail(legacyToConnectError(cfg, options.isLocal, error)));
+      }
+      return Effect.sync(() => {
+        done = true;
+      });
+    });
+
+    const execBatch = (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
+      if (statements.length === 0) return Effect.void;
+      let batchQuery: LegacyPgBatchQuery | undefined;
+      return Effect.acquireUseRelease(
+        Effect.interruptible(acquireBatchClient),
+        (activeClient) => {
+          const onConnectionError = () => {};
+          activeClient.on("error", onConnectionError);
+          return Effect.callback<void, LegacyDbExecError>((resume) => {
+            let done = false;
+            const finish = (error: Error | undefined) => {
+              if (done) return;
+              done = true;
+              if (error === undefined) {
+                resume(Effect.void);
+                return;
+              }
+              const mapped = legacyToExecError(error);
+              resume(
+                Effect.fail(
+                  new LegacyDbExecError({
+                    message: mapped.message,
+                    code: mapped.code,
+                    detail: mapped.detail,
+                    position: mapped.position,
+                    statementIndex: batchQuery?.completed ?? 0,
+                  }),
+                ),
+              );
+            };
+            batchQuery = new LegacyPgBatchQuery(statements, finish);
+            try {
+              activeClient.query(batchQuery);
+            } catch (error) {
+              finish(error instanceof Error ? error : new Error(String(error)));
+            }
+            return Effect.sync(() => {
+              done = true;
+            });
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => activeClient.removeListener("error", onConnectionError)),
+            ),
+          );
+        },
+        (activeClient, exit) =>
+          Effect.sync(() => {
+            const discard =
+              batchQuery?.poisoned === true ||
+              (Exit.isFailure(exit) &&
+                (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)));
+            activeClient.release(discard ? new Error("batch execution interrupted") : undefined);
+          }),
+      );
+    };
+
     const session: LegacyDbSession = {
+      ...(stepDownRequired ? { restoreRoleSql: SET_SESSION_ROLE } : {}),
       exec: (sql) => client.unsafe(sql).pipe(Effect.asVoid, Effect.mapError(legacyToExecError)),
+      execBatch,
       query: (sql, params) =>
         client
           .unsafe<Record<string, unknown>>(sql, params)

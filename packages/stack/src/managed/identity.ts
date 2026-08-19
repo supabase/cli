@@ -1,20 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import {
-  GIT_CHECKOUT_IDENTITY_VERSION,
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
-  type GitCheckoutIdentity,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
-import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import { errorCode } from "./error-code.ts";
-import { gitCheckoutIdentityPath, ordinaryWorkspaceIdentityPath } from "./paths.ts";
+import {
+  gitCheckoutLocationPath,
+  gitDetachedContextIdentityPath,
+  ordinaryWorkspaceIdentityPath,
+} from "./paths.ts";
+import type { ControlOwnership } from "./control.ts";
 
 /**
  * The marker's own failures are the only ones this module reports. Every
@@ -58,7 +60,7 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   }
   return {
     version,
-    projectId: identityField(value, "projectId"),
+    workspaceId: identityField(value, "workspaceId"),
     checkoutId: identityField(value, "checkoutId"),
     contextId: identityField(value, "contextId"),
   };
@@ -102,11 +104,6 @@ const readIdentity = async (
     throw error;
   }
 };
-
-export const readOrdinaryWorkspaceIdentity = (
-  workspacePath: string,
-): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
-  failsWithIdentity(Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: asRaised }));
 
 /** Read-only marker probe through Effect FileSystem; absence remains undefined. */
 export const readOrdinaryWorkspaceIdentityWithFileSystem = (
@@ -165,7 +162,7 @@ const ensureIdentity = async (
 
   const identity: OrdinaryWorkspaceIdentity = {
     version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-    projectId: createManagedUuid(idFactory, "projectId"),
+    workspaceId: createManagedUuid(idFactory, "workspaceId"),
     checkoutId: createManagedUuid(idFactory, "checkoutId"),
     contextId: createManagedUuid(idFactory, "contextId"),
   };
@@ -173,7 +170,6 @@ const ensureIdentity = async (
   await mkdir(dirname(markerPath), { recursive: true });
   const outcome = await claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
     mode: 0o600,
-    temporaryId: createManagedUuid(idFactory, "identity temporary id"),
   });
   if (outcome === "claimed") {
     return { identity, created: true, markerPath };
@@ -199,89 +195,94 @@ export const ensureOrdinaryWorkspaceIdentity = (
     }),
   );
 
-/**
- * Publishes an exact ordinary-folder identity without adopting or replacing a
- * competing marker. Recovery transitions use this when their reserved target
- * was already chosen before publication began.
- */
-export const publishOrdinaryWorkspaceIdentity = (
-  workspacePath: string,
-  identity: Pick<OrdinaryWorkspaceIdentity, "projectId" | "checkoutId" | "contextId">,
-  temporaryId: string = randomUUID(),
-): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
+const DETACHED_CONTEXT_VERSION = 1;
+
+const decodeDetachedContextId = (content: string): string => {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch (cause: unknown) {
+    throw new InvalidManagedIdentityError({
+      message: `The detached context identity is not JSON: ${cause}`,
+    });
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new InvalidManagedIdentityError({
+      message: "The detached context identity must be an object",
+    });
+  }
+  if (Reflect.get(value, "version") !== DETACHED_CONTEXT_VERSION) {
+    throw new InvalidManagedIdentityError({
+      message: "Unsupported detached context identity version",
+    });
+  }
+  const contextId = Reflect.get(value, "contextId");
+  if (typeof contextId !== "string") {
+    throw new InvalidManagedIdentityError({ message: "contextId must be an opaque UUID" });
+  }
+  return assertManagedUuid(contextId, "contextId");
+};
+
+const readDetachedContextId = async (gitDirectory: string): Promise<string | undefined> => {
+  try {
+    return decodeDetachedContextId(
+      await readFile(gitDetachedContextIdentityPath(gitDirectory), "utf8"),
+    );
+  } catch (error: unknown) {
+    if (errorCode(error) === "ENOENT") return undefined;
+    throw error;
+  }
+};
+
+export const readDetachedContextIdentity = (
+  gitDirectory: string,
+): Effect.Effect<string | undefined, InvalidManagedIdentityError> =>
   failsWithIdentity(
-    Effect.uninterruptible(
-      Effect.tryPromise({
-        try: async () => {
-          const existing = await readIdentity(workspacePath);
-          const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
-          const target: OrdinaryWorkspaceIdentity = {
-            version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-            projectId: assertManagedUuid(identity.projectId, "projectId"),
-            checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
-            contextId: assertManagedUuid(identity.contextId, "contextId"),
-          };
-          if (existing !== undefined) {
-            if (
-              existing.projectId !== target.projectId ||
-              existing.checkoutId !== target.checkoutId ||
-              existing.contextId !== target.contextId
-            ) {
-              throw new InvalidManagedIdentityError({
-                message: "Ordinary workspace identity changed before recovery publication",
-              });
-            }
-            return { identity: existing, created: false, markerPath };
-          }
-          await mkdir(dirname(markerPath), { recursive: true });
-          const outcome = await claimFileAtomically(
-            markerPath,
-            `${JSON.stringify(target, null, 2)}\n`,
-            { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
-          );
-          if (outcome === "claimed") return { identity: target, created: true, markerPath };
-          const winner = await readIdentity(workspacePath);
-          if (
-            winner === undefined ||
-            winner.projectId !== target.projectId ||
-            winner.checkoutId !== target.checkoutId ||
-            winner.contextId !== target.contextId
-          ) {
-            throw new InvalidManagedIdentityError({
-              message: "Ordinary workspace identity publication raced without the requested winner",
-            });
-          }
-          return { identity: winner, created: false, markerPath };
-        },
-        catch: asRaised,
-      }),
-    ),
+    Effect.tryPromise({ try: () => readDetachedContextId(gitDirectory), catch: asRaised }),
   );
 
-/**
- * Publish a caller-selected checkout identity into a git directory without
- * ever replacing a winner. Folder-to-Git conversion uses this primitive after
- * reserving its registry transition; an existing matching marker is already
- * the settled winner, while a different marker is a transition ownership
- * failure and must not be overwritten.
- */
-export const publishGitCheckoutIdentity = (
+export const ensureDetachedContextIdentity = (
   gitDirectory: string,
-  checkoutId: string,
-  temporaryId: string = randomUUID(),
-): Effect.Effect<boolean, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+  idFactory: () => string = randomUUID,
+): Effect.Effect<
+  { readonly contextId: string; readonly created: boolean },
+  InvalidManagedIdentityError
+> =>
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        const existing = await readDetachedContextId(gitDirectory);
+        if (existing !== undefined) return { contextId: existing, created: false };
+        const contextId = createManagedUuid(idFactory, "contextId");
+        const markerPath = gitDetachedContextIdentityPath(gitDirectory);
+        const outcome = await claimFileAtomically(
+          markerPath,
+          `${JSON.stringify({ version: DETACHED_CONTEXT_VERSION, contextId }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        if (outcome === "claimed") return { contextId, created: true };
+        const winner = await readDetachedContextId(gitDirectory);
+        if (winner === undefined) {
+          throw new InvalidManagedIdentityError({
+            message: "Detached context publication raced without a winning marker",
+          });
+        }
+        return { contextId: winner, created: false };
+      },
+      catch: asRaised,
+    }),
+  );
+
+export const readGitCheckoutLocation = (
+  gitDirectory: string,
+): Effect.Effect<string | undefined, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   failsWithIdentity(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const markerPath = gitCheckoutIdentityPath(gitDirectory);
-      const identity: GitCheckoutIdentity = {
-        version: GIT_CHECKOUT_IDENTITY_VERSION,
-        checkoutId: assertManagedUuid(checkoutId, "checkoutId"),
-      };
-      const existing = yield* fs.readFileString(markerPath).pipe(
+      return yield* fs.readFileString(gitCheckoutLocationPath(gitDirectory)).pipe(
         Effect.flatMap((content) =>
           Effect.try({
-            try: () => decodeGitCheckoutIdentity(content).checkoutId,
+            try: () => decodeLocation(content),
             catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
           }),
         ),
@@ -290,46 +291,97 @@ export const publishGitCheckoutIdentity = (
             ? Effect.succeed<string | undefined>(undefined)
             : Effect.fail(
                 new InvalidManagedIdentityError({
-                  message: `Git checkout identity is inaccessible (${error.message})`,
+                  message: `Git checkout location is inaccessible (${error.message})`,
                 }),
               ),
         ),
       );
-      if (existing !== undefined) {
-        if (existing !== identity.checkoutId) {
-          return yield* Effect.fail(
-            new InvalidManagedIdentityError({
-              message: "Git checkout identity changed before folder-to-Git migration",
-            }),
-          );
-        }
-        return false;
-      }
-      const outcome = yield* Effect.tryPromise({
-        try: () =>
-          claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
-            mode: 0o600,
-            temporaryId: assertManagedUuid(temporaryId, "git checkout identity temporary id"),
-          }),
-        catch: asRaised,
-      });
-      if (outcome === "claimed") return true;
-      const winner = yield* fs.readFileString(markerPath).pipe(
-        Effect.flatMap((content) =>
-          Effect.try({
-            try: () => decodeGitCheckoutIdentity(content).checkoutId,
-            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-          }),
-        ),
-        Effect.catchTag("PlatformError", () => Effect.succeed<string | undefined>(undefined)),
-      );
-      if (winner !== identity.checkoutId) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: "Git checkout identity publication raced without the requested winner",
-          }),
+    }),
+  );
+
+const decodeLocation = (content: string): string => {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch (cause: unknown) {
+    throw new InvalidManagedIdentityError({
+      message: `The git checkout location is not JSON: ${cause}`,
+    });
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof Reflect.get(value, "workspacePath") !== "string"
+  ) {
+    throw new InvalidManagedIdentityError({ message: "workspacePath must be a string" });
+  }
+  return Reflect.get(value, "workspacePath");
+};
+
+export const ensureGitCheckoutLocation = (
+  gitDirectory: string,
+  workspacePath: string,
+): Effect.Effect<
+  { readonly workspacePath: string; readonly created: boolean },
+  InvalidManagedIdentityError
+> =>
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        const existing = await (async () => {
+          try {
+            return decodeLocation(await readFile(gitCheckoutLocationPath(gitDirectory), "utf8"));
+          } catch (error: unknown) {
+            if (errorCode(error) === "ENOENT") return undefined;
+            throw error;
+          }
+        })();
+        if (existing !== undefined) return { workspacePath: existing, created: false };
+        const markerPath = gitCheckoutLocationPath(gitDirectory);
+        const outcome = await claimFileAtomically(
+          markerPath,
+          `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
+          { mode: 0o600 },
         );
-      }
-      return false;
+        if (outcome === "claimed") return { workspacePath, created: true };
+        const winner = decodeLocation(await readFile(markerPath, "utf8"));
+        return { workspacePath: winner, created: false };
+      },
+      catch: asRaised,
+    }),
+  );
+
+/** Replace a moved checkout marker while holding the opaque repair authority. */
+export const updateGitCheckoutLocationOwned = (
+  gitDirectory: string,
+  expectedPath: string,
+  workspacePath: string,
+  ownership: ControlOwnership,
+): Effect.Effect<{ readonly workspacePath: string }, InvalidManagedIdentityError> =>
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        void ownership;
+        const markerPath = gitCheckoutLocationPath(gitDirectory);
+        const current = decodeLocation(await readFile(markerPath, "utf8"));
+        if (current !== expectedPath) {
+          throw new InvalidManagedIdentityError({
+            message: "Git checkout location changed before repair publication",
+          });
+        }
+        const temporaryPath = `${markerPath}.tmp.${randomUUID()}`;
+        await writeFile(
+          temporaryPath,
+          `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        try {
+          await rename(temporaryPath, markerPath);
+        } finally {
+          await unlink(temporaryPath).catch(() => undefined);
+        }
+        return { workspacePath };
+      },
+      catch: asRaised,
     }),
   );

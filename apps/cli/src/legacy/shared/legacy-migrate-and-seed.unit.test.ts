@@ -22,10 +22,16 @@ const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 function fakeSession() {
   const execs: Array<string> = [];
+  // A file's statements travel as one batch, so both entry points record into
+  // `execs` — the assertions below only care about which SQL reached the database.
   const session: LegacyDbSession = {
     exec: (sql) =>
       Effect.sync(() => {
         execs.push(sql);
+      }),
+    execBatch: (statements) =>
+      Effect.sync(() => {
+        for (const { sql } of statements) execs.push(sql);
       }),
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
@@ -35,16 +41,20 @@ function fakeSession() {
   return { session, execs };
 }
 
-/** Every statement fails except the `BEGIN`/`COMMIT`/`ROLLBACK` transaction control Go wraps it in. */
+/** Every statement fails, whether it runs standalone or inside a batch. */
 function failingExecSession(): { session: LegacyDbSession; execs: Array<string> } {
   const execs: Array<string> = [];
-  const TRANSACTION_CONTROL = new Set(["BEGIN", "COMMIT", "ROLLBACK"]);
+  const syntaxError = () => new LegacyDbExecError({ message: "syntax error" });
   const session: LegacyDbSession = {
     exec: (sql) => {
       execs.push(sql);
-      return TRANSACTION_CONTROL.has(sql)
-        ? Effect.sync(() => {})
-        : Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+      return Effect.fail(syntaxError());
+    },
+    execBatch: (statements) => {
+      for (const { sql } of statements) execs.push(sql);
+      // The batch dies on its first statement, like a server ErrorResponse before
+      // any command completed.
+      return Effect.fail(new LegacyDbExecError({ message: "syntax error", statementIndex: 0 }));
     },
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
@@ -55,8 +65,11 @@ function failingExecSession(): { session: LegacyDbSession; execs: Array<string> 
 }
 
 function pgNetFailureSession(error: LegacyDbExecError): LegacyDbSession {
+  const failsOnPgNet = (sql: string): boolean => sql.includes("net.http_post");
   return {
-    exec: (sql) => (sql.includes("net.http_post") ? Effect.fail(error) : Effect.void),
+    exec: (sql) => (failsOnPgNet(sql) ? Effect.fail(error) : Effect.void),
+    execBatch: (statements) =>
+      statements.some(({ sql }) => failsOnPgNet(sql)) ? Effect.fail(error) : Effect.void,
     query: () => Effect.succeed([]),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -522,6 +535,31 @@ describe("legacyMigrateAndSeed local pg_net remediation", () => {
           assertMigrationApplyError(error);
           expect(error.suggestion).toBeUndefined();
           expect(error[ErrorActionabilityId]).toEqual(actionability.dbFinding);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyMigrateAndSeed apply order", () => {
+  it.effect("applies mixed-width versions in version order, like db push (#6036)", () => {
+    const workdir = makeWorkdir();
+    // `20260420010000_b.sql` precedes `20260420_a.sql` in file-name order
+    // ('0' < '_'), the reverse of the version order `db push` applies in since
+    // #6038. Unsorted, `db reset`/`db start` replay `b` before `a` locally while
+    // `db push` sends `a` before `b` remotely.
+    writeFile(workdir, "supabase/migrations/20260420_a.sql", "create table t (id int);");
+    writeFile(workdir, "supabase/migrations/20260420010000_b.sql", "alter table t add c int;");
+    const { session, execs } = fakeSession();
+    const out = mockOutput();
+    return run(workdir, "", baseConfig, session, out).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(execs.filter((sql) => sql.includes("table t"))).toEqual([
+            "create table t (id int)",
+            "alter table t add c int",
+          ]);
           rmSync(workdir, { recursive: true, force: true });
         }),
       ),

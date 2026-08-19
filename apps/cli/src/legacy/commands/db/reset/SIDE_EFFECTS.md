@@ -83,13 +83,14 @@ child) is fully native as of CLI-1958.
 
 ### Remote path (native, in TS)
 
-| Statement                                                                                                                                        | When                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                                 |
-| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                        |
-| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)     |
-| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`       |
-| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed` (runs after either branch above) |
+| Statement                                                                                                                                        | When                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations)                                                  | always, first                                                                                              |
+| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                                                                   | when `[db.vault]` has syncable secrets                                                                     |
+| schema-file statements (no history bookkeeping, no `RESET ALL` between files)                                                                    | `--experimental` + no resolved version + pg-delta not enabled (see Notes)                                  |
+| migration statements + `schema_migrations` history insert (per file, transactional; pipeline-incompatible statements run standalone — see Notes) | otherwise, when `[db.migrations].enabled`, for migrations `≤ --version`                                    |
+| seed statements + `seed_files` hash upsert                                                                                                       | when `[db.seed].enabled` and not `--no-seed` (runs after either branch above)                              |
+| `SET SESSION ROLE postgres`                                                                                                                      | stepped-down sessions only: after each role-reverting statement, at end of each file, before ledger writes |
 
 ### Local path (native, in TS)
 
@@ -253,9 +254,11 @@ path has no confirmation prompt.
   decrypts them into `toml.vault`, and `legacyUpsertVaultSecrets` upserts the
   decrypted values unconditionally, before either branch (schema-files or migrations)
   runs.
-- **Migrations catalog cache**: gated on BOTH no `--version`/`--last` having resolved
-  a version AND pg-delta being enabled (`[experimental.pgdelta].enabled` or
-  `SUPABASE_EXPERIMENTAL_PG_DELTA` — see Environment Variables); a versioned reset
+- **Migrations catalog cache**: gated on no `--version`/`--last` having resolved
+  a version, pg-delta being enabled (`[experimental.pgdelta].enabled` or
+  `SUPABASE_EXPERIMENTAL_PG_DELTA` — see Environment Variables), AND the legacy engine
+  being selected (`SUPABASE_USE_PG_DELTA_NEXT=false`; the default next engine skips
+  this warmup entirely); a versioned reset
   never refreshes the cache. A failure only warns on stderr and never fails
   the reset. Writes under `supabase/.temp/pgdelta/` (see Files
   Written), pruning older snapshots for the same prefix (retains 2). Native TS on

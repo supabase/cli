@@ -41,7 +41,6 @@ import {
   StackServiceActivator,
 } from "./ServiceActivation.ts";
 import { portFieldsForService } from "./ServicePorts.ts";
-import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
 import {
@@ -172,7 +171,6 @@ export const localStackLayer = (
   | StackBuilder
   | StackPreparation
   | ChildProcessSpawner.ChildProcessSpawner
-  | StackMetadataPersistence
   | FileSystem.FileSystem
   | Path.Path
 > =>
@@ -181,7 +179,6 @@ export const localStackLayer = (
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const metadataPersistence = yield* StackMetadataPersistence;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const scope = yield* Effect.scope;
@@ -368,16 +365,6 @@ export const localStackLayer = (
             prepared,
           );
           exactCleanupTargets = cleanupTargets;
-
-          yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
-            Effect.mapError(
-              (cause) =>
-                new StackBuildError({
-                  detail: "Failed to persist stack cleanup metadata",
-                  cause,
-                }),
-            ),
-          );
 
           const orchLayer = Orchestrator.layer(graph).pipe(
             Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
@@ -806,6 +793,9 @@ export const localStackLayer = (
             ).toReversed()) {
               yield* runtime.orchestrator.stopService(target);
             }
+            // Settle the public projection before returning so callers observe
+            // the stop immediately, matching the start/restart/waitReady paths.
+            yield* syncRuntimeProjectedStates(runtime);
           }).pipe(withLifecycleLock),
         restartService: (name) =>
           Effect.gen(function* () {

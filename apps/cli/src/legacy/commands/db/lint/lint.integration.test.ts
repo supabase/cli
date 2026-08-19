@@ -6,6 +6,7 @@ import {
   LEGACY_VALID_REF,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
+  legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -19,6 +20,7 @@ import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.t
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
+  type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDbLintFailOnError } from "./lint.errors.ts";
 import { encodeLegacyLintResults, parseLegacyLintResult } from "./lint.format.ts";
@@ -81,8 +83,8 @@ function mockConnection(opts: {
   const linted: Array<string> = [];
   let listParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      Effect.succeed({
+    connect: () => {
+      const session: LegacyDbSession = {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
@@ -122,7 +124,12 @@ function mockConnection(opts: {
             }
             return Effect.succeed([]);
           }),
-      }),
+        // A migration file's statements arrive as one batch; replay them through
+        // `exec`/`query` so this suite's recordings and failure injection still apply.
+        execBatch: (statements) => legacySequentialExecBatch(session)(statements),
+      };
+      return Effect.succeed(session);
+    },
   });
   return {
     layer,

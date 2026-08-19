@@ -317,11 +317,10 @@ describe("legacy hidden subcommands", () => {
         Effect.exit,
       ) as Effect.Effect<unknown, never, never>,
     );
-    // Effect CLI's own raw `_tag` for this error is misspelled "UnknownSubcomand"
-    // (`CliError.js`, upstream typo); `cliErrorCode()`/`normalize-error.ts` already
-    // correct it for user-facing output, but this assertion checks the raw,
-    // un-normalized tag, so it must match the upstream spelling as-is.
-    expect(JSON.stringify(unknownExit)).toContain("UnknownSubcomand");
+    // Effect CLI's raw `_tag` uses the corrected "UnknownSubcommand" spelling.
+    // This assertion checks the raw, un-normalized tag so it stays aligned with
+    // the upstream parser error value.
+    expect(JSON.stringify(unknownExit)).toContain("UnknownSubcommand");
     expect(causeOf(unknownExit).reasons[0]?._tag).toBe("Fail"); // typed CliError, pre-handler — dispatch never reached a handler
   });
 });

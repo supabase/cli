@@ -76,8 +76,10 @@ ran).
 
 Reuses `shared/functions/serve.ts`'s `startEdgeRuntimeContainer` core (the same one
 `functions serve` uses). Gated on `edge_runtime.enabled && !--exclude edge-runtime`,
-started between ImgProxy and pg-meta in the container-start sequence. Unlike every other
-service, it's a direct `docker run -d ...` (not `docker create`+`docker start`) and is
+started between ImgProxy and pg-meta in the container-start sequence. Its own
+`docker create` → `docker cp` (the bundled main-service template, streamed as a stdin
+tar archive) → `docker start` sequence is assembled by that shared core, not by
+`legacyCreateContainer` like every other service, and it is
 health-checked via an HTTP probe through Kong (`/functions/v1/_internal/health`), not a
 Docker healthcheck — mirroring PostgREST's own probe shape.
 
@@ -148,17 +150,27 @@ since the content already lives inside the container's own filesystem.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime — that's Studio's behavior, not something `start` itself writes.
 
-Edge Runtime's own JWT/service-role-key/configured-secret env file, multiline-env
-script + value files, and bootstrap `index.ts` template (`shared/functions/serve.ts`'s
-`writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
+Edge Runtime's own JWT/service-role-key/configured-secret env file and multiline-env
+script + value files (`shared/functions/serve.ts`'s
+`writeDockerEnvFile`/`writeDockerMultilineEnvScript`) are
 staged on host disk under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
-containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
+containerName>/{env,multiline-env}/` (directory mode `0700`, files mode `0600`) — the
+env file is read client-side by `--env-file`, the multiline-env directory is
 bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
-them on `stop` or a failed-start rollback. Each of the three writers removes and
+them on `stop` or a failed-start rollback. Each writer removes and
 recreates its own subdirectory fresh on every call (self-healing), so a
-shrinking env set never leaves stale files behind.
+shrinking env set never leaves stale files behind. The bootstrap `index.ts` template
+carries no secret content and, as of supabase/cli#6254, never touches host disk at all:
+it is streamed via `docker cp` straight into the created (not yet started) Edge Runtime
+container — a single-file host bind mount materializes as an empty directory on daemons
+that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons,
+podman machines), which broke `start` with edge-runtime's "failed to determine
+entrypoint". Only the bootstrap template is daemon-independent: user function
+sources under `supabase/functions/**` and the multiline-env script directory
+(present only when a secret value contains a newline) still arrive by host bind
+mounts and require a daemon that can see the project directory.
 
 ## API Routes
 
@@ -181,6 +193,7 @@ not implemented.
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | Enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                                                  | no        |
 | `SUPABASE_SHADOW_CACHE`                                                                                              | `false`/`0` opts out of the fresh-volume baseline PGDATA cache (default ON) — see "Fresh-volume DB setup" above                                                                                                                                                   | no        |
 | `SUPABASE_HOME`                                                                                                      | Roots the baseline PGDATA cache directory (`$SUPABASE_HOME/cache/shadow-baseline`, default `~/.supabase`)                                                                                                                                                         | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`                                                                                         | Selects the pg-delta implementation; `false` selects the legacy edge-runtime engine and thereby restores the migrations-catalog cache warmup (unset/unrecognized defaults to the next engine, which skips it)                                                     | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                | no        |
 | `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                    | no        |
 | `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliConfig.workdir`                                                                                                                                                                                                                                | no        |
@@ -290,6 +303,14 @@ prose, not structured data.
 
 ## Notes
 
+- **`pg_net` converges with `[experimental.webhooks]` on every non-backup start** (see
+  `docs/go-cli-divergences.md`): a fresh volume installs `pg_net` only when webhooks are
+  enabled or migration history contains a `create extension … pg_net`; an existing volume
+  additionally DROPS a `pg_net` that migration history does not own when webhooks are
+  disabled. Accepted, documented edge: `pg_net` installed outside migrations (local Studio
+  SQL editor / extension toggle) is dropped on the next start, and a tracked dependency on
+  `net.*` (PG14+ `BEGIN ATOMIC` functions) makes the non-`CASCADE` drop — and the start —
+  fail. Enable `[experimental.webhooks]` or declare the extension in a migration to opt out.
 - `--exclude`/`-x` accepts container names from the verified 13-key list (`gotrue`,
   `realtime`, `storage-api`, `imgproxy`, `kong`, `mailpit`, `postgrest`, `postgres-meta`,
   `studio`, `edge-runtime`, `logflare`, `vector`, `supavisor`) — `db`/`postgres` is never
@@ -341,7 +362,7 @@ prose, not structured data.
   `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory. As of
   supabase/cli#6022 this is a no-op for a removed Kong/Postgres/Supavisor container
   (nothing under its own directory anymore); it still matters for a removed Edge Runtime
-  container, whose own env-file/multiline-env-script/serve-main-template staging is
+  container, whose own env-file/multiline-env-script staging is
   unaffected by that change.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
