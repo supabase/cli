@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const LOCAL_HOST = "127.0.0.1";
+const LOOPBACK_NO_PROXY = `localhost,${LOCAL_HOST},[::1]`;
 
 /** Docker CLI's reserved "no context store entry" name (`docker/cli` `cli/command/cli.go`'s `DefaultContextName`). */
 const DEFAULT_CONTEXT_NAME = "default";
@@ -140,4 +141,11 @@ export function legacyGetHostname(): string {
     }
   }
   return LOCAL_HOST;
+}
+
+/** Keeps Bun from proxying the legacy CLI's loopback HTTP requests. */
+export function legacyConfigureLoopbackProxyBypass(env: NodeJS.ProcessEnv = process.env): void {
+  const key = (env["no_proxy"]?.length ?? 0) > 0 ? "no_proxy" : "NO_PROXY";
+  const current = env[key];
+  env[key] = current ? `${current},${LOOPBACK_NO_PROXY}` : LOOPBACK_NO_PROXY;
 }
