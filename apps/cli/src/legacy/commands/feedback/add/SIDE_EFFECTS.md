@@ -99,6 +99,8 @@ terminal, a "What's on your mind?" text prompt collects it first.
   `supabase feedback add -- "--yes should be the default"`.
 - Message resolution order: positional args → piped stdin (non-TTY) →
   interactive prompt (TTY, text mode) → error.
+- Piped stdin is read in constant memory with a 64 KB cap; input past the cap
+  fails as over-limit (exit 1) without buffering the rest of the pipe.
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
   `LegacyCliConfig`), OS/arch, agent detection, and — when the workdir has a
   linked project — its project ref. The resolved access token is never sent.

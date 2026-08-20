@@ -1,4 +1,5 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Stream } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { FeedbackClient } from "../../../../shared/feedback/feedback-client.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -16,10 +17,45 @@ import type { LegacyFeedbackAddArgs } from "./add.command.ts";
 import {
   LEGACY_FEEDBACK_EMPTY_MESSAGE,
   LEGACY_FEEDBACK_MESSAGE_LIMIT,
+  LEGACY_FEEDBACK_PIPE_CAP_BYTES,
+  LEGACY_FEEDBACK_PIPE_TOO_LONG_MESSAGE,
   LegacyFeedbackEmptyMessageError,
   LegacyFeedbackMessageTooLongError,
   legacyFeedbackTooLongMessage,
 } from "./add.errors.ts";
+
+// Collects piped stdin in constant memory, bailing out as over-limit once the
+// byte cap is crossed — the documented character limit makes anything past the
+// cap over-limit without buffering the rest of the pipe. Read errors degrade
+// to "no piped input", the same as `readPipedText`.
+const legacyReadCappedPipedText = (pipe: Stream.Stream<Uint8Array, PlatformError>) =>
+  Effect.gen(function* () {
+    const parts: Array<Uint8Array> = [];
+    let total = 0;
+    yield* pipe.pipe(
+      Stream.runForEachWhile((chunk) =>
+        Effect.sync(() => {
+          parts.push(chunk);
+          total += chunk.length;
+          return total <= LEGACY_FEEDBACK_PIPE_CAP_BYTES;
+        }),
+      ),
+      Effect.catchTag("PlatformError", () => Effect.succeed(undefined)),
+    );
+    if (total > LEGACY_FEEDBACK_PIPE_CAP_BYTES) {
+      return yield* Effect.fail(
+        new LegacyFeedbackMessageTooLongError({ message: LEGACY_FEEDBACK_PIPE_TOO_LONG_MESSAGE }),
+      );
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      bytes.set(part, offset);
+      offset += part.length;
+    }
+    const text = new TextDecoder().decode(bytes).trim();
+    return text.length > 0 ? Option.some(text) : Option.none<string>();
+  });
 
 // Resolution order: positional words → piped stdin (non-TTY) → interactive
 // prompt (TTY, text mode only — json/stream-json layers report
@@ -31,11 +67,8 @@ const legacyResolveFeedbackMessage = Effect.fnUntraced(function* (args: LegacyFe
 
   const stdin = yield* Stdin;
   if (!stdin.isTTY) {
-    const piped = yield* stdin.readPipedText;
-    if (Option.isSome(piped)) {
-      const fromPipe = piped.value.trim();
-      if (fromPipe.length > 0) return fromPipe;
-    }
+    const piped = yield* legacyReadCappedPipedText(stdin.pipedBytesStream);
+    if (Option.isSome(piped)) return piped.value;
   }
 
   const output = yield* Output;

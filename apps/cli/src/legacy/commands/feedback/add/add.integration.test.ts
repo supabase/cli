@@ -28,7 +28,12 @@ import {
 import { legacyInvalidOutputFormatMessage } from "../../../shared/legacy-go-output-flag.ts";
 import { LEGACY_FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { legacyFeedbackAddHandler } from "./add.command.ts";
-import { LEGACY_FEEDBACK_EMPTY_MESSAGE, legacyFeedbackTooLongMessage } from "./add.errors.ts";
+import {
+  LEGACY_FEEDBACK_EMPTY_MESSAGE,
+  LEGACY_FEEDBACK_PIPE_CAP_BYTES,
+  LEGACY_FEEDBACK_PIPE_TOO_LONG_MESSAGE,
+  legacyFeedbackTooLongMessage,
+} from "./add.errors.ts";
 import { legacyFeedbackAdd } from "./add.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-feedback-add-int-");
@@ -407,6 +412,40 @@ describe("legacy feedback add", () => {
     const { layer, submitter } = setupLegacyFeedback();
     return Effect.gen(function* () {
       const error = yield* legacyFeedbackAdd({ message: ["x".repeat(1001)] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "LegacyFeedbackMessageTooLongError",
+        message: legacyFeedbackTooLongMessage(1001),
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects piped input past the byte cap without buffering the whole pipe", () => {
+    // `cat huge.log | supabase feedback add`: the capped reader stops at the
+    // 64 KB byte cap and fails as over-limit instead of collecting the stream.
+    const { layer, submitter } = setupLegacyFeedback({
+      stdinIsTTY: false,
+      pipedInput: "x".repeat(LEGACY_FEEDBACK_PIPE_CAP_BYTES + 1),
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAdd({ message: [] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "LegacyFeedbackMessageTooLongError",
+        message: LEGACY_FEEDBACK_PIPE_TOO_LONG_MESSAGE,
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects piped input over the character limit but under the byte cap", () => {
+    const { layer, submitter } = setupLegacyFeedback({
+      stdinIsTTY: false,
+      pipedInput: `${"x".repeat(1001)}\n`,
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAdd({ message: [] }).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "LegacyFeedbackMessageTooLongError",

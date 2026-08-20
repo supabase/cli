@@ -23,6 +23,19 @@ export class LegacyFeedbackEmptyMessageError extends Data.TaggedError(
 /** The server-enforced feedback length cap, mirrored client-side. */
 export const LEGACY_FEEDBACK_MESSAGE_LIMIT = 1000;
 
+/**
+ * Bytes of piped stdin read before bailing out as over-limit. Sixteen times
+ * the limit's worst-case UTF-8 size (4 bytes per code point), so anything a
+ * plausible message produces — including generous whitespace padding — stays
+ * under it, while `cat huge.log | supabase feedback add` fails fast instead
+ * of buffering the whole pipe.
+ */
+export const LEGACY_FEEDBACK_PIPE_CAP_BYTES = 64 * 1024;
+
+export const LEGACY_FEEDBACK_PIPE_TOO_LONG_MESSAGE =
+  `Piped feedback exceeds the ${LEGACY_FEEDBACK_MESSAGE_LIMIT}-character limit. ` +
+  `Please shorten it and try again.`;
+
 export function legacyFeedbackTooLongMessage(length: number): string {
   return (
     `Feedback message is ${length} characters; ` +
