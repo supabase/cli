@@ -78,7 +78,7 @@
     "oxlint-tsgolint": "catalog:",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.48.1",
+    "posthog-node": "^5.48.2",
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.9",

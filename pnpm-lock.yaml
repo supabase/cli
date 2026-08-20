@@ -224,8 +224,8 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0
       posthog-node:
-        specifier: ^5.48.1
-        version: 5.48.1
+        specifier: ^5.48.2
+        version: 5.48.2
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -2264,11 +2264,11 @@ packages:
     resolution: {integrity: sha512-//0sR/cow/s4ICQaYoAobOl4aU8cjU6x/V24V7XkKotb9+O+3zySIYp146vpaobYHnxa4pZX8NkV54Z5AwbDKA==}
     engines: {node: '>=12'}
 
-  '@posthog/core@1.47.0':
-    resolution: {integrity: sha512-LW62V+9yx7G7mLd+EYpwW0PiaPZI8XRJ1tLuhw+9fXHpugLp8XQD5JuCQ2kIXvoUfyx1DpKfGQY3dUnzMOIn7Q==}
+  '@posthog/core@1.47.1':
+    resolution: {integrity: sha512-d38C5DulL3gCox4g0VGyb/Lhn548fBvj9f35LZGVasPspOs3jyApxROJyDXoWwIRivOjCOIShZQAdYkZVn9J3w==}
 
-  '@posthog/types@1.402.2':
-    resolution: {integrity: sha512-ZZTiS4dLwF4/D0YTzS3gGSLFnhuNOY5yu4d9VGS9trGe5GW6FjIXo20p18K5BPW2RZSYSld8sdnSAY3AUXleUQ==}
+  '@posthog/types@1.403.0':
+    resolution: {integrity: sha512-QbkO0epmdq38xhxwP214YRi0vgpZiXqhamaTjKT6kVGJYTtsE5qZ1GTgLp12IYehg/rd+whYYErH3/DeX8pj3Q==}
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -6113,8 +6113,8 @@ packages:
   postgres-range@1.1.4:
     resolution: {integrity: sha512-i/hbxIE9803Alj/6ytL7UHQxRvZkI9O4Sy+J3HGc4F4oo/2eQAjTSNJ0bfxyse3bH0nuVesCk+3IRLaMtG3H6w==}
 
-  posthog-node@5.48.1:
-    resolution: {integrity: sha512-BxLX2SqGEQhPqCPTalpyo0RRv1NMbf7UaN7q9d/ED77ksD6XOmE7ko2vIKO8F0zPL1NtKxIi+DYXap9lvR0RaA==}
+  posthog-node@5.48.2:
+    resolution: {integrity: sha512-3Ni5upqpbUXL1QM2oU4sL9Y3OycDGgrKI9aJOGHbcF9xkPwR18cq481Tkvn6/CCPbl04p3tjdwQNkGHVveQcag==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -8585,11 +8585,11 @@ snapshots:
       '@pnpm/network.ca-file': 1.0.2
       config-chain: 1.1.13
 
-  '@posthog/core@1.47.0':
+  '@posthog/core@1.47.1':
     dependencies:
-      '@posthog/types': 1.402.2
+      '@posthog/types': 1.403.0
 
-  '@posthog/types@1.402.2': {}
+  '@posthog/types@1.403.0': {}
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -12836,9 +12836,9 @@ snapshots:
 
   postgres-range@1.1.4: {}
 
-  posthog-node@5.48.1:
+  posthog-node@5.48.2:
     dependencies:
-      '@posthog/core': 1.47.0
+      '@posthog/core': 1.47.1
 
   pretty-ms@9.3.0:
     dependencies:
