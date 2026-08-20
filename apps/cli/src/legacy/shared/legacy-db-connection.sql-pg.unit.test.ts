@@ -5,6 +5,7 @@ import type * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
+import { LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import {
   legacyAcquireProbedPool,
   legacyBatchFailureError,
@@ -647,6 +648,7 @@ describe("legacyBatchFailureError", () => {
     const error = legacyBatchFailureError(
       new Error("the connection's socket is no longer writable"),
       { completed: 0, outcome: "unsent" },
+      true,
     );
 
     expect(error._tag).toBe("LegacyDbConnectError");
@@ -661,6 +663,7 @@ describe("legacyBatchFailureError", () => {
     const error = legacyBatchFailureError(
       new Error("Client has encountered a connection error and is not queryable"),
       { completed: 0, outcome: "unsent" },
+      true,
     );
 
     expect(error._tag).toBe("LegacyDbConnectError");
@@ -670,8 +673,31 @@ describe("legacyBatchFailureError", () => {
     );
   });
 
+  it("carries the local-stack hint, matching the checkout failure it races with", () => {
+    const local = legacyBatchFailureError(
+      new Error("socket died"),
+      {
+        completed: 0,
+        outcome: "unsent",
+      },
+      true,
+    );
+    const remote = legacyBatchFailureError(
+      new Error("socket died"),
+      {
+        completed: 0,
+        outcome: "unsent",
+      },
+      false,
+    );
+
+    expect(local).toMatchObject({ suggestion: LEGACY_SUGGEST_LOCAL_STACK });
+    expect(remote._tag).toBe("LegacyDbConnectError");
+    expect("suggestion" in remote).toBe(false);
+  });
+
   it("reports a batch that never reached the driver the same way", () => {
-    const error = legacyBatchFailureError(new Error("client was closed"), undefined);
+    const error = legacyBatchFailureError(new Error("client was closed"), undefined, true);
 
     expect(error._tag).toBe("LegacyDbConnectError");
     expect(error.message).toContain(
@@ -682,10 +708,14 @@ describe("legacyBatchFailureError", () => {
   it("keeps a partially written batch on the statement path, blaming statement 0", () => {
     // A poisoned batch is corked, so the server acknowledged nothing and `completed`
     // is always 0 — the failure can only be reported against the batch's first statement.
-    const error = legacyBatchFailureError(new Error("serialization blew up"), {
-      completed: 0,
-      outcome: "poisoned",
-    });
+    const error = legacyBatchFailureError(
+      new Error("serialization blew up"),
+      {
+        completed: 0,
+        outcome: "poisoned",
+      },
+      true,
+    );
 
     expect(error._tag).toBe("LegacyDbExecError");
     expect(error).toMatchObject({ message: "Error: serialization blew up", statementIndex: 0 });
@@ -706,6 +736,7 @@ describe("legacyBatchFailureError", () => {
         }),
       }),
       { completed: 3, outcome: "submitted" },
+      true,
     );
 
     expect(error._tag).toBe("LegacyDbExecError");

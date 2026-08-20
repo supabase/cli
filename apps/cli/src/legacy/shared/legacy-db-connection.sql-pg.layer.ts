@@ -12,6 +12,7 @@ import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
+  LEGACY_SUGGEST_LOCAL_STACK,
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
   legacyIsDialFailure,
@@ -225,10 +226,14 @@ const LEGACY_PGCONN_KEEPALIVE_MILLIS = 300_000;
 export function legacyBatchFailureError(
   error: Error,
   batch: { readonly completed: number; readonly outcome: LegacyBatchOutcome } | undefined,
+  isLocal: boolean,
 ): LegacyDbExecError | LegacyDbConnectError {
   if (batch === undefined || batch.outcome === "unsent") {
     return new LegacyDbConnectError({
       message: `${LEGACY_BATCH_CONNECTION_LOST}: ${error.message}`,
+      // The checkout failure a tick earlier carries this same hint, so losing the
+      // connection mid-batch must not silently drop it.
+      ...(isLocal ? { suggestion: LEGACY_SUGGEST_LOCAL_STACK } : {}),
     });
   }
   const mapped = legacyToExecError(error);
@@ -1083,7 +1088,7 @@ const connect = (
                 resume(Effect.void);
                 return;
               }
-              resume(Effect.fail(legacyBatchFailureError(error, batchQuery)));
+              resume(Effect.fail(legacyBatchFailureError(error, batchQuery, options.isLocal)));
             };
             batchQuery = new LegacyPgBatchQuery(statements, finish);
             try {

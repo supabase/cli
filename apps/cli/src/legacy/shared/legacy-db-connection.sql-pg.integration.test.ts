@@ -20,6 +20,7 @@ import {
 import {
   legacyAcquirePgPool,
   legacyDbConnectionSqlPgLayer,
+  LegacyPgBatchQuery,
 } from "./legacy-db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
@@ -662,8 +663,8 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
   );
 
   it.live("fails a batch whose connection drops after it was written, then recovers", () =>
-    // Guards the driver path that already worked: a socket dropped after the batch was
-    // written must surface as a batch failure, and its client must not be recycled.
+    // A socket dropped after the batch was written must fail that batch and must not leave
+    // the client to be handed to the next one.
     Effect.gen(function* () {
       const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstSync: true }));
       yield* runWithBatchServer(server, (session) =>
@@ -716,6 +717,42 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           expect(server.sockets.length).toBeGreaterThan(openedBeforeRedial);
         }),
       );
+    }),
+  );
+
+  it.live("refuses to write a batch onto a real pooled client whose socket is already gone", () =>
+    // The unit test drives `submit` through a hand-built connection; this pins the same
+    // refusal against a real node-postgres client, so a driver change that stops making the
+    // socket unwritable would be caught rather than mocked over. Destroying the socket and
+    // submitting in one synchronous block keeps the window deterministic: `writable` flips
+    // immediately, while pg only marks the client unqueryable on the next tick's close.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer());
+      yield* Effect.gen(function* () {
+        const pool = yield* legacyAcquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: SENTINEL_PASSWORD,
+            database: "postgres",
+            sslmode: "disable",
+          },
+          { isLocal: true, dnsResolver: "native" },
+        );
+        const client = yield* Effect.promise(() => pool.connect());
+        const batch = new LegacyPgBatchQuery([{ sql: "SELECT 1" }], () => {});
+
+        const refusal = yield* Effect.sync(() => {
+          client.connection.stream.destroy();
+          return batch.submit(client.connection);
+        });
+
+        expect(refusal?.message).toBe("the connection's socket is no longer writable");
+        expect(batch.outcome).toBe("unsent");
+        expect(server.state.frameTypes).toEqual([]);
+        client.release(new Error("done"));
+      }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
     }),
   );
 
