@@ -12,9 +12,10 @@ with it intact: `7b469f5b3` (CLI-1966's `internal/start` pin remains its own, se
 `a253ccba2`).
 
 See [`binary-distribution.md`](./binary-distribution.md) for how these two binaries are packaged,
-resolved at runtime, and sized, and
-[ADR 0016](../../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md) for the
-policy on when `apps/cli-go/` is actually authoritative for day-to-day legacy-shell work.
+resolved at runtime, and sized. The TypeScript CLI is the source of truth for all CLI behavior;
+`apps/cli-go/` is authoritative only for the proxied commands below, and the whole surface is
+slated for cleanup and removal ([ADR 0016](../../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md)
+records the earlier transition policy).
 
 ## The delegation surface
 

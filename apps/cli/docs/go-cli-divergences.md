@@ -1,10 +1,12 @@
 # Go CLI Divergences
 
-Ledger of deliberate TypeScript divergences from the old Go CLI (pre-`7b469f5b3`) on the legacy
-shell: TS-only commands, flags, and behavior with no Go counterpart. When you add a TS-only flag or
-a deliberate behavioral change to an already-ported legacy command, add an entry here in the same
-change. This document exists to answer support and migration questions about why the TS CLI does
-something the old Go CLI didn't — it is not a compatibility promise.
+**Frozen historical ledger** of deliberate TypeScript divergences from the old Go CLI
+(pre-`7b469f5b3`) on the legacy shell: TS-only commands, flags, and behavior with no Go
+counterpart. The TypeScript CLI is now the source of truth, so this ledger no longer accumulates
+entries — new flags, commands, and behavioral changes are simply new CLI behavior, documented
+through help text, tests, and each command's `SIDE_EFFECTS.md`. This document exists to answer
+support and migration questions about why the TS CLI does something the old Go CLI didn't — it is
+not a compatibility promise.
 
 ## TS-only Commands
 
@@ -230,6 +232,20 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   pull."). An in-sync database is a finding, not a failure to troubleshoot, so the
   debug hint sent users chasing a non-existent bug. Message text and exit code — the
   parts scripts depend on — are unchanged.
+- Edge Runtime's Docker container `--ulimit nofile` value (`functions serve` and `start`): Go
+  hardcodes `nofile=65536:65536`, raised from the daemon default to accommodate FD usage from
+  many concurrent Deno isolates (supabase/cli#5151). TS clamps that value to the host's own hard
+  nofile limit on Linux (`@supabase/stack`'s `edgeRuntimeNofileUlimit`, via
+  `process.report`'s `userLimits`), so a constrained sandbox (hard cap below 65536) can still start the
+  container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
+  proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
+  Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
+  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the legacy
+  `functions serve`/`start` bring-up warns with the reduced limit. The `@supabase/stack` service
+  builder (next-shell `stack start`) applies the same clamp silently: its defs are built without
+  an output channel, and in managed mode inside the daemon process, so a user-visible warning
+  there needs a diagnostics channel on `BuildResult` first; the applied value stays visible via
+  `docker inspect`.
 - A migration batch that never reached the wire (the connection died before or during
   submit) fails as a connection error carrying the driver's reason, with no
   `At statement: N` line and no statement echo. Go's `formatError`

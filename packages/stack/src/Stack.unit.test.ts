@@ -7,6 +7,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { StackBuildError } from "./errors.ts";
@@ -883,13 +884,54 @@ describe("Stack", () => {
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
-  it.live("uses the stack readiness deadline for explicit lazy activation and cleans up", () =>
+  it.effect("uses the stack readiness deadline for explicit lazy activation and cleans up", () =>
     Effect.gen(function* () {
-      const spawner = mockChildProcessSpawner();
+      const authHealthServer = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Bun.serve({
+            hostname: "127.0.0.1",
+            port: 0,
+            fetch: () => new Response("unhealthy", { status: 503 }),
+          }),
+        ),
+        (server) => Effect.sync(() => server.stop(true)),
+      );
+      const authPort = authHealthServer.port;
+      if (authPort === undefined) {
+        throw new Error("Expected the auth health test server to bind a TCP port");
+      }
+      const authConfig = defaultConfig.auth;
+      if (authConfig === false) {
+        throw new Error("Expected auth to be enabled in the default test config");
+      }
+      const postgresProbeStarted = yield* Deferred.make<void>();
+      const postgresInitStarted = yield* Deferred.make<void>();
+      const authSpawnStarted = yield* Deferred.make<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: (record) => {
+          if (record.command.endsWith("/pg_isready")) {
+            return Deferred.succeed(postgresProbeStarted, undefined).pipe(Effect.asVoid);
+          }
+          if (
+            record.args.some((arg) =>
+              Buffer.from(arg, "base64url").toString().includes('"command":"bash","args":["-c"'),
+            )
+          ) {
+            return Deferred.succeed(postgresInitStarted, undefined).pipe(Effect.asVoid);
+          }
+          return record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          )
+            ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.asVoid)
+            : Effect.void;
+        },
+      });
       let releasedAll = false;
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
+        ports: { ...defaultPorts, authPort },
+        auth: { ...authConfig, port: authPort },
         readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
@@ -904,9 +946,19 @@ describe("Stack", () => {
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
         const activator = yield* StackServiceActivator;
-        yield* stack.start();
+        const start = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(postgresProbeStarted);
+        yield* TestClock.adjust("10 millis");
+        yield* Deferred.await(postgresInitStarted);
+        yield* TestClock.adjust("89 millis");
+        yield* Fiber.join(start);
 
-        const error = yield* activator.activate("auth").pipe(Effect.flip);
+        const activation = yield* activator
+          .activate("auth")
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(authSpawnStarted);
+        yield* TestClock.adjust("100 millis");
+        const error = yield* Fiber.join(activation).pipe(Effect.flip);
 
         expect(error._tag).toBe("StackReadinessError");
         if (error._tag === "StackReadinessError") {
@@ -931,7 +983,7 @@ describe("Stack", () => {
         yield* stack.stop();
         expect(spawner.spawned).toHaveLength(spawnCountAfterDisposal);
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+    }).pipe(Effect.scoped),
   );
 
   it.live("allows a finite wait override against an infinite stack policy", () =>
