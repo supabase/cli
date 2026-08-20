@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Cause, Effect, FileSystem, Option, PlatformError } from "effect";
+import { Cause, Data, Effect, FileSystem, Option, PlatformError, Schedule } from "effect";
 
 export type FileClaimOutcome = "claimed" | "already-exists";
 
@@ -7,6 +7,10 @@ export interface FileClaimOptions {
   /** Mode for the published file; defaults to the process umask. */
   readonly mode?: number;
 }
+
+class ClaimLockBusyError extends Data.TaggedError("ManagedClaimLockBusy")<{
+  readonly path: string;
+}> {}
 
 const platformCauseCode = (error: PlatformError.PlatformError): string | undefined => {
   const cause = error.reason.cause;
@@ -18,6 +22,9 @@ const platformCauseCode = (error: PlatformError.PlatformError): string | undefin
 const isAlreadyExists = (error: PlatformError.PlatformError): boolean =>
   error.reason._tag === "AlreadyExists";
 
+const isNotFound = (error: PlatformError.PlatformError): boolean =>
+  error.reason._tag === "NotFound";
+
 const isHardLinkUnsupported = (error: PlatformError.PlatformError): boolean => {
   const code = platformCauseCode(error);
   return code === "EPERM" || code === "ENOTSUP";
@@ -27,15 +34,116 @@ const removeOwnedFile = (fs: FileSystem.FileSystem, path: string): Effect.Effect
   fs.remove(path, { force: true }).pipe(Effect.ignore);
 
 /**
+ * Writes one privately owned file and removes it if the write is interrupted or
+ * fails. The scope closes the handle before this effect succeeds, so callers can
+ * safely publish the path atomically afterwards.
+ */
+const writeOwnedFile = (
+  fs: FileSystem.FileSystem,
+  path: string,
+  content: string,
+  mode: number | undefined,
+): Effect.Effect<void, PlatformError.PlatformError> =>
+  Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      let opened = false;
+      const result = yield* Effect.exit(
+        restore(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const file = yield* fs.open(path, { flag: "wx", mode });
+              opened = true;
+              yield* file.writeAll(new TextEncoder().encode(content));
+            }),
+          ),
+        ),
+      );
+      if (result._tag === "Success") return;
+      if (opened) yield* removeOwnedFile(fs, path);
+      return yield* Effect.failCause(result.cause);
+    }),
+  );
+
+const lockTimeout = (path: string): PlatformError.PlatformError =>
+  PlatformError.systemError({
+    _tag: "Busy",
+    module: "FileSystem",
+    method: "claimFileAtomically",
+    pathOrDescriptor: path,
+    description: "Timed out waiting for the managed publication lock",
+  });
+
+const publishWhileHoldingLock = (
+  fs: FileSystem.FileSystem,
+  temporaryPath: string,
+  targetPath: string,
+): Effect.Effect<FileClaimOutcome, PlatformError.PlatformError> =>
+  Effect.gen(function* () {
+    // A winner may have completed between the initial observation and lock
+    // acquisition. Only report already-exists after proving that it is readable.
+    const existing = yield* Effect.exit(fs.readFile(targetPath));
+    if (existing._tag === "Success") return "already-exists" as const;
+    const existingError = Cause.findErrorOption(existing.cause);
+    if (Option.isNone(existingError)) return yield* Effect.failCause(existing.cause);
+    if (!isNotFound(existingError.value)) return yield* Effect.fail(existingError.value);
+
+    const linked = yield* Effect.exit(fs.link(temporaryPath, targetPath));
+    if (linked._tag === "Success") return "claimed" as const;
+    const linkError = Cause.findErrorOption(linked.cause);
+    if (Option.isNone(linkError)) return yield* Effect.failCause(linked.cause);
+    if (isAlreadyExists(linkError.value)) {
+      // The lock serializes managed claimants, but preserve the public contract
+      // if an external writer wins between the read and link operations.
+      const readable = yield* Effect.exit(fs.readFile(targetPath));
+      if (readable._tag === "Success") return "already-exists" as const;
+      return yield* Effect.failCause(readable.cause);
+    }
+    if (!isHardLinkUnsupported(linkError.value)) {
+      return yield* Effect.fail(linkError.value);
+    }
+
+    // Hard links are unavailable on some filesystems. We own the sidecar lock,
+    // so an atomic rename of the complete temporary file is the equivalent
+    // publication primitive and never exposes a partial canonical target.
+    yield* fs.rename(temporaryPath, targetPath);
+    return "claimed" as const;
+  });
+
+const attemptClaim = (
+  fs: FileSystem.FileSystem,
+  temporaryPath: string,
+  targetPath: string,
+): Effect.Effect<FileClaimOutcome, PlatformError.PlatformError | ClaimLockBusyError> =>
+  Effect.gen(function* () {
+    const existing = yield* Effect.exit(fs.readFile(targetPath));
+    if (existing._tag === "Success") return "already-exists" as const;
+    const existingError = Cause.findErrorOption(existing.cause);
+    if (Option.isNone(existingError)) return yield* Effect.failCause(existing.cause);
+    if (!isNotFound(existingError.value)) return yield* Effect.fail(existingError.value);
+
+    const lockPath = `${targetPath}.lock`;
+    const lock = Effect.acquireUseRelease(
+      writeOwnedFile(fs, lockPath, "managed-claim\n", 0o600).pipe(Effect.as(lockPath)),
+      () => publishWhileHoldingLock(fs, temporaryPath, targetPath),
+      (ownedPath) => removeOwnedFile(fs, ownedPath),
+    );
+    const result = yield* Effect.exit(lock);
+    if (result._tag === "Success") return result.value;
+    const lockError = Cause.findErrorOption(result.cause);
+    if (Option.isSome(lockError) && isAlreadyExists(lockError.value)) {
+      return yield* Effect.fail(new ClaimLockBusyError({ path: lockPath }));
+    }
+    return yield* Effect.failCause(result.cause);
+  });
+
+/**
  * Publishes `content` at `targetPath` unless a claimant got there first.
  *
- * The content is first written to a unique sibling and then hardlinked into
- * place. A link publishes a complete file in one filesystem operation and
- * refuses an existing target, so a concurrent claimant cannot observe a
- * partial marker. Filesystems without hardlinks fall back to an exclusive
- * target create; that path still removes an interrupted partial target before
- * returning the failure. Every temporary and fallback-owned path is cleaned
- * up by an uninterruptible finalizer.
+ * Every claimant writes a unique sibling completely before acquiring an
+ * exclusive sidecar lock. The lock serializes managed publishers, allowing the
+ * hard-link path and the atomic-rename fallback to share the same no-partial-file
+ * invariant. Contenders retry for a bounded period, so a crashed owner cannot
+ * make callers wait forever.
  */
 export const claimFileAtomically = (
   targetPath: string,
@@ -45,54 +153,24 @@ export const claimFileAtomically = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const temporaryPath = `${targetPath}.tmp.${randomUUID()}`;
+    const lockPath = `${targetPath}.lock`;
 
-    const publish = Effect.gen(function* () {
-      // Opening exclusively through a scoped handle makes both the creation
-      // and the write cancellation-aware; the outer cleanup removes a file
-      // opened before an interruption can reach this continuation.
-      const writeTemporary = Effect.scoped(
-        fs
-          .open(temporaryPath, { flag: "wx", mode: options.mode })
-          .pipe(Effect.flatMap((file) => file.writeAll(new TextEncoder().encode(content)))),
-      );
-      yield* writeTemporary;
+    const claim = attemptClaim(fs, temporaryPath, targetPath).pipe(
+      Effect.retry({
+        schedule: Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "2 seconds" })),
+        while: (error) => error instanceof ClaimLockBusyError,
+      }),
+      Effect.mapError((error) =>
+        error instanceof ClaimLockBusyError ? lockTimeout(lockPath) : error,
+      ),
+    );
 
-      const linked = yield* Effect.exit(fs.link(temporaryPath, targetPath));
-      if (linked._tag === "Success") return "claimed" as const;
-      const failure = Cause.findErrorOption(linked.cause);
-      if (Option.isNone(failure)) return yield* Effect.failCause(linked.cause);
-      const linkError = failure.value;
-      if (isAlreadyExists(linkError)) return "already-exists" as const;
-      if (!isHardLinkUnsupported(linkError)) return yield* Effect.fail(linkError);
-
-      // A filesystem without hardlinks still has an exclusive create. Track
-      // ownership so a cancelled write removes only the file this publisher
-      // opened; a completed write leaves the winner intact.
-      let targetCreated = false;
-      const fallback = yield* Effect.exit(
-        Effect.uninterruptibleMask((restore) =>
-          Effect.scoped(
-            fs.open(targetPath, { flag: "wx", mode: options.mode }).pipe(
-              Effect.tap(() => Effect.sync(() => (targetCreated = true))),
-              Effect.flatMap((file) => restore(file.writeAll(new TextEncoder().encode(content)))),
-            ),
-          ),
-        ),
-      );
-      if (fallback._tag === "Success") return "claimed" as const;
-      const fallbackFailure = Cause.findErrorOption(fallback.cause);
-      if (Option.isSome(fallbackFailure) && isAlreadyExists(fallbackFailure.value)) {
-        return "already-exists" as const;
-      }
-      if (targetCreated) {
-        yield* Effect.uninterruptible(removeOwnedFile(fs, targetPath));
-      }
-      return yield* Effect.failCause(fallback.cause);
-    });
-
-    const result = yield* Effect.exit(publish);
-    // This finalizer is deliberately outside the interruptible publication:
-    // it runs after any failure or interruption and cannot strand our sibling.
-    yield* Effect.uninterruptible(removeOwnedFile(fs, temporaryPath));
-    return result._tag === "Success" ? result.value : yield* Effect.failCause(result.cause);
+    // Bracket the temp path before entering the interruptible lock/publish
+    // region. Its finalizer is exact and uninterruptible, including cancellation
+    // while rename or link is suspended by a transformed FileSystem.
+    return yield* Effect.acquireUseRelease(
+      writeOwnedFile(fs, temporaryPath, content, options.mode).pipe(Effect.as(temporaryPath)),
+      () => claim,
+      (ownedPath) => removeOwnedFile(fs, ownedPath),
+    );
   });

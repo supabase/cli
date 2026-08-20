@@ -1,6 +1,6 @@
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer } from "effect";
+import { Deferred, Effect, Exit, FileSystem, Fiber, Layer, PlatformError } from "effect";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach } from "vitest";
@@ -17,6 +17,7 @@ import {
   inspectWorkspace,
   type GitCheckoutInspection,
 } from "./git.ts";
+import { ensureOrdinaryWorkspaceIdentity } from "./identity.ts";
 import { UnsupportedGitWorkspaceError } from "./model.ts";
 
 const { makeRoot, removeAll } = temporaryRoots("managed-git-test-");
@@ -142,5 +143,129 @@ describe("managed Git workspace identity", () => {
       expect(new Set(raced.map((identity) => identity.checkoutId)).size).toBe(1);
       expect(raced.filter((identity) => identity.checkoutIdentityCreated)).toHaveLength(1);
     }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("converges ordinary identity claims after unsupported-link publication", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      const markerPath = join(workspace, ".supabase", "identity.json");
+      const lockPath = `${markerPath}.lock`;
+      const renameStarted = yield* Deferred.make<void>();
+      const secondLockAttempted = yield* Deferred.make<void>();
+      const allowRename = yield* Deferred.make<void>();
+      let renameBlocked = false;
+      let lockAttempts = 0;
+      const layer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fs) => ({
+          ...fs,
+          link: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                cause: Object.assign(new Error("hard links unavailable"), { code: "EPERM" }),
+              }),
+            ),
+          open: (path, options) => {
+            if (path === lockPath && options?.flag === "wx") {
+              lockAttempts += 1;
+              if (lockAttempts === 2)
+                return Deferred.succeed(secondLockAttempted, undefined).pipe(
+                  Effect.andThen(fs.open(path, options)),
+                );
+            }
+            return fs.open(path, options);
+          },
+          rename: (fromPath, toPath) => {
+            if (!renameBlocked && toPath === markerPath) {
+              renameBlocked = true;
+              return Deferred.succeed(renameStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowRename)),
+                Effect.andThen(fs.rename(fromPath, toPath)),
+              );
+            }
+            return fs.rename(fromPath, toPath);
+          },
+        })),
+      ).pipe(Layer.provide(BunFileSystem.layer));
+
+      const first = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(renameStarted);
+      const second = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(secondLockAttempted);
+      const fs = yield* Effect.gen(function* () {
+        return yield* FileSystem.FileSystem;
+      }).pipe(Effect.provide(layer));
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      yield* Deferred.succeed(allowRename, undefined);
+      const identities = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      expect(identities[0].identity).toEqual(identities[1].identity);
+      expect(identities.filter((identity) => identity.created)).toHaveLength(1);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual(["identity.json"]);
+    }),
+  );
+
+  it.live("cleans unsupported-link publication on interruption before retry", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      const markerPath = join(workspace, ".supabase", "identity.json");
+      const renameStarted = yield* Deferred.make<void>();
+      const allowRename = yield* Deferred.make<void>();
+      let renameBlocked = false;
+      const layer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fs) => ({
+          ...fs,
+          link: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                cause: Object.assign(new Error("hard links unavailable"), { code: "EPERM" }),
+              }),
+            ),
+          rename: (fromPath, toPath) => {
+            if (!renameBlocked && toPath === markerPath) {
+              renameBlocked = true;
+              return Deferred.succeed(renameStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(allowRename)),
+                Effect.andThen(fs.rename(fromPath, toPath)),
+              );
+            }
+            return fs.rename(fromPath, toPath);
+          },
+        })),
+      ).pipe(Layer.provide(BunFileSystem.layer));
+
+      const first = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(renameStarted);
+      yield* Fiber.interrupt(first);
+      const interrupted = yield* Fiber.join(first).pipe(Effect.exit);
+      expect(Exit.isFailure(interrupted)).toBe(true);
+      const fs = yield* Effect.gen(function* () {
+        return yield* FileSystem.FileSystem;
+      }).pipe(Effect.provide(layer));
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual([]);
+
+      yield* Deferred.succeed(allowRename, undefined);
+      const retry = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(Effect.provide(layer));
+      expect(retry.created).toBe(true);
+      expect(yield* fs.readFileString(markerPath)).toContain(retry.identity.workspaceId);
+    }),
   );
 });
