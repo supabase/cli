@@ -114,15 +114,15 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 
 Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
 
-| Path                                                    | What it provides                                                                                                                                                          |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `legacy/config/legacy-cli-config.layer.ts`              | `LegacyCliConfig` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`              |
-| `legacy/config/legacy-project-ref.layer.ts`             | `LegacyProjectRefResolver` — `--project-ref` flag → env → `supabase/.temp/project-ref` file → prompt                                                                      |
-| `legacy/telemetry/legacy-telemetry-state.layer.ts`      | `LegacyTelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                             |
+| Path                                                    | What it provides                                                                                                                                                                          |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `legacy/config/legacy-cli-config.layer.ts`              | `LegacyCliConfig` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                              |
+| `legacy/config/legacy-project-ref.layer.ts`             | `LegacyProjectRefResolver` — `--project-ref` flag → env → `supabase/.temp/project-ref` file → prompt                                                                                      |
+| `legacy/telemetry/legacy-telemetry-state.layer.ts`      | `LegacyTelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                                             |
 | `legacy/telemetry/legacy-linked-project-cache.layer.ts` | `LegacyLinkedProjectCache.cache(ref)` — writes `<workdir>/supabase/.temp/linked-project.json` after `--project-ref` resolves; bypasses generated schema validation (uses raw HTTP client) |
-| `legacy/auth/legacy-http-debug.layer.ts`                | `legacyHttpClientLayer` — wraps the HTTP transport with a `--debug` stderr logger (`log.LstdFlags`-style timestamp format)                                                |
-| `legacy/output/legacy-glamour-table.ts`                 | `renderGlamourTable(headers, rows)` — the CLI's established ASCII table format                                                                                            |
-| `legacy/shared/legacy-upgrade-notice.ts`                | `legacyUpgradeNoticeHook` — post-success upgrade notice (GitHub latest-release fetch, 10h `supabase/.temp/cli-latest` cache, `SUPABASE_NO_UPDATE_NOTIFIER` opt-out)       |
+| `legacy/auth/legacy-http-debug.layer.ts`                | `legacyHttpClientLayer` — wraps the HTTP transport with a `--debug` stderr logger (`log.LstdFlags`-style timestamp format)                                                                |
+| `legacy/output/legacy-glamour-table.ts`                 | `renderGlamourTable(headers, rows)` — the CLI's established ASCII table format                                                                                                            |
+| `legacy/shared/legacy-upgrade-notice.ts`                | `legacyUpgradeNoticeHook` — post-success upgrade notice (GitHub latest-release fetch, 10h `supabase/.temp/cli-latest` cache, `SUPABASE_NO_UPDATE_NOTIFIER` opt-out)                       |
 
 ---
 
@@ -148,12 +148,17 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
 });
 ```
 
-When removing a wrapper (replacing it with a native TS implementation, or deleting the command
-outright):
+Shrinking the surface means replacing a wrapper with a **native TS implementation** — it does not
+license removing the user-facing command. Several wrapped commands are retained indefinitely
+precisely because dropping them was ruled a breaking change (CLI-1964; see the "Why it stays"
+column in the delegation table). Deleting a public command path is a product decision, never a
+cleanup task.
 
-1. Implement the business logic in `<command>.handler.ts` using Effect services (see the sections below), or delete the command tree.
-2. Update `docs/go-cli-porting-status.md` — the delegation surface table must stay accurate.
-3. If replacing natively, reproduce the old behavior (output, side effects, telemetry) from the pinned Go source at commit `7b469f5b3`.
+When replacing a wrapper natively:
+
+1. Implement the business logic in `<command>.handler.ts` using Effect services (see the sections below).
+2. Reproduce the old behavior (output, side effects, telemetry) from the pinned Go source at commit `7b469f5b3`.
+3. Update `docs/go-cli-porting-status.md` — the delegation surface table must stay accurate.
 
 ---
 
@@ -316,11 +321,11 @@ The legacy shell sends PostHog events to the product analytics pipeline. Drift i
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
 - **Custom events are established behavior — do not drop, rename, or reshape them.** Beyond `cli_command_executed`, the legacy shell fires:
 
-  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                         |
+  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                          |
   | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                |
-  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                        |
-  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                              |
+  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                 |
+  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                         |
+  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                               |
   | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (envelope-first; hostnames + vanity get envelope-only) |
 
   See `legacy/commands/login/` (handler + `SIDE_EFFECTS.md`) for the reference pattern.
