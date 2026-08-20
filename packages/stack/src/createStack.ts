@@ -2,7 +2,9 @@ import type { LogEntry } from "@supabase/process-compose";
 import {
   Cause,
   Context,
+  Deferred,
   Effect,
+  Exit,
   FileSystem,
   type Layer,
   ManagedRuntime,
@@ -115,9 +117,13 @@ const createStackAttempt = (
   Effect.gen(function* () {
     let portLease: PortLease | undefined;
     let resolved: ResolvedStackConfig | undefined;
+    let disposeRuntime: Effect.Effect<void> | undefined;
 
     const cleanup = Effect.uninterruptible(
       Effect.gen(function* () {
+        if (disposeRuntime !== undefined) {
+          yield* disposeRuntime.pipe(Effect.ignore);
+        }
         if (portLease !== undefined) {
           yield* portLease.releaseAll.pipe(Effect.ignore);
         }
@@ -157,21 +163,38 @@ const createStackAttempt = (
 
       const fullLayer = foregroundLayer(resolved, platformFactory, portLease);
       const managedRuntime = ManagedRuntime.make(fullLayer);
-      const operation = Effect.gen(function* () {
+      disposeRuntime = managedRuntime.disposeEffect;
+      return yield* Effect.gen(function* () {
         const services = yield* managedRuntime.contextEffect;
         const localStack = Context.get(services, Stack);
         const apiProxy = Context.get(services, ApiProxy);
         const lifecycle = Context.get(services, LocalStackLifecycle);
         const info = yield* Effect.provideContext(localStack.getInfo(), services);
 
-        let disposed = false;
-        const dispose = Effect.suspend(() => {
-          if (disposed) {
-            return Effect.void;
-          }
-          disposed = true;
-          return managedRuntime.disposeEffect;
-        });
+        const disposalCompletion = Deferred.makeUnsafe<Exit.Exit<void, never>>();
+        let disposalStarted = false;
+        const awaitDisposal = Deferred.await(disposalCompletion).pipe(
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Effect.failCause(exit.cause),
+          ),
+        );
+        const dispose = Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            if (disposalStarted) {
+              return restore(awaitDisposal);
+            }
+            disposalStarted = true;
+            return Effect.forkDetach(
+              managedRuntime.disposeEffect.pipe(
+                Effect.uninterruptible,
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(disposalCompletion, exit)),
+                Effect.asVoid,
+              ),
+              { startImmediately: true },
+            ).pipe(Effect.asVoid, Effect.andThen(restore(awaitDisposal)));
+          }),
+        );
         const run = <A, E>(effect: Effect.Effect<A, E>) =>
           runForegroundOperation(
             Effect.provideContext(effect, services),
@@ -215,18 +238,10 @@ const createStackAttempt = (
           logHistory: (name: string, limit?: number) => run(localStack.logHistory(name, limit)),
         } satisfies ForegroundStackHandle;
       });
-
-      return yield* operation.pipe(
-        Effect.catchCause((cause) =>
-          managedRuntime.disposeEffect.pipe(Effect.andThen(Effect.failCause(cause))),
-        ),
-      );
     });
 
     return yield* attempt.pipe(
-      Effect.catchCause((cause) =>
-        cleanup.pipe(Effect.andThen(Effect.fail(toStackError(Cause.squash(cause))))),
-      ),
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : cleanup)),
     );
   });
 
