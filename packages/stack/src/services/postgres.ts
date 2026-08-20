@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
+import { shortTempPrefixRoot } from "../paths.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
@@ -48,11 +51,13 @@ const NATIVE_POSTGRES_RUNTIME_ARGS = [
   "max_replication_slots=5",
 ] as const;
 
+const orphanCleanup = (opts: PostgresServiceOptions) =>
+  opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
+
 const postgresGetKeyScript = (binPath: string): string =>
   `${binPath}/share/supabase-cli/config/pgsodium_getkey.sh`;
 
-const orphanCleanup = (opts: PostgresServiceOptions) =>
-  opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
+const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 const postgresHealthCheck = (binPath: string, port: number) => ({
   probe: {
@@ -97,14 +102,29 @@ const postgresDockerHealthCheck = (
   );
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
-  const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
-  const getKeyScript = postgresGetKeyScript(opts.binPath);
+  // The bundled initializer persists absolute artifact paths in postgresql.conf.
+  // pgsodium executes its getkey path through a shell, so use a stable no-space
+  // alias for the whole bundle when the cache root itself contains whitespace.
+  const bundleKey = createHash("sha256").update(opts.dataDir).digest("hex").slice(0, 16);
+  const bundlePath = join(
+    shortTempPrefixRoot(),
+    `supabase-stack-postgres-${process.getuid?.() ?? process.pid}-${bundleKey}`,
+  );
+  const initScript = `${bundlePath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
+  const getKeyScript = postgresGetKeyScript(bundlePath);
+  const launchScript = `
+set -e
+ln -sfn ${shellQuote(opts.binPath)} ${shellQuote(bundlePath)}
+exec ${shellQuote(initScript)} "$@"
+`;
 
   return {
     name: "postgres",
     command: "bash",
     args: [
-      initScript,
+      "-c",
+      launchScript,
+      "--",
       "-p",
       String(opts.port),
       ...NATIVE_POSTGRES_RUNTIME_ARGS,

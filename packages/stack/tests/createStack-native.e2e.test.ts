@@ -1,19 +1,25 @@
 import { createClient } from "@supabase/supabase-js";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
+import { defaultCacheRoot } from "../src/paths.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 describe("native PostgREST tracer bullet", () => {
   let stack: StackHandle;
   let dataDir: string;
+  let cacheParent: string;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "supabase-native-postgrest-e2e-"));
+    cacheParent = mkdtempSync(join(tmpdir(), "supabase-native-cache-parent-"));
+    const cacheRoot = join(cacheParent, "cache root with spaces");
+    symlinkSync(defaultCacheRoot(), cacheRoot, "dir");
     stack = await createStack({
       mode: "native",
+      cacheRoot,
       functions: false,
       edgeRuntime: false,
       auth: false,
@@ -26,6 +32,7 @@ describe("native PostgREST tracer bullet", () => {
   afterAll(async () => {
     await stack?.dispose();
     rmSync(dataDir, { recursive: true, force: true });
+    rmSync(cacheParent, { recursive: true, force: true });
   }, 30_000);
 
   test("serves a CRUD request through the native PostgREST resource", async () => {
@@ -41,5 +48,41 @@ describe("native PostgREST tracer bullet", () => {
 
     const deleted = await client.from("todos").delete().eq("title", "native tracer bullet");
     expect(deleted.error).toBeNull();
+  }, 30_000);
+
+  test("repairs incomplete bundled initialization on restart", async () => {
+    const adminUrl = new URL(stack.dbUrl);
+    adminUrl.username = "supabase_admin";
+    const sql = new Bun.SQL(adminUrl.toString());
+    try {
+      await sql.unsafe(`
+        DELETE FROM supabase_migrations.cli_init WHERE phase = 'complete';
+        ALTER ROLE authenticator RESET session_preload_libraries;
+      `);
+    } finally {
+      await sql.close();
+    }
+
+    await stack.stop();
+    await stack.start();
+
+    const check = new Bun.SQL(adminUrl.toString());
+    try {
+      const rows = await check.unsafe<{ configured: boolean }[]>(`
+        SELECT EXISTS (
+          SELECT 1
+          FROM pg_roles
+          WHERE rolname = 'authenticator'
+            AND EXISTS (
+              SELECT 1
+              FROM unnest(coalesce(rolconfig, ARRAY[]::text[])) setting
+              WHERE setting LIKE 'session_preload_libraries=supautils%'
+            )
+        ) AS configured;
+      `);
+      expect(rows[0]?.configured).toBe(true);
+    } finally {
+      await check.close();
+    }
   }, 30_000);
 });

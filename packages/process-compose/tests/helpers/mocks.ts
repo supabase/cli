@@ -13,14 +13,22 @@ const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
   if (encoded === undefined) return false;
   try {
     const config: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (
+      typeof config !== "object" ||
+      config === null ||
+      !("command" in config) ||
+      !("args" in config) ||
+      !Array.isArray(config.args)
+    ) {
+      return false;
+    }
+    const bashScript =
+      config.command === "bash" && config.args[0] === "-c" && typeof config.args[1] === "string"
+        ? config.args[1]
+        : undefined;
     return (
-      typeof config === "object" &&
-      config !== null &&
-      "command" in config &&
-      "args" in config &&
-      Array.isArray(config.args) &&
-      ((config.command === "bash" && config.args[0] === "-c") ||
-        ((config.command === "docker" || config.command === "podman") && config.args[0] === "exec"))
+      (bashScript !== undefined && !/(?:^|\n)\s*exec\s/.test(bashScript)) ||
+      ((config.command === "docker" || config.command === "podman") && config.args[0] === "exec")
     );
   } catch {
     return false;
