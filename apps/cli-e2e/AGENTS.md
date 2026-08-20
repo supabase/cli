@@ -200,7 +200,7 @@ is a single-job operation; parallel shards would race on the shared
 
 ## Go binary version requirement
 
-The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else. If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
+The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else, and it is slated for cleanup and removal (the surface only shrinks; never add tests that grow it). If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
 
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
