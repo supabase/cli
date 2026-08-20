@@ -13,6 +13,7 @@ const PG14_PREP = [
 ] as const;
 
 const CURRENT_PREP = [
+  "DROP EXTENSION IF EXISTS pgjwt",
   "DROP EXTENSION IF EXISTS pgcrypto",
   'DROP EXTENSION IF EXISTS "uuid-ossp"',
 ] as const;
@@ -25,13 +26,16 @@ export const parsePostgresMajorVersion = (serverVersion: string): number => {
 export const declarativeBaselinePrepStatements = (majorVersion: number): ReadonlyArray<string> =>
   majorVersion === 14 ? PG14_PREP : CURRENT_PREP;
 
+/** User cannot edit this SQL; a persistent miss is a CLI bug. */
+export const DECLARATIVE_SHADOW_PREP_FAILURE_SUGGESTION =
+  "This statement is CLI-owned shadow prep, not a project migration or schema file. If it persists, report it with supabase issue bug.";
+
 const queryError = (sql: string, cause: unknown) =>
   new SchemaEngineError({
     detail: `Failed to prepare the isolated declaration shadow (${sql}): ${
       cause instanceof Error ? cause.message : String(cause)
     }`,
-    suggestion:
-      "Retry the command. If it persists, delete the Docker shadow baseline cache under ~/.supabase/cache/shadow-baseline.",
+    suggestion: DECLARATIVE_SHADOW_PREP_FAILURE_SUGGESTION,
   });
 
 const readServerVersion = (rows: ReadonlyArray<unknown>): string => {

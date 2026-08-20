@@ -1,11 +1,13 @@
 import { it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import { describe, expect, it as vitestIt } from "vitest";
 
+import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   legacyAllowSameDatabaseIdentityForPlanShadows,
   legacyPreparePgDeltaNextDeclarativeBaseline,
 } from "./legacy-pgdelta-next-shadow.layer.ts";
+import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
 function recordingSession() {
   const statements: string[] = [];
@@ -34,14 +36,47 @@ describe("legacyPreparePgDeltaNextDeclarativeBaseline", () => {
     });
   });
 
-  it.effect("does not modify PG15+ platform objects before dropping extensions", () => {
+  it.effect("drops pgjwt before pgcrypto on PG15+", () => {
     const { session, statements } = recordingSession();
     return Effect.gen(function* () {
       yield* legacyPreparePgDeltaNextDeclarativeBaseline(session, 17);
       expect(statements).toEqual([
+        "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
         'DROP EXTENSION IF EXISTS "uuid-ossp"',
       ]);
+    });
+  });
+
+  it.effect("names the failing prep statement and postgres detail", () => {
+    const session = {
+      exec: (sql: string) =>
+        sql.includes("pgcrypto")
+          ? Effect.fail(
+              new LegacyDbExecError({
+                message:
+                  "ERROR: cannot drop extension pgcrypto because other objects depend on it (SQLSTATE 2BP01)",
+                detail: "extension pgjwt depends on extension pgcrypto",
+              }),
+            )
+          : Effect.void,
+    };
+    return Effect.gen(function* () {
+      const exit = yield* legacyPreparePgDeltaNextDeclarativeBaseline(session, 17).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+      expect(error instanceof LegacyDeclarativeShadowDbError ? error.message : "").toContain(
+        "DROP EXTENSION IF EXISTS pgcrypto",
+      );
+      expect(error instanceof LegacyDeclarativeShadowDbError ? error.message : "").toContain(
+        "extension pgjwt depends on extension pgcrypto",
+      );
+      expect(error instanceof LegacyDeclarativeShadowDbError ? error.suggestion : "").toContain(
+        "supabase issue bug",
+      );
     });
   });
 });

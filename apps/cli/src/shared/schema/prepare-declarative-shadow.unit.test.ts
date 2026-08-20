@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 import {
   declarativeBaselinePrepStatements,
   parsePostgresMajorVersion,
@@ -16,8 +16,9 @@ describe("declarativeBaselinePrepStatements", () => {
     ]);
   });
 
-  it("only drops implicit extensions on PG15+", () => {
+  it("drops pgjwt before pgcrypto on PG15+ (image still installs pgjwt)", () => {
     expect(declarativeBaselinePrepStatements(17)).toEqual([
+      "DROP EXTENSION IF EXISTS pgjwt",
       "DROP EXTENSION IF EXISTS pgcrypto",
       'DROP EXTENSION IF EXISTS "uuid-ossp"',
     ]);
@@ -33,6 +34,30 @@ describe("parsePostgresMajorVersion", () => {
 });
 
 describe("prepareDeclarativeShadow", () => {
+  it.live("names the failing prep statement", () => {
+    const client = {
+      query: (sql: string) => {
+        if (sql === "SHOW server_version") {
+          return Promise.resolve({ rows: [{ server_version: "15.8" }] });
+        }
+        if (sql.includes("pgcrypto")) {
+          return Promise.reject(new Error("cannot drop extension pgcrypto (SQLSTATE 2BP01)"));
+        }
+        return Promise.resolve({ rows: [] });
+      },
+    };
+    return Effect.gen(function* () {
+      const exit = yield* prepareDeclarativeShadow(client).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const error = Exit.isFailure(exit)
+        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+        : undefined;
+      expect(error !== undefined && "detail" in error ? String(error.detail) : "").toContain(
+        "DROP EXTENSION IF EXISTS pgcrypto",
+      );
+    });
+  });
+
   it.live("runs the version-selected prep statements against the shadow", () => {
     const queries: string[] = [];
     const client = {
@@ -47,6 +72,7 @@ describe("prepareDeclarativeShadow", () => {
       yield* prepareDeclarativeShadow(client);
       expect(queries).toEqual([
         "SHOW server_version",
+        "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
         'DROP EXTENSION IF EXISTS "uuid-ossp"',
       ]);
