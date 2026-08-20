@@ -62,7 +62,9 @@ describe("legacyPreparePgDeltaNextDeclarativeBaseline", () => {
           : Effect.void,
     };
     return Effect.gen(function* () {
-      const exit = yield* legacyPreparePgDeltaNextDeclarativeBaseline(session, 17).pipe(Effect.exit);
+      const exit = yield* legacyPreparePgDeltaNextDeclarativeBaseline(session, 17).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       const error = Exit.isFailure(exit)
         ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))

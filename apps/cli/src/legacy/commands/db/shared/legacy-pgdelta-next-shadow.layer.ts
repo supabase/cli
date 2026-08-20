@@ -132,7 +132,9 @@ export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(fun
     yield* session.exec(sql).pipe(
       Effect.mapError((error) => {
         const detail =
-          error.detail !== undefined && error.detail.length > 0 ? `\n  Detail: ${error.detail}` : "";
+          error.detail !== undefined && error.detail.length > 0
+            ? `\n  Detail: ${error.detail}`
+            : "";
         return new LegacyDeclarativeShadowDbError({
           message: `Failed to prepare the isolated declaration shadow (${sql}): ${error.message}${detail}`,
           suggestion: DECLARATIVE_SHADOW_PREP_FAILURE_SUGGESTION,
