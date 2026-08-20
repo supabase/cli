@@ -707,6 +707,42 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("rejects an explicit mode change before attaching to a running owner", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-attach-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const dockerInput = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
+    const owner = spawnChild(dockerInput, { environment });
+    let contender: ChildHandle | undefined;
+    let sameMode: ChildHandle | undefined;
+    try {
+      const started = await owner.started;
+      contender = spawnChild(nativeInput, { environment });
+      await expect(contender.started).rejects.toThrow(
+        "Stack runtime is already docker; requested native",
+      );
+      await waitForExit(contender.child);
+
+      sameMode = spawnChild(dockerInput, { environment });
+      const attached = await sameMode.started;
+      expect(attached.attached).toBe(true);
+      await remoteStop(started.endpoint);
+      await Promise.all([waitForExit(owner.child), waitForExit(sameMode.child)]);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      if (sameMode?.child.exitCode === null) await kill(sameMode.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("reuses the persisted runtime instead of selecting a different one on restart", async () => {
     const roots = await workspace();
     const binDir = mkdtempSync(join(tmpdir(), "sup-stack-sticky-runtime-"));

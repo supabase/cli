@@ -905,7 +905,11 @@ export const localStackLayer = (
                 serviceStartupBegan = true;
                 const started = yield* beginStartTargets(
                   service,
-                  new Set(activationTargetsForService(enabledServices, service)),
+                  // Whole-stack startup owns every enabled service, including
+                  // lazy transitive dependencies of eager services (for
+                  // example Studio -> pgmeta). Explicit startService calls
+                  // keep their narrower activation allowlist below.
+                  new Set(enabledServices),
                 );
                 readiness.push(waitForTargets(started));
               }

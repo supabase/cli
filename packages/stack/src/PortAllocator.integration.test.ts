@@ -82,6 +82,32 @@ describe("selected-field port allocation", () => {
     }
   });
 
+  it("keeps an automatically selected port claimed after releasing its reservation", async () => {
+    const lease = await Effect.runPromise(
+      reservePortSet([{ field: "apiPort", selection: { kind: "automatic", preferred: 0 } }]),
+    );
+    const port = lease.ports.apiPort;
+
+    try {
+      expect(port).toBeGreaterThan(0);
+
+      await Effect.runPromise(lease.release(["apiPort"]));
+      const unavailable = await Effect.runPromise(
+        allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: port! } }]).pipe(
+          Effect.exit,
+        ),
+      );
+      expect(unavailable._tag).toBe("Failure");
+    } finally {
+      await Effect.runPromise(lease.releaseAll);
+    }
+
+    const available = await Effect.runPromise(
+      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: port! } }]),
+    );
+    expect(available.apiPort).toBe(port);
+  });
+
   it("fails when an exact port is occupied", async () => {
     const exit = await Effect.runPromise(
       Effect.scoped(

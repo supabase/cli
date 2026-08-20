@@ -215,4 +215,41 @@ dockerDescribe("createStack e2e (docker mode)", () => {
       expect(remaining.data).toHaveLength(0);
     },
   );
+
+  test(
+    "restarts the Studio graph with its Pgmeta dependency",
+    { timeout: STACK_DOCKER_E2E_TEST_TIMEOUT_MS },
+    async () => {
+      const graphDataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-docker-graph-"));
+      let graphStack: StackHandle | undefined;
+      try {
+        graphStack = await createStack({
+          mode: "docker",
+          postgres: { dataDir: graphDataDir },
+          pgmeta: {},
+          studio: {},
+        });
+        await graphStack.start();
+        expect(await graphStack.getServiceStatus("pgmeta")).toEqual(
+          expect.objectContaining({ status: "Healthy" }),
+        );
+        expect(await graphStack.getServiceStatus("studio")).toEqual(
+          expect.objectContaining({ status: "Healthy" }),
+        );
+
+        await graphStack.stop();
+        await graphStack.start();
+
+        expect(await graphStack.getServiceStatus("pgmeta")).toEqual(
+          expect.objectContaining({ status: "Healthy" }),
+        );
+        expect(await graphStack.getServiceStatus("studio")).toEqual(
+          expect.objectContaining({ status: "Healthy" }),
+        );
+      } finally {
+        await graphStack?.dispose();
+        rmSync(graphDataDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

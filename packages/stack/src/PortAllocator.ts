@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -92,7 +92,7 @@ const choosePreferredPort = (
   exclude: ReadonlySet<number>,
   probe: PortProbe,
 ): Effect.Effect<number, PortAllocationError> =>
-  exclude.has(port)
+  port <= 0 || exclude.has(port)
     ? probe.random(exclude)
     : probe.exact(port).pipe(Effect.catchTag("PortAllocationError", () => probe.random(exclude)));
 
@@ -135,6 +135,13 @@ const CLAIM_ROOT = join(tmpdir(), `supabase-stack-port-claims-${claimNamespace()
 const CLAIM_STALE_AFTER_MS = 30_000;
 
 const claimPath = (port: number): string => join(CLAIM_ROOT, `port-${port}`);
+
+const staleClaimPath = (path: string): string => `${path}.stale-${process.pid}-${randomUUID()}`;
+
+const isErrorCode = (cause: unknown, code: string): boolean =>
+  typeof cause === "object" && cause !== null && "code" in cause
+    ? Reflect.get(cause, "code") === code
+    : false;
 
 const isProcessAlive = (pid: number): boolean => {
   try {
@@ -213,7 +220,14 @@ const acquirePortClaim = (port: number): Effect.Effect<PortClaim, PortAllocation
           if (!(await claimIsStale(path))) {
             throw new PortAllocationError({ detail: `Port ${port} is not available`, port });
           }
-          await rm(path, { force: true });
+          try {
+            const quarantine = staleClaimPath(path);
+            await rename(path, quarantine);
+            await rm(quarantine, { force: true });
+          } catch (renameCause) {
+            if (isErrorCode(renameCause, "ENOENT")) continue;
+            throw renameCause;
+          }
         }
       }
     },
@@ -250,11 +264,24 @@ const claimedPorts = (): Effect.Effect<ReadonlySet<number>> =>
         if (!entry.isFile() || !entry.name.startsWith("port-")) continue;
         const port = Number(entry.name.slice("port-".length));
         if (!Number.isInteger(port) || port <= 0 || port > 65_535) continue;
-        if (await claimIsStale(join(CLAIM_ROOT, entry.name))) {
-          await rm(join(CLAIM_ROOT, entry.name), { force: true });
-          continue;
+        const path = join(CLAIM_ROOT, entry.name);
+        while (await claimIsStale(path)) {
+          try {
+            const quarantine = staleClaimPath(path);
+            await rename(path, quarantine);
+            await rm(quarantine, { force: true });
+            break;
+          } catch (renameCause) {
+            if (!isErrorCode(renameCause, "ENOENT")) throw renameCause;
+            try {
+              await stat(path);
+            } catch (statCause) {
+              if (isErrorCode(statCause, "ENOENT")) break;
+              throw statCause;
+            }
+          }
         }
-        ports.add(port);
+        if (!(await claimIsStale(path))) ports.add(port);
       }
       return ports;
     },
@@ -445,6 +472,9 @@ const makePortLease = (
   };
 };
 
+const isClaimCollision = (error: PortAllocationError, port: number): boolean =>
+  error.port === port && error.detail === `Port ${port} is not available`;
+
 const reserveRandomPort = (
   exclude: ReadonlySet<number>,
   field: PortField,
@@ -456,10 +486,12 @@ const reserveRandomPort = (
       : acquirePortClaim(bound.port).pipe(
           Effect.tap((claim) => Effect.sync(() => claims.set(field, claim))),
           Effect.map(() => bound),
-          Effect.catchTag("PortAllocationError", () =>
-            closeServer(bound.server).pipe(
-              Effect.andThen(reserveRandomPort(exclude, field, claims)),
-            ),
+          Effect.catchTag("PortAllocationError", (error) =>
+            isClaimCollision(error, bound.port)
+              ? closeServer(bound.server).pipe(
+                  Effect.andThen(reserveRandomPort(exclude, field, claims)),
+                )
+              : closeServer(bound.server).pipe(Effect.andThen(Effect.fail(error))),
           ),
         ),
   );
@@ -551,7 +583,11 @@ export const reservePortSet = (
             request.field,
             claimAndBind(request.field, selection.port, claims),
           );
-        } else if (selection.preferred !== undefined && !exclude.has(selection.preferred)) {
+        } else if (
+          selection.preferred !== undefined &&
+          selection.preferred > 0 &&
+          !exclude.has(selection.preferred)
+        ) {
           const preferred = selection.preferred;
           bound = yield* bindAndRegister(
             request.field,

@@ -67,11 +67,11 @@ export const makePostgresInitServiceDocker = (opts: DockerPostgresInitOptions): 
   args: [
     "exec",
     "-e",
-    "PGPASSWORD=postgres",
+    "PGPASSWORD",
     "-e",
-    `JWT_SECRET=${opts.jwtSecret}`,
+    "JWT_SECRET",
     "-e",
-    `JWT_EXP=${opts.jwtExpiry}`,
+    "JWT_EXP",
     dockerContainerName("postgres", opts.identity.key),
     "sh",
     "-c",
@@ -79,6 +79,11 @@ export const makePostgresInitServiceDocker = (opts: DockerPostgresInitOptions): 
 ${dockerPostgresSchemaSql(opts)}
 EOSQL`,
   ],
+  env: {
+    PGPASSWORD: "postgres",
+    JWT_SECRET: opts.jwtSecret,
+    JWT_EXP: String(opts.jwtExpiry),
+  },
   dependencies: opts.dependencies,
   supervision: {},
   restart: "no",

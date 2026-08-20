@@ -370,6 +370,31 @@ const runManaged = (
         new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
       );
     }
+    const requestedMode =
+      configInput.mode ??
+      (input.launch !== undefined && "mode" in input.launch ? input.launch.mode : undefined);
+    const existing = yield* manager.inspectStack(stackId);
+    const existingLaunch = existing?.launch;
+    const persistedRuntime: StackRuntimeSelection | undefined =
+      existingLaunch !== undefined && "mode" in existingLaunch && existingLaunch.mode === "native"
+        ? { mode: "native", containerRuntime: null }
+        : existingLaunch !== undefined &&
+            "mode" in existingLaunch &&
+            existingLaunch.mode === "docker"
+          ? { mode: "docker", containerRuntime: existingLaunch.containerRuntime }
+          : undefined;
+    if (
+      initialAcquisition._tag === "Attached" &&
+      persistedRuntime !== undefined &&
+      requestedMode !== undefined &&
+      persistedRuntime.mode !== requestedMode
+    ) {
+      return yield* Effect.fail(
+        new SupervisorStartError({
+          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+        }),
+      );
+    }
     let attachedOwnerWasStopping = false;
     const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
       manager.acquireControl(stackId).pipe(
@@ -466,19 +491,6 @@ const runManaged = (
         );
       }
     }
-    const existing = yield* manager.inspectStack(stackId);
-    const requestedMode =
-      configInput.mode ??
-      (input.launch !== undefined && "mode" in input.launch ? input.launch.mode : undefined);
-    const existingLaunch = existing?.launch;
-    const persistedRuntime: StackRuntimeSelection | undefined =
-      existingLaunch !== undefined && "mode" in existingLaunch && existingLaunch.mode === "native"
-        ? { mode: "native", containerRuntime: null }
-        : existingLaunch !== undefined &&
-            "mode" in existingLaunch &&
-            existingLaunch.mode === "docker"
-          ? { mode: "docker", containerRuntime: existingLaunch.containerRuntime }
-          : undefined;
     if (
       persistedRuntime !== undefined &&
       requestedMode !== undefined &&
