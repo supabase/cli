@@ -218,7 +218,7 @@ function substituteEnvLeaf(
   value: string,
   env: Readonly<Record<string, string>>,
   goViperCompat: boolean,
-): { readonly value: string; readonly resolved: boolean } {
+): { readonly value: string; readonly resolved: boolean; readonly envName?: string } {
   const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   if (match === null) {
     return { value, resolved: false };
@@ -229,10 +229,10 @@ function substituteEnvLeaf(
   // (`apps/cli-go/pkg/config/decode_hooks.go:19-24`: `len(env) > 0`), so a
   // key that's present but empty (e.g. a dotenv `KEY=` line) preserves the
   // `env(KEY)` literal exactly like an unset key, rather than substituting "".
-  if (resolved === undefined || resolved === "") {
+  if (envName === undefined || resolved === undefined || resolved === "") {
     return { value, resolved: false };
   }
-  return { value: resolved, resolved: true };
+  return { value: resolved, resolved: true, envName };
 }
 
 function isDeferredEnvField(ast: SchemaAST.AST): boolean {
@@ -258,22 +258,26 @@ function walk(
   ast: SchemaAST.AST | null,
   goViperCompat: boolean,
   path: ReadonlyArray<string>,
-  onResolvedEnv: ((path: ReadonlyArray<string>) => void) | undefined,
+  onResolvedEnv: ((path: ReadonlyArray<string>, envName: string) => void) | undefined,
 ): unknown {
   if (Array.isArray(document)) {
-    let resolved = false;
+    // Element-level resolutions are reported once, at the array's own path —
+    // one array literal may draw on several env vars, so the names collect.
+    const envNames: Array<string> = [];
     const onResolvedArrayEnv =
       onResolvedEnv === undefined
         ? undefined
-        : () => {
-            resolved = true;
+        : (_: ReadonlyArray<string>, envName: string) => {
+            if (!envNames.includes(envName)) {
+              envNames.push(envName);
+            }
           };
     const result = document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
       return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedArrayEnv);
     });
-    if (resolved) {
-      onResolvedEnv?.(path);
+    if (envNames.length > 0) {
+      onResolvedEnv?.(path, envNames.join(", "));
     }
     return result;
   }
@@ -297,8 +301,8 @@ function walk(
 
     const interpolation = substituteEnvLeaf(document, env, goViperCompat);
     const substituted = interpolation.value;
-    if (interpolation.resolved) {
-      onResolvedEnv?.(path);
+    if (interpolation.resolved && interpolation.envName !== undefined) {
+      onResolvedEnv?.(path, interpolation.envName);
     }
     const expected = ast === null ? "unknown" : leafExpectedType(ast);
 
@@ -357,7 +361,9 @@ export function interpolateEnvReferencesAgainstSchema(
   schema: { readonly ast: SchemaAST.AST },
   options?: {
     readonly goViperCompat?: boolean;
-    readonly onResolvedEnv?: (path: ReadonlyArray<string>) => void;
+    /** Fires per resolved leaf with the substituting env var's name (array
+     * leaves report once at the array path, names comma-joined). */
+    readonly onResolvedEnv?: (path: ReadonlyArray<string>, envName: string) => void;
   },
 ): unknown {
   return walk(

@@ -20,6 +20,11 @@ export type ProjectConfigValueSource = "environment" | "local" | "remote";
 export interface ProjectConfigValueOrigin {
   readonly path: ReadonlyArray<string>;
   readonly source: ProjectConfigValueSource;
+  /**
+   * For `"environment"` origins: the env var name(s) the `env()` reference
+   * resolved from (comma-joined when one array literal drew on several).
+   */
+  readonly envVariable?: string;
 }
 
 export interface LoadedProjectConfig {
@@ -722,7 +727,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   const goViperCompat = options?.goViperCompat ?? false;
   const interpolateDocument = (
     document: unknown,
-    onResolvedEnv?: (path: ReadonlyArray<string>) => void,
+    onResolvedEnv?: (path: ReadonlyArray<string>, envName: string) => void,
   ): unknown =>
     interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, ProjectConfigSchema, {
       goViperCompat,
@@ -770,9 +775,11 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // that path, but correctness on the match+`env()` path matters more than
   // avoiding it.
   const resolvedEnvironmentPaths: Array<string[]> = [];
+  const resolvedEnvironmentNames = new Map<string, string>();
   documentForDecode = isObject(documentForDecode)
-    ? interpolateDocument(documentForDecode, (path) => {
+    ? interpolateDocument(documentForDecode, (path, envName) => {
         resolvedEnvironmentPaths.push(Array.from(path));
+        resolvedEnvironmentNames.set(pathKey(Array.from(path)), envName);
       })
     : documentForDecode;
 
@@ -817,7 +824,12 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
             : localPathKeys.has(key)
               ? "local"
               : undefined;
-        return source === undefined ? [] : [{ path, source }];
+        if (source === undefined) {
+          return [];
+        }
+        const envVariable =
+          source === "environment" ? resolvedEnvironmentNames.get(key) : undefined;
+        return [{ path, source, ...(envVariable === undefined ? {} : { envVariable }) }];
       })
     : [];
 

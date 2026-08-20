@@ -56,5 +56,19 @@ export {
   omitDefaultValues,
   subtractProjectConfig,
 } from "./sparse.ts";
+export {
+  type ConfigChange,
+  type ConfigChangeClass,
+  type ConfigChangeCounts,
+  type ConfigChangeSet,
+  type DiffProjectConfigOptions,
+  type ManagedConfigProperty,
+  type RemoteConfigBlock,
+  type RemoteProjectConfig,
+  REMOTE_CONFIG_BLOCKS,
+  diffProjectConfig,
+  isEqualConfigValue,
+} from "./config-diff.ts";
+export { MANAGED_CONFIG_PATHS } from "./config-diff.managed.ts";
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
