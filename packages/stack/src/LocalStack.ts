@@ -377,7 +377,9 @@ export const localStackLayer = (
                 const state = SubscriptionRef.getUnsafe(stateRef).find(
                   (entry) => entry.name === service,
                 );
-                return state === undefined ? [] : [[service, state] as const];
+                return state === undefined || state.status === "Downloading"
+                  ? []
+                  : [[service, state] as const];
               }),
             );
             const deferred = Deferred.makeUnsafe<PreparedStackArtifacts, StackBuildError>();

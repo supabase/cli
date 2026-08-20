@@ -50,11 +50,16 @@ export const selectStackRuntime = (
       return { mode: "native", containerRuntime: null };
     }
 
-    const runtimes: ReadonlyArray<ContainerRuntime> = ["docker", "podman"];
-    for (const runtime of runtimes) {
-      if (yield* probeContainerRuntime(runtime)) {
-        return { mode: "docker", containerRuntime: runtime };
-      }
+    const runtimes = ["docker", "podman"] as const satisfies ReadonlyArray<ContainerRuntime>;
+    const probes = yield* Effect.all(
+      runtimes.map((runtime) =>
+        probeContainerRuntime(runtime).pipe(Effect.map((usable) => [runtime, usable] as const)),
+      ),
+      { concurrency: "unbounded" },
+    );
+    const selected = probes.find(([, usable]) => usable)?.[0];
+    if (selected !== undefined) {
+      return { mode: "docker", containerRuntime: selected };
     }
 
     if (requestedMode === "docker") {

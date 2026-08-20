@@ -25,10 +25,7 @@ export const httpTransportClientLayer = Layer.succeed(HttpTransportClient, {
       try: () =>
         fetch(`${endpoint.url}${path}`, {
           ...init,
-          signal:
-            init?.signal == null
-              ? AbortSignal.timeout(30_000)
-              : AbortSignal.any([init.signal, AbortSignal.timeout(30_000)]),
+          signal: init?.signal ?? AbortSignal.timeout(30_000),
         }),
       catch: (cause) =>
         new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),

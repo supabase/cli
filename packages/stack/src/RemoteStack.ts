@@ -359,6 +359,9 @@ export const RemoteStack = {
             Stream.provide(httpTransportClientLayer),
             Stream.catchTag("HttpTransportClientError", (error) => Stream.die(error)),
           );
+        const withLifecycleRequest = <A, E, R>(
+          request: (signal: AbortSignal) => Effect.Effect<A, E | HttpTransportClientError, R>,
+        ) => withHttpTransportClient(withAbortSignal(request));
 
         return {
           getInfo: () =>
@@ -367,10 +370,10 @@ export const RemoteStack = {
             ),
 
           start: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/start";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
                   Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
                 );
@@ -378,10 +381,10 @@ export const RemoteStack = {
             ),
 
           stop: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* dieOnNonOkStatus(
                   endpoint,
                   path,
@@ -391,10 +394,10 @@ export const RemoteStack = {
             ),
 
           dispose: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* dieOnNonOkStatus(
                   endpoint,
                   path,
@@ -404,24 +407,26 @@ export const RemoteStack = {
             ),
 
           startService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/start`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
                 yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
           stopService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/stop`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
                 yield* expectMutatingDaemonOk(endpoint, path, response, name).pipe(
                   Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
@@ -431,23 +436,25 @@ export const RemoteStack = {
             ),
 
           restartService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/restart`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
                 yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
           reloadFunctions: (opts) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/functions/reload";
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts ?? {}),
                 });
@@ -456,11 +463,12 @@ export const RemoteStack = {
             ),
 
           reloadEdgeRuntime: (opts) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/edge-runtime/reload";
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts),
                 });

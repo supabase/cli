@@ -151,6 +151,7 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     hostUser === undefined
       ? ""
       : `printf 'supabase_cli:x:${hostUid}:${hostGid}:Supabase CLI:/tmp:/usr/bin/sh\\n' >> /etc/passwd
+busybox chown ${hostUid}:${hostGid} /var/lib/postgresql/data
 busybox chown ${hostUid}:${hostGid} /opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh
 `;
   const command = `${hostUserSetup}if [ -s /var/lib/postgresql/data/PG_VERSION ]; then

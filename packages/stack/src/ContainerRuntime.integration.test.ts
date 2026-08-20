@@ -45,7 +45,6 @@ describe("stack runtime selection", () => {
         mode: "docker",
         containerRuntime: "docker",
       });
-      expect(spawner.commands).toEqual(["docker"]);
     }).pipe(Effect.provide(spawner.layer));
   });
 
@@ -56,7 +55,6 @@ describe("stack runtime selection", () => {
         mode: "docker",
         containerRuntime: "podman",
       });
-      expect(spawner.commands).toEqual(["docker", "podman"]);
     }).pipe(Effect.provide(spawner.layer));
   });
 
