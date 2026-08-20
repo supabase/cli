@@ -273,99 +273,6 @@ function legacySkippedStatementDiagnostics(
   }));
 }
 
-function legacyIsPgDeltaNextParameterAclDiagnostic<Subject>(
-  diagnostic: LegacyPgDeltaNextLibraryDiagnostic<Subject>,
-): boolean {
-  return diagnostic.code === "unmodeled_kind" && diagnostic.context?.["kind"] === "parameter ACL";
-}
-
-/**
- * The parameter-ACL catalog is cluster-wide, so a co-located declarative shadow
- * observes Supabase platform grants too. Keep strict coverage for every ACL
- * other than the exact platform bootstrap grant while removing the aggregate
- * diagnostic when that bootstrap grant is the only observed parameter ACL.
- */
-export function legacyFilterPgDeltaNextPlatformParameterAclDiagnostics<Subject>(
-  diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
-  userOwnedParameterAcls: readonly string[],
-): LegacyPgDeltaNextLibraryDiagnostic<Subject>[] {
-  const names = [...new Set(userOwnedParameterAcls)].sort();
-  const filtered: LegacyPgDeltaNextLibraryDiagnostic<Subject>[] = [];
-  for (const diagnostic of diagnostics) {
-    if (!legacyIsPgDeltaNextParameterAclDiagnostic(diagnostic)) {
-      filtered.push(diagnostic);
-      continue;
-    }
-    if (names.length === 0) continue;
-    const samples = names.slice(0, 5);
-    const more = names.length > samples.length ? ", …" : "";
-    filtered.push({
-      ...diagnostic,
-      message:
-        `${names.length} unmodeled "parameter ACL" object${names.length === 1 ? "" : "s"} ` +
-        `not managed by this engine (e.g. ${samples.join(", ")}${more}) — ` +
-        "v1 detects but does not model this kind",
-      context: { kind: "parameter ACL", count: names.length, samples },
-    });
-  }
-  return filtered;
-}
-
-interface LegacyPgDeltaNextParameterAclGrant {
-  readonly name: string;
-  readonly grantee: string;
-  readonly privilege: string;
-}
-
-// Supabase's platform bootstrap grants these so privileged platform roles can
-// manage the setting and the Realtime owner can replay routines whose proconfig
-// contains `SET log_min_messages ...`. Parameter ACLs have cluster scope, so
-// the grants are also visible from sibling shadow DBs.
-const legacyPgDeltaNextPlatformParameterAcls = new Set([
-  "log_min_messages\u0000supabase_admin\u0000ALTER SYSTEM",
-  "log_min_messages\u0000supabase_admin\u0000SET",
-  "log_min_messages\u0000supabase_realtime_admin\u0000SET",
-]);
-
-function legacyPgDeltaNextParameterAclKey(grant: LegacyPgDeltaNextParameterAclGrant): string {
-  return `${grant.name}\u0000${grant.grantee}\u0000${grant.privilege}`;
-}
-
-export function legacyPgDeltaNextUserOwnedParameterAcls(
-  grants: readonly LegacyPgDeltaNextParameterAclGrant[],
-): string[] {
-  return [
-    ...new Set(
-      grants
-        .filter(
-          (grant) =>
-            !legacyPgDeltaNextPlatformParameterAcls.has(legacyPgDeltaNextParameterAclKey(grant)),
-        )
-        .map((grant) => grant.name),
-    ),
-  ].sort();
-}
-
-async function legacyFilterPgDeltaNextPlatformDiagnostics<Subject>(
-  pool: Pool,
-  diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
-): Promise<LegacyPgDeltaNextLibraryDiagnostic<Subject>[]> {
-  if (!diagnostics.some(legacyIsPgDeltaNextParameterAclDiagnostic)) return [...diagnostics];
-  const result = await pool.query<LegacyPgDeltaNextParameterAclGrant>(
-    `SELECT DISTINCT pa.parname AS name,
-                     COALESCE(grantee.rolname, 'PUBLIC') AS grantee,
-                     acl.privilege_type AS privilege
-       FROM pg_parameter_acl pa
-       CROSS JOIN LATERAL aclexplode(pa.paracl) acl
-       LEFT JOIN pg_roles grantee ON grantee.oid = acl.grantee
-      ORDER BY pa.parname, grantee, privilege`,
-  );
-  return legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(
-    diagnostics,
-    legacyPgDeltaNextUserOwnedParameterAcls(result.rows),
-  );
-}
-
 function legacyNormalizePgDeltaNextRenderedFiles(
   files: readonly LegacyPgDeltaNextLibraryRenderedFile[],
 ): LegacyPgDeltaNextRenderedFile[] {
@@ -652,56 +559,26 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
 }
 
 const legacyPgDeltaNextRealLibraries = {
-  resolveProfile: async (
+  resolveProfile: (
     pool: Pool,
     options: Parameters<typeof resolveProfile>[2],
     schema?: readonly string[],
-  ) => {
-    const resolved = await resolveProfile(pool, legacyPgDeltaNextProfile(schema), options);
-    return {
-      ...resolved,
-      extract: async (
-        extractPool: Pool,
-        extractOptions?: Parameters<typeof resolved.extract>[1],
-      ) => {
-        const result = await resolved.extract(extractPool, extractOptions);
-        return {
-          ...result,
-          diagnostics: await legacyFilterPgDeltaNextPlatformDiagnostics(
-            extractPool,
-            result.diagnostics,
-          ),
-        };
-      },
-    };
-  },
+  ) => resolveProfile(pool, legacyPgDeltaNextProfile(schema), options),
   plan,
   renderPlanFiles,
-  buildSchemaExport: async (pool: Pool, input: LegacyPgDeltaNextLibraryExportOptions) => {
-    const result = await buildSchemaExport(pool, input);
-    return {
-      ...result,
-      diagnostics: await legacyFilterPgDeltaNextPlatformDiagnostics(pool, result.diagnostics),
-    };
-  },
-  planSchemaFiles: async (
+  buildSchemaExport,
+  planSchemaFiles: (
     targetPool: Pool,
     shadowPool: Pool,
     files: readonly LegacyPgDeltaNextSqlFile[],
     input: LegacyPgDeltaNextLibraryPlanOptions,
-  ) => {
-    const result = await planSchemaFiles(
+  ) =>
+    planSchemaFiles(
       targetPool,
       shadowPool,
       files.map((file) => ({ name: file.name, sql: file.sql })),
       input,
-    );
-    const [loadDiagnostics, targetDiagnostics] = await Promise.all([
-      legacyFilterPgDeltaNextPlatformDiagnostics(shadowPool, result.loadDiagnostics),
-      legacyFilterPgDeltaNextPlatformDiagnostics(targetPool, result.targetDiagnostics),
-    ]);
-    return { ...result, loadDiagnostics, targetDiagnostics };
-  },
+    ),
   serializeSnapshot,
   serializePlan,
   summarizeRemovals: legacySummarizePgDeltaNextRemovals,

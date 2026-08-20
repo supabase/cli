@@ -8,9 +8,7 @@ import { describe, expect } from "vitest";
 
 import {
   legacyPgDeltaNextAdapterLayerFromLibraries,
-  legacyFilterPgDeltaNextPlatformParameterAclDiagnostics,
   legacyPgDeltaNextProfile,
-  legacyPgDeltaNextUserOwnedParameterAcls,
   legacySummarizePgDeltaNextHazards,
   legacySummarizePgDeltaNextRemovals,
   type LegacyPgDeltaNextLibraries,
@@ -298,66 +296,6 @@ describe("LegacyPgDeltaNextAdapter", () => {
       coverage: ["unmodeled_drift"],
       kinds: ["data_loss", "rewrite_risk", "access_exclusive_lock", "unmodeled_drift"],
     });
-  });
-
-  it("filters platform parameter ACL coverage without hiding user-owned ACLs", () => {
-    const diagnostics = [
-      {
-        origin: "declarativeLoad" as const,
-        code: "unmodeled_kind",
-        severity: "warning" as const,
-        message: "2 unmodeled parameter ACLs",
-        context: {
-          kind: "parameter ACL",
-          count: 2,
-          samples: ["log_min_messages", "work_mem"],
-        },
-      },
-      {
-        origin: "declarativeLoad" as const,
-        code: "unsupported_extension",
-        severity: "warning" as const,
-        message: "extension is externally managed",
-      },
-    ];
-
-    expect(legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(diagnostics, [])).toEqual([
-      diagnostics[1],
-    ]);
-    expect(
-      legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(diagnostics, ["work_mem"]),
-    ).toEqual([
-      {
-        ...diagnostics[0],
-        message:
-          '1 unmodeled "parameter ACL" object not managed by this engine (e.g. work_mem) — v1 detects but does not model this kind',
-        context: { kind: "parameter ACL", count: 1, samples: ["work_mem"] },
-      },
-      diagnostics[1],
-    ]);
-  });
-
-  it("recognizes only the exact Supabase platform parameter grant tuples", () => {
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "SET" },
-        { name: "log_min_messages", grantee: "app_user", privilege: "SET" },
-        { name: "work_mem", grantee: "supabase_realtime_admin", privilege: "SET" },
-        { name: "work_mem", grantee: "app_user", privilege: "SET" },
-      ]),
-    ).toEqual(["log_min_messages", "work_mem"]);
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "ALTER SYSTEM" },
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "SET" },
-        { name: "log_min_messages", grantee: "supabase_realtime_admin", privilege: "SET" },
-      ]),
-    ).toEqual([]);
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_realtime_admin", privilege: "ALTER SYSTEM" },
-      ]),
-    ).toEqual(["log_min_messages"]);
   });
 
   it("renders selected-schema state without leaking other user or platform objects", () => {
