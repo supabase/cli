@@ -192,6 +192,9 @@ function setup(
                 actionStatuses: [],
               },
             }),
+          provisionPlatform: Effect.succeed({
+            url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+          }),
           provisionShadow: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),

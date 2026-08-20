@@ -72,6 +72,8 @@ function setup() {
           Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
         ),
       ),
+    provisionPlatform: () =>
+      Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
     provisionDeclarative: () =>
       Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
     provisionPlan: (opts) =>

@@ -59,6 +59,11 @@ export const legacyDockerIsolatedShadowLayer = Layer.effect(
           .pipe(Effect.mapError(toEngineError));
         return { url: shadow.declarativeUrl };
       }),
+      provisionPlatform: Effect.gen(function* () {
+        const opts = yield* shadowInput();
+        const shadow = yield* shadows.provisionPlatform(opts).pipe(Effect.mapError(toEngineError));
+        return { url: shadow.platformUrl };
+      }),
       provisionMigrations: Effect.gen(function* () {
         const opts = yield* shadowInput();
         const shadow = yield* shadows

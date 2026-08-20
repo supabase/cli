@@ -107,6 +107,8 @@ function setup(
 ) {
   const out = mockOutput({ interactive: false });
   let shadowProvisions = 0;
+  let platformProvisions = 0;
+  let appliedVersions: ReadonlyArray<string> = [];
   let diffCalls = 0;
   const layer = Layer.mergeAll(
     out.layer,
@@ -168,7 +170,11 @@ function setup(
       MigrationRunner,
       MigrationRunner.of({
         listRemote: () => Effect.succeed(opts.history ?? []),
-        applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
+        applyPending: (_pool, files) =>
+          Effect.sync(() => {
+            appliedVersions = files.map((file) => file.version);
+            return { applied: [], skipped: [] };
+          }),
         markApplied: () => Effect.die("unused"),
       }),
     ),
@@ -190,6 +196,10 @@ function setup(
           shadowProvisions += 1;
           return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
         }),
+        provisionPlatform: Effect.sync(() => {
+          platformProvisions += 1;
+          return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
+        }),
         provisionMigrations: Effect.sync(() => {
           shadowProvisions += 1;
           return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
@@ -201,6 +211,12 @@ function setup(
     layer,
     get shadowProvisions() {
       return shadowProvisions;
+    },
+    get platformProvisions() {
+      return platformProvisions;
+    },
+    get appliedVersions() {
+      return appliedVersions;
     },
   };
 }
@@ -234,12 +250,16 @@ describe("pushMigrations", () => {
       declarations: false,
       localRunning: false,
       drift: true,
+      files: [pendingFile],
+      history: [{ version: pendingFile.version, name: pendingFile.name }],
     });
     return Effect.gen(function* () {
       const exit = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("supabase migrations pull --from linked");
-      expect(ctx.shadowProvisions).toBe(1);
+      expect(ctx.shadowProvisions).toBe(0);
+      expect(ctx.platformProvisions).toBe(1);
+      expect(ctx.appliedVersions).toEqual([pendingFile.version]);
     });
   });
 
@@ -285,7 +305,8 @@ describe("pushMigrations", () => {
     return Effect.gen(function* () {
       const result = yield* pushMigrations(pushFlags).pipe(Effect.provide(ctx.layer));
       expect(result.mutatedDatabase).toBe(false);
-      expect(ctx.shadowProvisions).toBe(3);
+      expect(ctx.shadowProvisions).toBe(2);
+      expect(ctx.platformProvisions).toBe(1);
     });
   });
 
@@ -340,6 +361,7 @@ describe("pushMigrations", () => {
       );
       expect(result.mutatedDatabase).toBe(false);
       expect(ctx.shadowProvisions).toBe(0);
+      expect(ctx.platformProvisions).toBe(0);
     });
   });
 });

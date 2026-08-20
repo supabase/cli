@@ -42,6 +42,7 @@ function mockEngine(files: Array<{ name: string; sql: string }>) {
       diffPools: () => Effect.die("unused"),
       applyPlan: () => Effect.die("unused"),
       provisionShadow: Effect.die("unused"),
+      provisionPlatform: Effect.die("unused"),
       provisionMigrations: Effect.die("unused"),
     }),
   );

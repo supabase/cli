@@ -46,6 +46,7 @@ interface PgDeltaSchemaEngineShape {
     input: SchemaApplyPlanInput,
   ) => Effect.Effect<SchemaApplyOutcome, SchemaEngineError>;
   readonly provisionShadow: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;
+  readonly provisionPlatform: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;
   readonly provisionMigrations: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;
 }
 

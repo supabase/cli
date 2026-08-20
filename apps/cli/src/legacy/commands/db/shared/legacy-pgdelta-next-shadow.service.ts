@@ -10,6 +10,11 @@ export interface LegacyPgDeltaNextMigrationsShadow {
   readonly migrationsUrl: string;
 }
 
+/** Platform baseline with no project migrations and no declaration-prep drops. */
+export interface LegacyPgDeltaNextPlatformShadow {
+  readonly platformUrl: string;
+}
+
 /** The two live databases needed to plan declarative SQL with pg-delta next. */
 export interface LegacyPgDeltaNextPlanShadows extends LegacyPgDeltaNextMigrationsShadow {
   /** Independent platform baseline owned by `planSchemaFiles` while loading desired SQL. */
@@ -42,8 +47,16 @@ interface LegacyPgDeltaNextShadowShape {
     Scope.Scope
   >;
   /**
-   * Provisions only the declarative next-engine shadow (platform baseline, no
-   * project migrations). Removed when the current Effect scope closes.
+   * Platform baseline only: no project migrations, no pgjwt/pgcrypto/uuid-ossp
+   * drop. Shares the migrations cache key (`webhooks: config`). Removed when
+   * the current Effect scope closes.
+   */
+  readonly provisionPlatform: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<LegacyPgDeltaNextPlatformShadow, LegacyDeclarativeShadowDbError, Scope.Scope>;
+  /**
+   * Provisions only the declarative next-engine shadow (stripped platform
+   * baseline, no project migrations). Removed when the current Effect scope closes.
    */
   readonly provisionDeclarative: (
     opts: LegacyPgDeltaNextShadowInput,

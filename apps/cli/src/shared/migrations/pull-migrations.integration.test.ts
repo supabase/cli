@@ -115,6 +115,7 @@ function setup(opts: { changes?: boolean } = {}) {
           provisionShadow: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),
+          provisionPlatform: Effect.die("unused"),
           provisionMigrations: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),

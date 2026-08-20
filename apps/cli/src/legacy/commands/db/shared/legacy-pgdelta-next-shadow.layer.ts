@@ -46,6 +46,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import {
   LegacyPgDeltaNextShadow,
   type LegacyPgDeltaNextMigrationsShadow,
+  type LegacyPgDeltaNextPlatformShadow,
   type LegacyPgDeltaNextPlanShadows,
   type LegacyPgDeltaNextShadowInput,
 } from "./legacy-pgdelta-next-shadow.service.ts";
@@ -307,6 +308,17 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         } satisfies LegacyPgDeltaNextMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
+    const provisionPlatform = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.gen(function* () {
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
+        const setup = setupRunInput(input, handle);
+        yield* legacySetupShadowDatabase(input.spawner, setup, {}, handle);
+        return {
+          platformUrl: legacyToPostgresURL(setup.connConfig),
+        } satisfies LegacyPgDeltaNextPlatformShadow;
+      }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+
     const provisionDeclarative = (
       input: NativeShadowInput,
       opts: LegacyShadowCacheOpts,
@@ -347,6 +359,13 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
           return yield* provisionMigrations(input, cacheOpts(opts, "config"));
+        }).pipe(Effect.mapError(nextShadowError)),
+      provisionPlatform: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionPlatform(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionDeclarative: (opts) =>
         Effect.gen(function* () {

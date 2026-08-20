@@ -94,6 +94,7 @@ const engine = Layer.succeed(
     diffPools: () => Effect.succeed(planView(false)),
     applyPlan: () => Effect.die("unused"),
     provisionShadow: Effect.die("unused"),
+    provisionPlatform: Effect.die("unused"),
     provisionMigrations: Effect.die("unused"),
   }),
 );

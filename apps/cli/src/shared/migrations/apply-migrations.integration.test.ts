@@ -180,7 +180,8 @@ function setup(
             return Effect.succeed(planView(!match));
           },
           applyPlan: () => Effect.die("unused"),
-          provisionShadow: Effect.succeed({
+          provisionShadow: Effect.die("unused"),
+          provisionPlatform: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),
           provisionMigrations: Effect.die("unused"),

@@ -197,6 +197,7 @@ describe("diffMigrations", () => {
           diffPools: () => Effect.succeed(planView(true)),
           applyPlan: () => Effect.die("unused"),
           provisionShadow: Effect.die("unused"),
+          provisionPlatform: Effect.die("unused"),
           provisionMigrations: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),

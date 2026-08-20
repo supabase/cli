@@ -37,7 +37,7 @@ export const applyLocalPending = Effect.fn("migrations.applyLocalPending")(funct
   }
 
   const already = local.filter((file) => present.has(file.version));
-  const shadow = yield* engine.provisionShadow;
+  const shadow = yield* engine.provisionPlatform;
   const shadowPool = yield* acquireDatabasePool(shadow.url);
   if (already.length > 0) {
     yield* runner.applyPending(shadowPool, already);

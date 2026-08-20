@@ -80,7 +80,7 @@ export const pushMigrations = Effect.fn("migrations.push")(function* (input: Pus
           }
         }
 
-        const driftShadow = yield* engine.provisionShadow;
+        const driftShadow = yield* engine.provisionPlatform;
         const replayPool = yield* acquireDatabasePool(driftShadow.url);
         const replayed = localFiles.filter((file) => remoteVersions.has(file.version));
         yield* runner.applyPending(replayPool, replayed);
