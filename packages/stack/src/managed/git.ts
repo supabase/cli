@@ -1,12 +1,10 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Context, Duration, Effect, FileSystem, Layer, Schedule, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
-import { errorCode } from "./error-code.ts";
-import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
+import { failsOnlyWith, failsWith } from "./failure.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { ensureGitCheckoutLocation, readGitCheckoutLocation } from "./identity.ts";
 import { decodeGitCheckoutIdentity } from "./git-identity.ts";
@@ -774,92 +772,87 @@ const ensureConfigId = (
     return id;
   });
 
-const readCheckoutIdentity = async (
-  gitDirectory: string,
-): Promise<GitCheckoutIdentity | undefined> => {
-  try {
-    return decodeGitCheckoutIdentity(await readFile(gitCheckoutIdentityPath(gitDirectory), "utf8"));
-  } catch (error: unknown) {
-    if (errorCode(error) === "ENOENT") {
-      return undefined;
-    }
-    if (
-      error instanceof InvalidManagedIdentityError ||
-      error instanceof UnsupportedGitWorkspaceError
-    ) {
-      throw error;
-    }
-    throw new UnsupportedGitWorkspaceError({
-      path: gitCheckoutIdentityPath(gitDirectory),
-      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
-      workspaceCause: "metadata-inaccessible",
-    });
-  }
-};
-
-/**
- * Claiming a checkout stays one `await` chain, for the reason
- * `ensureOrdinaryWorkspaceIdentity` does: reading the marker, publishing the
- * claim, and re-reading the marker a losing claimant must adopt are a single
- * indivisible protocol, and an interruption between those steps would leave the
- * caller with a checkout identity no git directory agreed to.
- *
- * The git directory always exists by the time this runs — inspection found it —
- * so the marker needs no directory created for it.
- */
 interface CheckoutIdentityClaim {
   readonly checkoutId: string;
   /** Whether this call published the marker, rather than adopting a winner's. */
   readonly created: boolean;
 }
 
-const ensureCheckoutIdentity = async (
+const readCheckoutIdentity = (
+  gitDirectory: string,
+): Effect.Effect<
+  GitCheckoutIdentity | undefined,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const content = yield* fs.readFileString(gitCheckoutIdentityPath(gitDirectory)).pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed<string | undefined>(undefined)
+          : Effect.fail(
+              new UnsupportedGitWorkspaceError({
+                path: gitCheckoutIdentityPath(gitDirectory),
+                reason: `Git checkout identity is inaccessible (${error.message})`,
+                workspaceCause: "metadata-inaccessible",
+              }),
+            ),
+      ),
+    );
+    return content === undefined
+      ? undefined
+      : yield* Effect.try({
+          try: () => decodeGitCheckoutIdentity(content),
+          catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+        });
+  });
+
+const ensureCheckoutIdentity = (
   gitDirectory: string,
   idFactory: () => string,
-): Promise<CheckoutIdentityClaim> => {
-  const existing = await readCheckoutIdentity(gitDirectory);
-  if (existing !== undefined) {
-    return { checkoutId: existing.checkoutId, created: false };
-  }
+): Effect.Effect<
+  CheckoutIdentityClaim,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const existing = yield* readCheckoutIdentity(gitDirectory);
+    if (existing !== undefined) return { checkoutId: existing.checkoutId, created: false };
 
-  const identity: GitCheckoutIdentity = {
-    version: GIT_CHECKOUT_IDENTITY_VERSION,
-    checkoutId: createManagedUuid(idFactory, "checkoutId"),
-  };
-  let outcome: Awaited<ReturnType<typeof claimFileAtomically>>;
-  try {
-    outcome = await claimFileAtomically(
+    const identity: GitCheckoutIdentity = {
+      version: GIT_CHECKOUT_IDENTITY_VERSION,
+      checkoutId: createManagedUuid(idFactory, "checkoutId"),
+    };
+    const outcome = yield* claimFileAtomically(
       gitCheckoutIdentityPath(gitDirectory),
       `${JSON.stringify(identity, null, 2)}\n`,
-      {
-        mode: 0o600,
-      },
+      { mode: 0o600 },
+    ).pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Effect.fail(
+          new UnsupportedGitWorkspaceError({
+            path: gitCheckoutIdentityPath(gitDirectory),
+            reason: `Git checkout identity is inaccessible (${error.message})`,
+            workspaceCause: "metadata-inaccessible",
+          }),
+        ),
+      ),
     );
-  } catch (error: unknown) {
-    if (
-      error instanceof InvalidManagedIdentityError ||
-      error instanceof UnsupportedGitWorkspaceError
-    ) {
-      throw error;
+    if (outcome === "claimed") {
+      return { checkoutId: identity.checkoutId, created: true };
     }
-    throw new UnsupportedGitWorkspaceError({
-      path: gitCheckoutIdentityPath(gitDirectory),
-      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
-      workspaceCause: "metadata-inaccessible",
-    });
-  }
-  if (outcome === "claimed") {
-    return { checkoutId: identity.checkoutId, created: true };
-  }
 
-  const winner = await readCheckoutIdentity(gitDirectory);
-  if (winner === undefined) {
-    throw new InvalidManagedIdentityError({
-      message: "Checkout identity publication raced without a winning marker",
-    });
-  }
-  return { checkoutId: winner.checkoutId, created: false };
-};
+    const winner = yield* readCheckoutIdentity(gitDirectory);
+    if (winner === undefined) {
+      return yield* Effect.fail(
+        new InvalidManagedIdentityError({
+          message: "Checkout identity publication raced without a winning marker",
+        }),
+      );
+    }
+    return { checkoutId: winner.checkoutId, created: false };
+  });
 
 export interface EnsureGitCheckoutIdentityResult {
   readonly workspaceId: string;
@@ -902,7 +895,7 @@ export const ensureGitCheckoutIdentity = (
 ): Effect.Effect<
   EnsureGitCheckoutIdentityResult,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
@@ -912,10 +905,7 @@ export const ensureGitCheckoutIdentity = (
         "workspaceId",
         idFactory,
       );
-      const checkoutClaim = yield* Effect.tryPromise({
-        try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
-        catch: asRaised,
-      });
+      const checkoutClaim = yield* ensureCheckoutIdentity(inspection.gitDirectory, idFactory);
       yield* ensureGitCheckoutLocation(inspection.gitDirectory, inspection.workspaceRoot);
       return {
         workspaceId,

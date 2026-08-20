@@ -23,10 +23,6 @@ export const causeMessage = (cause: unknown): string => {
  * defect instead of widening a method's error channel to `unknown`.
  *
  * Both rethrowing handlers here are therefore for `Effect.try` only.
- * `Effect.tryPromise` calls its `catch` handler from inside the promise chain
- * the runtime is awaiting, so a handler that rethrows there escapes into that
- * chain instead of becoming a defect. An asynchronous call sorts its failures
- * after the fact instead, with {@link asRaised} and {@link failsOnlyWith}.
  *
  * The expected union must be named explicitly, because TypeScript infers a
  * single class from a variadic list of unrelated constructors instead of
@@ -63,10 +59,8 @@ export const failsWith =
  * inventing a protocol failure for them would hide what actually went wrong.
  *
  * The sorting happens after the effect fails rather than inside a `tryPromise`
- * `catch` handler: `Effect.try` turns a throwing handler into a defect, but a
- * `tryPromise` handler that throws does so inside the promise chain the runtime
- * is awaiting, where nothing is watching for it. Such a call therefore pairs a
- * handler that classifies nothing — see {@link asRaised} — with this recovery.
+ * `catch` handler: `Effect.try` turns a throwing handler into a defect. Effects
+ * that need this recovery classify their own failures before reaching it.
  */
 export const failsOnlyWith =
   <E>(failure: abstract new (...args: never[]) => E) =>
@@ -74,6 +68,3 @@ export const failsOnlyWith =
     Effect.catch(effect, (error) =>
       error instanceof failure ? Effect.fail(error) : Effect.die(error),
     );
-
-/** A `catch` handler that classifies nothing, so it can never throw. */
-export const asRaised = (error: unknown): unknown => error;

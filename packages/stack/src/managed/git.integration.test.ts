@@ -132,6 +132,15 @@ describe("managed Git workspace identity", () => {
       expect(new Set(identities.map((identity) => identity.checkoutId)).size).toBe(3);
       expect(first.checkoutKind).toBe("linked-worktree");
       expect(second.checkoutKind).toBe("linked-worktree");
+      const thirdPath = join(root, "third");
+      git(repository, "worktree", "add", "-q", thirdPath, "-b", "feature/third");
+      const third = yield* inspectCheckout(thirdPath);
+      const raced = yield* Effect.all(
+        [ensureGitCheckoutIdentity(third), ensureGitCheckoutIdentity(third)],
+        { concurrency: "unbounded" },
+      );
+      expect(new Set(raced.map((identity) => identity.checkoutId)).size).toBe(1);
+      expect(raced.filter((identity) => identity.checkoutIdentityCreated)).toHaveLength(1);
     }).pipe(Effect.provide(gitLayer)),
   );
 });

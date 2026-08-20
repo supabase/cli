@@ -968,11 +968,13 @@ const makeManager = (
               updatedAt,
             });
           }
-          yield* updateGitCheckoutLocationOwned(
-            inspection.gitDirectory,
-            revalidated.expectedPath,
-            revalidated.path,
-            repairAcquisition,
+          yield* provideDependencies(
+            updateGitCheckoutLocationOwned(
+              inspection.gitDirectory,
+              revalidated.expectedPath,
+              revalidated.path,
+              repairAcquisition,
+            ),
           );
           return yield* provideDependencies(discoverEnvironment(revalidated.path));
         }),
