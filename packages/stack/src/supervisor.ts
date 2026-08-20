@@ -766,9 +766,7 @@ export const supervisorLayer = (
       );
     }).pipe(
       Effect.onExit(() =>
-        detached
-          ? Effect.void
-          : Effect.promise(() => terminateChildProcess(child)).pipe(Effect.ignore),
+        detached ? Effect.void : terminateChildProcess(child).pipe(Effect.ignore),
       ),
     );
   });

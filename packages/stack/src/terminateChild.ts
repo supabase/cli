@@ -1,3 +1,5 @@
+import { Duration, Effect } from "effect";
+
 interface ChildLike {
   readonly pid?: number;
   readonly exitCode?: number | null;
@@ -10,60 +12,59 @@ interface ChildLike {
 const hasAlreadyExited = (child: ChildLike): boolean =>
   child.exitCode != null || child.signalCode != null;
 
-export const terminateChildProcess = async (
+const terminateWithSignal = (
+  child: ChildLike,
+  signal: NodeJS.Signals,
+  timeoutMs: number,
+): Effect.Effect<boolean> =>
+  Effect.raceFirst(
+    Effect.callback<boolean>((resume) => {
+      let cleaned = false;
+      const onExit = () => {
+        cleanup();
+        resume(Effect.succeed(true));
+      };
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        child.off("exit", onExit);
+      };
+
+      child.once("exit", onExit);
+      if (hasAlreadyExited(child)) {
+        onExit();
+      } else {
+        try {
+          child.kill(signal);
+        } catch {
+          // A child may disappear between the exit check and kill. The timeout
+          // stage still bounds this wait, and the next stage rechecks state.
+        }
+      }
+
+      return Effect.sync(cleanup);
+    }),
+    Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as(false)),
+  );
+
+export const terminateChildProcess = (
   child: ChildLike,
   opts: {
     readonly timeoutMs?: number;
   } = {},
-): Promise<void> => {
-  if (child.pid == null) {
-    return;
-  }
-  // An already-exited child never fires another `exit` event, so the waits
-  // below would burn their full SIGTERM + SIGKILL timeouts listening for one.
-  if (hasAlreadyExited(child)) {
-    return;
-  }
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (child.pid == null || hasAlreadyExited(child)) {
+      return;
+    }
 
-  const timeoutMs = opts.timeoutMs ?? 1_000;
+    const timeoutMs = opts.timeoutMs ?? 1_000;
+    if (yield* terminateWithSignal(child, "SIGTERM", timeoutMs)) {
+      return;
+    }
+    if (hasAlreadyExited(child)) {
+      return;
+    }
 
-  const termExit = waitForChildExit(child, timeoutMs);
-  try {
-    child.kill("SIGTERM");
-  } catch {}
-
-  if (await termExit) {
-    return;
-  }
-  if (hasAlreadyExited(child)) {
-    return;
-  }
-
-  const killExit = waitForChildExit(child, timeoutMs);
-  try {
-    child.kill("SIGKILL");
-  } catch {}
-
-  await killExit;
-};
-
-function waitForChildExit(child: ChildLike, timeoutMs: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const onExit = () => {
-      cleanup();
-      resolve(true);
-    };
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      resolve(false);
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      child.off("exit", onExit);
-    };
-
-    child.once("exit", onExit);
+    yield* terminateWithSignal(child, "SIGKILL", timeoutMs);
   });
-}

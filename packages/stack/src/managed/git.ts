@@ -556,9 +556,20 @@ const runGitConfig = (
   args: ReadonlyArray<string>,
   tolerateUnset: boolean,
   file: string,
-): Promise<GitConfigResult> =>
-  new Promise((settle) => {
-    execFile("git", ["config", ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
+): Effect.Effect<GitConfigResult> =>
+  Effect.callback<GitConfigResult>((resume) => {
+    let settled = false;
+    let child: ReturnType<typeof execFile> | undefined;
+    const settle = (result: GitConfigResult) => {
+      if (settled) return;
+      settled = true;
+      resume(Effect.succeed(result));
+    };
+    const onComplete = (
+      error: (Error & { readonly code?: number | string }) | null,
+      stdout: string,
+      stderr: string,
+    ) => {
       if (error === null) {
         settle({ kind: "answered", stdout });
         return;
@@ -593,6 +604,17 @@ const runGitConfig = (
           status: typeof exitCode === "number" ? exitCode : undefined,
         });
       }
+    };
+    try {
+      child = execFile("git", ["config", ...args], { encoding: "utf8" }, onComplete);
+    } catch (cause) {
+      settle({ kind: "failed", detail: `git config could not be spawned (${String(cause)})` });
+    }
+    return Effect.sync(() => {
+      settled = true;
+      try {
+        child?.kill();
+      } catch {}
     });
   });
 
@@ -614,9 +636,8 @@ const gitConfig = (
   Effect.flatMap(
     Effect.catch(
       Effect.retry(
-        Effect.flatMap(
-          Effect.promise(() => runGitConfig(args, tolerateUnset, file)),
-          (result) => (result.kind === "retryable" ? Effect.fail(result) : Effect.succeed(result)),
+        Effect.flatMap(runGitConfig(args, tolerateUnset, file), (result) =>
+          result.kind === "retryable" ? Effect.fail(result) : Effect.succeed(result),
         ),
         {
           while: (error) => error.kind === "retryable",
