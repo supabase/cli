@@ -80,10 +80,7 @@ const runtimeBootLayer = (
     anonJwt: config.anonJwt,
     serviceRoleJwt: config.serviceRoleJwt,
   };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(stackLayer),
-  );
+  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(stackLayer));
 
   return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
 };

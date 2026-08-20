@@ -1,9 +1,12 @@
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import { Deferred, Effect, Layer, Option, Context, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
   HttpClient,
   HttpClientRequest,
+  HttpMethod,
+  HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -73,12 +76,10 @@ function addProxyHeaders(
   );
 }
 
-const STRIP_PROXY_RESPONSE_HEADERS = new Set([
-  "content-encoding",
-  "content-length",
-  "date",
-  "transfer-encoding",
-]);
+// The response body is passed through unmodified (including any
+// content-encoding compression), so only the framing headers — recomputed by
+// the gateway's own server — and the stale upstream date are dropped.
+const STRIP_PROXY_RESPONSE_HEADERS = new Set(["content-length", "date", "transfer-encoding"]);
 
 function sanitizeProxyResponseHeaders(headers: Headers.Headers): Headers.Headers {
   return Headers.fromInput(
@@ -90,21 +91,60 @@ function sanitizeProxyResponseHeaders(headers: Headers.Headers): Headers.Headers
   );
 }
 
-const CORS_HEADERS: ReadonlyArray<readonly [string, string]> = [
-  ["access-control-allow-origin", "*"],
-  ["access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"],
-  ["access-control-allow-headers", "Authorization, Content-Type, apikey, X-Client-Info"],
-  ["access-control-expose-headers", "Content-Range, Range, sb-error-code"],
-  ["access-control-max-age", "86400"],
-];
+// `transfer-encoding` is hop-by-hop: the outgoing transport frames the
+// forwarded body itself and re-adds chunked when no length is known.
+// `content-length` is deliberately preserved: storage enforces file size
+// limits from it, S3 SigV4 clients sign it, and S3 UploadPart rejects
+// requests without it — which is also why the proxy transport is node:http
+// rather than fetch (fetch cannot send a length-framed stream and silently
+// converts uploads to chunked). Exported for unit tests.
+export function sanitizeProxyRequestHeaders(headers: Headers.Headers): Headers.Headers {
+  return Headers.remove(headers, "transfer-encoding");
+}
 
-function addCorsHeaders(
-  response: HttpServerResponse.HttpServerResponse,
-): HttpServerResponse.HttpServerResponse {
-  return CORS_HEADERS.reduce(
-    (res, [name, value]) => HttpServerResponse.setHeader(res, name, value),
-    response,
-  );
+// The gateway answers preflights itself by echoing
+// Access-Control-Request-Headers, matching the hosted api-gateway
+// (customer-router options handler) and the legacy Kong gateway, so new
+// client headers never need an allowlist update here. The method list and
+// max-age mirror the hosted values. Expose-headers is deliberately not set:
+// hosted never sets it either — backends own what they expose (PostgREST
+// exposes Content-Range, storage exposes etag on S3 UploadPart), and adding
+// a permissive value here would make code work locally that fails in
+// production.
+const corsMiddleware = HttpMiddleware.cors({
+  allowedMethods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS", "TRACE", "CONNECT"],
+  maxAge: 3600,
+});
+
+// HTTP/1.1 requests carry a body only when framed by one of these headers
+// (RFC 9112 §6.3, where transfer-encoding takes precedence). Streaming a
+// nonexistent body upstream fails with a transport error, so bodyless
+// requests must forward HttpBody.empty instead. Exported for unit tests.
+export function hasRequestBody(headers: Headers.Headers): boolean {
+  if (headers["transfer-encoding"] !== undefined) {
+    return true;
+  }
+  const contentLength = headers["content-length"];
+  if (contentLength === undefined) {
+    return false;
+  }
+  // Bodyless only when every (possibly duplicated) content-length value is
+  // zero — "0", "00", or a merged duplicate like "0, 0". Anything else,
+  // including malformed values, errs toward forwarding a body rather than
+  // silently dropping one.
+  return !/^0+(\s*,\s*0+)*$/.test(contentLength.trim());
+}
+
+// Cold-start retries must replay the request body, so replayable bodies are
+// buffered up to this size. Larger and unsized (chunked) bodies stream
+// through instead — a partially consumed stream cannot be re-sent — and skip
+// the retry.
+const COLD_START_REPLAY_MAX_BYTES = 1024 * 1024;
+
+// Exported for unit tests.
+export function isReplayableBodySize(headers: Headers.Headers): boolean {
+  const contentLength = Number(headers["content-length"]);
+  return Number.isFinite(contentLength) && contentLength <= COLD_START_REPLAY_MAX_BYTES;
 }
 
 // Edge Functions cold-boot lazily: the first request to a function makes the
@@ -170,14 +210,21 @@ function makeProxyHandler(
         outHeaders = Headers.set(outHeaders, name, value);
       }
 
+      outHeaders = sanitizeProxyRequestHeaders(outHeaders);
+
       const backendUrl = `http://127.0.0.1:${opts.backendPort}${backendPath}`;
-      const noBodyMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
-      const contentType = Option.getOrUndefined(Headers.get(req.headers, "content-type"));
+      const contentType = req.headers["content-type"];
 
       let body: HttpBody.HttpBody;
-      if (noBodyMethods.has(req.method)) {
+      let replayable = true;
+      if (!HttpMethod.hasBody(req.method) || !hasRequestBody(req.headers)) {
         body = HttpBody.empty;
-      } else if (opts.retryColdStart === true) {
+        // Normalize the forwarded framing: the inbound content-length may be
+        // absent or non-canonical (a merged duplicate like "0, 0").
+        outHeaders = HttpMethod.hasBody(req.method)
+          ? Headers.set(outHeaders, "content-length", "0")
+          : Headers.remove(outHeaders, "content-length");
+      } else if (opts.retryColdStart === true && isReplayableBodySize(req.headers)) {
         // Buffer the body so the request can be safely re-sent if we retry.
         const buffered = yield* Effect.result(req.arrayBuffer);
         if (Result.isFailure(buffered)) {
@@ -185,9 +232,15 @@ function makeProxyHandler(
             status: 502,
           });
         }
-        body = HttpBody.uint8Array(new Uint8Array(buffered.success), contentType);
+        const bytes = new Uint8Array(buffered.success);
+        body = HttpBody.uint8Array(bytes, contentType);
+        outHeaders = Headers.set(outHeaders, "content-length", String(bytes.byteLength));
       } else {
+        // Stream the body through with its original content-length framing
+        // preserved: storage derives file-size enforcement from it and S3
+        // SigV4 clients sign it, so it must reach the backend byte-exact.
         body = HttpBody.stream(req.stream, contentType);
+        replayable = false;
       }
 
       const outReq = HttpClientRequest.make(req.method)(backendUrl, {
@@ -196,7 +249,7 @@ function makeProxyHandler(
       });
 
       const request = client.execute(outReq);
-      const outRes = yield* opts.retryColdStart === true
+      const outRes = yield* opts.retryColdStart === true && replayable
         ? Effect.retry(request, {
             while: (error) => error.reason._tag === "TransportError",
             schedule: COLD_START_RETRY_SCHEDULE,
@@ -210,8 +263,12 @@ function makeProxyHandler(
     }).pipe(
       Effect.catchTag("HttpClientError", (error) =>
         Effect.succeed(
+          // The request body may have been partially consumed when the
+          // upstream failed, so the connection cannot be reused for another
+          // request — tell the client to close it.
           HttpServerResponse.text(`Bad gateway: ${error.message}`, {
             status: 502,
+            headers: { connection: "close" },
           }),
         ),
       ),
@@ -226,13 +283,14 @@ export class ApiProxy extends Context.Service<
     readonly awaitTerminalFailure: Effect.Effect<void>;
   }
 >()("local/ApiProxy") {
+  // The proxy owns its outgoing transport: it must forward length-framed
+  // streams byte-exact (fetch-based clients strip content-length and convert
+  // every streamed body to chunked, which breaks storage size enforcement and
+  // S3 signature verification), so it always uses the node:http client — Bun
+  // serves it through its node:http compatibility layer.
   static layer = (
     config: ProxyConfig,
-  ): Layer.Layer<
-    ApiProxy,
-    never,
-    HttpServer.HttpServer | HttpClient.HttpClient | StackServiceActivator
-  > =>
+  ): Layer.Layer<ApiProxy, never, HttpServer.HttpServer | StackServiceActivator> =>
     Layer.effect(ApiProxy)(
       Effect.gen(function* () {
         const server = yield* HttpServer.HttpServer;
@@ -409,15 +467,16 @@ export class ApiProxy extends Context.Service<
 
         const httpEffect = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
 
+        // Edge Functions own their CORS, preflights included: the hosted
+        // gateway forwards OPTIONS on functions routes to the user's function
+        // (function templates answer OPTIONS themselves), so the local
+        // gateway must not intercept them.
+        const corsApp = corsMiddleware(httpEffect);
         const appEffect = Effect.gen(function* () {
           const req = yield* HttpServerRequest.HttpServerRequest;
-
-          if (req.method === "OPTIONS") {
-            return addCorsHeaders(HttpServerResponse.empty({ status: 204 }));
-          }
-
-          const response = yield* httpEffect;
-          return addCorsHeaders(response);
+          const isFunctionsRoute =
+            req.url === "/functions/v1" || req.url.startsWith("/functions/v1/");
+          return yield* isFunctionsRoute ? httpEffect : corsApp;
         });
 
         yield* Effect.forkScoped(server.serve(appEffect));
@@ -427,5 +486,5 @@ export class ApiProxy extends Context.Service<
           awaitTerminalFailure: Deferred.await(terminalFailure),
         };
       }),
-    );
+    ).pipe(Layer.provide(NodeHttpClient.layerNodeHttp));
 }
