@@ -430,11 +430,11 @@ const claimedPorts = (
       let inspection = yield* inspectClaim(path);
       if (inspection === undefined || inspection.snapshot.info.type !== "File") continue;
       while (inspection.stale) {
-        const boundExit = yield* Effect.exit(Effect.interruptible(bindPort(port)));
-        if (boundExit._tag === "Failure") break;
-        const removed = yield* Effect.ensuring(
-          removeStaleClaim(path, inspection.snapshot),
-          closeServer(boundExit.value.server),
+        const expected = inspection.snapshot;
+        const removed = yield* Effect.acquireUseRelease(
+          Effect.interruptible(bindPort(port)),
+          () => Effect.interruptible(removeStaleClaim(path, expected)),
+          ({ server }) => closeServer(server),
         );
         if (removed) break;
         inspection = yield* inspectClaim(path);

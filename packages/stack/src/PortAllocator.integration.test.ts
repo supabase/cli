@@ -472,38 +472,76 @@ describe("selected-field port allocation", () => {
   }, 30_000);
 
   it("releases partial reservations when a selected set fails", async () => {
-    const firstPort = 25_973;
-    const failed = await run(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const occupied = yield* occupyFreePort();
-          return yield* reservePortSet([
-            { field: "apiPort", selection: { kind: "exact", port: firstPort } },
-            { field: "dbPort", selection: { kind: "exact", port: occupied.port } },
-          ]).pipe(Effect.exit);
+    const claimNamespace = mkdtempSync(resolve(tmpdir(), "supabase-stack-port-claims-test-"));
+    let firstPort: number | undefined;
+    const options = {
+      claimRoot: claimNamespace,
+      onBound: (_field: PortReservationRequest["field"], bound: { readonly port: number }) =>
+        Effect.sync(() => {
+          firstPort = bound.port;
         }),
-      ),
-    );
-    expect(failed._tag).toBe("Failure");
+    };
 
-    const available = await run(
-      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: firstPort } }]),
-    );
-    expect(available.apiPort).toBe(firstPort);
+    try {
+      const failed = await run(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const occupied = yield* occupyFreePort();
+            return yield* reservePortSet(
+              [
+                { field: "apiPort", selection: { kind: "automatic" } },
+                { field: "dbPort", selection: { kind: "exact", port: occupied.port } },
+              ],
+              options,
+            ).pipe(Effect.exit);
+          }),
+        ),
+      );
+      expect(failed._tag).toBe("Failure");
+      expect(firstPort).toBeGreaterThan(0);
+
+      const available = await run(
+        allocatePortSet(
+          [{ field: "apiPort", selection: { kind: "exact", port: firstPort! } }],
+          options,
+        ),
+      );
+      expect(available.apiPort).toBe(firstPort);
+    } finally {
+      rmSync(claimNamespace, { recursive: true, force: true });
+    }
   });
 
   it("releases a bound port when interrupted during lease registration", async () => {
-    const port = 25_974;
-    const interrupted = await run(
-      reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }], {
-        onBound: () => Effect.interrupt,
-      }).pipe(Effect.exit),
-    );
-    expect(interrupted._tag).toBe("Failure");
+    const claimNamespace = mkdtempSync(resolve(tmpdir(), "supabase-stack-port-claims-test-"));
+    let interruptedPort: number | undefined;
+    const options = {
+      claimRoot: claimNamespace,
+      onBound: (_field: PortReservationRequest["field"], bound: { readonly port: number }) =>
+        Effect.gen(function* () {
+          interruptedPort = bound.port;
+          yield* Effect.interrupt;
+        }),
+    };
 
-    const rebound = await run(
-      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]),
-    );
-    expect(rebound.apiPort).toBe(port);
+    try {
+      const interrupted = await run(
+        reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }], options).pipe(
+          Effect.exit,
+        ),
+      );
+      expect(interrupted._tag).toBe("Failure");
+      expect(interruptedPort).toBeGreaterThan(0);
+
+      const rebound = await run(
+        allocatePortSet(
+          [{ field: "apiPort", selection: { kind: "exact", port: interruptedPort! } }],
+          options,
+        ),
+      );
+      expect(rebound.apiPort).toBe(interruptedPort);
+    } finally {
+      rmSync(claimNamespace, { recursive: true, force: true });
+    }
   });
 });
