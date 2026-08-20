@@ -1,10 +1,12 @@
 # Go CLI Divergences
 
-Ledger of deliberate TypeScript divergences from the old Go CLI (pre-`7b469f5b3`) on the legacy
-shell: TS-only commands, flags, and behavior with no Go counterpart. When you add a TS-only flag or
-a deliberate behavioral change to an already-ported legacy command, add an entry here in the same
-change. This document exists to answer support and migration questions about why the TS CLI does
-something the old Go CLI didn't — it is not a compatibility promise.
+**Frozen historical ledger** of deliberate TypeScript divergences from the old Go CLI
+(pre-`7b469f5b3`) on the legacy shell: TS-only commands, flags, and behavior with no Go
+counterpart. The TypeScript CLI is now the source of truth, so this ledger no longer accumulates
+entries — new flags, commands, and behavioral changes are simply new CLI behavior, documented
+through help text, tests, and each command's `SIDE_EFFECTS.md`. This document exists to answer
+support and migration questions about why the TS CLI does something the old Go CLI didn't — it is
+not a compatibility promise.
 
 ## TS-only Commands
 
