@@ -64,8 +64,10 @@ Key references:
 Write new runtime code Effect-native from the start; do not build a sync or Promise-based core and wrap it in Effect afterwards. Retrofitting Effect onto a Promise core is expensive and error-prone: it resurfaces as blocking waits where a `Schedule` belongs, interruption gaps around resource acquisition, and untyped failures leaking through `Effect.tryPromise`.
 
 - Model failures as `Data.TaggedError` classes with typed error channels, dependencies as services provided through `Layer`, retries/polling as `Schedule`s, and resource lifecycles with scopes and interruption-safe masks — never `Atomics.wait`, ad-hoc `setTimeout` loops, or manual try/finally resource juggling in core code.
-- Expose Promise-based facades only at the outermost package edge (public entrypoints for non-Effect consumers), acquired asynchronously — never inside the core.
-- A small leaf primitive with no Effect semantics of its own (a pure function, a single-syscall fs helper) may stay plain async and be wrapped at its call boundary; everything with failure modes, retries, resources, or concurrency belongs in Effect.
+- Expose Promise-based facades only at the outermost package edge for non-Effect consumers. Do not use `async` functions, `new Promise`, Promise chains, Promise-based recursion, or `Effect.runPromise` inside the runtime core.
+- A Promise in any other production location requires a documented, concrete reason why the operation cannot be expressed with Effect. Convenience, familiarity, or avoiding an Effect service is not a valid reason.
+- Use `Effect.tryPromise` only at an unavoidable foreign Promise API boundary. Use its Effect-provided `AbortSignal` when the API supports cancellation, map failures into typed errors, and keep the Promise contained to that leaf boundary.
+- Prefer Effect services for filesystem, process, network, timing, retry, concurrency, and resource-lifecycle work. A small synchronous leaf operation may remain a plain function when it has no Effect semantics; it must not become an asynchronous Promise core.
 
 ## Code Quality
 
