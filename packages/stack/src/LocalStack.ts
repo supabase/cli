@@ -69,6 +69,9 @@ type LifecyclePhase = "idle" | "starting" | "running" | "stopping" | "stopped" |
 
 type StackService = typeof Stack.Service;
 
+const READINESS_DIAGNOSTIC_LOG_LIMIT = 20;
+const READINESS_DIAGNOSTIC_LINE_LIMIT = 512;
+
 /** Private signal used by the Promise adapter to close its enclosing managed runtime. */
 export class LocalStackLifecycle extends Context.Service<
   LocalStackLifecycle,
@@ -764,12 +767,60 @@ export const localStackLayer = (
           }),
         );
       };
+      const readinessErrorWithDiagnostics = (
+        error: StackReadinessError,
+      ): Effect.Effect<StackReadinessError> =>
+        Effect.gen(function* () {
+          if (runtimeState === undefined) return error;
+
+          const [states, logs] = yield* Effect.all([
+            runtimeState.orchestrator.getAllStates(),
+            logBuffer.historyAll(READINESS_DIAGNOSTIC_LOG_LIMIT),
+          ]);
+          const nonReadyStates = states.filter(
+            (state) =>
+              state.status !== "Healthy" && !(state.status === "Stopped" && state.exitCode === 0),
+          );
+          const stateDetail =
+            nonReadyStates.length === 0
+              ? "none"
+              : nonReadyStates
+                  .map((state) => {
+                    const errorDetail =
+                      state.error === null
+                        ? ""
+                        : `, error=${state.error.slice(0, READINESS_DIAGNOSTIC_LINE_LIMIT)}`;
+                    return `${state.name}: ${state.status} (desired=${state.desired}, restarts=${state.restartCount}${errorDetail})`;
+                  })
+                  .join("; ");
+          const logDetail =
+            logs.length === 0
+              ? "none"
+              : logs
+                  .map(
+                    (entry) =>
+                      `[${entry.service}/${entry.stream}] ${entry.line.slice(0, READINESS_DIAGNOSTIC_LINE_LIMIT)}`,
+                  )
+                  .join("\n");
+
+          return new StackReadinessError({
+            target: error.target,
+            timeoutMs: error.timeoutMs,
+            detail: `${error.detail}\nNon-ready services: ${stateDetail}\nRecent logs:\n${logDetail}`,
+          });
+        }).pipe(Effect.catchCause(() => Effect.succeed(error)));
       const cleanupOnReadinessFailure = <A, E, R>(
         effect: Effect.Effect<A, E | StackReadinessError, R>,
       ): Effect.Effect<A, E | StackReadinessError, R> =>
         effect.pipe(
-          Effect.catchTag("StackReadinessError", (error) =>
-            disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
+          Effect.catchIf(
+            (error): error is StackReadinessError => error instanceof StackReadinessError,
+            (error) =>
+              readinessErrorWithDiagnostics(error).pipe(
+                Effect.flatMap((diagnosticError) =>
+                  disposeOnce().pipe(Effect.andThen(Effect.fail(diagnosticError))),
+                ),
+              ),
           ),
         );
       yield* Effect.addFinalizer(disposeOnce);

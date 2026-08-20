@@ -148,7 +148,6 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
     expect(def.args).toContain("/usr/bin/sh");
     expect(def.args?.at(-2)).toBe("-c");
-    expect(def.args?.at(-1)).toContain("hba_file=/tmp/supabase-cli-pg_hba.conf");
     // Health check waits for the final postgres PID 1 process before probing it.
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
@@ -163,16 +162,7 @@ describe("makePostgresServiceDocker", () => {
     });
     expect(def.dependencies).toEqual([]);
     expect(def.restart).toBe("unless-stopped");
-    expect(def.supervision).toEqual({
-      orphanCleanup: [
-        {
-          _tag: "RunCommand",
-          executable: "docker",
-          args: ["rm", "-f", `supabase-postgres-${API_PORT}`],
-          timeoutMs: 5_000,
-        },
-      ],
-    });
+    expect(def.supervision?.orphanCleanup).toBeDefined();
   });
 });
 

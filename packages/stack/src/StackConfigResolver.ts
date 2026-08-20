@@ -390,14 +390,21 @@ const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean =
   }
 };
 
+const preparationPolicyRank: Readonly<Record<ServicePolicy, number>> = {
+  off: 0,
+  lazy: 1,
+  eager: 2,
+};
+
 /**
  * Resolve policy declarations before roots, ports, or config-dependent effects
  * are acquired. This keeps unsupported policies a pure user/configuration error.
  */
 const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
   const policies: Record<ServiceName, ServicePolicy> = Record.map(SERVICE_CATALOG, () => "off");
+  const requestedPolicies = config.servicePolicies ?? {};
   for (const service of SERVICE_NAMES) {
-    const requested = config.servicePolicies?.[service];
+    const requested = requestedPolicies[service];
     if (service === "postgres" && requested !== undefined && requested !== "eager") {
       throw new StackBuildError({
         detail: "postgres supports only the eager service preparation policy",
@@ -426,6 +433,32 @@ const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
       });
     }
     policies[service] = policy;
+  }
+
+  let promoted = true;
+  while (promoted) {
+    promoted = false;
+    for (const service of SERVICE_NAMES) {
+      const policy = policies[service];
+      if (policy === "off") continue;
+      for (const dependency of serviceMetadata(service).activation.activates) {
+        const dependencyPolicy = policies[dependency];
+        if (
+          dependencyPolicy === "off" ||
+          preparationPolicyRank[dependencyPolicy] <= preparationPolicyRank[policy]
+        ) {
+          continue;
+        }
+        if (requestedPolicies[service] !== undefined) {
+          throw new StackBuildError({
+            detail: `${dependency} uses the ${dependencyPolicy} preparation policy but requires ${service} to be at least ${dependencyPolicy}`,
+            reason: "invalid_config",
+          });
+        }
+        policies[service] = dependencyPolicy;
+        promoted = true;
+      }
+    }
   }
   return policies;
 };

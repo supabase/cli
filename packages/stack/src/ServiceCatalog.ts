@@ -139,6 +139,8 @@ export const SERVICE_CATALOG = {
               "bin/pg_isready",
               "bin/psql",
               "share/supabase-cli/bin/supabase-postgres-init.sh",
+              "share/supabase-cli/config/pgsodium_getkey.sh",
+              "share/supabase-cli/migrations",
               "lib",
             ],
           }),

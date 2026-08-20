@@ -52,4 +52,27 @@ describe("resolved service preparation policies", () => {
       reason: "invalid_config",
     });
   });
+
+  it("rejects an eager service whose required public dependency is lazy before allocating ports", async () => {
+    let allocated = false;
+    await expect(
+      resolveConfig(
+        {
+          analytics: {},
+          vector: {},
+          servicePolicies: { analytics: "lazy", vector: "eager" },
+        },
+        {
+          portAllocator: () => {
+            allocated = true;
+            throw new Error("must not allocate");
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+    expect(allocated).toBe(false);
+  });
 });

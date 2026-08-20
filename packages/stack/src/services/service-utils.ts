@@ -2,7 +2,11 @@ import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compos
 import type { ServiceName } from "../ServiceName.ts";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
-import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
+import {
+  dockerServiceCleanup,
+  dockerServiceOrphanCleanup,
+  type DockerDataOwnershipCleanup,
+} from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
   readonly service: string;
@@ -24,11 +28,13 @@ interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly entrypoint?: string;
   readonly volumes?: ReadonlyArray<string>;
   readonly securityOptions?: ReadonlyArray<string>;
+  readonly user?: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
   readonly shutdown?: ServiceDef["shutdown"];
   readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
+  readonly cleanup?: DockerDataOwnershipCleanup;
 }
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
@@ -79,6 +85,7 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
     ...(opts.securityOptions ?? []).flatMap((option) => ["--security-opt", option]),
+    ...(opts.user === undefined ? [] : ["--user", opts.user]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),
     ...(opts.args ?? []),
     ...envArgs(opts.env ?? {}),
@@ -93,10 +100,10 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(opts.runtime, containerName),
+    cleanup: dockerServiceCleanup(opts.runtime, containerName, opts.cleanup),
     supervision: {
       orphanCleanup: [
-        ...dockerServiceOrphanCleanup(opts.runtime, containerName),
+        ...dockerServiceOrphanCleanup(opts.runtime, containerName, opts.cleanup),
         ...(opts.orphanCleanup ?? []),
       ],
     },

@@ -123,7 +123,15 @@ interface ClaimRecord {
   readonly token: string;
 }
 
-const CLAIM_ROOT = join(tmpdir(), "supabase-stack-port-claims");
+const claimNamespace = (): string => {
+  const uid = process.getuid?.();
+  if (uid !== undefined) return `uid-${uid}`;
+  const username = process.env.USER ?? process.env.USERNAME ?? "unknown";
+  const safeUsername = username.replace(/[^a-zA-Z0-9._-]/g, "_") || "unknown";
+  return `user-${safeUsername}`;
+};
+
+const CLAIM_ROOT = join(tmpdir(), `supabase-stack-port-claims-${claimNamespace()}`);
 const CLAIM_STALE_AFTER_MS = 30_000;
 
 const claimPath = (port: number): string => join(CLAIM_ROOT, `port-${port}`);

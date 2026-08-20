@@ -1488,35 +1488,85 @@ describe("Stack", () => {
       const spawnStarted = yield* Deferred.make<void>();
       const spawner = mockChildProcessSpawner({
         beforeSpawn: (record) =>
-          record.args.some((arg) =>
-            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
-          )
-            ? Deferred.succeed(spawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+          record.command === "/cache/auth"
+            ? Deferred.succeed(spawnStarted, undefined)
             : Effect.void,
       });
       let releasedAll = false;
       const config = {
         ...defaultConfig,
-        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "lazy", auth: "lazy" },
+        postgrest: false,
+        servicePolicies: { ...defaultConfig.servicePolicies, postgrest: "off", auth: "lazy" },
         readiness: { mode: "infinite" },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
+      const graph = Effect.runSync(
+        buildGraph([
+          {
+            name: "postgres",
+            command: "true",
+            restart: "no",
+          },
+          {
+            name: "auth",
+            command: "/cache/auth",
+            dependencies: [{ service: "postgres", condition: "started" }],
+            restart: "unless-stopped",
+            healthCheck: {
+              probe: {
+                _tag: "Http",
+                host: "127.0.0.1",
+                port: 1,
+                path: "/health",
+                scheme: "http",
+              },
+              periodSeconds: 10,
+            },
+            hooks: [{ on: "started", run: (log) => log("stderr", "auth startup failed") }],
+          },
+        ]),
+      );
+      const builderLayer = Layer.succeed(StackBuilder, {
+        build: () =>
+          Effect.succeed({
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([
+              ["postgres", { visibility: "public" as const }],
+              ["auth", { visibility: "public" as const }],
+            ]),
+          }),
+      });
       const lease: PortLease = {
         ...noopPortLease(config.ports),
         releaseAll: Effect.sync(() => {
           releasedAll = true;
         }),
       };
-      const { layer } = setupLayer(config, lease, spawner);
+      const resolver = mockBinaryResolver();
+      const layer = localStackLayer(config, lease).pipe(
+        Layer.provide(builderLayer),
+        Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+        Layer.provide(spawner.layer),
+        Layer.provide(NodeServices.layer),
+      );
 
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
         const activator = yield* StackServiceActivator;
         yield* stack.start();
+        const authLog = yield* stack
+          .subscribeLogs("auth")
+          .pipe(Stream.runHead, Effect.forkChild({ startImmediately: true }));
         const activation = yield* activator
           .activate("auth")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(spawnStarted);
+        const authLogEntry = yield* Fiber.join(authLog);
+        expect(authLogEntry).toMatchObject({
+          _tag: "Some",
+          value: { line: "auth startup failed", service: "auth" },
+        });
 
         const error = yield* stack
           .waitAllReady({ mode: "finite", timeoutMs: 25 })
@@ -1526,6 +1576,9 @@ describe("Stack", () => {
         if (error._tag === "StackReadinessError") {
           expect(error.target).toBe("stack");
           expect(error.timeoutMs).toBe(25);
+          expect(error.detail).toContain("Non-ready services: auth:");
+          expect(error.detail).toContain("Recent logs");
+          expect(error.detail).toContain("auth startup failed");
         }
         expect(releasedAll).toBe(true);
         yield* Fiber.interrupt(activation);
