@@ -8,15 +8,20 @@ export const renderSchemaResult = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   yield* output.intro(title);
-  if (output.format === "text") {
-    for (const line of result.message.split("\n")) {
-      yield* output.info(line);
-    }
-    if (result.nextActions.length > 0) {
-      yield* output.info(`Next: ${result.nextActions.join(" | ")}`);
-    }
-    yield* output.outro(result.status === "failed" ? "Failed." : result.message.split("\n")[0]!);
+  if (output.format !== "text") {
+    yield* output.success(result.message, result.data);
     return;
   }
-  yield* output.success(result.message, result.data);
+  const lines = result.message.split("\n").filter((line) => line.length > 0);
+  const next =
+    result.nextActions.length > 0 ? `Next: ${result.nextActions.join(" | ")}` : undefined;
+  if (result.status === "failed") {
+    for (const line of lines) yield* output.info(line);
+    if (next !== undefined) yield* output.info(next);
+    yield* output.outro("Failed.");
+    return;
+  }
+  for (const line of lines.slice(1)) yield* output.info(line);
+  if (next !== undefined) yield* output.info(next);
+  yield* output.outro(lines[0] ?? "Done.");
 });

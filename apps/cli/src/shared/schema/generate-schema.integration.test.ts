@@ -32,7 +32,10 @@ function emptyPlan(): Plan {
   };
 }
 
-function planView(changes: boolean): SchemaPlanView {
+function planView(
+  changes: boolean,
+  extras: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">> = {},
+): SchemaPlanView {
   const plan = emptyPlan();
   return {
     planId: plan.planId,
@@ -62,8 +65,9 @@ function planView(changes: boolean): SchemaPlanView {
     destructive: false,
     renameCandidates: [],
     acceptedRenames: [],
-    coverageBlocked: false,
-    renameBlocked: false,
+    coverageBlocked: extras.coverageBlocked ?? false,
+    renameBlocked: extras.renameBlocked ?? false,
+    diagnostics: extras.diagnostics ?? [],
     plan,
   };
 }
@@ -86,6 +90,7 @@ function setup(
     journal?: SchemaDraftJournal;
     write?: boolean;
     localMigrations?: "seeded" | "empty";
+    plan?: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">>;
   } = {},
 ) {
   const out = mockOutput({ interactive: false });
@@ -174,7 +179,7 @@ function setup(
             if (opts.write === true) {
               return planView(planCalls === 1);
             }
-            return planView(opts.changes === true);
+            return planView(opts.changes === true, opts.plan ?? {});
           }),
         diffPools: () => Effect.die("unused"),
         applyPlan: () => Effect.die("unused"),
@@ -290,6 +295,31 @@ describe("generateSchema", () => {
       }
       expect(ctx.wrote).toBe(false);
       expect(ctx.shadowProvisions).toBe(0);
+      expect(ctx.cleared).toBe(false);
+    });
+  });
+
+  it.live("names coverage objects on dry-run without failing closed", () => {
+    const ctx = setup({
+      plan: {
+        coverageBlocked: true,
+        diagnostics: [
+          {
+            code: "unmodeled_kind",
+            severity: "warning",
+            message:
+              '1 unmodeled "cast" object not managed by this engine (e.g. public.widget AS integer)',
+            context: { kind: "cast", count: 1, samples: ["public.widget AS integer"] },
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const result = yield* generateSchema({ dryRun: true, baseline: false }).pipe(
+        Effect.provide(ctx.layer),
+      );
+      expect(result.status).toBe("clean");
+      expect(result.message).toContain("1 unmodeled cast (public.widget AS integer)");
       expect(ctx.cleared).toBe(false);
     });
   });

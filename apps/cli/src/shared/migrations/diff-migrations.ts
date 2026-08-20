@@ -3,7 +3,7 @@ import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector } from "../database/database-target.ts";
 import { SchemaTargetRequiredError, SchemaWorkspaceIoError } from "../schema/schema-errors.ts";
-import { formatPlanSummary } from "../schema/schema-output.ts";
+import { formatPlanSummary, withCoverageMessage } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 
@@ -61,7 +61,7 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
         status: plan.changes ? "drift" : "clean",
         message: plan.changes
           ? `${summary}\nResult: preview only; nothing was changed`
-          : "Live database matches migration replay.",
+          : withCoverageMessage("Live database matches migration replay.", plan),
         data: {
           status: plan.changes ? "drift" : "clean",
           plan_id: plan.planId,

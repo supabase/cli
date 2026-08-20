@@ -1,3 +1,4 @@
+import type { Diagnostic } from "@supabase/pg-delta/core";
 import type { SqlFileClassification } from "@supabase/pg-delta/frontends";
 import type { HazardReport } from "@supabase/pg-delta/plan";
 import type { Plan } from "@supabase/pg-delta/plan";
@@ -48,6 +49,7 @@ export type SchemaPlanView = {
   readonly acceptedRenames: ReadonlyArray<{ readonly from: string; readonly to: string }>;
   readonly coverageBlocked: boolean;
   readonly renameBlocked: boolean;
+  readonly diagnostics: ReadonlyArray<Diagnostic>;
   readonly plan: Plan;
 };
 

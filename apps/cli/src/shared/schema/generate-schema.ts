@@ -8,7 +8,7 @@ import {
   SchemaDraftConflictError,
   SchemaEngineError,
 } from "./schema-errors.ts";
-import { formatPlanSummary } from "./schema-output.ts";
+import { formatPlanSummary, withCoverageMessage } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult } from "./schema-types.ts";
@@ -93,7 +93,7 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
             status: plan.changes ? "needs_approval" : "clean",
             message: plan.changes
               ? `${summary}\nResult: dry-run; nothing was changed`
-              : "Declarations already match migration replay.",
+              : withCoverageMessage("Declarations already match migration replay.", plan),
             data: {
               status: plan.changes ? "needs_approval" : "clean",
               plan_id: plan.planId,

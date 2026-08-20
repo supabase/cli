@@ -11,7 +11,7 @@ function SchemaCliError<Tag extends string>(tag: Tag) {
     readonly suggestion: string;
   }> {
     override get message() {
-      return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+      return this.detail;
     }
   };
 }
@@ -28,7 +28,7 @@ export class SchemaUnmanagedFilesError extends Data.TaggedError("SchemaUnmanaged
   readonly paths: ReadonlyArray<string>;
 }> {
   override get message() {
-    return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+    return this.detail;
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return { ...actionability.invalidInput, fingerprint_suffix: "conflict" };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
@@ -33,7 +33,10 @@ function emptyPlan(): Plan {
   };
 }
 
-function planView(changes: boolean): SchemaPlanView {
+function planView(
+  changes: boolean,
+  extras: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">> = {},
+): SchemaPlanView {
   const plan = emptyPlan();
   return {
     planId: plan.planId,
@@ -53,8 +56,9 @@ function planView(changes: boolean): SchemaPlanView {
     destructive: false,
     renameCandidates: [],
     acceptedRenames: [],
-    coverageBlocked: false,
-    renameBlocked: false,
+    coverageBlocked: extras.coverageBlocked ?? false,
+    renameBlocked: extras.renameBlocked ?? false,
+    diagnostics: extras.diagnostics ?? [],
     plan,
   };
 }
@@ -86,6 +90,7 @@ function setup(
     history?: ReadonlyArray<{ version: string; name: string }>;
     catalogMatch?: boolean;
     planChanges?: boolean;
+    plan?: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">>;
   } = {},
 ) {
   const out = mockOutput({ interactive: false });
@@ -176,7 +181,7 @@ function setup(
         PgDeltaSchemaEngine,
         PgDeltaSchemaEngine.of({
           exportSchema: () => Effect.die("unused"),
-          planFiles: () => Effect.succeed(planView(opts.planChanges === true)),
+          planFiles: () => Effect.succeed(planView(opts.planChanges === true, opts.plan ?? {})),
           diffPools: () => Effect.succeed(planView(opts.catalogMatch !== true)),
           applyPlan: () =>
             Effect.succeed({
@@ -242,6 +247,38 @@ describe("applySchema", () => {
       const exit = yield* applySchema(flags).pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(ctx.applyPending).toBe(0);
+    });
+  });
+
+  it.live("names the unmodeled object when planning is blocked", () => {
+    const ctx = setup({
+      history: [{ version: localFile.version, name: localFile.name }],
+      plan: {
+        coverageBlocked: true,
+        diagnostics: [
+          {
+            code: "unmodeled_kind",
+            severity: "warning",
+            message:
+              '1 unmodeled "cast" object not managed by this engine (e.g. public.widget AS integer)',
+            context: { kind: "cast", count: 1, samples: ["public.widget AS integer"] },
+          },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* applySchema(flags).pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(failure._tag).toBe("Some");
+      if (failure._tag === "Some") {
+        expect(failure.value).toMatchObject({
+          _tag: "SchemaPlanningBlockedError",
+          detail: expect.stringContaining("public.widget AS integer"),
+          suggestion: expect.stringContaining("--debug"),
+        });
+      }
+      expect(ctx.journaled).toBe(false);
     });
   });
 

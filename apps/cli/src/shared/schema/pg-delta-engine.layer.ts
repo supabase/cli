@@ -89,6 +89,7 @@ function toPlanView(
     coverageBlocked:
       hasBlockingDiagnostics(diagnostics, { strictCoverage: true }) || hazards.coverage.length > 0,
     renameBlocked,
+    diagnostics,
     plan: thePlan,
   };
 }

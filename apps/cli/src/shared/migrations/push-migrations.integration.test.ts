@@ -66,6 +66,7 @@ function planView(changes: boolean): SchemaPlanView {
     acceptedRenames: [],
     coverageBlocked: false,
     renameBlocked: false,
+    diagnostics: [],
     plan,
   };
 }
