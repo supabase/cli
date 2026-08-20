@@ -614,11 +614,8 @@ describe("LegacyPgBatchQuery.submit", () => {
 
     const error = batch.submit(connection);
 
-    expect(error?.message).toBe(
-      "connection to the database was lost before the batch could be sent",
-    );
-    expect(batch.submitted).toBe(false);
-    expect(batch.poisoned).toBe(false);
+    expect(error?.message).toBe("the connection's socket is no longer writable");
+    expect(batch.outcome).toBe("unsent");
     expect(frames).toEqual([]);
   });
 
@@ -641,20 +638,21 @@ describe("LegacyPgBatchQuery.submit", () => {
       "sync",
       "uncork",
     ]);
-    expect(batch.submitted).toBe(true);
+    expect(batch.outcome).toBe("submitted");
   });
 });
 
 describe("legacyBatchFailureError", () => {
   it("reports an unsent batch as a lost connection rather than a statement failure", () => {
     const error = legacyBatchFailureError(
-      new Error("connection to the database was lost before the batch could be sent"),
-      { completed: 0, submitted: false, poisoned: false },
+      new Error("the connection's socket is no longer writable"),
+      { completed: 0, outcome: "unsent" },
     );
 
     expect(error._tag).toBe("LegacyDbConnectError");
     expect(error.message).toBe(
-      "connection to the database was lost before the batch could be sent",
+      "connection to the database was lost before the batch could be sent: " +
+        "the connection's socket is no longer writable",
     );
     expect(error[ErrorActionabilityId]).toMatchObject({ error_category: "db_connection" });
   });
@@ -662,7 +660,7 @@ describe("legacyBatchFailureError", () => {
   it("keeps the driver's own reason when pg refused the batch before submit", () => {
     const error = legacyBatchFailureError(
       new Error("Client has encountered a connection error and is not queryable"),
-      { completed: 0, submitted: false, poisoned: false },
+      { completed: 0, outcome: "unsent" },
     );
 
     expect(error._tag).toBe("LegacyDbConnectError");
@@ -681,14 +679,16 @@ describe("legacyBatchFailureError", () => {
     );
   });
 
-  it("keeps a partially written batch on the statement path", () => {
+  it("keeps a partially written batch on the statement path, blaming statement 0", () => {
+    // A poisoned batch is corked, so the server acknowledged nothing and `completed`
+    // is always 0 — the failure can only be reported against the batch's first statement.
     const error = legacyBatchFailureError(new Error("serialization blew up"), {
-      completed: 1,
-      submitted: false,
-      poisoned: true,
+      completed: 0,
+      outcome: "poisoned",
     });
 
     expect(error._tag).toBe("LegacyDbExecError");
+    expect(error).toMatchObject({ message: "Error: serialization blew up", statementIndex: 0 });
   });
 
   it("keeps server-error mapping and the completed count for a statement failure", () => {
@@ -705,7 +705,7 @@ describe("legacyBatchFailureError", () => {
           operation: "execute",
         }),
       }),
-      { completed: 3, submitted: true, poisoned: false },
+      { completed: 3, outcome: "submitted" },
     );
 
     expect(error._tag).toBe("LegacyDbExecError");
@@ -721,23 +721,26 @@ describe("legacyBatchFailureError", () => {
 
 describe("legacyShouldDiscardBatchClient", () => {
   it("discards a client whose batch never reached the wire", () => {
-    expect(legacyShouldDiscardBatchClient({ submitted: false }, Exit.succeed(undefined))).toBe(
+    expect(legacyShouldDiscardBatchClient({ outcome: "unsent" }, Exit.succeed(undefined))).toBe(
       true,
     );
   });
 
   it("returns a client to the pool once its batch was written, error or not", () => {
-    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.succeed(undefined))).toBe(
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.succeed(undefined))).toBe(
       false,
     );
     expect(
-      legacyShouldDiscardBatchClient({ submitted: true }, Exit.fail(new Error("server said no"))),
+      legacyShouldDiscardBatchClient(
+        { outcome: "submitted" },
+        Exit.fail(new Error("server said no")),
+      ),
     ).toBe(false);
   });
 
   it("discards a client whose batch was interrupted or died mid-flight", () => {
-    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.interrupt(1))).toBe(true);
-    expect(legacyShouldDiscardBatchClient({ submitted: true }, Exit.die("boom"))).toBe(true);
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1))).toBe(true);
+    expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"))).toBe(true);
   });
 
   it("keeps a client that was checked out but never used", () => {

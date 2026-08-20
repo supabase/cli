@@ -205,6 +205,9 @@ export function legacyToExecError(error: unknown): LegacyDbExecError {
 const LEGACY_BATCH_CONNECTION_LOST =
   "connection to the database was lost before the batch could be sent";
 
+/** How far a batch got on the wire: nothing sent, a partial write, or fully written. */
+export type LegacyBatchOutcome = "unsent" | "poisoned" | "submitted";
+
 /**
  * pgconn's keepalive period (its default dialer, 5 minutes). Go applies that period to both
  * the idle time and the probe interval; Node can only set the idle time, leaving interval and
@@ -221,16 +224,11 @@ const LEGACY_PGCONN_KEEPALIVE_MILLIS = 300_000;
  */
 export function legacyBatchFailureError(
   error: Error,
-  batch:
-    | { readonly completed: number; readonly submitted: boolean; readonly poisoned: boolean }
-    | undefined,
+  batch: { readonly completed: number; readonly outcome: LegacyBatchOutcome } | undefined,
 ): LegacyDbExecError | LegacyDbConnectError {
-  if (batch === undefined || (!batch.submitted && !batch.poisoned)) {
+  if (batch === undefined || batch.outcome === "unsent") {
     return new LegacyDbConnectError({
-      message:
-        error.message === LEGACY_BATCH_CONNECTION_LOST
-          ? LEGACY_BATCH_CONNECTION_LOST
-          : `${LEGACY_BATCH_CONNECTION_LOST}: ${error.message}`,
+      message: `${LEGACY_BATCH_CONNECTION_LOST}: ${error.message}`,
     });
   }
   const mapped = legacyToExecError(error);
@@ -249,11 +247,11 @@ export function legacyBatchFailureError(
  * socket is already gone, so the next checkout would write into the same dead connection.
  */
 export function legacyShouldDiscardBatchClient(
-  batch: { readonly submitted: boolean } | undefined,
+  batch: { readonly outcome: LegacyBatchOutcome } | undefined,
   exit: Exit.Exit<unknown, unknown>,
 ): boolean {
   return (
-    batch?.submitted === false ||
+    (batch !== undefined && batch.outcome !== "submitted") ||
     (Exit.isFailure(exit) && (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)))
   );
 }
@@ -273,8 +271,7 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
   }>;
   callback: (error: Error | undefined) => void;
   completed = 0;
-  poisoned = false;
-  submitted = false;
+  outcome: LegacyBatchOutcome = "unsent";
 
   constructor(
     statements: ReadonlyArray<LegacyDbBatchStatement>,
@@ -289,7 +286,7 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
 
   submit(connection: Pg.Connection): Error | null {
     if (!connection.stream.writable) {
-      return new Error(LEGACY_BATCH_CONNECTION_LOST);
+      return new Error("the connection's socket is no longer writable");
     }
     let started = false;
     connection.stream.cork?.();
@@ -302,10 +299,10 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
         connection.execute({ portal: "" }, true);
       }
       connection.sync();
-      this.submitted = true;
+      this.outcome = "submitted";
       return null;
     } catch (error) {
-      this.poisoned = started;
+      this.outcome = started ? "poisoned" : "unsent";
       return error instanceof Error ? error : new Error(String(error));
     } finally {
       connection.stream.uncork?.();
