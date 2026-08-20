@@ -190,6 +190,7 @@ function setup(
           provisionShadow: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),
+          provisionMigrations: Effect.die("unused"),
         }),
       ),
     ),

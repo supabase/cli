@@ -2,10 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
 import { Effect, Layer } from "effect";
 import type { Pool } from "pg";
+import { SchemaEngineError } from "../schema/schema-errors.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import type { SchemaPlanView } from "../schema/schema-types.ts";
 import { findMatchingPendingPrefix } from "./matching-pending-prefix.ts";
-import { migrationRunnerLayer } from "./migration-runner.layer.ts";
+import type { MigrationFile } from "./migration-file.ts";
+import { MigrationRunner } from "./migration-runner.service.ts";
 
 function emptyPlan(): Plan {
   return {
@@ -72,67 +74,73 @@ const second = {
   transactional: true,
 };
 
-function historyPool(seed: ReadonlyArray<string>, opts: { readonly failSql?: string } = {}): Pool {
-  const versions = [...seed];
+function historyPool(opts: { readonly failSql?: string } = {}): Pool {
   return {
-    query: async (sql: string, params?: ReadonlyArray<unknown>) => {
+    query: async (sql: string) => {
       if (opts.failSql !== undefined && sql === opts.failSql) {
         throw new Error("relation does not exist");
-      }
-      if (sql.includes("INSERT INTO") && params !== undefined) {
-        versions.push(String(params[0]));
-        return { rows: [] };
-      }
-      if (sql.includes("SELECT version")) {
-        return { rows: versions.map((version) => ({ version, name: "" })) };
       }
       return { rows: [] };
     },
   } as Pool;
 }
 
-describe("findMatchingPendingPrefix", () => {
-  it.live("applies a later pending file without treating known history as remote-only", () => {
-    const engine = Layer.succeed(
-      PgDeltaSchemaEngine,
-      PgDeltaSchemaEngine.of({
-        exportSchema: () => Effect.die("unused"),
-        planFiles: () => Effect.die("unused"),
-        diffPools: () => Effect.succeed(planView(false)),
-        applyPlan: () => Effect.die("unused"),
-        provisionShadow: Effect.die("unused"),
+const engine = Layer.succeed(
+  PgDeltaSchemaEngine,
+  PgDeltaSchemaEngine.of({
+    exportSchema: () => Effect.die("unused"),
+    planFiles: () => Effect.die("unused"),
+    diffPools: () => Effect.succeed(planView(false)),
+    applyPlan: () => Effect.die("unused"),
+    provisionShadow: Effect.die("unused"),
+    provisionMigrations: Effect.die("unused"),
+  }),
+);
+
+const runner = Layer.succeed(
+  MigrationRunner,
+  MigrationRunner.of({
+    listRemote: () => Effect.succeed([]),
+    applyPending: (pool, files: ReadonlyArray<MigrationFile>) =>
+      Effect.gen(function* () {
+        for (const file of files) {
+          yield* Effect.tryPromise({
+            try: () => pool.query(file.content),
+            catch: (cause) =>
+              new SchemaEngineError({
+                detail: `Failed applying ${file.fileName}: ${cause instanceof Error ? cause.message : String(cause)}`,
+                suggestion: "Check the migration SQL and retry.",
+              }),
+          });
+        }
+        return { applied: files.map((file) => file.version), skipped: [] };
       }),
-    );
-    return Effect.gen(function* () {
+    markApplied: () => Effect.void,
+  }),
+);
+
+describe("findMatchingPendingPrefix", () => {
+  it.live("applies a later pending file without treating known history as remote-only", () =>
+    Effect.gen(function* () {
       const prefix = yield* findMatchingPendingPrefix(
-        historyPool([first.version]),
-        historyPool([]),
+        historyPool(),
+        historyPool(),
         [first],
         [second],
       );
       expect(prefix.map((file) => file.version)).toEqual([second.version]);
-    }).pipe(Effect.provide(Layer.mergeAll(migrationRunnerLayer, engine)));
-  });
+    }).pipe(Effect.provide(Layer.mergeAll(runner, engine))),
+  );
 
-  it.live("stops the prefix scan when a later file cannot replay", () => {
-    const engine = Layer.succeed(
-      PgDeltaSchemaEngine,
-      PgDeltaSchemaEngine.of({
-        exportSchema: () => Effect.die("unused"),
-        planFiles: () => Effect.die("unused"),
-        diffPools: () => Effect.succeed(planView(false)),
-        applyPlan: () => Effect.die("unused"),
-        provisionShadow: Effect.die("unused"),
-      }),
-    );
-    return Effect.gen(function* () {
+  it.live("stops the prefix scan when a later file cannot replay", () =>
+    Effect.gen(function* () {
       const prefix = yield* findMatchingPendingPrefix(
-        historyPool([], { failSql: second.content }),
-        historyPool([]),
+        historyPool({ failSql: second.content }),
+        historyPool(),
         [],
         [first, second],
       );
       expect(prefix.map((file) => file.version)).toEqual([first.version]);
-    }).pipe(Effect.provide(Layer.mergeAll(migrationRunnerLayer, engine)));
-  });
+    }).pipe(Effect.provide(Layer.mergeAll(runner, engine))),
+  );
 });

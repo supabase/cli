@@ -27,12 +27,9 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `.trim();
 
-export const renderNativePostgresInitScript = (opts: {
-  readonly postgresDir: string;
-  readonly dbPort: number;
-  readonly autoExposeNewTables: boolean;
-}): string => {
+export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
   const pgBinDir = `${opts.postgresDir}/bin`;
+  const pgLibDir = `${opts.postgresDir}/lib`;
   const migrationsDir = `${opts.postgresDir}/share/supabase-cli/migrations`;
 
   const psql = `${pgBinDir}/psql -h 127.0.0.1 -p ${opts.dbPort}`;
@@ -51,7 +48,7 @@ EOSQL
   // Replaces calling migrate.sh (which spawns ~57 separate psql processes) with
   // chained -f flags that run all SQL files in a single psql session, cutting
   // postgres-init time from ~5s to ~1s.
-  return `
+  const script = `
 export PATH="${pgBinDir}:$PATH"
 export PGPASSWORD=postgres
 db="${migrationsDir}"
@@ -131,14 +128,11 @@ END
 \\$\\$;
 "
 `;
-};
 
-export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
-  const pgLibDir = `${opts.postgresDir}/lib`;
   return {
     name: "postgres-init",
     command: "bash",
-    args: ["-c", renderNativePostgresInitScript(opts)],
+    args: ["-c", script],
     env: {
       DYLD_LIBRARY_PATH: pgLibDir,
       LD_LIBRARY_PATH: pgLibDir,

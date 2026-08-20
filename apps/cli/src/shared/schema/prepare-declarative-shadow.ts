@@ -30,7 +30,8 @@ const queryError = (sql: string, cause: unknown) =>
     detail: `Failed to prepare the isolated declaration shadow (${sql}): ${
       cause instanceof Error ? cause.message : String(cause)
     }`,
-    suggestion: "Retry the command. If it persists, delete the native shadow baseline cache.",
+    suggestion:
+      "Retry the command. If it persists, delete the Docker shadow baseline cache under ~/.supabase/cache/shadow-baseline.",
   });
 
 const readServerVersion = (rows: ReadonlyArray<unknown>): string => {

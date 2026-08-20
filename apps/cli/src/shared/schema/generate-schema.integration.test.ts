@@ -3,7 +3,6 @@ import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
-import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { generateSchema } from "./generate-schema.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
@@ -166,14 +165,6 @@ function setup(
       }),
     ),
     Layer.succeed(
-      MigrationRunner,
-      MigrationRunner.of({
-        listRemote: () => Effect.succeed([]),
-        applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
-        markApplied: () => Effect.die("unused"),
-      }),
-    ),
-    Layer.succeed(
       PgDeltaSchemaEngine,
       PgDeltaSchemaEngine.of({
         exportSchema: () => Effect.die("unused"),
@@ -188,6 +179,12 @@ function setup(
         diffPools: () => Effect.die("unused"),
         applyPlan: () => Effect.die("unused"),
         provisionShadow: Effect.sync(() => {
+          shadowProvisions += 1;
+          return {
+            url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+          };
+        }),
+        provisionMigrations: Effect.sync(() => {
           shadowProvisions += 1;
           return {
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",

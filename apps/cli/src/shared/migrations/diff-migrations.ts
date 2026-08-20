@@ -6,8 +6,6 @@ import { SchemaTargetRequiredError, SchemaWorkspaceIoError } from "../schema/sch
 import { formatPlanSummary } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
-import { MigrationRepository } from "./migration-repository.service.ts";
-import { MigrationRunner } from "./migration-runner.service.ts";
 
 export type DiffMigrationsInput = {
   readonly against?: string;
@@ -24,17 +22,13 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
 
   const targets = yield* DatabaseTargetResolver;
   const engine = yield* PgDeltaSchemaEngine;
-  const repository = yield* MigrationRepository;
-  const runner = yield* MigrationRunner;
   const live = yield* targets.resolve(parseTargetSelector(input.against));
-  const migrations = yield* repository.listLocal;
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const livePool = yield* acquireDatabasePool(live.connectionString);
-      const shadow = yield* engine.provisionShadow;
+      const shadow = yield* engine.provisionMigrations;
       const sourcePool = yield* acquireDatabasePool(shadow.url);
-      yield* runner.applyPending(sourcePool, migrations);
       const plan = yield* engine.diffPools({
         sourcePool,
         desiredPool: livePool,

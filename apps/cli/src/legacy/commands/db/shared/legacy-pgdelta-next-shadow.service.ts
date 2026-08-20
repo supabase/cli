@@ -42,6 +42,17 @@ interface LegacyPgDeltaNextShadowShape {
     Scope.Scope
   >;
   /**
+   * Provisions only the declarative next-engine shadow (platform baseline, no
+   * project migrations). Removed when the current Effect scope closes.
+   */
+  readonly provisionDeclarative: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<
+    { readonly declarativeUrl: string },
+    LegacyDeclarativeShadowDbError,
+    Scope.Scope
+  >;
+  /**
    * Provisions the independent migrated and declarative shadows needed by a
    * declarative plan. Concurrency is strategy-driven (see
    * `legacy-pgdelta-next-shadow.plan.ts`): warm snapshots restore in parallel,

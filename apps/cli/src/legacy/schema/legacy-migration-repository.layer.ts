@@ -1,15 +1,22 @@
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
-import { SchemaMigrationNameError, SchemaWorkspaceIoError } from "../schema/schema-errors.ts";
-import { MIGRATION_NO_TRANSACTION_DIRECTIVE } from "../schema/schema-paths.ts";
-import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
 import {
-  formatMigrationTimestamp,
-  migrationFileName,
-  parseMigrationContent,
-  parseMigrationFileName,
-  type MigrationFile,
-} from "./migration-file.ts";
-import { MigrationRepository } from "./migration-repository.service.ts";
+  SchemaMigrationNameError,
+  SchemaWorkspaceIoError,
+} from "../../shared/schema/schema-errors.ts";
+import { MIGRATION_NO_TRANSACTION_DIRECTIVE } from "../../shared/schema/schema-paths.ts";
+import { SchemaWorkspace } from "../../shared/schema/schema-workspace.service.ts";
+import type { MigrationFile } from "../../shared/migrations/migration-file.ts";
+import { MigrationRepository } from "../../shared/migrations/migration-repository.service.ts";
+import {
+  legacyFormatMigrationTimestamp,
+  legacyGetMigrationPath,
+  legacyParseMigrationContent,
+} from "../shared/legacy-migration-file.ts";
+import {
+  legacyListLocalMigrationPaths,
+  MIGRATE_FILE_PATTERN,
+} from "../shared/legacy-migration-history.ts";
 
 const NAME_PATTERN = /^[A-Za-z0-9_-]+$/u;
 const MAX_VERSION_COLLISION_ATTEMPTS = 100;
@@ -20,38 +27,39 @@ const ioError = (detail: string) =>
     suggestion: "Check permissions on supabase/migrations and retry.",
   });
 
-export const migrationRepositoryLayer = Layer.effect(
+export const legacyMigrationRepositoryLayer = Layer.effect(
   MigrationRepository,
   Effect.gen(function* () {
     const workspace = yield* SchemaWorkspace;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const output = yield* Output;
+    const workdir = path.dirname(path.dirname(workspace.migrationsDir));
 
     const readLocal = Effect.gen(function* () {
-      const exists = yield* fs
-        .exists(workspace.migrationsDir)
-        .pipe(Effect.orElseSucceed(() => false));
-      if (!exists) return [];
-      const names = yield* fs
-        .readDirectory(workspace.migrationsDir)
-        .pipe(Effect.mapError((error) => ioError(`Failed to read migrations: ${error.message}`)));
+      const paths = yield* legacyListLocalMigrationPaths(fs, path, workspace.migrationsDir).pipe(
+        Effect.provideService(Output, output),
+        Effect.mapError((error) => ioError(error.message)),
+      );
       const files: Array<MigrationFile> = [];
-      for (const fileName of names) {
-        const parsed = parseMigrationFileName(fileName);
-        if (parsed === undefined) continue;
-        const absolutePath = path.join(workspace.migrationsDir, fileName);
+      for (const absolutePath of paths) {
+        const fileName = path.basename(absolutePath);
+        const parsed = MIGRATE_FILE_PATTERN.exec(fileName);
+        const version = parsed?.[1];
+        const name = parsed?.[2];
+        if (version === undefined || name === undefined) continue;
         const content = yield* fs
           .readFileString(absolutePath)
           .pipe(
             Effect.mapError((error) => ioError(`Failed to read ${fileName}: ${error.message}`)),
           );
         files.push({
-          version: parsed.version,
-          name: parsed.name,
+          version,
+          name,
           fileName,
           absolutePath,
           content,
-          transactional: parseMigrationContent(content).transactional,
+          transactional: legacyParseMigrationContent(content).transactionMode === "transactional",
         });
       }
       return files.sort((left, right) => left.version.localeCompare(right.version));
@@ -69,20 +77,27 @@ export const migrationRepositoryLayer = Layer.effect(
       return Effect.void;
     };
 
+    const assertInsideMigrations = (absolutePath: string, name: string) => {
+      if (!absolutePath.startsWith(workspace.migrationsDir + path.sep)) {
+        return Effect.fail(
+          new SchemaMigrationNameError({
+            detail: `Migration name "${name}" escapes supabase/migrations.`,
+            suggestion: "Use a simple identifier without path separators.",
+          }),
+        );
+      }
+      return Effect.void;
+    };
+
     return MigrationRepository.of({
       listLocal: readLocal,
       createEmpty: (name, content = "") =>
         Effect.gen(function* () {
           yield* assertName(name);
-          const version = formatMigrationTimestamp(yield* Clock.currentTimeMillis);
-          const fileName = migrationFileName(version, name);
-          const absolutePath = path.join(workspace.migrationsDir, fileName);
-          if (!absolutePath.startsWith(workspace.migrationsDir + path.sep)) {
-            return yield* new SchemaMigrationNameError({
-              detail: `Migration name "${name}" escapes supabase/migrations.`,
-              suggestion: "Use a simple identifier without path separators.",
-            });
-          }
+          const version = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
+          const absolutePath = legacyGetMigrationPath(path, workdir, version, name);
+          const fileName = path.basename(absolutePath);
+          yield* assertInsideMigrations(absolutePath, name);
           yield* fs
             .makeDirectory(workspace.migrationsDir, { recursive: true })
             .pipe(Effect.mapError((error) => ioError(error.message)));
@@ -111,14 +126,14 @@ export const migrationRepositoryLayer = Layer.effect(
 
           const build = (baseMillis: number) =>
             input.files.map((file, index) => {
-              const version = formatMigrationTimestamp(baseMillis + index * 1000);
+              const version = legacyFormatMigrationTimestamp(baseMillis + index * 1000);
               const name = unitName(file.suffix);
-              const fileName = migrationFileName(version, name);
+              const absolutePath = legacyGetMigrationPath(path, workdir, version, name);
               return {
                 version,
                 name,
-                fileName,
-                absolutePath: path.join(workspace.migrationsDir, fileName),
+                fileName: path.basename(absolutePath),
+                absolutePath,
                 body: file.transactional
                   ? file.sql
                   : `${MIGRATION_NO_TRANSACTION_DIRECTIVE}\n${file.sql}`,
@@ -140,6 +155,7 @@ export const migrationRepositoryLayer = Layer.effect(
 
           const written: Array<MigrationFile> = [];
           for (const file of planned) {
+            yield* assertInsideMigrations(file.absolutePath, file.name);
             yield* fs.writeFileString(file.absolutePath, file.body).pipe(
               Effect.mapError((error) =>
                 ioError(`Failed to write ${file.fileName}: ${error.message}`),

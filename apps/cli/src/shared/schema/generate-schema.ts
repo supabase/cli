@@ -1,7 +1,6 @@
 import { Clock, Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
-import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { formatMigrationRepairCommand } from "../migrations/migration-repair-suggest.ts";
 import { digestVersions } from "./schema-digest.ts";
 import {
@@ -27,7 +26,6 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
   const state = yield* SchemaStateStore;
   const engine = yield* PgDeltaSchemaEngine;
   const migrations = yield* MigrationRepository;
-  const runner = yield* MigrationRunner;
 
   const declarations = yield* workspace.readDeclarationFiles;
   const localMigrations = yield* migrations.listLocal;
@@ -60,15 +58,13 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
           }
         }
 
-        const sourceShadow = yield* engine.provisionShadow;
+        const sourceShadow = input.baseline
+          ? yield* engine.provisionShadow
+          : yield* engine.provisionMigrations;
         const desiredShadow = yield* engine.provisionShadow;
 
         const sourcePool = yield* acquireDatabasePool(sourceShadow.url);
         const desiredPool = yield* acquireDatabasePool(desiredShadow.url);
-
-        if (!input.baseline) {
-          yield* runner.applyPending(sourcePool, localMigrations);
-        }
 
         const plan = yield* engine.planFiles({
           targetPool: sourcePool,
@@ -126,12 +122,10 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
         });
 
         const persistGenerated = Effect.gen(function* () {
-          const verifyShadow = yield* engine.provisionShadow;
+          const verifyShadow = yield* engine.provisionMigrations;
           const verifySource = yield* acquireDatabasePool(verifyShadow.url);
           const verifyDesired = yield* engine.provisionShadow;
           const verifyDesiredPool = yield* acquireDatabasePool(verifyDesired.url);
-          const allMigrations = yield* migrations.listLocal;
-          yield* runner.applyPending(verifySource, allMigrations);
           const verify = yield* engine.planFiles({
             targetPool: verifySource,
             shadowPool: verifyDesiredPool,

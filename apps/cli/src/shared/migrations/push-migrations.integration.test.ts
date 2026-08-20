@@ -189,6 +189,10 @@ function setup(
           shadowProvisions += 1;
           return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
         }),
+        provisionMigrations: Effect.sync(() => {
+          shadowProvisions += 1;
+          return { url: "postgresql://postgres:postgres@127.0.0.1:1/postgres" };
+        }),
       }),
     ),
   );

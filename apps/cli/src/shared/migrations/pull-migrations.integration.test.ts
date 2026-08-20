@@ -7,7 +7,6 @@ import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import type { SchemaPlanView } from "../schema/schema-types.ts";
 import { pullMigrations } from "./pull-migrations.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
-import { MigrationRunner } from "./migration-runner.service.ts";
 
 function emptyPlan(): Plan {
   return {
@@ -106,14 +105,6 @@ function setup(opts: { changes?: boolean } = {}) {
         }),
       ),
       Layer.succeed(
-        MigrationRunner,
-        MigrationRunner.of({
-          listRemote: () => Effect.succeed([]),
-          applyPending: () => Effect.succeed({ applied: [], skipped: [] }),
-          markApplied: () => Effect.die("unused"),
-        }),
-      ),
-      Layer.succeed(
         PgDeltaSchemaEngine,
         PgDeltaSchemaEngine.of({
           exportSchema: () => Effect.die("unused"),
@@ -121,6 +112,9 @@ function setup(opts: { changes?: boolean } = {}) {
           diffPools: () => Effect.succeed(planView(opts.changes === true)),
           applyPlan: () => Effect.die("unused"),
           provisionShadow: Effect.succeed({
+            url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+          }),
+          provisionMigrations: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),
         }),

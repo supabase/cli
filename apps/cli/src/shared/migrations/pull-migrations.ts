@@ -7,7 +7,6 @@ import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import { formatMigrationRepairCommand, repairFlagsForTarget } from "./migration-repair-suggest.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
-import { MigrationRunner } from "./migration-runner.service.ts";
 
 export type PullMigrationsInput = {
   readonly from?: string;
@@ -18,17 +17,14 @@ export const pullMigrations = Effect.fn("migrations.pull")(function* (input: Pul
   const targets = yield* DatabaseTargetResolver;
   const engine = yield* PgDeltaSchemaEngine;
   const repository = yield* MigrationRepository;
-  const runner = yield* MigrationRunner;
   const remote = yield* targets.resolve(parseTargetSelector(input.from ?? "linked"));
-  const migrations = yield* repository.listLocal;
   const name = input.name ?? "remote_schema";
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const remotePool = yield* acquireDatabasePool(remote.connectionString);
-      const shadow = yield* engine.provisionShadow;
+      const shadow = yield* engine.provisionMigrations;
       const sourcePool = yield* acquireDatabasePool(shadow.url);
-      yield* runner.applyPending(sourcePool, migrations);
       const plan = yield* engine.diffPools({
         sourcePool,
         desiredPool: remotePool,

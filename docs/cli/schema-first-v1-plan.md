@@ -13,8 +13,8 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 6. `schema generate --dry-run` previews generate. `migrations diff` replaces `db diff`.
 7. `schema pull` is database-authoritative regeneration (`--force` / `--output`). No merge.
 8. `--yes` answers ordinary prompts. Durable identity is `--yes` or matching `--project-ref` for linked targets, and `--allow-remote` for raw URLs. There is no `--allow-data-loss`. Local disposable `schema apply` auto-approves modeled hazards.
-9. New commands live at top level in the **legacy** (stable) CLI. The same verbs also stay on next (alpha). Go-parity `db` and singular `migration` stay on stable. Plural `migrations` is the schema-first group (it is no longer an alias of `migration`).
-10. `schema generate` / `apply` / `migrations diff|push|pull` plan against **isolated native Postgres clusters** with a cached platform baseline — not co-located `CREATE DATABASE` shadows. `planSchemaFiles` always uses `isolatedShadow: true`.
+9. New commands live at top level in the **legacy** (stable) CLI only. `next/` is going away and must not grow these verbs. Go-parity `db` and singular `migration` stay on stable. Plural `migrations` is the schema-first group (it is no longer an alias of `migration`).
+10. `schema generate` / `apply` / `migrations diff|push|pull` plan against **isolated Docker shadows** restored from the existing tar cache (`$SUPABASE_HOME/cache/shadow-baseline/shadow-baseline-<key>.tar`) — the same pool `#6223` shares with the main DB. Not native Postgres binaries, and not co-located `CREATE DATABASE` shadows. `planSchemaFiles` always uses `isolatedShadow: true` (separate cluster, provisioned as a Docker container).
 
 ## Open questions (resolved for V1)
 
@@ -28,25 +28,22 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 | 6 | Only a running local stack owned by this project is verified-disposable. Every remote/URL target is durable. No environment classification yet. |
 | 7 | Clone proof is not required. Generate verifies by planning `M → D` and checking convergence on a clean replay. Push live-verifies declarations-ahead (`M → D`) and remote drift unless `--skip-verify`. |
 | 8 | `migrations diff` supports `--file` / `-f` (preview-to-file, no apply). |
-| 9 | Isolated shadows are native Postgres (same binaries as `start`), snapshotted under `$SUPABASE_HOME/cache/native-shadow-baseline/`. Co-located shadows are not used on this path. |
+| 9 | Isolated shadows are Docker containers restored from `$SUPABASE_HOME/cache/shadow-baseline/`. The local target is this project's `supabase_db_<project_id>` container. Co-located shadows and native Postgres binaries are not used on this path. |
 
 ## Shell and ownership
 
 ```
-apps/cli/src/shared/schema/       engine adapter, workspace, journal, use cases, runtime
-apps/cli/src/shared/migrations/   repository, history, runner, use cases
+apps/cli/src/shared/schema/       engine adapter, workspace, journal, use cases
+apps/cli/src/shared/migrations/   repository/runner services, use cases
 apps/cli/src/shared/database/     target resolution, pool, mutation auth
+apps/cli/src/legacy/schema/       Docker shadows, Docker local target, linked connector, live repository/runner
 apps/cli/src/legacy/commands/schema/
 apps/cli/src/legacy/commands/migrations/
-apps/cli/src/next/commands/schema/      same verbs on alpha
-apps/cli/src/next/commands/migrations/
-apps/cli/src/next/commands/db/          compatibility aliases only
-apps/cli/src/next/commands/migration/   compatibility aliases only
 ```
 
 - `next/` must not import `legacy/`. `legacy/` must not import `next/`.
 - Handlers call one use case and render. Handlers must not import other handlers.
-- Use cases and schema runtime live in `shared/` so both shells can call them.
+- Use cases live in `shared/`. Live Docker/legacy helpers are provided from `legacy/schema/` layers (`shared/` cannot import `legacy/`).
 - pg-delta stays the compiler. The CLI owns paths, targets, prompts, locks, and output.
 
 ## Command surface (stable / legacy)
@@ -64,19 +61,7 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 | `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift unless `--skip-verify`. Drift errors prefill `migration repair` / `migrations pull`. |
 | `migrations pull` | R − M → files | Migration files; next action is `migration repair --status applied` for the written versions |
 
-### Aliases (next only, deprecation notice on stderr)
-
-| Alias | Target |
-| ----- | ------ |
-| `db diff` | `migrations diff` |
-| `db push` | `migrations push` |
-| `db pull` (default) | `migrations pull` |
-| `db pull --declarative` | `schema pull --from linked` |
-| `db schema declarative generate` | `schema pull` |
-| `db schema declarative sync` | `schema generate` (`--apply` also runs `schema apply`) |
-| `migration new` / `migrations` already | `migrations new` |
-| `migration list` | `migrations list` |
-| `migration up` | `migrations apply` |
+Go-parity `db` / singular `migration` commands are unchanged on stable. This prototype does not add `next/` aliases or deprecations.
 
 ## Safety
 
@@ -84,7 +69,7 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 - `--yes` never bypasses the target gate or live verify (unless `--skip-verify`).
 - Durable identity: interactive confirm-by-typing-ref; non-interactive `--yes` or matching `--project-ref`.
 - `DATABASE_URL` / `SUPABASE_DB_URL` (and `--db-url`) are unverifiable URL targets: no `projectRef`, mutations require `--allow-remote`. An env URL is enough even when the project is not linked. Unset those env vars to use the linked project connection.
-- Linked sockets (no env URL) come from the TypeScript linked resolver (`legacyResolveLinkedConn`) on the stable CLI. Next/alpha stays fail-closed unless an env URL + `--allow-remote` is supplied.
+- Linked sockets (no env URL) come from the TypeScript linked resolver (`legacyResolveLinkedConn`) on the stable CLI.
 - Raw URL targets: `--allow-remote` instead of ref assertion.
 - Local `schema apply`: auto-approve modeled hazards. Ambiguous rename / coverage gap / unknown metadata still fail closed.
 - `--skip-verify` skips push’s isolated-shadow declarations-ahead and remote-drift checks. Identity flags unchanged.
@@ -97,4 +82,5 @@ apps/cli/src/next/commands/migration/   compatibility aliases only
 - Semantic three-way merge
 - File watcher / TUI
 - Replacing Go-parity `db` / singular `migration` on stable
+- Same verbs on `next/`, native Postgres binaries, or a private native-shadow cache
 - Marketing "provable no-data-loss"

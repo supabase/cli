@@ -61,11 +61,10 @@ export const pushMigrations = Effect.fn("migrations.push")(function* (input: Pus
 
       if (!input.skipVerify) {
         if (declarations.length > 0) {
-          const sourceShadow = yield* engine.provisionShadow;
+          const sourceShadow = yield* engine.provisionMigrations;
           const desiredShadow = yield* engine.provisionShadow;
           const sourcePool = yield* acquireDatabasePool(sourceShadow.url);
           const desiredPool = yield* acquireDatabasePool(desiredShadow.url);
-          yield* runner.applyPending(sourcePool, localFiles);
           const ahead = yield* engine.planFiles({
             targetPool: sourcePool,
             shadowPool: desiredPool,

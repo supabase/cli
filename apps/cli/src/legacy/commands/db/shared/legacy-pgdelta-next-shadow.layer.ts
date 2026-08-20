@@ -338,6 +338,13 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const input = buildNativeInput(opts, built, port);
           return yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
+      provisionDeclarative: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionDeclarative(input, cacheOpts(opts, "disabled"));
+        }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
           const migrationsPort = yield* nextPort();

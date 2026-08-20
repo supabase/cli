@@ -1,17 +1,23 @@
-import { Effect, Layer, Option } from "effect";
-import { schemaRuntimeLayer } from "../../shared/schema/schema-runtime.layer.ts";
-import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { Effect, Layer, Path } from "effect";
+import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { pgDeltaSchemaEngineLayer } from "../../shared/schema/pg-delta-engine.layer.ts";
+import { schemaStateLayer } from "../../shared/schema/schema-state.layer.ts";
+import { schemaWorkspaceLayer } from "../../shared/schema/schema-workspace.layer.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { legacyNextCliConfigLayer } from "../config/legacy-next-cli-config.layer.ts";
+import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
 import { legacyDbConfigLayer } from "../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
-import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
+import { legacyDockerRunLayer } from "../shared/legacy-docker-run.layer.ts";
 import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
+import { legacyPgDeltaNextShadowLayer } from "../commands/db/shared/legacy-pgdelta-next-shadow.layer.ts";
+import { legacyDockerIsolatedShadowLayer } from "./legacy-docker-isolated-shadow.layer.ts";
 import { legacyDockerLocalDatabaseFallbackLayer } from "./legacy-docker-local-database.layer.ts";
 import { legacyLinkedRemoteConnectorLayer } from "./legacy-linked-remote-connector.layer.ts";
-import { legacySchemaProjectLinkStateLayer } from "./legacy-schema-project-link-state.layer.ts";
+import { legacyMigrationRepositoryLayer } from "./legacy-migration-repository.layer.ts";
+import { legacyMigrationRunnerLayer } from "./legacy-migration-runner.layer.ts";
+import { legacySchemaDatabaseTargetLayer } from "./legacy-schema-database-target.layer.ts";
 
 const legacyCliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -22,40 +28,52 @@ const legacySchemaDbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(httpClient),
+);
+
+const dockerShadows = legacyDockerIsolatedShadowLayer.pipe(
+  Layer.provide(nextShadow),
+  Layer.provide(legacyCliConfig),
+);
+
+const schemaEngine = pgDeltaSchemaEngineLayer.pipe(Layer.provide(dockerShadows));
+
 export const legacySchemaRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
   Layer.unwrap(
     Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
-      const runtimeInfo = yield* RuntimeInfo;
-      const debugLogger = yield* Effect.serviceOption(LegacyDebugLogger);
-      const runtime = Layer.succeed(
-        RuntimeInfo,
-        RuntimeInfo.of({
-          ...runtimeInfo,
-          cwd: config.workdir,
-        }),
-      );
-      return schemaRuntimeLayer(commandPath, {
-        runtimeInfo: runtime,
-        cliConfig: legacyNextCliConfigLayer.pipe(
-          Layer.provide(Layer.succeed(LegacyCliConfig, config)),
-          Layer.provide(runtime),
-          Layer.provide(
-            Option.match(debugLogger, {
-              onNone: () => Layer.empty,
-              onSome: (logger) => Layer.succeed(LegacyDebugLogger, logger),
-            }),
-          ),
-        ),
-        localDatabaseFallback: legacyDockerLocalDatabaseFallbackLayer.pipe(
-          Layer.provide(Layer.succeed(LegacyCliConfig, config)),
-        ),
-        projectLinkState: legacySchemaProjectLinkStateLayer.pipe(
-          Layer.provide(Layer.succeed(LegacyCliConfig, config)),
-        ),
-        linkedRemoteConnector: legacyLinkedRemoteConnectorLayer.pipe(
-          Layer.provide(legacySchemaDbConfig),
-        ),
+      const path = yield* Path.Path;
+      const workspace = schemaWorkspaceLayer({
+        projectRoot: config.workdir,
+        supabaseDir: path.join(config.workdir, "supabase"),
+        projectHomeDir: path.join(config.workdir, ".supabase"),
       });
+      const localDatabase = legacyDockerLocalDatabaseFallbackLayer.pipe(
+        Layer.provide(Layer.succeed(LegacyCliConfig, config)),
+      );
+      const linkedRemote = legacyLinkedRemoteConnectorLayer.pipe(
+        Layer.provide(legacySchemaDbConfig),
+      );
+      const targets = legacySchemaDatabaseTargetLayer.pipe(
+        Layer.provide(localDatabase),
+        Layer.provide(linkedRemote),
+        Layer.provide(Layer.succeed(LegacyCliConfig, config)),
+      );
+      return Layer.mergeAll(
+        workspace,
+        schemaStateLayer.pipe(Layer.provide(workspace)),
+        legacyMigrationRepositoryLayer.pipe(Layer.provide(workspace)),
+        legacyMigrationRunnerLayer,
+        schemaEngine,
+        targets,
+        linkedRemote,
+        localDatabase,
+        commandRuntimeLayer(commandPath),
+      );
     }),
   ).pipe(Layer.provide(legacyCliConfig), Layer.provide(legacyDebugLoggerLayer));

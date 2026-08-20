@@ -146,10 +146,6 @@ export type { PartialVersionManifest } from "./versions.ts";
 export { PartialVersionManifestSchema } from "./versions.ts";
 export { resolveConfig } from "./StackConfigResolver.ts";
 
-export type { BinarySpec } from "./BinaryResolver.ts";
-export { resolveNativeBinary } from "./resolve-native-binary.ts";
-export { renderNativePostgresInitScript } from "./services/postgres-init.ts";
-
 export { DaemonStartError } from "./layers.ts";
 export type { ManagedDaemonConfigInput } from "./layers.ts";
 export type { StackSummary } from "./discovery.ts";

@@ -4,7 +4,7 @@
 
 This document defines the command structure for the new Supabase CLI.
 
-The `schema` and `migrations` verbs now ship on the stable (legacy) shell as well as next (alpha). Singular `migration` on stable remains the Go-parity group.
+The `schema` and `migrations` verbs ship on the stable (legacy) shell only. Singular `migration` on stable remains the Go-parity group.
 
 For alpha, we will design the command surface from `supabase dev` outward. The goal is not to mirror the old CLI or the Management API. The goal is to give both humans and LLMs one command set that feels obvious, consistent, and reusable.
 

@@ -190,6 +190,7 @@ export const pgDeltaSchemaEngineLayer = Layer.effect(
             ),
         }),
       provisionShadow: shadows.provision,
+      provisionMigrations: shadows.provisionMigrations,
     });
   }),
 );
