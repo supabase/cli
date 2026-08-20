@@ -211,9 +211,8 @@ export type LegacyBatchOutcome = "unsent" | "poisoned" | "submitted";
 
 /**
  * pgconn's keepalive period (its default dialer, 5 minutes). Go applies that period to both
- * the idle time and the probe interval; Node can only set the idle time, leaving interval and
- * count at OS defaults, so a silently dead peer surfaces roughly 11 minutes later on Linux —
- * sooner than Go's own window, not later.
+ * the idle time and the probe interval; Node only sets the idle time and leaves the probe
+ * schedule to the runtime and OS, so a silently dead peer surfaces sooner here than under Go.
  */
 const LEGACY_PGCONN_KEEPALIVE_MILLIS = 300_000;
 
@@ -250,6 +249,12 @@ export function legacyBatchFailureError(
  * Whether a batch's pooled client must be destroyed rather than returned to the pool. A
  * batch that never reached the wire leaves the client looking healthy to pg-pool while its
  * socket is already gone, so the next checkout would write into the same dead connection.
+ *
+ * A batch that WAS written keeps its client: a statement failure should not cost a redial and
+ * a fresh step-down on a single-connection pool. Recovering from a socket that died after the
+ * write is left to pg-pool, which drops a released client whose private `_queryable` flag is
+ * false — so that is the behavior to re-check if a pg-pool bump ever breaks the recovery this
+ * layer's integration tests assert.
  */
 export function legacyShouldDiscardBatchClient(
   batch: { readonly outcome: LegacyBatchOutcome } | undefined,
