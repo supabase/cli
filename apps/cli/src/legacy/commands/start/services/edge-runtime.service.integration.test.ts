@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import { edgeRuntimeNofileUlimit } from "@supabase/stack/effect";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach } from "vitest";
@@ -189,20 +190,22 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       }),
   );
 
-  it.effect("sets --ulimit nofile=65536:65536, matching Go's Ulimits container.Config", () =>
-    Effect.gen(function* () {
-      const mock = mockDockerSpawner();
-      const out = mockOutput();
+  it.effect(
+    "sets --ulimit nofile, capped at Go's 65536 and clamped to the host hard limit (CLI-2220)",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
 
-      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-        Effect.provide(out.layer),
-      );
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
 
-      const runCall = mock.runCall!;
-      const ulimitIndex = runCall.args.indexOf("--ulimit");
-      expect(runCall.args[ulimitIndex + 1]).toBe("nofile=65536:65536");
-    }),
+        const runCall = mock.runCall!;
+        const ulimitIndex = runCall.args.indexOf("--ulimit");
+        expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin"));
+      }),
   );
 
   it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>

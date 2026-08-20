@@ -10,7 +10,12 @@ import {
   type ResolvedProjectValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
-import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+import {
+  defaultJwtSecret,
+  defaultPublishableKey,
+  defaultSecretKey,
+  edgeRuntimeNofileUlimit,
+} from "@supabase/stack/effect";
 import {
   createHmac,
   createPrivateKey,
@@ -1754,7 +1759,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "edge_runtime",
         ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
         "--ulimit",
-        "nofile=65536:65536",
+        edgeRuntimeNofileUlimit(input.platform),
         "--label",
         `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
         "--label",

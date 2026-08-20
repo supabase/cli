@@ -230,3 +230,12 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   pull."). An in-sync database is a finding, not a failure to troubleshoot, so the
   debug hint sent users chasing a non-existent bug. Message text and exit code — the
   parts scripts depend on — are unchanged.
+- Edge Runtime's Docker container `--ulimit nofile` value (`functions serve` and `start`): Go
+  hardcodes `nofile=65536:65536`, raised from the daemon default to accommodate FD usage from
+  many concurrent Deno isolates (supabase/cli#5151). TS clamps that value to the host's own hard
+  nofile limit on Linux (`@supabase/stack`'s `edgeRuntimeNofileUlimit`, via
+  `process.report`'s `userLimits`), so a constrained sandbox (hard cap below 65536) can still start the
+  container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
+  proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
+  Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
+  gets a smaller fd budget, never a failed start.
