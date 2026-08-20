@@ -1,11 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   clearFunctionsRuntimeConfig,
@@ -16,6 +16,9 @@ import {
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { verifyRequest } from "./services/edge-runtime-main.ts";
+
+const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
+  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeServices.layer)));
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
@@ -239,7 +242,7 @@ describe("stack Functions runtime config", () => {
       yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
       expect(yield* Effect.promise(() => readdir(join(cwd, "edge-runtime")))).toEqual([]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
     );
   });

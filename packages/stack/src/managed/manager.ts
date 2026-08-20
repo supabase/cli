@@ -579,6 +579,7 @@ const makeManager = (
             exactRequests.length === 0
               ? undefined
               : yield* reservePortSet(exactRequests, { reserved: exactReserved }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.mapError((cause) => {
                     const entry =
                       cause.field === undefined
@@ -616,6 +617,7 @@ const makeManager = (
             automaticRequests.length === 0
               ? undefined
               : yield* reservePortSet(automaticRequests, { reserved: automaticReserved }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.mapError(
                     (cause) =>
                       new ManagedPortAllocationError({

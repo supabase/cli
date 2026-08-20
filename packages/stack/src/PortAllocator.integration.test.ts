@@ -3,7 +3,8 @@ import { once } from "node:events";
 import { createServer, type Server } from "node:net";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect, FileSystem } from "effect";
 import { allocatePortSet, reservePortSet, type PortReservationRequest } from "./PortAllocator.ts";
 
 const PORT_LEASE_CHILD = resolve(import.meta.dirname, "../tests/helpers/port-lease-child.ts");
@@ -94,48 +95,60 @@ const automatic = (field: PortReservationRequest["field"]): PortReservationReque
   selection: { kind: "automatic" },
 });
 
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)));
+
 describe("selected-field port allocation", () => {
-  it("holds only requested fields and can release and re-reserve them", async () => {
-    const lease = await Effect.runPromise(
-      reservePortSet([automatic("apiPort"), automatic("dbPort")]),
+  it("requires an Effect FileSystem service for claim inspection", async () => {
+    const exit = await Effect.runPromise(
+      // @ts-expect-error This red contract intentionally omits the required service.
+      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: 25_901 } }]).pipe(
+        Effect.exit,
+      ),
     );
+
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("holds only requested fields and can release and re-reserve them", async () => {
+    const lease = await run(reservePortSet([automatic("apiPort"), automatic("dbPort")]));
 
     try {
       expect(lease.ports.apiPort).toBeGreaterThan(0);
       expect(lease.ports.dbPort).toBeGreaterThan(0);
       expect("authPort" in lease.ports).toBe(false);
 
-      const unavailable = await Effect.runPromise(
+      const unavailable = await run(
         allocatePortSet([
           { field: "apiPort", selection: { kind: "exact", port: lease.ports.apiPort! } },
         ]).pipe(Effect.exit),
       );
       expect(unavailable._tag).toBe("Failure");
 
-      await Effect.runPromise(lease.release(["apiPort"]));
-      const unavailableWhileLeaseIsActive = await Effect.runPromise(
+      await run(lease.release(["apiPort"]));
+      const unavailableWhileLeaseIsActive = await run(
         allocatePortSet([
           { field: "apiPort", selection: { kind: "exact", port: lease.ports.apiPort! } },
         ]).pipe(Effect.exit),
       );
       expect(unavailableWhileLeaseIsActive._tag).toBe("Failure");
 
-      await Effect.runPromise(lease.reserve(["apiPort"]));
-      const unavailableAgain = await Effect.runPromise(
+      await run(lease.reserve(["apiPort"]));
+      const unavailableAgain = await run(
         allocatePortSet([
           { field: "apiPort", selection: { kind: "exact", port: lease.ports.apiPort! } },
         ]).pipe(Effect.exit),
       );
       expect(unavailableAgain._tag).toBe("Failure");
 
-      await Effect.runPromise(lease.releaseAll);
+      await run(lease.releaseAll);
     } finally {
-      await Effect.runPromise(lease.releaseAll);
+      await run(lease.releaseAll);
     }
   });
 
   it("keeps an automatically selected port claimed after releasing its reservation", async () => {
-    const lease = await Effect.runPromise(
+    const lease = await run(
       reservePortSet([{ field: "apiPort", selection: { kind: "automatic", preferred: 0 } }]),
     );
     const port = lease.ports.apiPort;
@@ -143,25 +156,25 @@ describe("selected-field port allocation", () => {
     try {
       expect(port).toBeGreaterThan(0);
 
-      await Effect.runPromise(lease.release(["apiPort"]));
-      const unavailable = await Effect.runPromise(
+      await run(lease.release(["apiPort"]));
+      const unavailable = await run(
         allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: port! } }]).pipe(
           Effect.exit,
         ),
       );
       expect(unavailable._tag).toBe("Failure");
     } finally {
-      await Effect.runPromise(lease.releaseAll);
+      await run(lease.releaseAll);
     }
 
-    const available = await Effect.runPromise(
+    const available = await run(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: port! } }]),
     );
     expect(available.apiPort).toBe(port);
   });
 
   it("fails when an exact port is occupied", async () => {
-    const exit = await Effect.runPromise(
+    const exit = await run(
       Effect.scoped(
         Effect.gen(function* () {
           const occupied = yield* occupyFreePort();
@@ -179,7 +192,7 @@ describe("selected-field port allocation", () => {
   });
 
   it("rejects zero for an exact port selection", async () => {
-    const exit = await Effect.runPromise(
+    const exit = await run(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: 0 } }]).pipe(
         Effect.exit,
       ),
@@ -190,18 +203,15 @@ describe("selected-field port allocation", () => {
 
   it("keeps concurrent selected-field leases disjoint", async () => {
     const [first, second] = await Promise.all([
-      Effect.runPromise(reservePortSet([automatic("apiPort"), automatic("dbPort")])),
-      Effect.runPromise(reservePortSet([automatic("apiPort"), automatic("dbPort")])),
+      run(reservePortSet([automatic("apiPort"), automatic("dbPort")])),
+      run(reservePortSet([automatic("apiPort"), automatic("dbPort")])),
     ]);
 
     try {
       const firstPorts = new Set(Object.values(first.ports));
       expect(Object.values(second.ports).every((port) => !firstPorts.has(port))).toBe(true);
     } finally {
-      await Promise.all([
-        Effect.runPromise(first.releaseAll),
-        Effect.runPromise(second.releaseAll),
-      ]);
+      await Promise.all([run(first.releaseAll), run(second.releaseAll)]);
     }
   });
 
@@ -216,7 +226,7 @@ describe("selected-field port allocation", () => {
       expect(new Set(ports).size).toBe(ports.length);
 
       for (const port of ports) {
-        const unavailable = await Effect.runPromise(
+        const unavailable = await run(
           allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
             Effect.exit,
           ),
@@ -229,10 +239,10 @@ describe("selected-field port allocation", () => {
   }, 30_000);
 
   it("releases partial reservations when a selected set fails", async () => {
-    const firstPort = await Effect.runPromise(
+    const firstPort = await run(
       Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
     );
-    const failed = await Effect.runPromise(
+    const failed = await run(
       Effect.scoped(
         Effect.gen(function* () {
           const occupied = yield* occupyFreePort();
@@ -245,24 +255,24 @@ describe("selected-field port allocation", () => {
     );
     expect(failed._tag).toBe("Failure");
 
-    const available = await Effect.runPromise(
+    const available = await run(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: firstPort } }]),
     );
     expect(available.apiPort).toBe(firstPort);
   });
 
   it("releases a bound port when interrupted during lease registration", async () => {
-    const port = await Effect.runPromise(
+    const port = await run(
       Effect.scoped(Effect.map(occupyFreePort(), (occupied) => occupied.port)),
     );
-    const interrupted = await Effect.runPromise(
+    const interrupted = await run(
       reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }], {
         onBound: () => Effect.interrupt,
       }).pipe(Effect.exit),
     );
     expect(interrupted._tag).toBe("Failure");
 
-    const rebound = await Effect.runPromise(
+    const rebound = await run(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]),
     );
     expect(rebound.apiPort).toBe(port);

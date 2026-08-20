@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
@@ -7,8 +8,14 @@ import { dockerContainerName } from "./StackIdentity.ts";
 import { runForegroundOperation } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import { shortTempPrefixRoot } from "./paths.ts";
-import { resolveConfig, sanitizeDaemonConfigInput } from "./StackConfigResolver.ts";
+import {
+  resolveConfig as resolveConfigEffect,
+  sanitizeDaemonConfigInput,
+} from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
+
+const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
+  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
 
 describe("foreground operation lifecycle", () => {
   it("disposes the foreground runtime after a direct readiness timeout", async () => {

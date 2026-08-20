@@ -13,7 +13,7 @@ import { reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import type { ResolveConfigOptions } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 
 type PlatformServices =
@@ -30,6 +30,10 @@ interface PlatformFactoryOptions {
 }
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
+export type ResolveConfigPromise = (
+  input?: StackConfig,
+  options?: ResolveConfigOptions,
+) => Promise<ResolvedStackConfig>;
 
 /** @internal Converts operation failures and closes a terminal foreground runtime. */
 export async function runForegroundOperation<A>(
@@ -90,12 +94,13 @@ const createStackAttempt = async (
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
   runtime: StackRuntimeSelection,
+  resolveConfigPromise: ResolveConfigPromise,
   preferredApiPort?: number,
 ): Promise<StackHandle> => {
   let portLease: PortLease | undefined;
   let resolved: ResolvedStackConfig;
   try {
-    resolved = await resolveConfig(config, {
+    resolved = await resolveConfigPromise(config, {
       runtime,
       ...(preferredApiPort === undefined ? {} : { preferredPorts: { apiPort: preferredApiPort } }),
       portAllocator: (requests, options) =>
@@ -198,6 +203,7 @@ export async function createStack(
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
   runtime: StackRuntimeSelection,
+  resolveConfigPromise: ResolveConfigPromise,
 ): Promise<StackHandle> {
   const automaticApiPort = config?.port === undefined;
   for (let attempt = 0; ; attempt += 1) {
@@ -208,6 +214,7 @@ export async function createStack(
         config,
         platformFactory,
         runtime,
+        resolveConfigPromise,
         attempt === 0 ? undefined : 0,
       );
     } catch (error) {

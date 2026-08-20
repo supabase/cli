@@ -1,3 +1,4 @@
+import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Stream } from "effect";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -105,7 +106,7 @@ export const freePorts = (
         field,
         selection: { kind: "automatic" as const },
       })),
-    );
+    ).pipe(Effect.provide(NodeFileSystem.layer));
     const ports = FREE_PORT_FIELDS.slice(0, count).flatMap((field) => {
       const port = lease.ports[field];
       return port === undefined ? [] : [port];

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Cause, Effect, Exit, Schema } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Cause, Effect, Exit, FileSystem, Schema } from "effect";
 import { PortSetSchema } from "./effect.ts";
 import { allocatePortSet, PortAllocationError } from "./PortAllocator.ts";
 import { DEFAULT_PORTS, type PortField } from "./PortCatalog.ts";
+
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)));
 
 const fakePortProbe = (
   options: {
@@ -18,7 +22,13 @@ const fakePortProbe = (
   return {
     exact: (port: number) =>
       unavailable.has(port)
-        ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port }))
+        ? Effect.fail(
+            new PortAllocationError({
+              detail: `Port ${port} is not available`,
+              port,
+              reason: "unavailable",
+            }),
+          )
         : Effect.succeed(port),
     random: (exclude: ReadonlySet<number>) =>
       Effect.gen(function* () {
@@ -45,7 +55,7 @@ describe("allocatePortSet", () => {
     fields.map((field) => ({ field, selection: { kind: "automatic" as const } }));
 
   it("all allocated ports are unique", async () => {
-    const ports = await Effect.runPromise(
+    const ports = await run(
       allocatePortSet(
         requests(["apiPort", "dbPort", "authPort", "postgrestPort", "postgrestAdminPort"]),
         { probe: fakePortProbe() },
@@ -66,11 +76,11 @@ describe("allocatePortSet", () => {
   });
 
   it("reserved ports are skipped by later allocations", async () => {
-    const a = await Effect.runPromise(
+    const a = await run(
       allocatePortSet(requests(["apiPort", "dbPort"]), { probe: fakePortProbe() }),
     );
     const aPorts = new Set(Object.values(a) as number[]);
-    const b = await Effect.runPromise(
+    const b = await run(
       allocatePortSet(requests(["apiPort", "dbPort"]), {
         reserved: aPorts,
         probe: fakePortProbe(),
@@ -84,7 +94,7 @@ describe("allocatePortSet", () => {
   });
 
   it("identifies the exact field that collides with an earlier request", async () => {
-    const exit = await Effect.runPromise(
+    const exit = await run(
       allocatePortSet(
         [
           { field: "apiPort", selection: { kind: "exact", port: 22_001 } },
@@ -107,7 +117,7 @@ describe("allocatePortSet", () => {
   it("explicit port is respected when available", async () => {
     const requestedApiPort = 21001;
     const requestedDbPort = 21002;
-    const ports = await Effect.runPromise(
+    const ports = await run(
       allocatePortSet(
         [
           { field: "apiPort", selection: { kind: "exact", port: requestedApiPort } },
@@ -124,7 +134,7 @@ describe("allocatePortSet", () => {
     const apiPort = 21003;
     const dbPort = 21004;
     const studioPort = 21005;
-    const ports = await Effect.runPromise(
+    const ports = await run(
       allocatePortSet(
         [
           { field: "apiPort", selection: { kind: "automatic", preferred: apiPort } },
@@ -143,7 +153,7 @@ describe("allocatePortSet", () => {
   it("preferred ports fall back to random ports when unavailable", async () => {
     const apiPort = 21006;
     const dbPort = 21007;
-    const ports = await Effect.runPromise(
+    const ports = await run(
       allocatePortSet(
         [
           { field: "apiPort", selection: { kind: "automatic", preferred: apiPort } },
@@ -163,7 +173,7 @@ describe("allocatePortSet", () => {
   });
 
   it("explicit ports cannot override reserved ownership", async () => {
-    const exit = await Effect.runPromise(
+    const exit = await run(
       allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: 22001 } }], {
         reserved: new Set([22001]),
       }).pipe(Effect.exit),
@@ -176,7 +186,7 @@ describe("allocatePortSet", () => {
   });
 
   it("preferred ports skip reserved ownership and use random fallback", async () => {
-    const ports = await Effect.runPromise(
+    const ports = await run(
       allocatePortSet(
         [
           { field: "apiPort", selection: { kind: "automatic", preferred: 23001 } },

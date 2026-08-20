@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createStack, type StackHandle } from "./createStack.ts";
 import { platformFactory } from "./platform-node.ts";
+import { resolveConfig } from "./node.ts";
 
 const handles: StackHandle[] = [];
 
@@ -28,6 +29,7 @@ describe("direct createStack port ownership", () => {
       },
       platformFactory,
       { mode: "native", containerRuntime: null },
+      resolveConfig,
     );
     handles.push(stack);
 

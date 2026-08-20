@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect } from "effect";
+import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { StackBuildError } from "./errors.ts";
+
+const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
+  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
 
 describe("resolved service preparation policies", () => {
   it("applies explicit policies and catalog defaults while keeping Postgres eager", async () => {

@@ -26,7 +26,7 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedDaemonLayer } from "./supervisor.ts";
 import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
@@ -40,6 +40,9 @@ const errorChildEntryPoint = fileURLToPath(
 );
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 const FILE_WAIT_TIMEOUT_MS = 30_000;
+
+const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
+  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 

@@ -3,7 +3,11 @@ import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import { selectStackRuntime } from "./ContainerRuntime.ts";
-import { createStack as createStackCore, type StackHandle } from "./createStack.ts";
+import {
+  createStack as createStackCore,
+  type ResolveConfigPromise,
+  type StackHandle,
+} from "./createStack.ts";
 import { toStackError } from "./errors.ts";
 import {
   prefetch as prefetchEffect,
@@ -15,6 +19,13 @@ import { defaultCacheRoot } from "./paths.ts";
 import { platformFactory } from "./platform-bun.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackConfig.ts";
+import {
+  resolveConfig as resolveConfigEffect,
+  type ResolveConfigOptions,
+} from "./StackConfigResolver.ts";
+
+const resolveConfigPromise: ResolveConfigPromise = (config, options) =>
+  Effect.runPromise(resolveConfigEffect(config, options).pipe(Effect.provide(BunServices.layer)));
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
   const runtime = await Effect.runPromise(
@@ -22,7 +33,11 @@ export async function createStack(config?: StackConfig): Promise<StackHandle> {
   ).catch((error: unknown) => {
     throw toStackError(error);
   });
-  return createStackCore(config, platformFactory, runtime);
+  return createStackCore(config, platformFactory, runtime, resolveConfigPromise);
+}
+
+export async function resolveConfig(config?: StackConfig, options?: ResolveConfigOptions) {
+  return resolveConfigPromise(config, options);
 }
 
 export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {

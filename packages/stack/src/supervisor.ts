@@ -544,20 +544,16 @@ const runManaged = (
         launch,
       });
       claimedStack = true;
-      const resolved = yield* Effect.tryPromise({
-        try: () =>
-          resolveConfig(
-            {
-              ...configInput,
-              projectDir: configInput.projectDir ?? input.workspacePath,
-              stackRoot: managedStackPaths(input.stateRoot, started.stack.id).root,
-              runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
-              instanceId: started.stack.id,
-            },
-            { runtime, portAllocator: () => Effect.succeed(started.lease.ports) },
-          ),
-        catch: (cause) => cause,
-      });
+      const resolved = yield* resolveConfig(
+        {
+          ...configInput,
+          projectDir: configInput.projectDir ?? input.workspacePath,
+          stackRoot: managedStackPaths(input.stateRoot, started.stack.id).root,
+          runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
+          instanceId: started.stack.id,
+        },
+        { runtime, portAllocator: () => Effect.succeed(started.lease.ports) },
+      );
       const config: ResolvedDaemonConfig = {
         ...resolved,
         name: input.stackName,
