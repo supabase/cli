@@ -9,6 +9,7 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
+import { legacySettleFeedbackTask } from "../feedback-task.ts";
 import type { LegacyFeedbackDeleteArgs } from "./delete.command.ts";
 import {
   LEGACY_FEEDBACK_DELETE_CANCELLED_MESSAGE,
@@ -70,8 +71,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
     const looking = yield* output.task("Looking up feedback...");
     const preview = yield* client
       .preview(token, rowContext)
-      .pipe(Effect.tapError(() => looking.fail()));
-    yield* looking.clear();
+      .pipe(legacySettleFeedbackTask(looking));
 
     if (Option.isNone(preview)) {
       return yield* Effect.fail(
@@ -118,8 +118,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
     const deleting = yield* output.task("Deleting feedback...");
     const { deleted } = yield* client
       .delete(token, rowContext)
-      .pipe(Effect.tapError(() => deleting.fail()));
-    yield* deleting.clear();
+      .pipe(legacySettleFeedbackTask(deleting));
 
     // The preview matched but the delete didn't: the row disappeared in between.
     if (!deleted) {

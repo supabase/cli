@@ -11,6 +11,7 @@ import { legacyResolveAgentMode } from "../../../shared/legacy-agent-mode.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
+import { legacySettleFeedbackTask } from "../feedback-task.ts";
 import type { LegacyFeedbackAddArgs } from "./add.command.ts";
 import {
   LEGACY_FEEDBACK_EMPTY_MESSAGE,
@@ -119,9 +120,7 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
           agentName,
         },
       })
-      .pipe(Effect.tapError(() => sending.fail()));
-
-    yield* sending.clear();
+      .pipe(legacySettleFeedbackTask(sending));
 
     // `-o json` takes priority over `--output-format` (legacy shell invariant 6):
     // stdout carries the machine payload only. `pretty` (or unset) falls through.
