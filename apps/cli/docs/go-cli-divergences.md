@@ -238,5 +238,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
   proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
   Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
-  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the CLI
-  emits a warning naming the reduced limit so the smaller fd budget is visible.
+  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the legacy
+  `functions serve`/`start` bring-up warns with the reduced limit. The `@supabase/stack` service
+  builder (next-shell `stack start`) applies the same clamp silently: its defs are built without
+  an output channel, and in managed mode inside the daemon process, so a user-visible warning
+  there needs a diagnostics channel on `BuildResult` first; the applied value stays visible via
+  `docker inspect`.
