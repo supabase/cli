@@ -20,7 +20,7 @@ describe("parallel stacks (multi-process)", () => {
       ),
     );
     stacks.push(...results);
-  }, 210_000);
+  }, 230_000);
 
   afterAll(async () => {
     await Promise.allSettled(

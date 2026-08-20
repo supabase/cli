@@ -20,7 +20,17 @@ process.once("SIGINT", onEarlySignal);
 process.once("SIGTERM", onEarlySignal);
 
 const parentPid = readParentPid(process.argv.slice(2));
-const stack = await createStack();
+// This helper proves cross-process stack isolation, not the full service graph
+// (the dedicated createStack e2e scenarios cover that). Keeping only the
+// mandatory Postgres service makes the concurrency test exercise real ports,
+// processes, Docker, and HTTP readiness without starting two redundant copies
+// of every local service.
+const stack = await createStack({
+  postgrest: false,
+  auth: false,
+  edgeRuntime: false,
+  functions: false,
+});
 if (earlyShutdownRequested) {
   await stack.dispose();
   process.exit(0);

@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { terminateChildProcess } from "../../src/terminateChild.ts";
 
 const STANDALONE_SCRIPT = resolve(import.meta.dirname, "standalone-stack.ts");
-const DEFAULT_READINESS_TIMEOUT_MS = 180_000;
+// The stack's own readiness policy is 180s. This outer subprocess guard must
+// leave enough time for that typed failure and its diagnostics to reach stderr.
+const DEFAULT_READINESS_TIMEOUT_MS = 200_000;
 const OUTPUT_TAIL_CHARS = 2_000;
 
 export interface SpawnedStackInfo {
