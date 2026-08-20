@@ -904,14 +904,29 @@ describe("Stack", () => {
       if (authConfig === false) {
         throw new Error("Expected auth to be enabled in the default test config");
       }
+      const postgresProbeStarted = yield* Deferred.make<void>();
+      const postgresInitStarted = yield* Deferred.make<void>();
       const authSpawnStarted = yield* Deferred.make<void>();
       const spawner = mockChildProcessSpawner({
-        beforeSpawn: (record) =>
-          record.args.some((arg) =>
+        beforeSpawn: (record) => {
+          if (record.command.endsWith("/pg_isready")) {
+            return Deferred.succeed(postgresProbeStarted, undefined).pipe(Effect.asVoid);
+          }
+          if (
+            record.args.some((arg) =>
+              Buffer.from(arg, "base64url")
+                .toString()
+                .includes('"command":"bash","args":["-c"'),
+            )
+          ) {
+            return Deferred.succeed(postgresInitStarted, undefined).pipe(Effect.asVoid);
+          }
+          return record.args.some((arg) =>
             Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
           )
             ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.asVoid)
-            : Effect.void,
+            : Effect.void;
+        },
       });
       let releasedAll = false;
       const config = {
@@ -936,7 +951,10 @@ describe("Stack", () => {
         const start = yield* stack
           .start()
           .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* TestClock.adjust("99 millis");
+        yield* Deferred.await(postgresProbeStarted);
+        yield* TestClock.adjust("10 millis");
+        yield* Deferred.await(postgresInitStarted);
+        yield* TestClock.adjust("89 millis");
         yield* Fiber.join(start);
 
         const activation = yield* activator
