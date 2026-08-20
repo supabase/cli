@@ -13,13 +13,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { NodeServices } from "@effect/platform-node";
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import {
+  BinaryHostCompatibilityError,
   BinaryManifestError,
   BinaryRuntimeError,
   ChecksumMismatchError,
@@ -99,6 +100,7 @@ const makeResolverLayer = (
     readonly checksum?: string;
     readonly checksumText?: string;
     readonly spawnedCommands?: Array<{ command: string; args: ReadonlyArray<string> }>;
+    readonly transformFileSystem?: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem;
   } = {},
 ) => {
   const client = HttpClient.make((request) =>
@@ -153,10 +155,22 @@ const makeResolverLayer = (
             });
           }),
         ).pipe(Layer.provide(NodeServices.layer));
+  const fileSystemLayer =
+    options.transformFileSystem === undefined
+      ? NodeFileSystem.layer
+      : Layer.effect(
+          FileSystem.FileSystem,
+          Effect.map(FileSystem.FileSystem, options.transformFileSystem),
+        ).pipe(Layer.provide(NodeFileSystem.layer));
   return BinaryResolver.make(cacheRoot).pipe(
-    Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
-    Layer.provide(spawnerLayer),
-    Layer.provide(NodeServices.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(HttpClient.HttpClient, client),
+        spawnerLayer,
+        fileSystemLayer,
+        NodePath.layer,
+      ),
+    ),
   );
 };
 
@@ -191,6 +205,50 @@ describe("BinaryResolver slim-services installer", () => {
           "postgrest",
         );
         expect(existsSync(join(result.first.path, ".complete"))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.live("rejects a complete cache prepared for an incompatible host", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        const resolverLayer = makeResolverLayer(root, makeFixture(root));
+        const installed = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolve({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer));
+
+        const markerPath = join(installed, ".complete");
+        const marker = JSON.parse(readFileSync(markerPath, "utf8"));
+        marker.hostCompatibility =
+          process.platform === "darwin"
+            ? {
+                runtimeRequires: null,
+                libc: null,
+                osFloor: { kind: "macos", floor: "999.0" },
+              }
+            : {
+                runtimeRequires: "glibc",
+                libc: "glibc",
+                osFloor: { kind: "glibc", floor: "999.0" },
+              };
+        writeFileSync(markerPath, JSON.stringify(marker));
+
+        const failure = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolve({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer), Effect.flip);
+
+        expect(failure).toBeInstanceOf(BinaryHostCompatibilityError);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -320,6 +378,72 @@ describe("BinaryResolver slim-services installer", () => {
         }).pipe(Effect.provide(resolverLayer));
         expect(restoredPath.downloaded).toBe(true);
         expect(existsSync(join(restoredPath.path, "bin/postgrest"))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.live("preserves a cache published while another resolver repairs stale state", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        const fixture = makeFixture(root);
+        const resolverLayer = makeResolverLayer(root, fixture);
+        const installed = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolveWithMetadata({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer));
+        const markerPath = join(installed.path, ".complete");
+        writeFileSync(markerPath, JSON.stringify({ service: "postgrest" }));
+
+        const staleMarkerRead = yield* Deferred.make<void>();
+        const releaseStaleReader = yield* Deferred.make<void>();
+        let markerReads = 0;
+        const staleReaderLayer = makeResolverLayer(root, fixture, {
+          transformFileSystem: (fileSystem) =>
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              readFileString: (requestedPath, options) =>
+                Effect.gen(function* () {
+                  const contents = yield* fileSystem.readFileString(requestedPath, options);
+                  if (requestedPath === markerPath) {
+                    markerReads += 1;
+                    if (markerReads === 2) {
+                      yield* Deferred.succeed(staleMarkerRead, undefined);
+                      yield* Deferred.await(releaseStaleReader);
+                    }
+                  }
+                  return contents;
+                }),
+            }),
+        });
+        const staleReader = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolveWithMetadata({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(staleReaderLayer), Effect.forkChild);
+        yield* Deferred.await(staleMarkerRead);
+
+        const publisher = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolveWithMetadata({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(makeResolverLayer(root, fixture)));
+        yield* Deferred.succeed(releaseStaleReader, undefined);
+        const repaired = yield* Fiber.join(staleReader);
+
+        expect(publisher.downloaded).toBe(true);
+        expect(repaired.downloaded).toBe(false);
+        expect(repaired.path).toBe(installed.path);
+        expect(readFileSync(join(installed.path, "bin/postgrest"), "utf8")).toContain("postgrest");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

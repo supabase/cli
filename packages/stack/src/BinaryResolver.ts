@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
-import { Context, Effect, FileSystem, Layer, Option, Path, Result } from "effect";
+import {
+  Context,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Result,
+  Schedule,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -55,6 +66,15 @@ interface AssetInfo {
   readonly target: NativeTarget;
 }
 
+interface HostCompatibilityRequirement {
+  readonly runtimeRequires: null | "glibc";
+  readonly libc: null | "glibc";
+  readonly osFloor: null | {
+    readonly kind: "glibc" | "macos";
+    readonly floor: string | null;
+  };
+}
+
 interface CacheCompleteMarker {
   readonly provider: string;
   readonly service: string;
@@ -64,13 +84,14 @@ interface CacheCompleteMarker {
   readonly target: NativeTarget;
   readonly releaseSet: "slim-services";
   readonly runtime: "native";
+  readonly hostCompatibility: HostCompatibilityRequirement;
 }
 
 const cachePath = (baseDir: string, info: AssetInfo): string =>
   `${baseDir}/${info.releaseSet}/${info.service}/${info.version}/${info.runtime}/${info.target}`;
 
 const CACHE_COMPLETE_MARKER = ".complete";
-const STALE_STAGING_AGE_MS = 24 * 60 * 60 * 1_000;
+const STALE_PREPARATION_ENTRY_AGE_MS = 24 * 60 * 60 * 1_000;
 
 const hasTraversalSegment = (value: string): boolean =>
   value.split(/[\\/]/).some((segment) => segment === "..");
@@ -162,7 +183,10 @@ const validateManifest = (
   raw: unknown,
   platform: { readonly os: string; readonly arch: string },
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-): Effect.Effect<SlimServiceManifest, BinaryManifestError | BinaryHostCompatibilityError> =>
+): Effect.Effect<
+  HostCompatibilityRequirement,
+  BinaryManifestError | BinaryHostCompatibilityError
+> =>
   Effect.gen(function* () {
     if (typeof raw !== "object" || raw === null) {
       return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest must be an object"));
@@ -214,24 +238,6 @@ const validateManifest = (
     if (osFloor !== null && typeof osFloor !== "object") {
       return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest os_floor is invalid"));
     }
-    const requiresGlibc =
-      manifest.libc === "glibc" || runtimeRequires === "glibc" || osFloor?.kind === "glibc";
-    if (osFloor !== null && osFloor.kind === "macos" && platform.os !== "darwin") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target: release.target,
-          detail: "Manifest requires macOS",
-        }),
-      );
-    }
-    if (requiresGlibc && platform.os !== "linux") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target: release.target,
-          detail: "Manifest requires Linux/glibc",
-        }),
-      );
-    }
     if (osFloor !== null && osFloor.kind !== "macos" && osFloor.kind !== "glibc") {
       return yield* Effect.fail(
         new BinaryHostCompatibilityError({
@@ -240,7 +246,48 @@ const validateManifest = (
         }),
       );
     }
-    const floor = osFloor?.floor;
+    const hostCompatibility: HostCompatibilityRequirement = {
+      runtimeRequires,
+      libc: manifest.libc,
+      osFloor:
+        osFloor === null
+          ? null
+          : osFloor.kind === "macos"
+            ? { kind: "macos", floor: osFloor.floor }
+            : { kind: "glibc", floor: osFloor.floor },
+    };
+    yield* validateHostCompatibility(release.target, hostCompatibility, platform, spawner);
+    return hostCompatibility;
+  });
+
+const validateHostCompatibility = (
+  target: NativeTarget,
+  requirement: HostCompatibilityRequirement,
+  platform: { readonly os: string; readonly arch: string },
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.Effect<void, BinaryHostCompatibilityError> =>
+  Effect.gen(function* () {
+    const requiresGlibc =
+      requirement.libc === "glibc" ||
+      requirement.runtimeRequires === "glibc" ||
+      requirement.osFloor?.kind === "glibc";
+    if (requirement.osFloor?.kind === "macos" && platform.os !== "darwin") {
+      return yield* Effect.fail(
+        new BinaryHostCompatibilityError({
+          target,
+          detail: "Manifest requires macOS",
+        }),
+      );
+    }
+    if (requiresGlibc && platform.os !== "linux") {
+      return yield* Effect.fail(
+        new BinaryHostCompatibilityError({
+          target,
+          detail: "Manifest requires Linux/glibc",
+        }),
+      );
+    }
+    const floor = requirement.osFloor?.floor;
     if (requiresGlibc) {
       const host = yield* Effect.sync(() => {
         try {
@@ -265,7 +312,7 @@ const validateManifest = (
       if (typeof host !== "string" || host.trim().length === 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
-            target: release.target,
+            target,
             detail: "Unable to determine host glibc version",
           }),
         );
@@ -273,7 +320,7 @@ const validateManifest = (
       if (floor !== null && floor !== undefined && compareVersions(host, floor) < 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
-            target: release.target,
+            target,
             detail: `Host glibc ${host} is below manifest floor ${floor}`,
           }),
         );
@@ -281,7 +328,7 @@ const validateManifest = (
     }
     if (
       platform.os === "darwin" &&
-      osFloor?.kind === "macos" &&
+      requirement.osFloor?.kind === "macos" &&
       floor !== null &&
       floor !== undefined
     ) {
@@ -289,7 +336,7 @@ const validateManifest = (
         Effect.mapError(
           (cause) =>
             new BinaryHostCompatibilityError({
-              target: release.target,
+              target,
               detail: `Unable to determine macOS version: ${String(cause)}`,
             }),
         ),
@@ -298,7 +345,7 @@ const validateManifest = (
       if (hostVersion.length === 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
-            target: release.target,
+            target,
             detail: "Unable to determine macOS version",
           }),
         );
@@ -306,13 +353,12 @@ const validateManifest = (
       if (compareVersions(hostVersion, floor) < 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
-            target: release.target,
+            target,
             detail: `Host macOS ${hostVersion} is below manifest floor ${floor}`,
           }),
         );
       }
     }
-    return manifest;
   });
 
 const compareVersions = (left: string, right: string): number => {
@@ -393,6 +439,29 @@ export class BinaryResolver extends Context.Service<
             return false;
           if (!("releaseSet" in value) || value.releaseSet !== "slim-services") return false;
           if (!("runtime" in value) || value.runtime !== "native") return false;
+          if (!("hostCompatibility" in value)) return false;
+          const host = value.hostCompatibility;
+          if (typeof host !== "object" || host === null) return false;
+          if (
+            !("runtimeRequires" in host) ||
+            (host.runtimeRequires !== null && host.runtimeRequires !== "glibc")
+          )
+            return false;
+          if (!("libc" in host) || (host.libc !== null && host.libc !== "glibc")) return false;
+          if (!("osFloor" in host)) return false;
+          if (host.osFloor !== null) {
+            if (typeof host.osFloor !== "object") return false;
+            if (
+              !("kind" in host.osFloor) ||
+              (host.osFloor.kind !== "glibc" && host.osFloor.kind !== "macos")
+            )
+              return false;
+            if (
+              !("floor" in host.osFloor) ||
+              (host.osFloor.floor !== null && typeof host.osFloor.floor !== "string")
+            )
+              return false;
+          }
           return true;
         };
 
@@ -400,15 +469,20 @@ export class BinaryResolver extends Context.Service<
           directory: string,
           release: NativeReleaseArtifact,
           info: AssetInfo,
+          platform: { readonly os: string; readonly arch: string },
         ) =>
           Effect.gen(function* () {
             const marker = yield* fs
               .readFileString(path.join(directory, CACHE_COMPLETE_MARKER))
               .pipe(Effect.option);
             if (Option.isNone(marker)) return false;
-            const parsed = yield* Effect.try({
-              try: () => JSON.parse(marker.value),
-              catch: () => undefined,
+            const parsed = yield* Effect.sync(() => {
+              try {
+                const value: unknown = JSON.parse(marker.value);
+                return value;
+              } catch {
+                return undefined;
+              }
             });
             if (!isCacheCompleteMarker(parsed)) return false;
             if (
@@ -427,8 +501,15 @@ export class BinaryResolver extends Context.Service<
             const present = yield* Effect.forEach(requiredPaths, (entry) =>
               fs.exists(path.join(directory, entry)),
             );
-            return present.every(Boolean);
-          }).pipe(Effect.catch(() => Effect.succeed(false)));
+            if (!present.every(Boolean)) return false;
+            yield* validateHostCompatibility(
+              release.target,
+              parsed.hostCompatibility,
+              platform,
+              spawner,
+            );
+            return true;
+          }).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
 
         const resolveRelease = (spec: BinarySpec) =>
           Effect.gen(function* () {
@@ -458,7 +539,7 @@ export class BinaryResolver extends Context.Service<
             return cachePath(spec.cacheDir ?? binDir, info);
           });
 
-        const cleanupStaleStaging = (directory: string, prefix: string) =>
+        const cleanupStaleEntries = (directory: string, prefix: string) =>
           fs.readDirectory(directory).pipe(
             Effect.flatMap((entries) =>
               Effect.forEach(
@@ -470,7 +551,7 @@ export class BinaryResolver extends Context.Service<
                       Option.match(info.mtime, {
                         onNone: () => Effect.void,
                         onSome: (modifiedAt) =>
-                          Date.now() - modifiedAt.getTime() >= STALE_STAGING_AGE_MS
+                          Date.now() - modifiedAt.getTime() >= STALE_PREPARATION_ENTRY_AGE_MS
                             ? fs.remove(stagingPath, { recursive: true, force: true })
                             : Effect.void,
                       }),
@@ -533,7 +614,7 @@ export class BinaryResolver extends Context.Service<
                 Effect.fail(new DownloadError({ url: release.manifestUrl, cause })),
               ),
             );
-            yield* Effect.try({
+            const hostCompatibility = yield* Effect.try({
               try: () => {
                 const parsed: unknown = JSON.parse(manifestText);
                 return parsed;
@@ -671,6 +752,7 @@ export class BinaryResolver extends Context.Service<
                 }),
               );
             }
+            return hostCompatibility;
           });
 
         const resolveWithMetadata = (spec: BinarySpec, options?: ResolveBinaryOptions) => {
@@ -680,8 +762,10 @@ export class BinaryResolver extends Context.Service<
             const cacheDir = cachePath(baseDir, info);
             const parentDir = path.dirname(cacheDir);
             const stagingPrefix = `.${release.assetName}.partial-`;
-            yield* cleanupStaleStaging(parentDir, stagingPrefix);
-            if (yield* isCompleteCache(cacheDir, release, info)) {
+            const publicationLock = path.join(parentDir, `.${release.assetName}.publication-lock`);
+            yield* cleanupStaleEntries(parentDir, stagingPrefix);
+            yield* cleanupStaleEntries(parentDir, path.basename(publicationLock));
+            if (yield* isCompleteCache(cacheDir, release, info, platform)) {
               return {
                 path: cacheDir,
                 downloaded: false,
@@ -695,7 +779,7 @@ export class BinaryResolver extends Context.Service<
               prefix: stagingPrefix,
             });
             return yield* Effect.gen(function* () {
-              yield* extractRelease(release, stagingDir, platform);
+              const hostCompatibility = yield* extractRelease(release, stagingDir, platform);
               yield* fs.writeFile(
                 path.join(stagingDir, CACHE_COMPLETE_MARKER),
                 new TextEncoder().encode(
@@ -708,6 +792,7 @@ export class BinaryResolver extends Context.Service<
                     target: info.target,
                     releaseSet: info.releaseSet,
                     runtime: info.runtime,
+                    hostCompatibility,
                   }),
                 ),
               );
@@ -719,23 +804,46 @@ export class BinaryResolver extends Context.Service<
               if (Result.isSuccess(publication)) {
                 return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
               }
-              if (yield* isCompleteCache(cacheDir, release, info)) {
+              if (yield* isCompleteCache(cacheDir, release, info, platform)) {
                 return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
               }
 
-              // A fully staged replacement is now available, so an incomplete
-              // destination can be reclaimed without risking the last usable
-              // cache entry. Retry publication once; persistent filesystem
-              // failures still surface instead of looping forever.
-              yield* fs.remove(cacheDir, { recursive: true, force: true });
-              const retry = yield* fs.rename(stagingDir, cacheDir).pipe(Effect.result);
-              if (Result.isSuccess(retry)) {
-                return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
-              }
-              if (yield* isCompleteCache(cacheDir, release, info)) {
-                return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
-              }
-              return yield* Effect.fail(retry.failure);
+              return yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const acquirePublicationLock: Effect.Effect<void, PlatformError.PlatformError> =
+                    fs.makeDirectory(publicationLock).pipe(
+                      Effect.retry({
+                        while: (error) => error.reason._tag === "AlreadyExists",
+                        schedule: Schedule.recurs(1_200).pipe(
+                          Schedule.addDelay(() => Effect.succeed(Duration.millis(25))),
+                        ),
+                      }),
+                    );
+                  yield* Effect.acquireRelease(acquirePublicationLock, () =>
+                    fs
+                      .remove(publicationLock, { recursive: true, force: true })
+                      .pipe(Effect.ignore),
+                  );
+
+                  // The destination may have changed while this resolver was
+                  // waiting to repair it. Revalidate under the publication
+                  // claim before removing anything shared.
+                  if (yield* isCompleteCache(cacheDir, release, info, platform)) {
+                    return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
+                  }
+
+                  yield* fs.remove(cacheDir, { recursive: true, force: true });
+                  const retry = yield* fs.rename(stagingDir, cacheDir).pipe(Effect.result);
+                  if (Result.isSuccess(retry)) {
+                    return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
+                  }
+                  const retryFailure = retry.failure;
+                  if (yield* isCompleteCache(cacheDir, release, info, platform)) {
+                    return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
+                  }
+                  return yield* Effect.fail(retryFailure);
+                }),
+              );
             }).pipe(
               Effect.ensuring(
                 fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
