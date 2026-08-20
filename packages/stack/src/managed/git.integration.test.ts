@@ -268,4 +268,136 @@ describe("managed Git workspace identity", () => {
       expect(yield* fs.readFileString(markerPath)).toContain(retry.identity.workspaceId);
     }),
   );
+
+  it.live("cleans an ordinary identity temp after interruption races exclusive open", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      const markerPath = join(workspace, ".supabase", "identity.json");
+      let tempOpenBlocked = false;
+      const layer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fs) => ({
+          ...fs,
+          open: (path, options) => {
+            if (
+              !tempOpenBlocked &&
+              path.startsWith(`${markerPath}.tmp.`) &&
+              options?.flag === "wx"
+            ) {
+              tempOpenBlocked = true;
+              return fs
+                .open(path, options)
+                .pipe(Effect.flatMap((file) => Effect.interrupt.pipe(Effect.as(file))));
+            }
+            return fs.open(path, options);
+          },
+        })),
+      ).pipe(Layer.provide(BunFileSystem.layer));
+
+      const interrupted = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(interrupted)).toBe(true);
+
+      const fs = yield* Effect.gen(function* () {
+        return yield* FileSystem.FileSystem;
+      }).pipe(Effect.provide(layer));
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual([]);
+
+      const retry = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(Effect.provide(layer));
+      expect(retry.created).toBe(true);
+    }),
+  );
+
+  it.live("cleans a fallback lock after interruption races exclusive open", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      const markerPath = join(workspace, ".supabase", "identity.json");
+      const lockPath = `${markerPath}.lock`;
+      let lockOpenBlocked = false;
+      const layer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fs) => ({
+          ...fs,
+          link: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                cause: Object.assign(new Error("hard links unavailable"), { code: "EPERM" }),
+              }),
+            ),
+          open: (path, options) => {
+            if (!lockOpenBlocked && path === lockPath && options?.flag === "wx") {
+              lockOpenBlocked = true;
+              return fs
+                .open(path, options)
+                .pipe(Effect.flatMap((file) => Effect.interrupt.pipe(Effect.as(file))));
+            }
+            return fs.open(path, options);
+          },
+        })),
+      ).pipe(Layer.provide(BunFileSystem.layer));
+
+      const interrupted = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(interrupted)).toBe(true);
+
+      const fs = yield* Effect.gen(function* () {
+        return yield* FileSystem.FileSystem;
+      }).pipe(Effect.provide(layer));
+      expect(yield* fs.exists(markerPath)).toBe(false);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual([]);
+
+      const retry = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(Effect.provide(layer));
+      expect(retry.created).toBe(true);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual(["identity.json"]);
+    }),
+  );
+
+  it.live("recovers an ordinary identity after a dead fallback owner", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      makeDirectory(workspace, ".supabase");
+      const markerPath = join(workspace, ".supabase", "identity.json");
+      const lockPath = `${markerPath}.lock`;
+      const staleTempPath = `${markerPath}.tmp.crashed`;
+      writeFileSync(staleTempPath, "orphan");
+      writeFileSync(
+        lockPath,
+        `${JSON.stringify({ token: "crashed-owner", pid: 99_999_999, tempPath: staleTempPath })}\n`,
+      );
+      const layer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fs) => ({
+          ...fs,
+          link: () =>
+            Effect.fail(
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "FileSystem",
+                method: "link",
+                cause: Object.assign(new Error("hard links unavailable"), { code: "EPERM" }),
+              }),
+            ),
+        })),
+      ).pipe(Layer.provide(BunFileSystem.layer));
+
+      const result = yield* ensureOrdinaryWorkspaceIdentity(workspace).pipe(Effect.provide(layer));
+      expect(result.created).toBe(true);
+      const fs = yield* Effect.gen(function* () {
+        return yield* FileSystem.FileSystem;
+      }).pipe(Effect.provide(layer));
+      expect(yield* fs.readFileString(markerPath)).toContain(result.identity.workspaceId);
+      expect(yield* fs.readDirectory(join(workspace, ".supabase"))).toEqual(["identity.json"]);
+    }),
+  );
 });
