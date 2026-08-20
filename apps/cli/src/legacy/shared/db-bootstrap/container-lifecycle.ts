@@ -684,58 +684,46 @@ function legacyDockerStartContainer(
 }
 
 /**
- * Extracts an in-memory tar archive through the same Docker CLI/Engine connection used by create
- * and start. Stdin requires no daemon-visible bind source or client-visible host path, so the flow
- * works with local, remote-context, and confined container clients.
+ * `docker cp - <dest>` with tar bytes on stdin. The stream form keeps member uid/gid;
+ * a host-path copy would reset ownership to root.
  */
-function legacyDockerCopyArchiveIntoContainer(
+export function legacyDockerCopyArchiveIntoContainer<E>(
   spawner: Spawner,
-  archive: Uint8Array,
+  archive: Uint8Array | LegacyStartPreStartArchiveSpec["tar"],
   containerDest: string,
-): Effect.Effect<void, LegacyContainerCreateError> {
+  fail: (detail: string) => E,
+): Effect.Effect<void, E> {
+  const stdin = Stream.isStream(archive) ? archive : Stream.make(archive);
   return Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawnContainerCli(spawner, ["cp", "-", containerDest], {
-        stdin: Stream.make(archive),
+        stdin,
         stdout: "ignore",
         stderr: "pipe",
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyContainerCreateError({
-              message: `failed to create docker container: failed to copy secret file into container: ${legacyDescribeContainerCliFailure(cause)}`,
-              reason: "runtime",
-            }),
-        ),
-      );
+      }).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
       const [exitCode, stderr] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
-      ).pipe(
-        Effect.mapError(
-          () =>
-            new LegacyContainerCreateError({
-              message:
-                "failed to create docker container: failed to copy secret file into container",
-              reason: "runtime",
-            }),
-        ),
-      );
+      ).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
       if (exitCode !== 0) {
         const message = stderr.trim();
         return yield* Effect.fail(
-          new LegacyContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: failed to copy secret file into container: ${message}`
-                : "failed to create docker container: failed to copy secret file into container",
-            reason: legacyContainerCliReason(message),
-          }),
+          fail(message.length > 0 ? `exit ${exitCode}: ${message}` : `exit ${exitCode}`),
         );
       }
     }),
   );
 }
+
+const legacySecretCopyFailure = (detail: string): LegacyContainerCreateError =>
+  new LegacyContainerCreateError({
+    message:
+      detail.length > 0
+        ? `failed to create docker container: failed to copy secret file into container: ${detail}`
+        : "failed to create docker container: failed to copy secret file into container",
+    reason:
+      detail.length > 0 && !legacyIsDockerDaemonUnreachable(detail) ? "configuration" : "runtime",
+  });
 
 /**
  * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
@@ -767,7 +755,12 @@ function legacyCopyStartSecretFilesIntoContainer(
       }),
   }).pipe(
     Effect.flatMap((archive) =>
-      legacyDockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`),
+      legacyDockerCopyArchiveIntoContainer(
+        spawner,
+        archive,
+        `${containerId}:/`,
+        legacySecretCopyFailure,
+      ),
     ),
   );
 }
@@ -790,29 +783,15 @@ function legacyExtractPreStartArchiveIntoContainer(
   containerId: string,
   archive: LegacyStartPreStartArchiveSpec,
 ): Effect.Effect<void, LegacyContainerCreateError> {
-  const failure = (detail: string) =>
-    new LegacyContainerCreateError({
-      message: `failed to create docker container: failed to restore archive into container${detail}`,
-      reason: "runtime",
-    });
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const child = yield* spawnContainerCli(
-        spawner,
-        ["cp", "-", `${containerId}:${archive.containerPath}`],
-        { stdin: archive.tar, stdout: "ignore", stderr: "pipe" },
-      ).pipe(Effect.mapError((cause) => failure(`: ${legacyDescribeContainerCliFailure(cause)}`)));
-      const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-        { concurrency: "unbounded" },
-      ).pipe(Effect.mapError(() => failure("")));
-      if (exitCode !== 0) {
-        const message = stderr.trim();
-        return yield* Effect.fail(
-          failure(message.length > 0 ? `: ${message}` : `: exit ${exitCode}`),
-        );
-      }
-    }),
+  return legacyDockerCopyArchiveIntoContainer(
+    spawner,
+    archive.tar,
+    `${containerId}:${archive.containerPath}`,
+    (detail) =>
+      new LegacyContainerCreateError({
+        message: `failed to create docker container: failed to restore archive into container: ${detail}`,
+        reason: "runtime",
+      }),
   );
 }
 
@@ -901,7 +880,7 @@ export function legacyCreateContainer(
     // `shadow-database.ts`), but `preStartArchives` is TS-only with no Go counterpart, and its one
     // producer (the shadow baseline cache's warm restore) recovers from this exact failure by
     // provisioning a replacement — which must not accumulate an orphaned created container per
-    // recovery (review: Codex on #6184).
+    // recovery.
     yield* Effect.forEach(
       finalSpec.preStartArchives ?? [],
       (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),

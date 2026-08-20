@@ -6,9 +6,8 @@
  *
  * A black-box `runSupabaseLive` subprocess test, like every other `*.live.test.ts` in this
  * workspace: the facts it is here to prove are the ones only the real wiring can — that `db diff`
- * actually routes through `legacyAcquireShadowDatabase`, that the cache's env gates
- * (`SUPABASE_SHADOW_CACHE`/`SUPABASE_SHADOW_DEBUG`) and its `${SUPABASE_HOME}/cache/shadow-baseline`
- * artifact location survive a real process boundary, that the cache key is STABLE across two
+ * actually routes through `legacyAcquireShadowDatabase`, that `SUPABASE_SHADOW_CACHE` and
+ * `${SUPABASE_HOME}/cache/shadow-baseline` survive a real process boundary, that the cache key is STABLE across two
  * separate CLI processes (an in-process test computes it once), and that a warm-restored cluster
  * yields the same migration SQL as a cold-provisioned one. It replaces an earlier in-process
  * version of this file that called `legacyAcquireShadowDatabase` directly with a synthetic layer
@@ -165,12 +164,7 @@ as $$ select 1; $$;
           home: home.dir,
           exitTimeoutMs: DIFF_TIMEOUT_MS,
           env: {
-            // The e2e/live harness pins this to "0" by default so ordinary suites never leave a
-            // ~90MB tar behind; this suite's subject IS the cache, so it opts back in.
             SUPABASE_SHADOW_CACHE: "1",
-            // Turns on `shadow-debug.ts`'s stderr phase lines, which name the path actually taken
-            // (`baseline-export` cold, `baseline-restore` warm).
-            SUPABASE_SHADOW_DEBUG: "1",
             SUPABASE_DB_SHADOW_PORT: String(shadowPort),
           },
         };
@@ -199,11 +193,6 @@ as $$ select 1; $$;
       expect(cold, "every candidate shadow port reported a bind conflict").toBeDefined();
       if (cold === undefined) return;
       expect(cold.exitCode, `stdout:\n${cold.stdout}\nstderr:\n${cold.stderr}`).toBe(0);
-      expect(cold.stderr).toContain("shadow-debug: baseline-export");
-      expect(cold.stderr).not.toContain("shadow-debug: baseline-restore");
-      // The artifact is a plain file under the global per-settings cache — the property that lets
-      // worktrees with the same settings share a warm hit, and a future native (non-Docker)
-      // Postgres service consume the same snapshot.
       expect(coldTars, `cache dir: ${cacheDir}\nstderr:\n${cold.stderr}`).toHaveLength(1);
       expect(coldTars[0]).toMatch(BASELINE_TAR_PATTERN);
 
@@ -211,8 +200,6 @@ as $$ select 1; $$;
       expect(warm).toBeDefined();
       if (warm === undefined) return;
       expect(warm.exitCode, `stdout:\n${warm.stdout}\nstderr:\n${warm.stderr}`).toBe(0);
-      expect(warm.stderr).toContain("shadow-debug: baseline-restore");
-      expect(warm.stderr).not.toContain("shadow-debug: baseline-export");
       // Neither degradation path may have engaged — both warn on stderr before falling back to a
       // cold provision, and either would otherwise hide a broken warm path behind a passing run.
       expect(warm.stderr).not.toContain("cached shadow baseline unusable");

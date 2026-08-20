@@ -1,29 +1,8 @@
 /**
- * Shadow baseline cache — the acquire/release pair `db diff`/`db pull`/the migrations-catalog
- * resolution path use in place of bare `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase`
- * (`shadow-database.ts`). Caches the shadow's platform baseline (init schema + the PG15+ one-shot
- * realtime/storage/auth jobs) as a disk-level PGDATA snapshot, never a kept container.
- *
- * - **Cold** (no snapshot for this key): provision the shadow as an uncached run does, then —
- *   right after the baseline and before `contrib_regression`/any user migration — stop the
- *   container, export its PGDATA via {@link legacyExportPgDataTar} (`pgdata-snapshot.ts`), and
- *   start it again.
- * - **Warm** (that tar exists): create the shadow with the tar unpacked into it before it starts
- *   ({@link legacyPgDataRestoreArchive}), so the entrypoint skips `initdb` and the whole baseline;
- *   the caller applies user migrations straight onto the restored `postgres`.
- *
- * Invariants: the artifact is a plain file, not a Docker object (native-services friendly — see
- * `pgdata-snapshot.ts`'s own header); no container outlives a run — cold, warm, and cache-off
- * shadows are all removed with `docker rm -f -v` on release; the cold path alone drops `--rm` (see
- * {@link LegacyCreateShadowDatabaseInput.autoRemove} for the consequence); the tar is published by
- * an atomic rename, so concurrent writers need no lock file; a cache anomaly never fails the run —
- * a warm-path anomaly cold-provisions (deleting the tar only when its contents are implicated —
- * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and leaves the
- * run uncached (with ONE deliberate exception: a shadow that fails to come back up after the
- * snapshot fails the run — see `legacyExportShadowBaseline`); tars live under the global
- * `${SUPABASE_HOME}/cache/shadow-baseline/` (shared across worktrees with the same settings),
- * with LRU (keep 8) + 14-day mtime TTL retention. `SUPABASE_SHADOW_CACHE` is ON by default;
- * `false`/`0` opts out.
+ * Shadow baseline cache for `db diff`/`db pull`/catalog resolution. Snapshots the platform
+ * baseline as a PGDATA tar under `${SUPABASE_HOME}/cache/shadow-baseline/` (keep 3, 2-day TTL).
+ * Off unless `SUPABASE_SHADOW_CACHE` is set (viper bool + project dotenv). A cache miss or
+ * anomaly never fails the run except when the shadow does not come back after a cold export.
  */
 
 import { createHash } from "node:crypto";
@@ -32,21 +11,21 @@ import type { ProjectConfig } from "@supabase/config";
 import { Clock, Effect, Option, Result, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import { legacyViperEnvBoolWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   containerCliExitCode,
   legacyDescribeContainerCliFailure,
 } from "../legacy-container-cli.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
-import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
-import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import {
   LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
   LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
   type LegacySetupDatabaseOptions,
+  legacyResolveSetupWebhooksEnabled,
 } from "./db-setup.ts";
 import {
   LEGACY_START_INTERNAL_DB_NAME,
@@ -78,10 +57,10 @@ import type {
   LegacyPgDataSnapshotUnavailable,
 } from "./pgdata-snapshot.ts";
 import { legacyResolvePinnedImage } from "./pinned-image.ts";
-import { legacyTimeShadowPhase } from "./shadow-debug.ts";
 import {
   legacyCreateShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowConnConfig,
   type LegacyShadowBaselineState,
   LegacyShadowDbError,
   type LegacyShadowSetupInput,
@@ -89,7 +68,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `SUPABASE_SHADOW_CACHE` — the opt-OUT gate for this whole module (default ON). */
+/** `SUPABASE_SHADOW_CACHE` — opt-in gate (viper bool; unset is off). */
 export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
 
 /**
@@ -116,8 +95,7 @@ interface LegacyShadowCacheUnavailable {
    * port collision, or even a corrupt archive's failed extraction) leaves the tar in place: an
    * infra failure says nothing about the tar, and a genuinely corrupt one is atomically
    * REPLACED by the cold fallback's own export in the same run, so deleting up front would only
-   * throw away a valid ~15s-to-rebuild baseline on transient Docker failures (review: Codex on
-   * #6184).
+   * throw away a valid ~15s-to-rebuild baseline on transient Docker failures.
    */
   readonly tarSuspect?: boolean;
 }
@@ -127,28 +105,6 @@ const legacyShadowCacheUnavailable = (
   opts: { readonly tarSuspect?: boolean } = {},
 ): LegacyShadowCacheUnavailable => ({ reason, ...opts });
 
-/**
- * Whether the shadow baseline cache is enabled for this invocation.
- *
- * Unset (or empty) means ON — this is a default-on optimization, not a feature flag. A value that
- * IS set goes through the repo's `viper.GetBool` parser, so `SUPABASE_SHADOW_CACHE=false` and
- * `=0` opt out while `=1`/`=true` are explicit opt-ins.
- *
- * `projectEnvValues` (the project's dotenv-merged env, ambient-wins — see
- * `legacyGetRegistryOverride`'s identical parameter, `legacy-docker-registry.ts`) is consulted
- * first so an opt-out set only in `supabase/.env` is honored, matching how Go's `loadNestedEnv`
- * makes project dotenv visible to every viper read (review: Codex on #6184). Falls back to `env`
- * (ambient) when the record is absent or lacks the key.
- */
-export function legacyShadowCacheEnabled(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  projectEnvValues?: Readonly<Record<string, string>>,
-): boolean {
-  const raw = projectEnvValues?.[LEGACY_SHADOW_CACHE_ENV] ?? env[LEGACY_SHADOW_CACHE_ENV];
-  if (raw === undefined || raw.length === 0) return true;
-  return legacyParseBoolEnv(raw);
-}
-
 // ---------------------------------------------------------------------------
 // Cache key
 // ---------------------------------------------------------------------------
@@ -156,26 +112,13 @@ export function legacyShadowCacheEnabled(
 /** One of the three PG15+ one-shot migrate jobs, as the cache key sees it. */
 export interface LegacyShadowCacheServiceInput {
   readonly enabled: boolean;
-  /**
-   * `legacyResolvePinnedImage`'s pinned image passed through `legacyGetRegistryImageUrl` — the
-   * REGISTRY-RESOLVED ref, not the bare `supabase/<name>:<tag>` pin, because that is the identity
-   * `legacyRunStartMigrateJob`'s own `legacyEnsureImagesCached` resolve actually runs: a changed
-   * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (ambient or project-`.env`) can serve a different image
-   * under the same tag, and the postgres image field above is already the registry-resolved form
-   * (review: Codex on #6184). Hashed ONLY when {@link enabled}, since a disabled service's job
-   * never ran into the baseline.
-   */
+  /** Registry-resolved image; hashed only when {@link enabled}. */
   readonly image: string;
 }
 
 /**
- * Every input baked into the shadow cluster during a cold provision. Deliberately NOT
- * `legacySetupInputsToken`'s shape (`legacy-pgdelta.cache.ts`): that key is a Go-parity
- * byte-for-byte contract shared with the Go binary AND hashes vault NAMES only while omitting
- * the one-shot job image tags — both fatal for a CLUSTER snapshot, which carries the vault
- * secrets' values and the versioned `auth`/`storage`/`_realtime` schema those jobs write. This
- * key mirrors that function's hashing STYLE (sha256 over newline-joined formatted fields) without
- * reusing it.
+ * Inputs baked into the shadow cluster. Separate from `legacySetupInputsToken`:
+ * that catalog key hashes vault names only and omits job image tags.
  */
 export interface LegacyShadowCacheKeyInputs {
   /** The resolved, full `supabase/postgres` image (tag included — a major version is not enough). */
@@ -187,29 +130,20 @@ export interface LegacyShadowCacheKeyInputs {
   /** `[db] password` — baked into the cluster as the `postgres` role's password. */
   readonly dbPassword: string;
   /**
-   * The Storage migration pin read from `supabase/.temp/storage-migration` (written by
-   * `supabase link`), fed as `DB_MIGRATIONS_FREEZE_AT` to the Storage one-shot migrate job
-   * (`legacyStartStorageMigrateEnv`, `db-setup.ts`) — it decides WHICH Storage migrations the
-   * baseline carries, independently of the job image's own tag. `""` when absent (unlinked
-   * project), matching the setup input's own zero value. Hashed ONLY when `services.storage`
-   * is enabled AND `majorVersion >= 15` — the exact compound gate `legacyStartInitSchema15`
-   * (`db-setup.ts`) puts the consuming job behind, mirroring {@link jwks}'s treatment
-   * (review: depthfirst/Codex on #6184).
+   * Storage migration pin from `supabase/.temp/storage-migration`. Hashed only when
+   * storage is enabled and `majorVersion >= 15`.
    */
   readonly storageTargetMigration: string;
   readonly dbSettings: ProjectConfig["db"]["settings"];
   /**
-   * `api.auto_expose_new_tables` as config carries it. Hashed as the EFFECTIVE two-state behavior,
-   * not the raw tri-state — see {@link legacyEffectiveShadowApiGrantsKept}.
+   * `api.auto_expose_new_tables` as config carries it. Hashed as the effective
+   * two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.
    */
   readonly autoExposeNewTables: Option.Option<boolean>;
   /**
-   * Effective Webhooks/`pg_net` policy baked into the cluster — the same boolean
-   * `legacySetupDatabase` applies (`options.webhooks` resolved against
-   * `setup.webhooksEnabled`). Distinct from the raw config flag: legacy migrate
-   * forces enabled, next declarative forces disabled, and next migrate follows
-   * config. Hashed so those callers cannot share a snapshot (review: Codex/
-   * depthfirst on #6184).
+   * Effective Webhooks/`pg_net` policy `legacySetupDatabase` applies. Legacy
+   * migrate forces enabled; next declarative forces disabled; next migrate
+   * follows config.
    */
   readonly webhooksEnabled: boolean;
   /** `supabase/roles.sql`'s contents, `""` when absent. */
@@ -241,56 +175,32 @@ export interface LegacyShadowCacheKeyInputs {
 }
 
 /**
- * Digest of every CLI-EMBEDDED literal baked into the baseline cluster — the inputs that change
- * with a CLI release rather than with the project's config: the PG15+ entrypoint's initdb heredocs
- * (schema/webhook/_supabase — `postgres.service.ts`), the API privilege revocation, and the
- * Realtime one-shot job's seed constants. Without this line, a CLI upgrade that edits a grant,
- * schema statement, revocation, or seeded literal WITHOUT bumping the corresponding image would
- * warm-restore the previous release's baseline (review: depthfirst/Codex on #6184). Computed once
- * at module load — these are compile-time constants. When adding a new embedded step to the
- * baseline (`legacySetupDatabase`/the entrypoint scripts/a one-shot job's env), add its text here
- * too.
- *
- * Deliberately EXCLUDES PG<=14's own setup SQL (`LEGACY_START_DB_GLOBALS_SQL`,
- * `LEGACY_START_DB_INITIAL_SCHEMA_13_SQL`/`_14_SQL`): PG<=14 is cache-ineligible —
- * {@link legacyResolveShadowCacheKeyInputs} returns `Option.none()` for `majorVersion <= 14` before
- * any key is computed, so no cluster keyed by this digest can ever have run through that SQL. If
- * PG<=14 ever becomes cache-eligible, those templates must be re-added here.
+ * Digest of CLI-embedded literals baked into the baseline (initdb heredocs, privilege
+ * SQL, vault upsert SQL, Realtime seed constants). Lazy: these are compile-time constants.
+ * PG<=14 setup SQL is excluded because that major is cache-ineligible.
  */
-const LEGACY_SHADOW_BASELINE_EMBEDDED_DIGEST = createHash("sha256")
-  .update(
-    [
-      LEGACY_START_DB_SCHEMA_SQL,
-      LEGACY_START_DB_WEBHOOK_SQL,
-      LEGACY_START_DB_SUPABASE_SQL,
-      LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
-      // The webhooks-enable statement `legacySetupDatabase` runs for a webhooks-enabled baseline
-      // (`db-setup.ts`). `webhooksEnabled` above only says WHETHER it ran; this line covers the
-      // text it ran, so editing the statement re-keys those tars too (review: Codex on #6184).
-      LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
-      // The vault upsert's own SQL (`legacyUpsertVaultSecrets`, `legacy-vault.ts`) runs into the
-      // baseline right after the privilege pass — same digest rationale as every line above.
-      LEGACY_READ_VAULT_KV,
-      LEGACY_UPDATE_VAULT_KV,
-      LEGACY_CREATE_VAULT_KV,
-      // The Realtime one-shot job's CLI-embedded seed literals. `SEED_SELF_HOST=true`
-      // (`legacyBuildRealtimeEnv`, `realtime-env.ts`) makes that job PERSIST a tenant plus its
-      // `postgres_cdc_rls` extension settings into `_realtime`, encrypted with `DB_ENC_KEY` — so
-      // these values are baked into the snapshot exactly like the SQL above, and every one of them
-      // is a `toml:"-"`/hardcoded literal a CLI release can edit. `services.realtime.image` only
-      // re-keys when the IMAGE moves, so without these lines such an edit would warm-restore the
-      // old tenant identity and encryption key (review: Codex on #6184). Only the CONSTANTS
-      // belong here: the job's per-run env (the shadow's own short container id as `DB_HOST`, its
-      // password, the resolved JWKS) is either already a key field or deliberately excluded.
-      LEGACY_REALTIME_TENANT_ID,
-      LEGACY_REALTIME_ENCRYPTION_KEY,
-      LEGACY_REALTIME_DB_USER,
-      LEGACY_START_INTERNAL_DB_NAME,
-      String(LEGACY_START_INTERNAL_DB_PORT),
-    ].join("\n--8<--\n"),
-    "utf8",
-  )
-  .digest("hex");
+let legacyShadowBaselineEmbeddedDigestMemo: string | undefined;
+const legacyShadowBaselineEmbeddedDigest = (): string =>
+  (legacyShadowBaselineEmbeddedDigestMemo ??= createHash("sha256")
+    .update(
+      [
+        LEGACY_START_DB_SCHEMA_SQL,
+        LEGACY_START_DB_WEBHOOK_SQL,
+        LEGACY_START_DB_SUPABASE_SQL,
+        LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
+        LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
+        LEGACY_READ_VAULT_KV,
+        LEGACY_UPDATE_VAULT_KV,
+        LEGACY_CREATE_VAULT_KV,
+        LEGACY_REALTIME_TENANT_ID,
+        LEGACY_REALTIME_ENCRYPTION_KEY,
+        LEGACY_REALTIME_DB_USER,
+        LEGACY_START_INTERNAL_DB_NAME,
+        String(LEGACY_START_INTERNAL_DB_PORT),
+      ].join("\n--8<--\n"),
+      "utf8",
+    )
+    .digest("hex"));
 
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
 function legacyCanonicalJson(value: unknown): string {
@@ -302,15 +212,12 @@ function legacyCanonicalJson(value: unknown): string {
   return `{${entries.map(([key, entryValue]) => `${JSON.stringify(key)}:${legacyCanonicalJson(entryValue)}`).join(",")}}`;
 }
 
-const legacyBoolToken = (value: boolean) => (value ? "true" : "false");
-
 /**
  * The two-state behavior `legacyApplyApiPrivileges` (`db-setup.ts`) actually derives from
  * `api.auto_expose_new_tables`' tri-state: it returns early ONLY for an explicit `true`, so unset
  * and explicit `false` both exec {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} and bake the exact
  * same cluster. Hashing the raw tri-state would split those two into different keys and force a
- * spurious ~90MB re-snapshot for a config edit that changes nothing on disk (review: Codex on
- * #6184).
+ * spurious ~90MB re-snapshot for a config edit that changes nothing on disk.
  */
 const legacyEffectiveShadowApiGrantsKept = (value: Option.Option<boolean>): boolean =>
   Option.getOrElse(value, () => false);
@@ -322,11 +229,7 @@ const legacyEffectiveShadowApiGrantsKept = (value: Option.Option<boolean>): bool
  * collision, not a missed field. Short enough to read in a filename.
  */
 export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string {
-  // Every UNRESTRICTED string is JSON-encoded before interpolation (`quoted`): a raw newline in
-  // one field could otherwise forge a whole extra payload line, letting two distinct
-  // configurations collide (review: Codex on #6184 — same class as the vault tuples below).
-  // Numbers and closed tokens need no quoting; `rolesSql` stays raw because it is the
-  // documented LAST field, with nothing after it to forge.
+  // JSON-encode unrestricted strings so a raw newline cannot forge the next payload line.
   const quoted = (value: string) => JSON.stringify(value);
   const lines: Array<string> = [
     `postgres_image=${quoted(inputs.postgresImage)}`,
@@ -339,10 +242,9 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
     `root_key=${quoted(inputs.rootKey)}`,
     `db_password=${quoted(inputs.dbPassword)}`,
     `db_settings=${legacyCanonicalJson(inputs.dbSettings)}`,
-    `api_grants_kept=${legacyBoolToken(legacyEffectiveShadowApiGrantsKept(inputs.autoExposeNewTables))}`,
-    `webhooks_enabled=${legacyBoolToken(inputs.webhooksEnabled)}`,
-    // Not a per-run input — see the digest's own doc comment for what it covers and why.
-    `baseline_embedded_digest=${LEGACY_SHADOW_BASELINE_EMBEDDED_DIGEST}`,
+    `api_grants_kept=${legacyEffectiveShadowApiGrantsKept(inputs.autoExposeNewTables)}`,
+    `webhooks_enabled=${inputs.webhooksEnabled}`,
+    `baseline_embedded_digest=${legacyShadowBaselineEmbeddedDigest()}`,
   ];
   for (const name of ["realtime", "storage", "auth"] as const) {
     const service = inputs.services[name];
@@ -367,35 +269,19 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
       ? `storage_target_migration=${quoted(inputs.storageTargetMigration)}`
       : "storage_target_migration=excluded",
   );
-  // ONLY resolved entries: `legacyUpsertVaultSecrets` (`legacy-vault.ts`) filters on
-  // `secret.resolved` before touching `vault.secrets`, so an unresolved entry never lands in
-  // the cluster and must not affect the key — hashing exactly what the upsert processes
-  // (review: Codex on #6184).
+  // Only resolved vault entries: the upsert skips unresolved secrets.
   for (const secret of inputs.vault
     .filter((secret) => secret.resolved)
     .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
     // JSON-encoded tuple, not `name=value`: both halves are unrestricted strings, so a bare
     // `=` join would let (`a=b`, `c`) and (`a`, `b=c`) collide — and a value containing a
-    // newline could forge a whole extra payload line (review: Codex on #6184).
+    // newline could forge a whole extra payload line.
     lines.push(`vault=${JSON.stringify([secret.name, secret.value])}`);
   }
   // Last, raw (it can contain anything, including newlines) — mirroring `setupInputsToken`,
   // which also appends `roles.sql` verbatim at the end of its own payload.
   const payload = `${lines.join("\n")}\nroles_sql=\n${inputs.rolesSql}`;
   return createHash("sha256").update(payload, "utf8").digest("hex").slice(0, 16);
-}
-
-/**
- * Same resolution `legacySetupDatabase` applies (`db-setup.ts`): `"enabled"` always
- * installs `pg_net`, `"disabled"` always removes it, `"config"` (the default) follows
- * `setup.webhooksEnabled`.
- */
-export function legacyEffectiveShadowWebhooksEnabled(
-  policy: LegacySetupDatabaseOptions["webhooks"],
-  webhooksEnabled: boolean,
-): boolean {
-  const webhooks = policy ?? "config";
-  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
 }
 
 /**
@@ -422,23 +308,12 @@ const legacyResolveShadowCacheKeyInputs = <E>(
   opts: LegacyShadowCacheOpts = {},
 ): Effect.Effect<Option.Option<LegacyShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
-    // OrioleDB (`experimental.orioledb_version`) makes the WHOLE cache ineligible, not just a
-    // key input: that branch runs the shadow with an external S3 storage backend
-    // (`S3_ENABLED=true` — `legacyPostgresExtraEnv`, `postgres.service.ts`), so part of the
-    // cluster's state lives outside PGDATA and a disk-level tar is not a coherent snapshot to
-    // begin with (review: Codex on #6184). Same `Option.none` degradation as an unreadable
-    // `roles.sql` below: the run proceeds uncached.
+    // OrioleDB keeps cluster state in S3, so a PGDATA tar is not a coherent snapshot.
     const orioledbVersion = input.experimental.orioledb_version;
     if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
 
-    // PG <= 14 is cache-ineligible too: its setup path executes the bundled globals SQL
-    // (`LEGACY_START_DB_GLOBALS_SQL`, `db-setup.ts`'s pre-15 branch), whose `ALTER ROLE … SET`
-    // statements (statement_timeout, `postgres`'s search_path) only take effect on NEW sessions.
-    // Go/uncached runs apply migrations on the SAME session that ran the setup — before those
-    // defaults exist — while any snapshot boundary forces a reconnect that picks them up, so
-    // unqualified names in user migrations could resolve into different schemas and change the
-    // diff (review: Codex on #6184). PG15+ moves that SQL into the entrypoint's initdb heredoc,
-    // which runs before any CLI session, so no session ever observes a mid-run change there.
+    // PG<=14 applies `ALTER ROLE … SET` on the setup session; a snapshot reconnect would
+    // observe those defaults and change migration resolution.
     if (input.setup.majorVersion <= 14) return Option.none();
 
     const rolesPath = input.path.join(input.workdir, "supabase", "roles.sql");
@@ -473,13 +348,13 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       // The EFFECTIVE value, not the raw input: `legacyBuildShadowPostgresContainerSpec`
       // (`postgres.service.ts`) falls back to the embedded default when unset, so hashing `""`
       // would fail to re-key if that security-sensitive default ever rotates between CLI
-      // releases (review: depthfirst on #6184).
+      // releases.
       rootKey: input.rootKey ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
       dbPassword: input.password,
       dbSettings: input.db.settings,
       storageTargetMigration: input.setup.storageTargetMigration,
       autoExposeNewTables: input.setup.apiAutoExposeNewTables,
-      webhooksEnabled: legacyEffectiveShadowWebhooksEnabled(
+      webhooksEnabled: legacyResolveSetupWebhooksEnabled(
         opts.webhooks,
         input.setup.webhooksEnabled,
       ),
@@ -512,11 +387,11 @@ const LEGACY_SHADOW_BASELINE_TAR_PREFIX = "shadow-baseline-";
 
 const LEGACY_SHADOW_BASELINE_TAR_SUFFIX = ".tar";
 
-/** Cap on published tars in the global cache (~90MB each → ~720MB). */
-export const LEGACY_SHADOW_BASELINE_KEEP = 8;
+/** Cap on published tars in the global cache (~90MB each). */
+export const LEGACY_SHADOW_BASELINE_KEEP = 3;
 
-/** Drop published tars whose mtime is older than this (warm hits refresh mtime). */
-export const LEGACY_SHADOW_BASELINE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/** Drop unused published tars older than 2 days (warm hits refresh mtime). */
+export const LEGACY_SHADOW_BASELINE_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
 
 /**
  * `shadow-baseline-<key>.tar` under `${SUPABASE_HOME}/cache/shadow-baseline/` — one ~90MB file
@@ -550,12 +425,13 @@ export interface LegacyShadowBaselineTarEntry {
 export interface LegacyShadowBaselineRetentionOpts {
   readonly keep?: number;
   readonly maxAgeMs?: number;
+  /** Never evict this published tar, even if it is older than the TTL or over the cap. */
+  readonly retainFileName?: string;
 }
 
 /**
  * Pure LRU + age eviction: drop every published tar older than `maxAgeMs`, then among the
- * survivors keep the newest `keep` by mtime. Never returns non-tar names (catalogs, partials).
- * Unit-testable without a filesystem.
+ * survivors keep the newest `keep` by mtime. The current run's tar is never evicted.
  */
 export function legacyShadowBaselineTarsToEvict(
   entries: ReadonlyArray<LegacyShadowBaselineTarEntry>,
@@ -564,7 +440,10 @@ export function legacyShadowBaselineTarsToEvict(
 ): ReadonlyArray<string> {
   const keep = opts.keep ?? LEGACY_SHADOW_BASELINE_KEEP;
   const maxAgeMs = opts.maxAgeMs ?? LEGACY_SHADOW_BASELINE_MAX_AGE_MS;
-  const candidates = entries.filter((entry) => legacyIsShadowBaselineTar(entry.fileName));
+  const retain = opts.retainFileName;
+  const candidates = entries.filter(
+    (entry) => legacyIsShadowBaselineTar(entry.fileName) && entry.fileName !== retain,
+  );
   const aged = new Set(
     candidates.filter((entry) => now - entry.mtimeMs > maxAgeMs).map((entry) => entry.fileName),
   );
@@ -592,19 +471,14 @@ export function legacyIsShadowBaselinePartial(fileName: string): boolean {
   return /^shadow-baseline-[0-9a-f]{16}\.tar\.\d+\.partial$/u.test(fileName);
 }
 
-/**
- * A partial older than this is abandoned: the export itself streams ~90MB in seconds, so an
- * hour-old temp file's writer is long gone. Deliberately enormous relative to a real export so a
- * slow disk can never get a LIVE temp file swept out from under its writer.
- */
-const LEGACY_SHADOW_PARTIAL_ABANDON_MS = 60 * 60 * 1000;
+/** A partial older than 5 minutes is abandoned; a live export finishes in seconds. */
+const LEGACY_SHADOW_PARTIAL_ABANDON_MS = 5 * 60 * 1000;
 
 /**
  * Removes abandoned `.partial` temp files (see {@link legacyIsShadowBaselinePartial}) — the one
  * artifact a SIGKILLed/crashed cold export leaves behind that nothing else ever cleans: later
  * runs use their own pid in the temp name, and the tar retention sweep deliberately ignores
- * `.partial` names (review: Codex on #6184). Runs before every cold export and on warm hits (so
- * orphans cannot accumulate once every later run goes warm) — best-effort throughout.
+ * `.partial` names — best-effort throughout.
  */
 const legacySweepAbandonedShadowBaselinePartials = <E>(
   input: LegacyShadowSetupInput<E>,
@@ -637,6 +511,7 @@ const legacySweepAbandonedShadowBaselinePartials = <E>(
  */
 const legacySweepShadowBaselineRetention = <E>(
   input: LegacyShadowSetupInput<E>,
+  retainFileName?: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const cacheDir = legacyShadowBaselineCacheDir(input.path);
@@ -656,7 +531,7 @@ const legacySweepShadowBaselineRetention = <E>(
       entries.push({ fileName, mtimeMs: mtime.getTime() });
     }
     yield* Effect.forEach(
-      legacyShadowBaselineTarsToEvict(entries, now),
+      legacyShadowBaselineTarsToEvict(entries, now, { retainFileName }),
       (fileName) => legacyForgetShadowBaselineTar(input.fs, input.path.join(cacheDir, fileName)),
       { discard: true },
     );
@@ -703,19 +578,6 @@ const legacyShadowContainerVerb = (
     ),
   );
 
-/** The shadow's own connect target, shared by the readiness waits on both paths. */
-const legacyShadowConnConfig = <E>(input: LegacyShadowSetupInput<E>): LegacyPgConnInput => ({
-  host: input.hostname,
-  port: input.shadowPort,
-  user: "postgres",
-  password: input.password,
-  database: "postgres",
-});
-
-/**
- * `legacyWaitForShadowReady` self-instruments (`ready-attempt`/`ready-wait`, `health-check.ts`)
- * whenever `SUPABASE_SHADOW_DEBUG` is on, so neither call site here needs an extra timing wrapper.
- */
 const legacyAwaitShadowReady = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
@@ -761,28 +623,13 @@ const legacyWriteShadowBaselineTar = <E>(
         legacyShadowCacheUnavailable(cause.reason),
       ),
     );
-    yield* legacySweepShadowBaselineRetention(input);
+    yield* legacySweepShadowBaselineRetention(input, input.path.basename(tarPath));
   });
 
 /**
- * The cold path's snapshot step, run at the baseline/migrations seam — after
- * `legacySetupDatabase` and strictly before `contrib_regression` or any user migration, with no
- * session open against the shadow ({@link LegacyShadowBaselineState.snapshotBaseline}).
- *
- * `docker stop` -> export -> `docker start` -> readiness wait. The container is stopped because a
- * live Postgres's PGDATA is not a coherent thing to copy; the stop is fast (~1s) because the
- * entrypoint `exec`s Postgres, so PID 1 receives the SIGTERM instead of `sh` swallowing it and
- * burning the full 10s grace period.
- *
- * Two failure classes, deliberately NOT one broad catch: a stop/export failure only means this
- * run stays uncached — it warns and the run continues. A restart/readiness failure is the RUN'S
- * problem: the caller is about to reconnect to the shadow's published port, and reporting success
- * over a dead container would make that connect a blind dial — which can even reach a DIFFERENT
- * Postgres that claimed the port while the container was down (matching default credentials are
- * common locally), applying the template + migrations to the wrong database. So the restart runs
- * whether the export succeeded or not (`docker start` on an already-running container — e.g. when
- * the stop itself failed — is a no-op success), and its failure PROPAGATES as a
- * {@link LegacyShadowDbError} instead of degrading (review: Codex on #6184).
+ * Cold snapshot: stop → stamp → export → start → ready. Stop/export failures only
+ * warn (run stays uncached). Restart/ready failure is fatal — the caller is about to
+ * reconnect on the published port.
  */
 const legacyExportShadowBaseline = <E>(
   spawner: Spawner,
@@ -791,76 +638,48 @@ const legacyExportShadowBaseline = <E>(
   tarPath: string,
   containerId: string,
 ): Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection> =>
-  legacyTimeShadowPhase(
-    "baseline-export",
-    Effect.gen(function* () {
-      // Cache-degradable phase: stop + export. A failure here (including a failed stop, after
-      // which the container is simply still up) only costs this run its snapshot.
-      const exported = yield* Effect.result(
-        Effect.gen(function* () {
-          yield* legacyShadowContainerVerb(spawner, "stop", containerId);
-          // The stamp is what makes the published tar mean "the baseline THIS key promises" rather
-          // than "some PostgreSQL cluster". Two things give it that meaning. Its POSITION in the
-          // sequence: this whole step runs from `snapshotBaseline`, which `legacySetupShadowDatabase`
-          // invokes strictly after `legacySetupDatabase` returns (`shadow-database.ts`), and the
-          // stamp is the last mutation before the copy-out — so a future regression that snapshots
-          // EARLIER cannot produce a marked tar, it just stays uncached instead of silently
-          // publishing a bare cluster under a baseline key. And its CONTENT: `key` itself, which
-          // `legacyWarmShadow` compares against the key it resolved this run, so a valid snapshot
-          // of a DIFFERENT key that was copied over this filename is rejected too (review: Codex
-          // on #6184).
-          yield* legacyStampPgDataBaselineMarker(spawner, containerId, key).pipe(
-            Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
-              legacyShadowCacheUnavailable(cause.reason),
-            ),
-          );
-          yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
-        }),
-      );
-      // Run-critical phase: the shadow must be back up and answering before this step reports
-      // success — see this function's own doc comment for why these failures must propagate.
-      const revive = Effect.gen(function* () {
-        yield* legacyShadowContainerVerb(spawner, "start", containerId);
-        yield* legacyAwaitShadowReady(spawner, input, containerId, "re-started shadow");
-      });
-      yield* revive.pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyShadowDbError({
-              message: `shadow database did not come back after the baseline snapshot: ${cause.reason}`,
-              reason: "docker_daemon",
-            }),
-        ),
-      );
-      if (Result.isFailure(exported)) {
-        const output = yield* Output;
-        yield* output.raw(
-          `Warning: shadow baseline not cached: ${exported.failure.reason}\n`,
-          "stderr",
+  Effect.gen(function* () {
+    const exported = yield* Effect.result(
+      Effect.gen(function* () {
+        yield* legacyShadowContainerVerb(spawner, "stop", containerId);
+        yield* legacyStampPgDataBaselineMarker(spawner, containerId, key).pipe(
+          Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
+            legacyShadowCacheUnavailable(cause.reason),
+          ),
         );
-      }
-    }),
-  );
+        yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
+      }),
+    );
+    const revive = Effect.gen(function* () {
+      yield* legacyShadowContainerVerb(spawner, "start", containerId);
+      yield* legacyAwaitShadowReady(spawner, input, containerId, "re-started shadow");
+    });
+    yield* revive.pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyShadowDbError({
+            message: `shadow database did not come back after the baseline snapshot: ${cause.reason}`,
+            reason: "docker_daemon",
+          }),
+      ),
+    );
+    if (Result.isFailure(exported)) {
+      const output = yield* Output;
+      yield* output.raw(
+        `Warning: shadow baseline not cached: ${exported.failure.reason}\n`,
+        "stderr",
+      );
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Acquire / release
 // ---------------------------------------------------------------------------
 
-/**
- * Per-invocation cache controls a CALLER passes (as opposed to the user-level
- * {@link LEGACY_SHADOW_CACHE_ENV} env gate). `bypassCache` is `db schema declarative sync
- * --no-cache`'s hook: that flag documents "force fresh shadow database setup", so a run carrying
- * it must neither restore an existing snapshot nor publish a new one — exactly the uncached
- * lifecycle, regardless of the env gate (review: Codex on #6184).
- *
- * `webhooks` is the same policy the caller will pass to `legacySetupDatabase` /
- * `legacySetupShadowDatabase` / `legacyMigrate*ShadowDatabase`. Defaults to `"config"`
- * (follow `setup.webhooksEnabled`), matching {@link LegacySetupDatabaseOptions}. Hashed as
- * the effective boolean so a forced-on legacy migrate snapshot cannot warm-restore into a
- * next path that follows config, or a declarative shadow that forces webhooks off.
- */
 export interface LegacyShadowCacheOpts {
+  /** `sync --no-cache`: neither restore nor publish, regardless of the env gate. */
   readonly bypassCache?: boolean;
+  /** Effective webhooks/`pg_net` policy — hashed so migrate/declarative snapshots cannot mix. */
   readonly webhooks?: LegacySetupDatabaseOptions["webhooks"];
 }
 
@@ -963,8 +782,7 @@ const legacyDescribeShadowArchiveProblem = (problem: LegacyPgDataArchiveProblem)
  * that starts but never accepts connections would otherwise pin a Ctrl-C for the full
  * `healthTimeoutSeconds` budget — exactly the swallowed-SIGINT shape `legacyPrepareShadowSource`'s
  * own doc comment (`legacy-shadow-source.ts`) was restructured to avoid. `Effect.onInterrupt`
- * removes the container on that path, so re-enabling interruption cannot leak it (review: Codex
- * on #6184).
+ * removes the container on that path, so re-enabling interruption cannot leak it.
  */
 const legacyWarmShadow = <E>(
   spawner: Spawner,
@@ -987,8 +805,7 @@ const legacyWarmShadow = <E>(
     // schema. So the tar's own headers are scanned BEFORE anything is created (locally, no Docker)
     // for the cluster file, for the baseline marker this module stamps immediately before every
     // export, AND for that marker's key — see {@link legacyValidatePgDataArchive}. A read failure
-    // is infra and leaves the tar in place; either verdict implicates its CONTENTS (review: Codex
-    // on #6184).
+    // is infra and leaves the tar in place; either verdict implicates its CONTENTS.
     const problem = yield* legacyValidatePgDataArchive(input.fs, tarPath, key).pipe(
       Effect.mapError((cause) => legacyShadowCacheUnavailable(cause.reason)),
     );
@@ -999,13 +816,10 @@ const legacyWarmShadow = <E>(
         }),
       );
     }
-    const { containerId } = yield* legacyTimeShadowPhase(
-      "baseline-restore",
-      legacyCreateShadowDatabase(spawner, {
-        ...input,
-        restoreArchive: legacyPgDataRestoreArchive(input.fs, tarPath),
-      }),
-    ).pipe(
+    const { containerId } = yield* legacyCreateShadowDatabase(spawner, {
+      ...input,
+      restoreArchive: legacyPgDataRestoreArchive(input.fs, tarPath),
+    }).pipe(
       Effect.mapError((cause) =>
         legacyShadowCacheUnavailable(`failed to restore shadow baseline: ${cause.message}`),
       ),
@@ -1035,10 +849,8 @@ const legacyWarmShadow = <E>(
  * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
  * container outlives provision (the engine keeps using the URL after this returns).
  *
- * With {@link LEGACY_SHADOW_CACHE_ENV} set to a falsey value this IS `legacyCreateShadowDatabase`,
- * byte for byte. Otherwise it resolves the cache key and either restores this key's snapshot into
- * a fresh container (warm) or creates one and arranges for its baseline to be exported (cold).
- * Either way the container itself is created identically to an uncached one.
+ * Unset or falsey {@link LEGACY_SHADOW_CACHE_ENV} is the uncached create. Otherwise it
+ * restores this key's snapshot (warm) or creates one and exports the baseline (cold).
  *
  * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
  * `legacyCreateShadowDatabase` — a warm restore adds ~2s of uninterruptible work (a `docker cp -`);
@@ -1064,16 +876,15 @@ export const legacyAcquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (
       opts.bypassCache === true ||
-      !legacyShadowCacheEnabled(process.env, input.setup.projectEnvValues)
+      !legacyViperEnvBoolWithProjectFallback(
+        LEGACY_SHADOW_CACHE_ENV,
+        input.setup.projectEnvValues ?? {},
+      )
     ) {
       return yield* legacyUncachedShadow(spawner, input);
     }
 
-    // Interruptible: this runs inside `acquireUseRelease`'s uninterruptible `acquire`, but
-    // nothing has been acquired yet — and the JWKS effect inside can be a real third-party
-    // discovery request, which must not pin a Ctrl-C for its whole duration (review: Codex on
-    // #6184). Interruption here simply means no container was ever created, so there is nothing
-    // for a finalizer to release.
+    // Interruptible: nothing acquired yet; JWKS discovery must not pin Ctrl-C.
     const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
@@ -1085,13 +896,10 @@ export const legacyAcquireShadowDatabase = <E>(
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
 
-    // Warm hits refresh mtime (so frequently used keys survive LRU/TTL) and sweep abandoned
-    // partials — a killed concurrent writer's leftover would otherwise persist indefinitely once
-    // every later run goes warm, since the cold export's own sweep never runs again (review:
-    // Codex on #6184). Best-effort and cheap.
+    // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
     yield* legacyTouchShadowBaselineTar(input.fs, tarPath);
     yield* legacySweepAbandonedShadowBaselinePartials(input);
-    yield* legacySweepShadowBaselineRetention(input);
+    yield* legacySweepShadowBaselineRetention(input, input.path.basename(tarPath));
 
     return yield* legacyWarmShadow(spawner, input, key, tarPath).pipe(
       Effect.catch((cause) =>
@@ -1115,40 +923,12 @@ export const legacyAcquireShadowDatabase = <E>(
   });
 
 /**
- * The acquire/use/release triple every shadow-provisioning call site that runs the platform
- * baseline uses (`db diff`'s migra/pg-delta branch, `db pull`'s migration diff,
- * `legacy-pgdelta.cache.ts`'s catalog export).
- *
- * `Effect.acquireUseRelease`, NOT a `yield* acquire` followed by a later
- * `.pipe(Effect.ensuring(release))`: the latter leaves a real gap between the shadow's successful
- * creation and the finalizer actually being attached — a fiber interrupt landing between those two
- * statements would skip the release entirely, leaking the live container and leaving the shadow
- * port occupied. `acquireUseRelease` closes that: `acquire` runs inside an `uninterruptibleMask`
- * and the release finalizer is registered in the SAME uninterruptible continuation `acquire`
- * resolves into, matching Go's `defer DockerRemove` immediately after successful creation
- * (review: PRRT_kwDOErm0O86XDr4Y). It does NOT make removal unconditional — see
- * `legacyCreateShadowDatabase`'s own doc comment (`shadow-database.ts`) for the still-present,
- * deliberate-Go-parity leak window when `acquire` itself fails partway through (a `docker create`
- * success followed by a `docker cp`/`docker start` failure).
- *
- * `acquire` is ONLY the container acquisition — NOT the health-wait/migrate/declarative-apply
- * `legacyPrepareShadowSource` performs. Those belong in `use`, where a SIGINT can still interrupt
- * them (matching Go's single cancellable `ctx` threaded through the equivalent calls); passing all
- * of `legacyPrepareShadowSource` as `acquire` made that whole sequence uninterruptible too, since
- * `acquireUseRelease`'s `uninterruptibleMask` has no `restore` around `acquire` — see
- * `legacy-shadow-source.ts`'s own doc comment on `legacyPrepareShadowSource` for the full
- * rationale (review: PRRT_kwDOErm0O86XMrID).
- *
- * `release` is `legacyRemoveShadowDatabase` unconditionally — the shadow baseline cache keeps a
- * file, never a container, so there is nothing here for it to special-case.
- *
- * The handle `use` receives also carries the baseline state `legacyPrepareShadowSource` needs.
- *
- * `E` (also present in `use`'s own `E2`, since every real caller's `use` phase already resolves
- * the same `input.setup.jwks` effect via `legacyMigrateShadowDatabase`/`legacyResolveDbSetupPrelude`)
- * can now ALSO surface straight out of `acquire`: see {@link legacyAcquireShadowDatabase}'s own
- * doc comment for why a JWKS failure discovered while computing the cache key must propagate
- * rather than degrade to an uncached shadow.
+ * Acquire/use/release for a platform-baseline shadow. `acquireUseRelease` registers
+ * removal in the same uninterruptible continuation as a successful create, so a
+ * SIGINT between those steps cannot leak the container. A create that fails
+ * after `docker create` still has the pre-existing leak window. Health-wait and
+ * migrate stay in `use` so they stay interruptible. A JWKS failure during key
+ * resolve propagates from acquire rather than degrading to an uncached shadow.
  */
 export const legacyWithShadowDatabase = <E, A, E2, R2>(
   spawner: Spawner,

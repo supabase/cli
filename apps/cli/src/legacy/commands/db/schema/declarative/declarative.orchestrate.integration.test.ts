@@ -393,9 +393,6 @@ const toml: LegacyDbTomlValues = {
 };
 
 describe("legacyDiffDeclarativeToMigrations", () => {
-  // The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker
-  // cp`/`docker start` round trip plus a snapshot tar to every shadow this suite provisions. This
-  // suite is about the orchestration, not the cache, so it asserts the plain shadow lifecycle.
   useLegacyShadowCacheDisabled();
   it.effect(
     "resolves the migrations catalog natively and diffs it against the seam-provisioned declarative catalog",

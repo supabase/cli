@@ -740,10 +740,8 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
 
 /**
  * Sets `name` to `value` (or unsets it when `value` is `undefined`) for the duration of `body`,
- * restoring whatever was there before — including whatever a surrounding `beforeEach` such as
- * {@link useLegacyShadowCacheDisabled} put there. Scoping the override to the effect rather than
- * to a nested `describe` keeps it independent of vitest's hook ordering, so a single test can
- * opt back INTO a variable its file pins off.
+ * restoring whatever was there before — including a surrounding
+ * {@link useLegacyShadowCacheDisabled} pin, so a cache-subject test can opt back in.
  */
 export const legacyWithEnv = <A, E, R>(
   name: string,
@@ -766,17 +764,10 @@ export const legacyWithEnv = <A, E, R>(
   );
 
 /**
- * Pins `SUPABASE_SHADOW_CACHE=0` for every test in the calling file, restoring whatever the host
- * had afterwards. Like {@link useLegacyTempWorkdir} it calls vitest's `beforeEach`/`afterEach`
- * internally, so it must be invoked at module scope (or inside the surrounding `describe`).
- *
- * The shadow baseline cache (`db-bootstrap/shadow-cache.ts`) is ON by default and reads
- * `process.env` directly, so ANY suite that provisions a shadow through
- * `legacyWithShadowDatabase` with a mocked spawner — `db diff`, `db pull`, declarative sync — now
- * exercises the cache path unless it opts out: the cold path adds a `docker stop`/`docker cp`/
- * `docker start` round trip and writes a ~90MB-shaped tar into the test's workdir. Suites whose
- * subject is anything OTHER than the cache should call this so they keep asserting the plain
- * container lifecycle; the cache's own suites deliberately do not.
+ * Pins `SUPABASE_SHADOW_CACHE=0` for the calling file so a developer/CI soak (`=1`)
+ * cannot flip mocked-spawner suites onto the cache path. Call at module scope (or
+ * inside the surrounding `describe`). Cache-subject tests opt back in with
+ * {@link legacyWithEnv}.
  */
 export function useLegacyShadowCacheDisabled(): void {
   const name = "SUPABASE_SHADOW_CACHE";

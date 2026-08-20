@@ -29,6 +29,7 @@ import {
   legacyConnectShadowDatabase,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowConnConfig,
   legacyShadowRunInputFromLocalContainerInputs,
   legacySetupShadowDatabase,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
@@ -93,18 +94,9 @@ interface ProvisionedDeclarativeShadow {
 }
 
 /**
- * Whether pg-delta's same-database guard must be bypassed for this plan's two shadows — i.e.
- * whether they can legitimately report the same PostgreSQL identity (system identifier +
- * database OID). That happens exactly when the declarative shadow was physically RESTORED from
- * the same snapshot key that also produced the migrations shadow's cluster: same key means same
- * tar, and the migrations side is that tar's lineage whether it warm-restored FROM the tar or
- * cold-exported it this very run — the baseline handoff, where requiring the migrations handle
- * itself to be a warm restore would leave the guard armed against its own clone and fail the
- * first cold plan (review: Codex on #6184, P1). A freshly initdb'd declarative shadow always
- * carries its own new identity, and different keys mean tars exported from different clusters,
- * so both of those stay `false` and keep the guard armed. A `true` alongside identities that
- * happen to differ is harmless by design: pg-delta's bypass only takes effect on an exact
- * identity match, never on a same-lineage sibling.
+ * Bypass pg-delta's same-database guard when both shadows share one snapshot
+ * key and the declarative side was restored from that tar. A cold-exported
+ * migrations handle is still that tar's lineage.
  */
 export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
   readonly declarativeRestoredFromPgDataSnapshot: boolean;
@@ -139,13 +131,7 @@ const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowAcquiredHan
   projectId: input.base.projectId,
   container: handle.containerId,
   networkId: input.base.networkId,
-  connConfig: {
-    host: input.base.hostname,
-    port: input.base.shadowPort,
-    user: "postgres",
-    password: input.base.password,
-    database: "postgres",
-  },
+  connConfig: legacyShadowConnConfig(input.base),
   setup: input.base.setup,
 });
 
@@ -250,13 +236,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
       legacyWaitForShadowReady(
         input.spawner,
         handle.containerId,
-        {
-          host: input.base.hostname,
-          port: input.base.shadowPort,
-          user: "postgres",
-          password: input.base.password,
-          database: "postgres",
-        },
+        legacyShadowConnConfig(input.base),
         {
           timeoutSeconds: input.base.healthTimeoutSeconds,
           image: input.base.image,

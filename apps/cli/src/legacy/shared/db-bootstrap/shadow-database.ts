@@ -81,7 +81,6 @@ import { legacyWaitForShadowReady } from "./health-check.ts";
 import type { LegacyLocalDbContainerInputs } from "./local-container-inputs.ts";
 import { legacyListLocalMigrationPaths } from "../legacy-migration-history.ts";
 import { legacyToPostgresURL } from "../legacy-postgres-url.ts";
-import { legacyTimeShadowPhase } from "./shadow-debug.ts";
 import {
   type LegacyFreshDbSetupInput,
   type LegacySetupDatabaseInput,
@@ -524,8 +523,7 @@ export function legacyShadowRunInputFromLocalContainerInputs(
       // key, once by `legacyResolveDbSetupPrelude` for the baseline itself — and third-party
       // JWKS discovery can be a real network request. Memoizing the first success keeps the run
       // to one request AND guarantees the published snapshot carries the exact value its key was
-      // computed from, even if the issuer rotates mid-run (review: Codex on #6184). Failures are
-      // not cached — a transient discovery failure fails the run either way.
+      // computed from, even if the issuer rotates mid-run.
       jwks: legacyMemoizeSuccess(localInputs.setup.jwks),
       apiUrl: localInputs.setup.apiUrl,
       authExternalUrl: localInputs.setup.authExternalUrl,
@@ -544,6 +542,22 @@ export function legacyShadowRunInputFromLocalContainerInputs(
     },
   };
 }
+
+/** Host/port/password fields every shadow connect target is built from. */
+export interface LegacyShadowConnFields {
+  readonly hostname: string;
+  readonly shadowPort: number;
+  readonly password: string;
+}
+
+/** The shadow's `postgres`/`postgres` connect target on the published host port. */
+export const legacyShadowConnConfig = (input: LegacyShadowConnFields): LegacyPgConnInput => ({
+  host: input.hostname,
+  port: input.shadowPort,
+  user: "postgres",
+  password: input.password,
+  database: "postgres",
+});
 
 /**
  * Port of Go's `PrepareRawShadow` (`apps/cli-go/internal/db/diff/shadow.go:93-116`): readiness
@@ -571,9 +585,8 @@ export function legacyShadowRunInputFromLocalContainerInputs(
  * `healthTimeoutSeconds`) was silently swallowed until the wait finished or timed out on its
  * own, unlike Go. Splitting `legacyCreateShadowDatabase` out as the (brief, Docker-API-bound)
  * `acquire` and keeping this wait as part of the interruptible `use` restores that parity
- * — a SIGINT here now lands immediately, same as Go's ctx cancellation, while
- * `legacyRemoveShadowDatabase` still runs as the `release` finalizer regardless of how `use`
- * exits (review: PRRT_kwDOErm0O86XMrID).
+ * — a SIGINT here now lands immediately, while `legacyRemoveShadowDatabase` still
+ * runs as the `release` finalizer regardless of how `use` exits.
  */
 export const legacyPrepareRawShadow = (
   spawner: Spawner,
@@ -582,13 +595,7 @@ export const legacyPrepareRawShadow = (
 ): Effect.Effect<LegacyShadowSourceResult, LegacyHealthCheckTimeoutError, LegacyDbConnection> =>
   Effect.gen(function* () {
     const { containerId } = handle;
-    const connConfig: LegacyPgConnInput = {
-      host: input.hostname,
-      port: input.shadowPort,
-      user: "postgres",
-      password: input.password,
-      database: "postgres",
-    };
+    const connConfig = legacyShadowConnConfig(input);
     yield* legacyWaitForShadowReady(spawner, containerId, connConfig, {
       timeoutSeconds: input.healthTimeoutSeconds,
       image: input.image,
@@ -644,16 +651,13 @@ export const legacySetupShadowConn = (
 const legacyCreateShadowTemplateDatabase = (
   session: LegacyDbSession,
 ): Effect.Effect<void, LegacyShadowDbError, Output> =>
-  legacyTimeShadowPhase(
-    "contrib-regression-create",
-    session.exec(LEGACY_SHADOW_CREATE_TEMPLATE_SQL).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyShadowDbError({
-            message: `failed to create template database: ${errMessage(cause)}`,
-            reason: "database",
-          }),
-      ),
+  session.exec(LEGACY_SHADOW_CREATE_TEMPLATE_SQL).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyShadowDbError({
+          message: `failed to create template database: ${errMessage(cause)}`,
+          reason: "database",
+        }),
     ),
   );
 
@@ -823,25 +827,16 @@ export interface LegacyShadowBaselineState {
    * be closed before a real snapshot (a disk-level export severs any live backend), but when no
    * snapshot will run, splitting sessions would be a gratuitous behavior change — a reconnect
    * picks up role-level defaults `roles.sql` may have just installed (e.g. `ALTER ROLE postgres
-   * SET statement_timeout`), which Go's single-connection flow never exposed to migrations
-   * (review: Codex on #6184). So uncached and warm runs keep exactly one session.
+   * SET statement_timeout`), which an uncached single session never exposes to migrations.
+   * Uncached and warm runs keep one session.
    */
   readonly snapshotRequired: boolean;
   /**
-   * Runs immediately after a FRESHLY provisioned baseline and strictly before the template
-   * database/user migrations — the only point at which `postgres` holds the pristine baseline and
-   * nothing else.
+   * Runs after a freshly provisioned baseline and before the template / user
+   * migrations. Takes no session; a real snapshot stops the container.
    *
-   * Takes NO session, and {@link legacyMigrateShadowDatabase} guarantees no session is open
-   * against the shadow while it runs when {@link snapshotRequired} is set: the snapshot is a
-   * disk-level PGDATA export that has to stop the container, which would sever any live backend.
-   *
-   * A cache that cannot SNAPSHOT degrades silently (warn + uncached run) — but the error channel
-   * is {@link LegacyShadowDbError}, not `never`, for the one failure that is the run's problem
-   * rather than the cache's: a shadow that does not come back up after the export. Reporting
-   * success there would send the caller's next connect to a dead (or worse, someone else's)
-   * Postgres on the shadow port — see `legacyExportShadowBaseline`'s doc comment
-   * (`shadow-cache.ts`).
+   * A failed snapshot degrades silently except when the shadow does not come
+   * back — that is a {@link LegacyShadowDbError}.
    */
   readonly snapshotBaseline: Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection>;
 }

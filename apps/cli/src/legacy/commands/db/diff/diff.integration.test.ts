@@ -536,9 +536,6 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
   );
 
 const tmp = useLegacyTempWorkdir();
-// The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker cp`/
-// `docker start` round trip plus a snapshot tar to every shadow this suite provisions. This suite
-// is about the command, not the cache, so it asserts the plain shadow lifecycle.
 useLegacyShadowCacheDisabled();
 
 // --- native --use-pgadmin fixtures ---
@@ -2619,9 +2616,8 @@ describe("legacy db diff", () => {
     };
 
     /**
-     * Runs `db diff` with the shadow baseline cache ENABLED (this file pins it off for every
-     * other test) and its artifacts isolated under the workdir, against the stateful Docker
-     * model the export/restore round trip needs.
+     * Runs `db diff` with the shadow baseline cache on and artifacts under the workdir,
+     * against the stateful Docker model the export/restore round trip needs.
      */
     const runCached = (implementation: "legacy" | "next") => {
       const s = setup(tmp.current, {

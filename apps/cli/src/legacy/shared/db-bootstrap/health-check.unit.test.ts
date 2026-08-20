@@ -886,7 +886,7 @@ describe("legacyWaitForShadowReady", () => {
       }),
   );
 
-  it.effect("keeps polling a refused connect on a 1-second backoff until it succeeds", () =>
+  it.effect("keeps polling a refused connect on a 500ms backoff until it succeeds", () =>
     Effect.gen(function* () {
       const mock = mockHealthSpawner(() => runningStarting);
       const db = mockShadowDbConnection({ failTimes: 2 });
@@ -938,9 +938,9 @@ describe("legacyWaitForShadowReady", () => {
           { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
         ]);
         expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
-        // 1 initial attempt + `timeoutSeconds` retries, same budget as the
-        // Docker-health gate this replaces.
-        expect(db.attempts).toHaveLength(3);
+        // 1 initial attempt + `timeoutSeconds * 2` retries at 500ms (same wall
+        // time as the old 1s poll).
+        expect(db.attempts).toHaveLength(5);
         expect(
           mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
         ).toBe(true);
@@ -950,8 +950,7 @@ describe("legacyWaitForShadowReady", () => {
   it.effect("stops on elapsed time, not on the retry count, when every attempt hangs", () =>
     Effect.gen(function* () {
       const mock = mockHealthSpawner(() => runningStarting);
-      // 1.2s per dial: the round trip is now 2.2s (dial + the 1-second backoff), so the
-      // `timeoutSeconds` retry count alone would keep polling until t=7.8s.
+      // 1.2s per dial plus 500ms spacing — the retry count alone would keep polling past the wall cap.
       const db = mockShadowDbConnection({
         failTimes: Number.POSITIVE_INFINITY,
         connectMillis: 1200,
@@ -1015,7 +1014,7 @@ describe("legacyWaitForShadowReady", () => {
       expect(error.unhealthy).toEqual([
         { containerId: SHADOW_CONTAINER_ID, reason: "container is not running: exited" },
       ]);
-      // A dead container can never become connectable — one second in, not 30.
+      // A dead container can never become connectable — fails on the next poll, not at 30s.
       expect(inspectCalls(mock)).toHaveLength(2);
       expect(db.attempts).toHaveLength(1);
       expect(

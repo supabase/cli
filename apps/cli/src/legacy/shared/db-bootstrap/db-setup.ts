@@ -474,6 +474,15 @@ export interface LegacySetupDatabaseOptions {
   readonly webhooks?: "config" | "enabled" | "disabled";
 }
 
+/** `"enabled"` always installs `pg_net`, `"disabled"` always removes it, `"config"` follows the project flag. */
+export function legacyResolveSetupWebhooksEnabled(
+  policy: LegacySetupDatabaseOptions["webhooks"],
+  webhooksEnabled: boolean,
+): boolean {
+  const webhooks = policy ?? "config";
+  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
+}
+
 /** Input to {@link legacyStartSetupLocalDatabase}. */
 export interface LegacyStartSetupLocalDatabaseInput extends Omit<
   LegacySetupDatabaseInput,
@@ -1070,13 +1079,12 @@ export const legacySetupDatabase = (
         if (requiresPg14WebhooksCleanup) {
           yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }
-        const webhooks = options.webhooks ?? "config";
         yield* legacyApplyDatabaseWebhooks(
           session,
           fs,
           path,
           tmpDir,
-          webhooks === "enabled" || (webhooks === "config" && input.webhooksEnabled),
+          legacyResolveSetupWebhooksEnabled(options.webhooks, input.webhooksEnabled),
         );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),

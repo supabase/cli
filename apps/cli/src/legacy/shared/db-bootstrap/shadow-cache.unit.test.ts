@@ -1,15 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Option } from "effect";
 
+import { legacyResolveSetupWebhooksEnabled } from "./db-setup.ts";
 import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
-  legacyEffectiveShadowWebhooksEnabled,
   legacyIsShadowBaselinePartial,
   legacyIsShadowBaselineTar,
   legacyShadowBaselineTarFileName,
   legacyShadowBaselineTarsToEvict,
-  legacyShadowCacheEnabled,
   legacyShadowCacheKey,
   type LegacyShadowCacheKeyInputs,
 } from "./shadow-cache.ts";
@@ -35,45 +34,16 @@ const baseKeyInputs = (): LegacyShadowCacheKeyInputs => ({
   },
 });
 
-describe("legacyShadowCacheEnabled", () => {
-  it("is ON unless the env var explicitly opts out", () => {
-    // Unset and empty both mean "the user never expressed a preference" — the cache is a
-    // default-on optimization, not a feature flag.
-    expect(legacyShadowCacheEnabled({})).toBe(true);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "" })).toBe(true);
-    // A value that IS set goes through the repo's `viper.GetBool` parser.
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "0" })).toBe(false);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "false" })).toBe(false);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "no" })).toBe(false);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "1" })).toBe(true);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "true" })).toBe(true);
-    expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "TRUE" })).toBe(true);
-  });
-
-  it("honors an opt-out set only in the project dotenv values", () => {
-    // `supabase/.env` is loaded into `projectEnvValues` (ambient-wins merge, upstream), not into
-    // `process.env` — the gate must consult it, same as the registry override does.
-    expect(legacyShadowCacheEnabled({}, { SUPABASE_SHADOW_CACHE: "false" })).toBe(false);
-    expect(legacyShadowCacheEnabled({}, { SUPABASE_SHADOW_CACHE: "1" })).toBe(true);
-    expect(legacyShadowCacheEnabled({}, {})).toBe(true);
-    // The record's own value is what counts once present — upstream merging already applied
-    // ambient-wins precedence when building it.
-    expect(
-      legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "1" }, { SUPABASE_SHADOW_CACHE: "0" }),
-    ).toBe(false);
-  });
-});
-
-describe("legacyEffectiveShadowWebhooksEnabled", () => {
+describe("legacyResolveSetupWebhooksEnabled", () => {
   it("matches legacySetupDatabase: enabled/disabled override config, config follows the flag", () => {
-    expect(legacyEffectiveShadowWebhooksEnabled("enabled", false)).toBe(true);
-    expect(legacyEffectiveShadowWebhooksEnabled("enabled", true)).toBe(true);
-    expect(legacyEffectiveShadowWebhooksEnabled("disabled", true)).toBe(false);
-    expect(legacyEffectiveShadowWebhooksEnabled("disabled", false)).toBe(false);
-    expect(legacyEffectiveShadowWebhooksEnabled("config", true)).toBe(true);
-    expect(legacyEffectiveShadowWebhooksEnabled("config", false)).toBe(false);
-    expect(legacyEffectiveShadowWebhooksEnabled(undefined, true)).toBe(true);
-    expect(legacyEffectiveShadowWebhooksEnabled(undefined, false)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled("enabled", false)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("enabled", true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("disabled", true)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled("disabled", false)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled("config", true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("config", false)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled(undefined, true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled(undefined, false)).toBe(false);
   });
 });
 
@@ -405,6 +375,34 @@ describe("shadow baseline tar retention", () => {
         (LEGACY_SHADOW_BASELINE_KEEP + 1).toString(16).padStart(16, "0"),
       ),
     );
+  });
+
+  it("never evicts the current key, even when it is aged or over the cap", () => {
+    const current = legacyShadowBaselineTarFileName("dddddddddddddddd");
+    const aged = now - LEGACY_SHADOW_BASELINE_MAX_AGE_MS - 1;
+    const evicted = legacyShadowBaselineTarsToEvict(
+      [
+        { fileName: current, mtimeMs: aged },
+        { fileName: legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"), mtimeMs: now - 1_000 },
+        { fileName: legacyShadowBaselineTarFileName("bbbbbbbbbbbbbbbb"), mtimeMs: now - 2_000 },
+        { fileName: legacyShadowBaselineTarFileName("cccccccccccccccc"), mtimeMs: now - 3_000 },
+        { fileName: legacyShadowBaselineTarFileName("eeeeeeeeeeeeeeee"), mtimeMs: now - 4_000 },
+      ],
+      now,
+      { retainFileName: current },
+    );
+    expect(evicted).not.toContain(current);
+    expect(evicted).toContain(legacyShadowBaselineTarFileName("eeeeeeeeeeeeeeee"));
+  });
+
+  it("drops a 4th young tar once the keep cap is full", () => {
+    const entries = Array.from({ length: 4 }, (_, index) => ({
+      fileName: legacyShadowBaselineTarFileName(index.toString(16).padStart(16, "0")),
+      mtimeMs: now - index * 1_000,
+    }));
+    expect(legacyShadowBaselineTarsToEvict(entries, now)).toEqual([
+      legacyShadowBaselineTarFileName("0000000000000003"),
+    ]);
   });
 
   it("never returns a file that is not one of this module's own snapshots", () => {

@@ -36,6 +36,7 @@ import {
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
+import { legacyDockerCopyArchiveIntoContainer } from "./container-lifecycle.ts";
 import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -188,28 +189,14 @@ export const legacyStampPgDataBaselineMarker = (
 ): Effect.Effect<void, LegacyPgDataSnapshotUnavailable> =>
   Effect.gen(function* () {
     const tar = yield* legacyPgDataBaselineMarkerTar(key);
-    const failure = (detail: string) =>
-      legacyPgDataSnapshotUnavailable(
-        `failed to stamp ${LEGACY_PGDATA_BASELINE_MARKER_ENTRY}: ${detail}`,
-      );
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const child = yield* spawnContainerCli(
-          spawner,
-          ["cp", "-", `${containerId}:${LEGACY_PGDATA_PATH}`],
-          { stdin: Stream.make(tar), stdout: "ignore", stderr: "pipe" },
-        ).pipe(Effect.mapError((cause) => failure(legacyDescribeContainerCliFailure(cause))));
-        const [exitCode, stderr] = yield* Effect.all(
-          [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
-          { concurrency: "unbounded" },
-        ).pipe(Effect.mapError((cause) => failure(legacyDescribeContainerCliFailure(cause))));
-        if (exitCode !== 0) {
-          const message = stderr.trim();
-          return yield* Effect.fail(
-            failure(`docker cp exited ${exitCode}${message.length > 0 ? `: ${message}` : ""}`),
-          );
-        }
-      }),
+    yield* legacyDockerCopyArchiveIntoContainer(
+      spawner,
+      tar,
+      `${containerId}:${LEGACY_PGDATA_PATH}`,
+      (detail) =>
+        legacyPgDataSnapshotUnavailable(
+          `failed to stamp ${LEGACY_PGDATA_BASELINE_MARKER_ENTRY}: ${detail}`,
+        ),
     );
   });
 
@@ -260,7 +247,7 @@ export const legacyExportPgDataTar = (
             // PRE-CREATED file's permissive mode instead of applying `mode` (which only governs
             // creation). With the best-effort remove above, `wx` only ever fails if someone
             // recreated the path in the race window — and that failure degrades to an uncached
-            // run, never to a world-readable tar (review: depthfirst on #6184).
+            // run, never to a world-readable tar.
             Stream.run(child.stdout, fs.sink(tempPath, { flag: "wx", mode: 0o600 })),
             legacyCollectText(child.stderr),
           ],

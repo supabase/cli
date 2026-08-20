@@ -43,7 +43,6 @@ import {
   legacyAcquireShadowDatabase,
   type LegacyShadowCacheOpts,
 } from "./shadow-cache.ts";
-import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
 import type { LegacyShadowDbSetupInput, LegacyShadowSetupInput } from "./shadow-database.ts";
 
@@ -68,35 +67,6 @@ const withShadowCacheHome = <A, E, R>(
     join(tempRoot.current, "_supabase_home"),
     withShadowCacheEnv(value, body),
   );
-
-const withShadowDebugEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
-  legacyWithEnv(LEGACY_SHADOW_DEBUG_ENV, value, body);
-
-/**
- * Captures every write `body` makes directly to the real `process.stderr` — the channel
- * `legacyWaitForShadowReady`'s own `ready-attempt`/`ready-wait` debug lines use, since that
- * function has no `Output` in its context (see `health-check.ts`'s own doc comment). Mirrors
- * `health-check.unit.test.ts`'s own capture/restore pattern.
- */
-const captureStderr = <A, E, R>(
-  body: Effect.Effect<A, E, R>,
-): Effect.Effect<{ readonly result: A; readonly writes: ReadonlyArray<string> }, E, R> =>
-  Effect.gen(function* () {
-    const writes: Array<string> = [];
-    const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
-    globalThis.process.stderr.write = ((chunk: string | Uint8Array) => {
-      writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
-      return true;
-    }) as typeof globalThis.process.stderr.write;
-    const result = yield* body.pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          globalThis.process.stderr.write = originalWrite;
-        }),
-      ),
-    );
-    return { result, writes };
-  });
 
 // ---------------------------------------------------------------------------
 // A fake Postgres the readiness probe can connect to
@@ -304,16 +274,14 @@ describe("legacyAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
         yield* coldRun(docker, input);
-        // A concurrent writer that lost the publish race and was SIGKILLed mid-export: its
-        // partial predates the hour threshold. Every later run is warm, so the warm branch
-        // must be the one to sweep it.
+        // A concurrent writer SIGKILLed mid-export: its partial is older than 5 minutes.
         const abandoned = path.join(
           shadowCacheDir(path),
           "shadow-baseline-0011223344556677.tar.4242.partial",
         );
         yield* fs.writeFileString(abandoned, "stale");
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-        yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
+        const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
+        yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
 
         const warm = yield* legacyAcquireShadowDatabase(docker.spawner, input);
         expect(warm.baselinePresent).toBe(true);
@@ -347,7 +315,7 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("takes the cache path when the env var is unset (default ON)", () => {
+  it.live("stays uncached when the env var is unset (default OFF)", () => {
     const docker = mockLegacyDockerDaemonCliSpawner();
     const cluster = fakeCluster();
     const out = mockOutput();
@@ -357,8 +325,10 @@ describe("legacyAcquireShadowDatabase", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+        expect(handle.baselinePresent).toBe(false);
+        expect(docker.calls("create")[0] ?? []).toContain("--rm");
         yield* handle.snapshotBaseline;
-        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+        expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
@@ -517,14 +487,13 @@ describe("legacyAcquireShadowDatabase", () => {
         const path = yield* Path.Path;
         const tempDir = shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
-        // A SIGKILLed export's leftover (writer long gone — hour-plus-old mtime) and a
-        // concurrent writer's live temp file (fresh mtime).
+        // A SIGKILLed export leftover (older than 5 minutes) and a live writer's fresh temp file.
         const abandoned = path.join(tempDir, "shadow-baseline-0123456789abcdef.tar.99999.partial");
         const live = path.join(tempDir, "shadow-baseline-fedcba9876543210.tar.88888.partial");
         yield* fs.writeFileString(abandoned, "stale");
         yield* fs.writeFileString(live, "in-flight");
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-        yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
+        const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
+        yield* fs.utimes(abandoned, sixMinutesAgo, sixMinutesAgo);
 
         yield* coldRun(docker, shadowInput(fs, path));
 
@@ -568,12 +537,12 @@ describe("legacyAcquireShadowDatabase", () => {
         const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
         yield* fs.utimes(path.join(shadowCacheDir(path), first[0] ?? ""), anHourAgo, anHourAgo);
 
-        // Fill to the keep-cap + 1 with more distinct keys; the oldest (first) is evicted.
-        for (let i = 0; i < LEGACY_SHADOW_BASELINE_KEEP - 1; i++) {
+        // Fill past keep-cap. The current key is retained, so siblings evict first.
+        for (let i = 0; i < LEGACY_SHADOW_BASELINE_KEEP; i++) {
           yield* coldRun(docker, shadowInput(fs, path, { jwtExpiry: 8000 + i }));
         }
         const afterCap = yield* soleTarName(fs, path);
-        expect(afterCap).toHaveLength(LEGACY_SHADOW_BASELINE_KEEP);
+        expect(afterCap).toHaveLength(LEGACY_SHADOW_BASELINE_KEEP + 1);
         expect(afterCap).not.toContain(first[0]);
         expect(yield* fs.exists(stray)).toBe(true);
       }),
@@ -976,57 +945,5 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(yield* soleTarName(fs, path)).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, fakeCluster().layer)));
-  });
-});
-
-describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
-  it.live("emits export and restore phase lines when the debug env var is set", () => {
-    const docker = mockLegacyDockerDaemonCliSpawner();
-    const cluster = fakeCluster();
-    const out = mockOutput();
-    return withShadowCacheHome(
-      "1",
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const input = shadowInput(fs, path);
-        const { writes } = yield* withShadowDebugEnv(
-          "1",
-          captureStderr(
-            Effect.gen(function* () {
-              yield* coldRun(docker, input);
-              yield* legacyAcquireShadowDatabase(docker.spawner, input);
-            }),
-          ),
-        );
-
-        // Routed through the mocked `Output` (both phases run inside shadow-cache.ts, which
-        // always has `Output` in context).
-        expect(out.stderrText).toContain("shadow-debug: baseline-export");
-        expect(out.stderrText).toContain("shadow-debug: baseline-restore");
-        // Written straight to the real `process.stderr` by `legacyWaitForShadowReady`
-        // (`health-check.ts`), which has no `Output` in its own context.
-        expect(writes.some((chunk) => chunk.includes("shadow-debug: ready-wait"))).toBe(true);
-      }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
-  });
-
-  it.live("emits no shadow-debug lines when the debug env var is unset", () => {
-    const docker = mockLegacyDockerDaemonCliSpawner();
-    const cluster = fakeCluster();
-    const out = mockOutput();
-    return withShadowCacheHome(
-      "1",
-      withShadowDebugEnv(
-        undefined,
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { writes } = yield* captureStderr(coldRun(docker, shadowInput(fs, path)));
-          expect(out.stderrText).not.toContain("shadow-debug:");
-          expect(writes.some((chunk) => chunk.includes("shadow-debug:"))).toBe(false);
-        }),
-      ),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 });

@@ -90,7 +90,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   baseline cache (#6184): the shadow
   database's platform baseline is cached as a PGDATA snapshot under
   `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
-  the root; LRU keep-8 + 14-day mtime TTL, shared across worktrees with the same settings) and
+  the root; LRU keep-3 + 2-day mtime TTL, shared across worktrees with the same settings) and
   restored into a
   fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. The key
   includes the effective Webhooks/`pg_net` policy (legacy migrate forces enabled; next migrate
@@ -99,10 +99,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   shadows via `legacyAcquireShadowDatabase`, and `generate`/`sync`/`diff`'s legacy pg-delta
   opt-out (`SUPABASE_USE_PG_DELTA_NEXT=false`), whose catalog exports provision a shadow through
   the same acquire on a catalog cache miss (ephemeral host ports are not part of the cache
-  key — they are not baked into PGDATA). TS-only,
-  default ON; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (ambient env or project dotenv), `sync
---no-cache` bypasses it per-invocation, and `SUPABASE_SHADOW_DEBUG=1` prints stderr-only phase
-  timings. OrioleDB clusters and PG <= 14 are cache-ineligible (external S3 state and mid-session
+  key — they are not baked into PGDATA). TS-only, off unless
+  `SUPABASE_SHADOW_CACHE` is set (ambient env or project dotenv); `sync --no-cache` bypasses it
+  per-invocation. OrioleDB clusters and PG <= 14 are cache-ineligible (external S3 state and mid-session
   role-default mutation respectively — see `shadow-cache.ts`). Known session-semantics caveat on
   the cached paths: migrations run on a session opened after the baseline, so role-level defaults
   a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations, whereas Go's

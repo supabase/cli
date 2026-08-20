@@ -770,8 +770,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
-  // No default: every caller must declare its provisioner's effective webhooks policy, or the
-  // key records config-following while the baseline forced `pg_net` on (review: Codex on #6184).
+  // No default: every caller must declare its provisioner's effective webhooks policy.
   shadowCacheOpts: LegacyShadowCacheOpts,
 ) =>
   Effect.gen(function* () {
@@ -1001,9 +1000,7 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
-    // `--no-cache` promises "force fresh shadow database setup" (`declarative.shared.ts`), so it
-    // must ALSO bypass the shadow baseline snapshot, not just the catalog cache — otherwise a
-    // warm tar would skip the very setup the flag exists to force (review: Codex on #6184).
+    // `--no-cache` must also bypass the baseline snapshot, not just the catalog.
     { bypassCache: params.noCache, webhooks: "enabled" },
   );
 });

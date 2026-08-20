@@ -540,9 +540,6 @@ const seedMigration = (workdir: string, version: string) => {
 };
 
 const tmp = useLegacyTempWorkdir();
-// The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker cp`/
-// `docker start` round trip plus a snapshot tar to every shadow this suite provisions. This suite
-// is about the command, not the cache, so it asserts the plain shadow lifecycle.
 useLegacyShadowCacheDisabled();
 
 describe("legacy db pull", () => {
@@ -2325,9 +2322,8 @@ describe("legacy db pull", () => {
     };
 
     /**
-     * Runs `db pull` with the shadow baseline cache ENABLED (this file pins it off for every
-     * other test) and its artifacts isolated under the temp root, against the stateful Docker
-     * model the export/restore round trip needs.
+     * Runs `db pull` with the shadow baseline cache on and artifacts under the temp root,
+     * against the stateful Docker model the export/restore round trip needs.
      *
      * Each run gets its OWN workdir so the migration file the previous pull wrote cannot shift
      * the second run's behaviour — the cache key is global and deliberately workdir-independent,
