@@ -1,7 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -148,6 +156,35 @@ describe("selected-field port allocation", () => {
       );
       expect(ports.apiPort).toBe(port);
       expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(claimNamespace, { recursive: true, force: true });
+    }
+  });
+
+  it("skips an occupied stale claim while allocating another automatic port", async () => {
+    const claimNamespace = mkdtempSync(resolve(tmpdir(), "supabase-stack-port-claims-test-"));
+    const token = `test-occupied-stale-${randomUUID()}`;
+
+    try {
+      const allocated = await run(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const occupied = yield* occupyFreePort();
+            const stalePath = staleClaimAt(claimNamespace, occupied.port, token);
+            const staleContents = readFileSync(stalePath, "utf8");
+            const ports = yield* allocatePortSet([automatic("apiPort")], {
+              claimRoot: claimNamespace,
+            });
+
+            expect(ports.apiPort).not.toBe(occupied.port);
+            expect(existsSync(stalePath)).toBe(true);
+            expect(readFileSync(stalePath, "utf8")).toBe(staleContents);
+            return ports;
+          }),
+        ),
+      );
+
+      expect(allocated.apiPort).toBeGreaterThan(0);
     } finally {
       rmSync(claimNamespace, { recursive: true, force: true });
     }

@@ -429,18 +429,31 @@ const claimedPorts = (
       const path = join(root, entry);
       let inspection = yield* inspectClaim(path);
       if (inspection === undefined || inspection.snapshot.info.type !== "File") continue;
+      let unreclaimable = false;
       while (inspection.stale) {
         const expected = inspection.snapshot;
-        const removed = yield* Effect.acquireUseRelease(
+        const removal = yield* Effect.acquireUseRelease(
           Effect.interruptible(bindPort(port)),
           () => Effect.interruptible(removeStaleClaim(path, expected)),
           ({ server }) => closeServer(server),
+        ).pipe(
+          Effect.map((removed) => ({ _tag: "Checked" as const, removed })),
+          Effect.catchTag("PortAllocationError", (error) =>
+            error.reason === "unavailable"
+              ? Effect.succeed({ _tag: "Unavailable" as const })
+              : Effect.fail(error),
+          ),
         );
+        if (removal._tag === "Unavailable") {
+          unreclaimable = true;
+          break;
+        }
+        const removed = removal.removed;
         if (removed) break;
         inspection = yield* inspectClaim(path);
         if (inspection === undefined) break;
       }
-      if (inspection !== undefined && !inspection.stale) ports.add(port);
+      if (!unreclaimable && inspection !== undefined && !inspection.stale) ports.add(port);
     }
     return ports;
   }).pipe(
