@@ -42,6 +42,8 @@ interface PortAllocationOptions extends PortSelectionOptions {
   readonly probe?: PortProbe;
   /** @internal deterministic interruption hook used by allocator integration tests. */
   readonly onBound?: (field: PortField, bound: BoundPort) => Effect.Effect<void>;
+  /** @internal deterministic interruption hook for claim-to-lease handoff tests. */
+  readonly onClaimed?: (field: PortField, claim: PortClaim) => Effect.Effect<void>;
 }
 
 interface PortProbe {
@@ -278,13 +280,16 @@ const removeCreatedClaim = (
   path: string,
   contents: string,
   openedInfo: FileSystem.File.Info | undefined,
+  opened: boolean,
   fs: FileSystem.FileSystem,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    if (openedInfo === undefined) return;
+    if (!opened) return;
     const current = yield* readClaimSnapshot(path).pipe(Effect.orElseSucceed(() => undefined));
     if (current === undefined) return;
-    if (Option.isSome(openedInfo.ino) && Option.isSome(current.info.ino)) {
+    if (openedInfo === undefined) {
+      if (current.contents.length !== 0) return;
+    } else if (Option.isSome(openedInfo.ino) && Option.isSome(current.info.ino)) {
       if (openedInfo.ino.value !== current.info.ino.value) return;
     } else {
       if (current.contents !== contents) return;
@@ -298,6 +303,41 @@ const removeCreatedClaim = (
     }
     yield* fs.remove(path, { force: true }).pipe(Effect.ignore);
   }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+
+const restoreQuarantinedClaim = (
+  path: string,
+  quarantine: string,
+  contents: string,
+  fs: FileSystem.FileSystem,
+): Effect.Effect<boolean, PlatformError> => {
+  let opened = false;
+  let written = false;
+  return Effect.scoped(
+    fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
+      Effect.flatMap((handle) => {
+        opened = true;
+        return Effect.ensuring(
+          handle
+            .writeAll(new TextEncoder().encode(contents))
+            .pipe(Effect.tap(() => Effect.sync(() => (written = true)))),
+          Effect.uninterruptible(
+            Effect.suspend(() =>
+              written ? Effect.void : fs.remove(path, { force: true }).pipe(Effect.ignore),
+            ),
+          ),
+        );
+      }),
+    ),
+  ).pipe(
+    Effect.as(true),
+    Effect.catchTag("PlatformError", (error) =>
+      isAlreadyExists(error) ? Effect.succeed(false) : Effect.fail(error),
+    ),
+    Effect.tap((restored) =>
+      restored && opened ? fs.remove(quarantine, { force: true }).pipe(Effect.ignore) : Effect.void,
+    ),
+  );
+};
 
 const readClaimRecord = (
   path: string,
@@ -332,13 +372,7 @@ const quarantineClaim = (
       return true;
     }
     if (current !== undefined) {
-      yield* fs
-        .rename(quarantine, path)
-        .pipe(
-          Effect.catchTag("PlatformError", (error) =>
-            isNotFound(error) || isAlreadyExists(error) ? Effect.void : Effect.fail(error),
-          ),
-        );
+      yield* restoreQuarantinedClaim(path, quarantine, current.contents, fs);
     }
     return false;
   });
@@ -359,22 +393,24 @@ const acquirePortClaimInternal = (
 
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt += 1) {
       let openedInfo: FileSystem.File.Info | undefined;
-      const opened = yield* Effect.exit(
+      let created = false;
+      const openedExit = yield* Effect.exit(
         Effect.scoped(
           fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
-            Effect.flatMap((handle) =>
-              handle.stat.pipe(
+            Effect.flatMap((handle) => {
+              created = true;
+              return handle.stat.pipe(
                 Effect.tap((info) => Effect.sync(() => (openedInfo = info))),
                 Effect.andThen(handle.writeAll(new TextEncoder().encode(contents))),
-              ),
-            ),
+              );
+            }),
           ),
         ),
       );
-      if (opened._tag === "Success") return { path, port, token };
-      yield* Effect.uninterruptible(removeCreatedClaim(path, contents, openedInfo, fs));
-      const failure = Cause.findErrorOption(opened.cause);
-      if (Option.isNone(failure)) return yield* Effect.failCause(opened.cause);
+      if (openedExit._tag === "Success") return { path, port, token };
+      yield* Effect.uninterruptible(removeCreatedClaim(path, contents, openedInfo, created, fs));
+      const failure = Cause.findErrorOption(openedExit.cause);
+      if (Option.isNone(failure)) return yield* Effect.failCause(openedExit.cause);
       if (!isAlreadyExists(failure.value)) {
         return yield* Effect.fail(failure.value);
       }
@@ -676,6 +712,7 @@ const reserveRandomPort = (
   field: PortField,
   claims: Map<PortField, PortClaim>,
   fs: FileSystem.FileSystem,
+  onClaimed: PortAllocationOptions["onClaimed"],
   attempt = 0,
 ): Effect.Effect<
   BoundPort,
@@ -694,23 +731,31 @@ const reserveRandomPort = (
     const bound = yield* Effect.interruptible(bindPort(0));
     if (exclude.has(bound.port)) {
       yield* closeServer(bound.server);
-      return yield* reserveRandomPort(exclude, field, claims, fs, attempt + 1);
+      return yield* reserveRandomPort(exclude, field, claims, fs, onClaimed, attempt + 1);
     }
 
     const claimExit = yield* Effect.exit(
       Effect.interruptible(
-        acquirePortClaimInternal(bound.port).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.tap((claim) => Effect.sync(() => claims.set(field, claim))),
-        ),
+        acquirePortClaimInternal(bound.port).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
       ),
     );
-    if (claimExit._tag === "Success") return bound;
+    if (claimExit._tag === "Success") {
+      const handoff = yield* Effect.exit(
+        Effect.interruptible(onClaimed?.(field, claimExit.value) ?? Effect.void),
+      );
+      if (handoff._tag === "Failure") {
+        yield* Effect.uninterruptible(releasePortClaim(claimExit.value, fs));
+        yield* closeServer(bound.server);
+        return yield* Effect.failCause(handoff.cause);
+      }
+      yield* Effect.uninterruptible(Effect.sync(() => claims.set(field, claimExit.value)));
+      return bound;
+    }
 
     yield* closeServer(bound.server);
     const failure = Cause.findErrorOption(claimExit.cause);
     if (Option.isSome(failure) && failure.value instanceof PortClaimCollisionError) {
-      return yield* reserveRandomPort(exclude, field, claims, fs, attempt + 1);
+      return yield* reserveRandomPort(exclude, field, claims, fs, onClaimed, attempt + 1);
     }
     if (Option.isSome(failure) && failure.value instanceof PlatformError) {
       return yield* Effect.fail(portAllocationFromCause(bound.port, failure.value));
@@ -847,13 +892,13 @@ export const reservePortSet = (
               request.field,
               claimAndBind(request.field, preferred, claims, fs).pipe(
                 Effect.catchTag("PortClaimCollisionError", () =>
-                  reserveRandomPort(exclude, request.field, claims, fs).pipe(
+                  reserveRandomPort(exclude, request.field, claims, fs, options.onClaimed).pipe(
                     Effect.provideService(FileSystem.FileSystem, fs),
                   ),
                 ),
                 Effect.catchTag("PortAllocationError", (error) =>
                   error.reason === "unavailable"
-                    ? reserveRandomPort(exclude, request.field, claims, fs).pipe(
+                    ? reserveRandomPort(exclude, request.field, claims, fs, options.onClaimed).pipe(
                         Effect.provideService(FileSystem.FileSystem, fs),
                       )
                     : Effect.fail(error),
@@ -863,7 +908,7 @@ export const reservePortSet = (
           } else {
             bound = yield* bindAndRegister(
               request.field,
-              reserveRandomPort(exclude, request.field, claims, fs).pipe(
+              reserveRandomPort(exclude, request.field, claims, fs, options.onClaimed).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
               ),
             );

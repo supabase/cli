@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -111,6 +112,9 @@ const claimRoot = resolve(
 
 const claimPath = (port: number) => resolve(claimRoot, `port-${port}`);
 
+const dynamicPort = () =>
+  Effect.runPromise(Effect.scoped(Effect.map(occupyFreePort(), ({ port }) => port)));
+
 const staleClaim = (port: number, token: string) => {
   mkdirSync(claimRoot, { recursive: true });
   const path = claimPath(port);
@@ -118,6 +122,31 @@ const staleClaim = (port: number, token: string) => {
   const old = new Date(Date.now() - 60_000);
   utimesSync(path, old, old);
   return path;
+};
+
+const removeOwnedClaims = (paths: ReadonlySet<string>, tokens: ReadonlySet<string>): void => {
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    try {
+      const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+      const token =
+        typeof value === "object" && value !== null ? Reflect.get(value, "token") : undefined;
+      if (typeof token === "string" && tokens.has(token)) rmSync(path, { force: true });
+    } catch {
+      // Leave unknown records untouched; cleanup is restricted to owned tokens.
+    }
+  }
+};
+
+const removeOwnedEmptyClaims = (paths: ReadonlySet<string>): void => {
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    try {
+      if (readFileSync(path, "utf8").length === 0) rmSync(path, { force: true });
+    } catch {
+      // Leave unknown records untouched; cleanup is restricted to empty files opened by this test.
+    }
+  }
 };
 
 const withFileSystem = <A, E>(
@@ -144,8 +173,11 @@ describe("selected-field port allocation", () => {
   });
 
   it("reclaims a stale claim before probing an exact port", async () => {
-    const port = 25_951;
-    const path = staleClaim(port, "stale-recovery");
+    const port = await dynamicPort();
+    const token = `test-stale-recovery-${randomUUID()}`;
+    const path = staleClaim(port, token);
+    const ownedPaths = new Set([path]);
+    const ownedTokens = new Set([token]);
 
     try {
       const ports = await run(
@@ -154,13 +186,17 @@ describe("selected-field port allocation", () => {
       expect(ports.apiPort).toBe(port);
       expect(existsSync(path)).toBe(false);
     } finally {
-      rmSync(path, { force: true });
+      removeOwnedClaims(ownedPaths, ownedTokens);
     }
   });
 
   it("does not delete a fresh replacement while reclaimers race", async () => {
-    const port = 25_952;
-    const path = staleClaim(port, "stale-race");
+    const port = await dynamicPort();
+    const staleToken = `test-stale-race-${randomUUID()}`;
+    const freshToken = `test-fresh-race-${randomUUID()}`;
+    const path = staleClaim(port, staleToken);
+    const ownedPaths = new Set([path]);
+    const ownedTokens = new Set([staleToken, freshToken]);
     let raced = false;
 
     try {
@@ -174,10 +210,12 @@ describe("selected-field port allocation", () => {
             Effect.gen(function* () {
               if (!raced && from === path) {
                 raced = true;
-                yield* fs.rename(from, `${from}.competing`);
+                const competing = `${from}.competing`;
+                ownedPaths.add(competing);
+                yield* fs.rename(from, competing);
                 yield* fs.writeFileString(
                   from,
-                  JSON.stringify({ pid: process.pid, token: "fresh" }),
+                  JSON.stringify({ pid: process.pid, token: freshToken }),
                 );
               }
               yield* fs.rename(from, to);
@@ -194,18 +232,81 @@ describe("selected-field port allocation", () => {
       }
       expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
         pid: process.pid,
-        token: "fresh",
+        token: freshToken,
       });
     } finally {
-      rmSync(path, { force: true });
-      rmSync(`${path}.competing`, { force: true });
+      removeOwnedClaims(ownedPaths, ownedTokens);
+    }
+  });
+
+  it("does not overwrite a third claim created during stale restoration", async () => {
+    const port = await dynamicPort();
+    const staleToken = `test-stale-restore-${randomUUID()}`;
+    const freshToken = `test-fresh-restore-${randomUUID()}`;
+    const thirdToken = `test-third-restore-${randomUUID()}`;
+    const path = staleClaim(port, staleToken);
+    const ownedPaths = new Set([path]);
+    const ownedTokens = new Set([staleToken, freshToken, thirdToken]);
+    let staleMoved = false;
+    let thirdWritten = false;
+
+    try {
+      const exit = await withFileSystem(
+        allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
+          Effect.exit,
+        ),
+        (fs) => ({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (!staleMoved && from === path) {
+                staleMoved = true;
+                const competing = `${from}.restore-competing`;
+                ownedPaths.add(competing);
+                yield* fs.rename(from, competing);
+                yield* fs.writeFileString(
+                  from,
+                  JSON.stringify({ pid: process.pid, token: freshToken }),
+                );
+              }
+              if (staleMoved && !thirdWritten && to === path && from !== path) {
+                thirdWritten = true;
+                yield* fs.writeFileString(
+                  path,
+                  JSON.stringify({ pid: process.pid, token: thirdToken }),
+                );
+              }
+              yield* fs.rename(from, to);
+            }),
+          open: (filePath, options) =>
+            Effect.gen(function* () {
+              if (staleMoved && !thirdWritten && filePath === path && options?.flag === "wx") {
+                thirdWritten = true;
+                yield* fs.writeFileString(
+                  path,
+                  JSON.stringify({ pid: process.pid, token: thirdToken }),
+                );
+              }
+              return yield* fs.open(filePath, options);
+            }),
+        }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
+        pid: process.pid,
+        token: thirdToken,
+      });
+    } finally {
+      removeOwnedClaims(ownedPaths, ownedTokens);
     }
   });
 
   it("removes a claim file when creation is interrupted during the write", async () => {
-    const port = 25_953;
+    const port = await dynamicPort();
     const path = claimPath(port);
-    rmSync(path, { force: true });
+    const ownedPaths = new Set([path]);
+    const ownedTokens = new Set<string>();
 
     try {
       const exit = await withFileSystem(
@@ -228,7 +329,38 @@ describe("selected-field port allocation", () => {
       expect(exit._tag).toBe("Failure");
       expect(existsSync(path)).toBe(false);
     } finally {
-      rmSync(path, { force: true });
+      removeOwnedClaims(ownedPaths, ownedTokens);
+    }
+  });
+
+  it("removes a claim file when stat is interrupted after exclusive open", async () => {
+    const port = await dynamicPort();
+    const path = claimPath(port);
+    const ownedPaths = new Set([path]);
+    const ownedTokens = new Set<string>();
+
+    try {
+      const exit = await withFileSystem(
+        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
+          Effect.exit,
+        ),
+        (fs) => ({
+          ...fs,
+          open: (filePath, options) =>
+            fs.open(filePath, options).pipe(
+              Effect.map((handle) => ({
+                ...handle,
+                stat: filePath === path && options?.flag === "wx" ? Effect.interrupt : handle.stat,
+              })),
+            ),
+        }),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      removeOwnedClaims(ownedPaths, ownedTokens);
+      removeOwnedEmptyClaims(ownedPaths);
     }
   });
 
@@ -255,6 +387,34 @@ describe("selected-field port allocation", () => {
     );
     expect(reboundExit._tag).toBe("Success");
     if (reboundExit._tag === "Success") await run(reboundExit.value.releaseAll);
+  });
+
+  it("releases an automatically acquired claim when handoff is interrupted", async () => {
+    let ownedClaim: { readonly path: string; readonly token: string } | undefined;
+    const onClaimed = (
+      _field: PortReservationRequest["field"],
+      claim: { readonly path: string; readonly token: string },
+    ) => {
+      ownedClaim = claim;
+      return Effect.interrupt;
+    };
+
+    const exit = await run(
+      reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }], {
+        onClaimed,
+      }).pipe(Effect.exit),
+    );
+
+    try {
+      expect(exit._tag).toBe("Failure");
+      expect(ownedClaim).toBeDefined();
+      if (ownedClaim !== undefined) expect(existsSync(ownedClaim.path)).toBe(false);
+    } finally {
+      if (exit._tag === "Success") await run(exit.value.releaseAll);
+      if (ownedClaim !== undefined) {
+        removeOwnedClaims(new Set([ownedClaim.path]), new Set([ownedClaim.token]));
+      }
+    }
   });
 
   it("holds only requested fields and can release and re-reserve them", async () => {
