@@ -914,9 +914,7 @@ describe("Stack", () => {
           }
           if (
             record.args.some((arg) =>
-              Buffer.from(arg, "base64url")
-                .toString()
-                .includes('"command":"bash","args":["-c"'),
+              Buffer.from(arg, "base64url").toString().includes('"command":"bash","args":["-c"'),
             )
           ) {
             return Deferred.succeed(postgresInitStarted, undefined).pipe(Effect.asVoid);
@@ -948,9 +946,7 @@ describe("Stack", () => {
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
         const activator = yield* StackServiceActivator;
-        const start = yield* stack
-          .start()
-          .pipe(Effect.forkChild({ startImmediately: true }));
+        const start = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(postgresProbeStarted);
         yield* TestClock.adjust("10 millis");
         yield* Deferred.await(postgresInitStarted);
