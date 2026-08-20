@@ -246,13 +246,3 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   an output channel, and in managed mode inside the daemon process, so a user-visible warning
   there needs a diagnostics channel on `BuildResult` first; the applied value stays visible via
   `docker inspect`.
-- A migration batch that never reached the wire (the connection died before or during
-  submit) fails as a connection error carrying the driver's reason, with no
-  `At statement: N` line and no statement echo. Go's `formatError`
-  (`apps/cli-go/pkg/migration/file.go:126-147`) renders every `ExecBatch` failure —
-  dead connection included — as `<err>\nAt statement: N\n<sql>`. Naming a statement
-  that provably never ran sent users debugging their own SQL for a transport failure,
-  so the TS shell reports the connectivity failure instead. This covers batches only: a
-  batch that was written, and the pipeline-incompatible statements the same loop runs
-  standalone through `exec` (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …), both keep Go's
-  `At statement: N` rendering for every failure, transport included.
