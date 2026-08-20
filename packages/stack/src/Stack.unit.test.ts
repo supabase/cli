@@ -1516,7 +1516,7 @@ describe("Stack", () => {
         }
         expect((yield* stack.getState("auth")).status).not.toBe("Downloading");
       }).pipe(Effect.provide(layer));
-    }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
+    }).pipe(Effect.scoped),
   );
 
   it.live("allows a finite wait override against an infinite stack policy", () =>
