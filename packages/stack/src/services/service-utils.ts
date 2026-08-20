@@ -2,11 +2,7 @@ import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compos
 import type { ServiceName } from "../ServiceName.ts";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
-import {
-  dockerServiceCleanup,
-  dockerServiceOrphanCleanup,
-  type DockerDataOwnershipCleanup,
-} from "./docker-cleanup.ts";
+import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
   readonly service: string;
@@ -34,8 +30,19 @@ interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly restart?: ServiceDef["restart"];
   readonly shutdown?: ServiceDef["shutdown"];
   readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
-  readonly cleanup?: DockerDataOwnershipCleanup;
 }
+
+export const hostUserForLinuxDocker = (
+  runtime: ContainerRuntime,
+  platformOs: string,
+): string | undefined => {
+  // Linux bind mounts preserve numeric ownership. Matching the caller keeps
+  // private runtime files readable and persistent data removable by the host.
+  if (runtime !== "docker" || platformOs !== "linux") return undefined;
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  return uid === undefined || gid === undefined ? undefined : `${uid}:${gid}`;
+};
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
   Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
@@ -100,10 +107,10 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(opts.runtime, containerName, opts.cleanup),
+    cleanup: dockerServiceCleanup(opts.runtime, containerName),
     supervision: {
       orphanCleanup: [
-        ...dockerServiceOrphanCleanup(opts.runtime, containerName, opts.cleanup),
+        ...dockerServiceOrphanCleanup(opts.runtime, containerName),
         ...(opts.orphanCleanup ?? []),
       ],
     },

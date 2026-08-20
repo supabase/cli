@@ -1,11 +1,12 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
-import { removePathOnOrphanCleanup, type DockerDataOwnershipCleanup } from "./docker-cleanup.ts";
+import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
+  hostUserForLinuxDocker,
   type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
@@ -95,30 +96,6 @@ const postgresDockerHealthCheck = (
     },
   );
 
-const postgresDockerOwnershipCleanup = (
-  opts: DockerPostgresOptions,
-): DockerDataOwnershipCleanup | undefined => {
-  if (opts.runtime !== "docker" || opts.platformOs !== "linux") {
-    return undefined;
-  }
-
-  const uid = process.getuid?.();
-  const gid = process.getgid?.();
-  if (uid === undefined || gid === undefined) {
-    return undefined;
-  }
-
-  return {
-    runtime: opts.runtime,
-    image: opts.image,
-    hostPath: opts.dataDir,
-    containerPath: "/var/lib/postgresql/data",
-    uid,
-    gid,
-    removeHostPath: opts.cleanupDataDirOnExit,
-  };
-};
-
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
   const getKeyScript = postgresGetKeyScript(opts.binPath);
@@ -147,7 +124,8 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const containerName = dockerContainerName("postgres", opts.identity.key);
-  const ownershipCleanup = postgresDockerOwnershipCleanup(opts);
+  const hostUser = hostUserForLinuxDocker(opts.runtime, opts.platformOs);
+  const [hostUid, hostGid] = hostUser?.split(":") ?? [];
   const runtimeArgs = [
     "-p",
     String(opts.port),
@@ -163,18 +141,22 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
   // data directory in Docker, route through a temporary HBA copy that adds the
   // container network rule without mutating the persisted native config.
   const runEntrypoint = (args: string): string =>
-    opts.runtime === "docker" && opts.platformOs === "linux"
-      ? `exec busybox su -s /usr/bin/sh nonroot -c 'exec /usr/local/bin/entry.sh ${args}'`
-      : `exec /usr/local/bin/entry.sh ${args}`;
-
-  const command = `${
-    opts.runtime === "docker" && opts.platformOs === "linux"
-      ? "busybox chown -R 65532:65532 /var/lib/postgresql/data\n"
-      : ""
-  }if [ -s /var/lib/postgresql/data/PG_VERSION ]; then
+    hostUser === undefined
+      ? `exec /usr/local/bin/entry.sh ${args}`
+      : `exec busybox su -s /usr/bin/sh supabase_cli -c "exec /usr/local/bin/entry.sh ${args}"`;
+  // initdb requires the effective uid to resolve through /etc/passwd, while
+  // the image init script chmods its key helper. Perform only that image setup
+  // as root, then drop to the host uid before touching the bind-mounted data.
+  const hostUserSetup =
+    hostUser === undefined
+      ? ""
+      : `printf 'supabase_cli:x:${hostUid}:${hostGid}:Supabase CLI:/tmp:/usr/bin/sh\\n' >> /etc/passwd
+busybox chown ${hostUid}:${hostGid} /opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh
+`;
+  const command = `${hostUserSetup}if [ -s /var/lib/postgresql/data/PG_VERSION ]; then
   cp /var/lib/postgresql/data/pg_hba.conf /tmp/supabase-cli-pg_hba.conf
   printf '\\nhost all all all scram-sha-256\\n' >> /tmp/supabase-cli-pg_hba.conf
-  busybox chown 65532:65532 /tmp/supabase-cli-pg_hba.conf
+  ${hostUser === undefined ? "" : `busybox chown ${hostUid}:${hostGid} /tmp/supabase-cli-pg_hba.conf`}
   ${runEntrypoint(`-c hba_file=/tmp/supabase-cli-pg_hba.conf ${runtimeArgs.join(" ")}`)}
 else
   ${runEntrypoint(runtimeArgs.join(" "))}
@@ -188,13 +170,12 @@ fi`;
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],
     env: { POSTGRES_PASSWORD: "postgres" },
-    ...(opts.runtime === "docker" && opts.platformOs === "linux" ? { user: "0" } : {}),
+    user: hostUser === undefined ? undefined : "0",
     entrypoint: "/usr/bin/sh",
     cmd: ["-c", command],
     dependencies: opts.dependencies,
     healthCheck: postgresDockerHealthCheck(opts.runtime, containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
-    cleanup: ownershipCleanup,
-    orphanCleanup: ownershipCleanup === undefined ? orphanCleanup(opts) : [],
+    orphanCleanup: orphanCleanup(opts),
   });
 };

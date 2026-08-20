@@ -5,6 +5,7 @@ import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
+  hostUserForLinuxDocker,
   hostHttpHealthCheck,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -105,6 +106,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
       ...edgeRuntimeEnv(opts),
       FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,
     },
+    user: hostUserForLinuxDocker(opts.runtime, opts.platformOs),
     cmd: [...edgeRuntimeArgs(opts, bootstrapMountDir)],
     dependencies: opts.dependencies,
     healthCheck: edgeRuntimeHealthCheck(opts.port),
