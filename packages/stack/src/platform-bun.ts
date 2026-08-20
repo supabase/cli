@@ -83,17 +83,17 @@ const controlTransport: ControlTransport["Service"] = {
     ),
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
-          signal: AbortSignal.timeout(500),
+      try: (signal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
+          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
           // One-shot connection: a pooled keep-alive connection would let a
           // closed listener keep answering status probes while the probes
           // themselves keep the connection alive.
           headers: { connection: "close" },
-        });
-        if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
-        return await response.json();
-      },
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
+          return response.json();
+        }),
       catch: (cause) => {
         if (
           cause instanceof SyntaxError ||
@@ -111,14 +111,14 @@ const controlTransport: ControlTransport["Service"] = {
     }),
   requestStop: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
+      try: (signal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
-          signal: AbortSignal.timeout(500),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
           headers: { connection: "close" },
-        });
-        if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
-      },
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
+        }),
       catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
     }),
 };
