@@ -99,6 +99,26 @@ describe("diffProjectConfig classification", () => {
     expect(change).toMatchObject({ class: "remote_only", local: undefined, remote: 250 });
   });
 
+  test("optional-key paths with no materialized default suppress zero-valued remotes", () => {
+    // db.ssl_enforcement and auth providers are optionalKey — absent from the
+    // default config — and the platform reports their unconfigured state as
+    // zero values. Those are not drift; a non-zero value is.
+    const clean = diffWith(
+      {},
+      {
+        database: { ssl_enforced: false },
+        auth: { external_github_enabled: false, external_github_client_id: "" },
+      },
+    );
+    expect(clean.changes).toEqual([]);
+
+    const drifted = diffWith({}, { database: { ssl_enforced: true } });
+    expect(changeAt(drifted.changes, "db.ssl_enforcement.enabled")).toMatchObject({
+      class: "remote_only",
+      remote: true,
+    });
+  });
+
   test("declared value the response does not carry is local_only", () => {
     const result = diffWith(
       { api: { max_rows: 500 } },

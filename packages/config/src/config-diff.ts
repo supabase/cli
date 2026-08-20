@@ -194,6 +194,12 @@ function canonicalArrayElement(value: unknown): string {
   return `j:${JSON.stringify(value)}`;
 }
 
+function isZeroValue(value: unknown): boolean {
+  return (
+    value === false || value === "" || value === 0 || (Array.isArray(value) && value.length === 0)
+  );
+}
+
 /**
  * Order-insensitive, type-aware value equality: arrays compare as multisets
  * (`additional_redirect_urls` in a different order is not a difference), and
@@ -250,7 +256,16 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
 
     if (remoteValue !== undefined) {
       const defaultValue = valueAtPath(defaults, property.path);
-      if (!isEqualConfigValue(normalize(defaultValue), normalize(remoteValue))) {
+      // Optional-key sections (db.ssl_enforcement, db.settings, auth
+      // providers…) never materialize in the default config, so their paths
+      // have no baseline value. The platform still reports the unconfigured
+      // state for them as the type's zero value (false / "" / 0 / []) — an
+      // undeclared feature reporting its zero value is not drift.
+      const suppressed =
+        defaultValue === undefined
+          ? isZeroValue(remoteValue)
+          : isEqualConfigValue(normalize(defaultValue), normalize(remoteValue));
+      if (!suppressed) {
         changes.push({
           path: property.path,
           class: "remote_only",
