@@ -6,6 +6,7 @@ import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
 import { stackHealthBudgets } from "./health-budgets.ts";
+import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
@@ -94,7 +95,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
       `${bootstrapDir}:${bootstrapMountDir}:ro`,
       ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
     ],
-    args: ["--ulimit", "nofile=65536:65536"],
+    args: ["--ulimit", edgeRuntimeNofileUlimit(opts.platformOs).arg],
     env: {
       ...edgeRuntimeEnv(opts),
       FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,
