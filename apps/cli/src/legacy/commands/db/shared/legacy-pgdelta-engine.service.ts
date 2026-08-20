@@ -75,7 +75,8 @@ export type LegacyPgDeltaHazardKind =
   | "access_exclusive_lock"
   | "unmodeled_kind"
   | "unmodeled_drift"
-  | "unresolved_security_label";
+  | "unresolved_security_label"
+  | "vault_presence";
 
 interface LegacyPgDeltaActionHazard {
   readonly actionIndex: number;
