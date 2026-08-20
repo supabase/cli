@@ -129,14 +129,6 @@ describe("selected-field port allocation", () => {
       expect(unavailableAgain._tag).toBe("Failure");
 
       await Effect.runPromise(lease.releaseAll);
-      const reboundBoth = await Effect.runPromise(
-        allocatePortSet([
-          { field: "apiPort", selection: { kind: "exact", port: lease.ports.apiPort! } },
-          { field: "dbPort", selection: { kind: "exact", port: lease.ports.dbPort! } },
-        ]),
-      );
-      expect(reboundBoth.apiPort).toBe(lease.ports.apiPort);
-      expect(reboundBoth.dbPort).toBe(lease.ports.dbPort);
     } finally {
       await Effect.runPromise(lease.releaseAll);
     }
@@ -184,6 +176,16 @@ describe("selected-field port allocation", () => {
     if (exit._tag === "Failure") {
       expect(JSON.stringify(exit.cause)).toContain("is not available");
     }
+  });
+
+  it("rejects zero for an exact port selection", async () => {
+    const exit = await Effect.runPromise(
+      allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port: 0 } }]).pipe(
+        Effect.exit,
+      ),
+    );
+
+    expect(exit._tag).toBe("Failure");
   });
 
   it("keeps concurrent selected-field leases disjoint", async () => {

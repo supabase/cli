@@ -132,9 +132,9 @@ describe("normalizeServiceVersion", () => {
     expect(normalizeServiceVersion("edge-runtime", "v1.73.0")).toBe("v1.73.0");
   });
 
-  it("preserves explicit release tags", () => {
-    expect(normalizeServiceVersion("mailpit", "1.30.2")).toBe("1.30.2");
-    expect(normalizeServiceVersion("imgproxy", "3.8.0")).toBe("3.8.0");
+  it("normalizes bare versions for services with v-prefixed catalog releases", () => {
+    expect(normalizeServiceVersion("mailpit", "1.30.2")).toBe("v1.30.2");
+    expect(normalizeServiceVersion("imgproxy", "3.8.0")).toBe("v3.8.0");
   });
 
   it("passes through other services unchanged", () => {

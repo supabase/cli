@@ -94,6 +94,7 @@ const postgresDockerHealthCheck = (
     "sh",
     [
       "-ec",
+      // Linux /proc/1/comm truncates `.postgres-wrapped` to 15 characters.
       `case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -h 127.0.0.1 -p ${port} -U postgres ;; *) exit 1 ;; esac`,
     ],
     {

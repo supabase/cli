@@ -156,6 +156,25 @@ describe("managed stack document store", () => {
     }).pipe(Effect.provide(filesystemLayer)),
   );
 
+  it.live("rejects unknown launch modes as invalid managed documents", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        STACK_ID,
+        JSON.stringify({ ...document(), launch: { mode: "auto", versions: {} } }),
+      );
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "InvalidManagedStackDocumentError",
+        });
+      }
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
   it.live("lists a corrupt stack beside healthy stacks", () =>
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();

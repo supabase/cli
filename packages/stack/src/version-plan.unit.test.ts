@@ -51,12 +51,12 @@ describe("planStackVersions", () => {
         postgres: "17.4.1.045",
         postgrest: "v14.5",
         auth: "v2.170.0",
-        storage: "1.40.0",
+        storage: "v1.40.0",
       },
       activeOverrides: [
         { service: "postgres", version: "17.4.1.045", source: "flag" },
         { service: "auth", version: "v2.170.0", source: "flag" },
-        { service: "storage", version: "1.40.0", source: "local" },
+        { service: "storage", version: "v1.40.0", source: "local" },
       ],
     });
   });

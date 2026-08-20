@@ -34,7 +34,7 @@ export type PartialVersionManifest = Schema.Schema.Type<typeof PartialVersionMan
  * Returns the full Docker image URL for a service.
  */
 export function dockerImageForService(service: ServiceName, version: string): string {
-  return dockerImageForArtifact(service, version);
+  return dockerImageForArtifact(service, normalizeServiceVersion(service, version));
 }
 
 function assertFullVersions(
@@ -56,10 +56,15 @@ export function fullVersionManifest(
 /** Normalizes a version string to the catalog's canonical stored form. */
 export function normalizeServiceVersion(service: ServiceName, version: string): string {
   const normalized = version.trim();
-  const tagPrefix = serviceMetadata(service).artifact.docker.tagPrefix;
-  return tagPrefix !== undefined && normalized.startsWith(tagPrefix)
-    ? normalized.slice(tagPrefix.length)
-    : normalized;
+  const metadata = serviceMetadata(service);
+  const tagPrefix = metadata.artifact.docker.tagPrefix;
+  const withoutDockerTagPrefix =
+    tagPrefix !== undefined && normalized.startsWith(tagPrefix)
+      ? normalized.slice(tagPrefix.length)
+      : normalized;
+  return metadata.defaultVersion.startsWith("v") && !withoutDockerTagPrefix.startsWith("v")
+    ? `v${withoutDockerTagPrefix}`
+    : withoutDockerTagPrefix;
 }
 
 export function normalizeServiceVersions(

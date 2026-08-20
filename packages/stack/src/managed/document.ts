@@ -28,7 +28,9 @@ const managedStackLaunchSchema = Schema.Union([
     containerRuntime: Schema.Literals(["docker", "podman"] as const),
     ...managedStackLaunchFields,
   }),
-  Schema.Struct(managedStackLaunchFields),
+  Schema.Struct({
+    ...managedStackLaunchFields,
+  }),
 ]);
 
 export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
@@ -136,12 +138,29 @@ export class InvalidManagedStackDocumentError extends Data.TaggedError(
 const decodeDocument = Schema.decodeUnknownSync(ManagedStackDocumentSchema);
 const encodeDocument = Schema.encodeUnknownSync(managedStackDocumentSchema);
 
+const hasUnknownLaunchMode = (content: string): boolean => {
+  let value: unknown;
+  try {
+    value = JSON.parse(content);
+  } catch {
+    return false;
+  }
+  if (typeof value !== "object" || value === null) return false;
+  const launch = Reflect.get(value, "launch");
+  if (typeof launch !== "object" || launch === null) return false;
+  const mode = Reflect.get(launch, "mode");
+  return mode !== undefined && mode !== "native" && mode !== "docker";
+};
+
 export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
   Effect.try({
     try: () => {
+      if (hasUnknownLaunchMode(content)) {
+        throw new Error("Managed document has an unknown launch mode");
+      }
       const document = decodeDocument(content);
       if (!hasCorePortAssignments(document)) {
         throw new Error("Managed document is missing core port assignments");

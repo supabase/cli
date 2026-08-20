@@ -565,6 +565,16 @@ export async function resolveConfig(
     }
   };
 
+  for (const field of portFieldsForConfigInput(config)) {
+    const port = explicitPortForField(field);
+    if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) {
+      throw new StackBuildError({
+        detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
+        reason: "invalid_config",
+      });
+    }
+  }
+
   const unorderedRequests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(
     config,
   ).map((field) => {

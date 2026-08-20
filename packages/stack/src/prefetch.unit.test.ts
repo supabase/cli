@@ -211,6 +211,29 @@ describe("prefetch", () => {
     });
   });
 
+  test("Docker preparation applies the catalog v prefix to bare versions", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({
+        mode: "docker",
+        containerRuntime: "docker",
+        services: ["postgrest"],
+        versions: { postgrest: "16.1" },
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.postgrest).toEqual({
+      type: "docker",
+      image: "ghcr.io/supabase/cli/postgrest:v16.1",
+    });
+  });
+
   test("native mode rejects services that have no native runtime", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([]);

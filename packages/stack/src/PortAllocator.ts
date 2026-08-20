@@ -82,10 +82,14 @@ const chooseExactPort = (
   port: number,
   exclude: ReadonlySet<number>,
   probe: PortProbe,
-): Effect.Effect<number, PortAllocationError> =>
-  exclude.has(port)
+): Effect.Effect<number, PortAllocationError> => {
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    return Effect.fail(new PortAllocationError({ detail: `Invalid exact port ${port}`, port }));
+  }
+  return exclude.has(port)
     ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available`, port }))
     : probe.exact(port);
+};
 
 const choosePreferredPort = (
   port: number,
@@ -572,6 +576,13 @@ export const reservePortSet = (
         let bound: BoundPort;
 
         if (selection.kind === "exact") {
+          if (!Number.isInteger(selection.port) || selection.port < 1 || selection.port > 65_535) {
+            return yield* new PortAllocationError({
+              detail: `Invalid exact port ${selection.port}`,
+              field: request.field,
+              port: selection.port,
+            });
+          }
           if (exclude.has(selection.port)) {
             return yield* new PortAllocationError({
               detail: `Port ${selection.port} is not available`,

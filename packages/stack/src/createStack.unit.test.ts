@@ -134,6 +134,32 @@ describe("resolveConfig edge runtime defaults", () => {
 });
 
 describe("resolveConfig explicit keyless ports", () => {
+  it("rejects an explicit zero port before invoking allocation", async () => {
+    let allocatorCalled = false;
+    await expect(
+      resolveConfig(
+        { mode: "native", port: 0 },
+        {
+          portAllocator: () => {
+            allocatorCalled = true;
+            return Effect.die(new Error("allocator should not run"));
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+    expect(allocatorCalled).toBe(false);
+  });
+
+  it.each([1.5, -1, 65_536])("rejects an explicit invalid port %s", async (port) => {
+    await expect(resolveConfig({ mode: "native", port })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+  });
+
   it("preserves an explicit pooler api port", async () => {
     const config = await resolveConfig(
       {
