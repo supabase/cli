@@ -15,6 +15,9 @@ import {
   type ControlOwnerStatus,
   type ControlEndpoint,
 } from "./managed/control.ts";
+
+const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
+
 const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined;
   if ("code" in cause && typeof cause.code === "string") return cause.code;
@@ -47,6 +50,8 @@ const readError = (
   }
   if (
     cause instanceof SyntaxError ||
+    (cause instanceof Error &&
+      cause.message === `Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`) ||
     (cause instanceof Error &&
       cause.message.startsWith("Control status request returned") &&
       !cause.message.endsWith(" 404"))
@@ -99,15 +104,20 @@ const controlTransport: ControlTransport["Service"] = {
       let response: Http.IncomingMessage | undefined;
       let onData: ((chunk: string) => void) | undefined;
       let onEnd: (() => void) | undefined;
+      let onResponseError: ((cause: Error) => void) | undefined;
+      let onResponseAborted: (() => void) | undefined;
+      let onResponseClose: (() => void) | undefined;
       let settled = false;
       let cleanup = () => {};
-      const finish = (effect: Effect.Effect<unknown, unknown>) => {
+      let dispose = () => {};
+      const finish = (effect: Effect.Effect<unknown, unknown>, shouldDispose = false) => {
         if (settled) return;
         settled = true;
         cleanup();
+        if (shouldDispose) dispose();
         resume(effect);
       };
-      const onError = (cause: Error) => finish(Effect.fail(cause));
+      const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
       const request = Http.request(
         {
           host: "127.0.0.1",
@@ -122,60 +132,100 @@ const controlTransport: ControlTransport["Service"] = {
         (incoming) => {
           response = incoming;
           let body = "";
+          let bodyBytes = 0;
+          let ended = false;
+          let responseAborted = false;
           onData = (chunk) => {
+            bodyBytes += Buffer.byteLength(chunk, "utf8");
+            if (bodyBytes > MAX_CONTROL_RESPONSE_BYTES) {
+              finish(
+                Effect.fail(
+                  new Error(`Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`),
+                ),
+                true,
+              );
+              return;
+            }
             body += chunk;
           };
           onEnd = () => {
+            ended = true;
             if ((incoming.statusCode ?? 500) < 200 || (incoming.statusCode ?? 500) >= 300) {
               finish(
                 Effect.fail(
                   new Error(`Control status request returned ${incoming.statusCode ?? 500}`),
                 ),
+                true,
               );
               return;
             }
             try {
               finish(Effect.succeed(JSON.parse(body)));
             } catch (cause) {
-              finish(Effect.fail(cause));
+              finish(Effect.fail(cause), true);
+            }
+          };
+          onResponseError = (cause) => finish(Effect.fail(cause), true);
+          onResponseAborted = () => {
+            responseAborted = true;
+          };
+          onResponseClose = () => {
+            if (responseAborted || !ended) {
+              finish(Effect.fail(new Error("Control status response closed before end")), true);
             }
           };
           incoming.setEncoding("utf8");
           incoming.on("data", onData);
           incoming.once("end", onEnd);
+          incoming.once("error", onResponseError);
+          incoming.once("aborted", onResponseAborted);
+          incoming.once("close", onResponseClose);
         },
       );
+      dispose = () => {
+        response?.destroy();
+        request.destroy();
+      };
       cleanup = () => {
-        request.removeListener("error", onError);
+        request.removeListener("error", onRequestError);
         request.setTimeout(0);
         if (response !== undefined) {
           if (onData !== undefined) response.removeListener("data", onData);
           if (onEnd !== undefined) response.removeListener("end", onEnd);
+          if (onResponseError !== undefined) response.removeListener("error", onResponseError);
+          if (onResponseAborted !== undefined) {
+            response.removeListener("aborted", onResponseAborted);
+          }
+          if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
         }
       };
       request.setTimeout(500, () => request.destroy(new Error("Control status request timed out")));
-      request.once("error", onError);
+      request.once("error", onRequestError);
       request.end();
       return Effect.sync(() => {
         settled = true;
         cleanup();
-        response?.destroy();
-        request.destroy();
+        dispose();
       });
     }).pipe(Effect.mapError((cause) => readError(endpoint, cause))),
   requestStop: (endpoint: ControlEndpoint) =>
     Effect.callback<void, unknown>((resume) => {
       let response: Http.IncomingMessage | undefined;
       let onEnd: (() => void) | undefined;
+      let onResponseError: ((cause: Error) => void) | undefined;
+      let onResponseAborted: (() => void) | undefined;
+      let onResponseClose: (() => void) | undefined;
       let settled = false;
       let cleanup = () => {};
-      const finish = (effect: Effect.Effect<void, unknown>) => {
+      let dispose = () => {};
+      const finish = (effect: Effect.Effect<void, unknown>, shouldDispose = false) => {
         if (settled) return;
         settled = true;
         cleanup();
+        if (shouldDispose) dispose();
         resume(effect);
       };
-      const onError = (cause: Error) => finish(Effect.fail(cause));
+      const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
       const request = Http.request(
         {
           host: endpoint.hostname,
@@ -186,7 +236,10 @@ const controlTransport: ControlTransport["Service"] = {
         },
         (incoming) => {
           response = incoming;
+          let ended = false;
+          let responseAborted = false;
           onEnd = () => {
+            ended = true;
             if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
               finish(Effect.void);
             } else {
@@ -194,28 +247,49 @@ const controlTransport: ControlTransport["Service"] = {
                 Effect.fail(
                   new Error(`Control stop request returned ${incoming.statusCode ?? 500}`),
                 ),
+                true,
               );
             }
           };
-          incoming.resume();
+          onResponseError = (cause) => finish(Effect.fail(cause), true);
+          onResponseAborted = () => {
+            responseAborted = true;
+          };
+          onResponseClose = () => {
+            if (responseAborted || !ended) {
+              finish(Effect.fail(new Error("Control stop response closed before end")), true);
+            }
+          };
           incoming.once("end", onEnd);
+          incoming.once("error", onResponseError);
+          incoming.once("aborted", onResponseAborted);
+          incoming.once("close", onResponseClose);
+          incoming.resume();
         },
       );
+      dispose = () => {
+        response?.destroy();
+        request.destroy();
+      };
       cleanup = () => {
-        request.removeListener("error", onError);
+        request.removeListener("error", onRequestError);
         request.setTimeout(0);
-        if (response !== undefined && onEnd !== undefined) {
-          response.removeListener("end", onEnd);
+        if (response !== undefined) {
+          if (onEnd !== undefined) response.removeListener("end", onEnd);
+          if (onResponseError !== undefined) response.removeListener("error", onResponseError);
+          if (onResponseAborted !== undefined) {
+            response.removeListener("aborted", onResponseAborted);
+          }
+          if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
         }
       };
       request.setTimeout(500, () => request.destroy(new Error("Control stop request timed out")));
-      request.once("error", onError);
+      request.once("error", onRequestError);
       request.end();
       return Effect.sync(() => {
         settled = true;
         cleanup();
-        response?.destroy();
-        request.destroy();
+        dispose();
       });
     }).pipe(
       Effect.mapError(
