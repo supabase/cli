@@ -1100,6 +1100,12 @@ describe("legacyIsPipelineIncompatible", () => {
       "-- cannot run in a transaction\n/* generated */\nCREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
       true,
     ],
+    ["drop index concurrently", "DROP INDEX CONCURRENTLY public.widgets_id_idx", true],
+    [
+      "drop index concurrently if exists",
+      "drop index concurrently if exists api.idx_rx_orders_clinic_id",
+      true,
+    ],
     ["reindex table concurrently", "REINDEX TABLE CONCURRENTLY public.widgets", true],
     [
       "reindex with options concurrently",
@@ -1119,6 +1125,7 @@ describe("legacyIsPipelineIncompatible", () => {
     ["bom before vacuum", "\uFEFFVACUUM", true],
     // Negatives — compatible statements that must keep running inside the batch transaction.
     ["plain create index", "CREATE INDEX widgets_id_idx ON public.widgets(id)", false],
+    ["plain drop index", "DROP INDEX IF EXISTS public.widgets_id_idx", false],
     [
       "concurrently in string literal",
       "SELECT 'CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)'",

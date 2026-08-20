@@ -59,6 +59,7 @@ const BOM_CODE_POINT = 0xfeff;
 // pipeline-incompatible here but wouldn't under that narrower definition. Not worth
 // changing behaviour over — flagging so a future review doesn't rediscover it.
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
+const DROP_INDEX_CONCURRENTLY_PATTERN = /^DROP\s+INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
@@ -95,8 +96,9 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
 
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE
- * [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
- * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the implicit transaction
+ * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
+ * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`. Such statements fail with SQLSTATE 25001
+ * inside the implicit transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
@@ -104,6 +106,7 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
   return (
     CREATE_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
+    DROP_INDEX_CONCURRENTLY_PATTERN.test(upper) ||
     REINDEX_CONCURRENTLY_PATTERN.test(upper) ||
     VACUUM_PATTERN.test(upper) ||
     ALTER_SYSTEM_PATTERN.test(upper) ||
