@@ -22,41 +22,59 @@ describeLive("supabase feedback (legacy, live)", () => {
     async () => {
       using home = makeTempHome();
       const message = "cli-e2e golden path (add.live.test.ts)";
-      const added = await runSupabaseLive(
-        ["feedback", "add", message, "--profile", "supabase-staging", "--output-format", "json"],
-        {
-          home: home.dir,
-          env: { HOME: home.dir },
-        },
-      );
-      expect(added.exitCode).toBe(0);
-      const receipt = JSON.parse(added.stdout);
-      expect(receipt).toEqual({
-        delete_token: expect.stringMatching(UUID_PATTERN),
-        message: "Thanks for the feedback!",
-      });
+      const runDelete = (token: string) =>
+        runSupabaseLive(
+          [
+            "feedback",
+            "delete",
+            token,
+            "--yes",
+            "--profile",
+            "supabase-staging",
+            "--output-format",
+            "json",
+          ],
+          {
+            home: home.dir,
+            env: { HOME: home.dir },
+          },
+        );
 
-      const deleted = await runSupabaseLive(
-        [
-          "feedback",
-          "delete",
-          receipt.delete_token,
-          "--yes",
-          "--profile",
-          "supabase-staging",
-          "--output-format",
-          "json",
-        ],
-        {
-          home: home.dir,
-          env: { HOME: home.dir },
-        },
-      );
-      expect(deleted.exitCode).toBe(0);
-      expect(JSON.parse(deleted.stdout)).toEqual({
-        feedback: message,
-        message: "Feedback deleted.",
-      });
+      // Capture the token before asserting so a failed assertion between the
+      // add and the delete still leaves a handle for cleanup below.
+      let token: string | undefined;
+      let cleaned = false;
+      try {
+        const added = await runSupabaseLive(
+          ["feedback", "add", message, "--profile", "supabase-staging", "--output-format", "json"],
+          {
+            home: home.dir,
+            env: { HOME: home.dir },
+          },
+        );
+        expect(added.exitCode).toBe(0);
+        const receipt = JSON.parse(added.stdout);
+        if (typeof receipt?.delete_token === "string") token = receipt.delete_token;
+        expect(receipt).toEqual({
+          delete_token: expect.stringMatching(UUID_PATTERN),
+          message: "Thanks for the feedback!",
+        });
+
+        const deleted = await runDelete(receipt.delete_token);
+        cleaned = deleted.exitCode === 0;
+        expect(deleted.exitCode).toBe(0);
+        expect(JSON.parse(deleted.stdout)).toEqual({
+          feedback: message,
+          message: "Feedback deleted.",
+        });
+      } finally {
+        // Best-effort teardown: a failing run must not leave its row on the
+        // staging feedback project. Inert when the round trip already deleted
+        // it; the exact token targets only this test's own row.
+        if (token !== undefined && !cleaned) {
+          await runDelete(token).catch(() => {});
+        }
+      }
     },
   );
 });
