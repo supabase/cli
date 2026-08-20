@@ -1,7 +1,67 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
 import { createServer, type Server } from "node:net";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import { allocatePortSet, reservePortSet, type PortReservationRequest } from "./PortAllocator.ts";
+
+const PORT_LEASE_CHILD = resolve(import.meta.dirname, "../tests/helpers/port-lease-child.ts");
+
+interface ChildLease {
+  readonly process: ChildProcessWithoutNullStreams;
+  readonly ready: Promise<{ readonly apiPort: number; readonly dbPort: number }>;
+}
+
+const startChildLease = (): ChildLease => {
+  const child = spawn("bun", ["run", PORT_LEASE_CHILD], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const ready = new Promise<{ readonly apiPort: number; readonly dbPort: number }>(
+    (resolveReady, rejectReady) => {
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        stdout += chunk.toString();
+        const newline = stdout.indexOf("\n");
+        if (newline === -1) return;
+        settled = true;
+        try {
+          resolveReady(JSON.parse(stdout.slice(0, newline)));
+        } catch (error) {
+          rejectReady(new Error(`Invalid child lease response: ${stdout}`, { cause: error }));
+        }
+      });
+      child.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        rejectReady(error);
+      });
+      child.once("close", (code) => {
+        if (settled) return;
+        settled = true;
+        rejectReady(
+          new Error(`Port lease child exited with code ${code} before readiness: ${stderr}`),
+        );
+      });
+    },
+  );
+
+  return { process: child, ready };
+};
+
+const releaseChildLease = async (child: ChildProcessWithoutNullStreams): Promise<void> => {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const closed = once(child, "close");
+  child.stdin.end("release\n");
+  await closed;
+};
 
 const listen = (port: number) =>
   Effect.callback<Server, Error>((resume) => {
@@ -142,6 +202,29 @@ describe("selected-field port allocation", () => {
       ]);
     }
   });
+
+  it("keeps automatic ports disjoint across processes", async () => {
+    const firstChild = startChildLease();
+    const secondChild = startChildLease();
+    const children = [firstChild, secondChild];
+
+    try {
+      const [first, second] = await Promise.all([firstChild.ready, secondChild.ready]);
+      const ports = [first.apiPort, first.dbPort, second.apiPort, second.dbPort];
+      expect(new Set(ports).size).toBe(ports.length);
+
+      for (const port of ports) {
+        const unavailable = await Effect.runPromise(
+          allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
+            Effect.exit,
+          ),
+        );
+        expect(unavailable._tag).toBe("Failure");
+      }
+    } finally {
+      await Promise.all(children.map(({ process }) => releaseChildLease(process)));
+    }
+  }, 30_000);
 
   it("releases partial reservations when a selected set fails", async () => {
     const firstPort = await Effect.runPromise(
