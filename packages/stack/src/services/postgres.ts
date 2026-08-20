@@ -73,8 +73,9 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
  * The supabase/postgres image briefly accepts connections while its entrypoint
  * runs initialization. During that phase PID 1 is still the shell and the
  * temporary server is stopped before the final postgres process starts. Gate
- * readiness on the final Postgres executable as PID 1 and pg_isready so
- * dependents never race that handoff.
+ * readiness on the final Postgres process name and pg_isready so dependents
+ * never race that handoff. `/proc/1/exe` is intentionally avoided because
+ * Linux container hardening can make that symlink unreadable across users.
  */
 const postgresDockerHealthCheck = (
   runtime: DockerPostgresOptions["runtime"],
@@ -87,7 +88,7 @@ const postgresDockerHealthCheck = (
     "sh",
     [
       "-ec",
-      `case "$(readlink /proc/1/exe)" in */postgres|*/.postgres-wrapped) pg_isready -h 127.0.0.1 -p ${port} -U postgres ;; *) exit 1 ;; esac`,
+      `case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -h 127.0.0.1 -p ${port} -U postgres ;; *) exit 1 ;; esac`,
     ],
     {
       ...stackHealthBudgets.postgresDocker,

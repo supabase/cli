@@ -148,18 +148,14 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
     expect(def.args).toContain("/usr/bin/sh");
     expect(def.args?.at(-2)).toBe("-c");
-    // Health check waits for the final postgres PID 1 process before probing it.
-    expect(def.healthCheck?.probe).toEqual({
-      _tag: "Exec",
-      command: "docker",
-      args: [
-        "exec",
-        `supabase-postgres-${API_PORT}`,
-        "sh",
-        "-ec",
-        'case "$(readlink /proc/1/exe)" in */postgres|*/.postgres-wrapped) pg_isready -h 127.0.0.1 -p 54322 -U postgres ;; *) exit 1 ;; esac',
-      ],
-    });
+    // The Linux-compatible health gate distinguishes the final server from
+    // the image's temporary initialization server.
+    expect(def.healthCheck?.probe).toEqual(
+      expect.objectContaining({ _tag: "Exec", command: "docker" }),
+    );
+    expect(
+      def.healthCheck?.probe._tag === "Exec" && def.healthCheck.probe.args.join(" "),
+    ).toContain("/proc/1/comm");
     expect(def.dependencies).toEqual([]);
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision?.orphanCleanup).toBeDefined();

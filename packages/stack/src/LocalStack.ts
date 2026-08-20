@@ -928,6 +928,7 @@ export const localStackLayer = (
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
+            cleanupOnReadinessFailure,
             Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
           );
         },

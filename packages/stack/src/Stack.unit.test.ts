@@ -1363,7 +1363,40 @@ describe("Stack", () => {
               : Effect.void,
         releaseAll: Effect.void,
       };
-      const { layer } = setupLayer(config, lease);
+      const graph = Effect.runSync(
+        buildGraph([
+          {
+            name: "postgres",
+            command: process.execPath,
+            restart: "unless-stopped",
+            healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+          },
+          {
+            name: "mailpit",
+            command: process.execPath,
+            restart: "unless-stopped",
+            healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+          },
+        ]),
+      );
+      const builderLayer = Layer.succeed(StackBuilder, {
+        build: () =>
+          Effect.succeed({
+            graph,
+            cleanupTargets: { dockerContainerNames: [] },
+            serviceProjection: new Map([
+              ["postgres", { visibility: "public" as const }],
+              ["mailpit", { visibility: "public" as const }],
+            ]),
+          }),
+      });
+      const resolver = mockBinaryResolver();
+      const layer = localStackLayer(config, lease).pipe(
+        Layer.provide(builderLayer),
+        Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+        Layer.provide(mockChildProcessSpawner().layer),
+        Layer.provide(NodeServices.layer),
+      );
 
       yield* Effect.gen(function* () {
         const stack = yield* Stack;
@@ -1372,7 +1405,10 @@ describe("Stack", () => {
 
         yield* Deferred.await(mailpitReleaseStarted);
         yield* Deferred.succeed(allowPostgresRelease, undefined);
-        yield* Fiber.interrupt(starting);
+        yield* Fiber.join(starting);
+
+        expect((yield* stack.getState("postgres")).status).toBe("Healthy");
+        expect((yield* stack.getState("mailpit")).status).toBe("Healthy");
 
         yield* stack.stop();
       }).pipe(Effect.provide(layer));
