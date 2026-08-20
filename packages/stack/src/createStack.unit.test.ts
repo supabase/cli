@@ -20,7 +20,7 @@ const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
 describe("foreground operation lifecycle", () => {
   it("disposes the foreground runtime after a direct readiness timeout", async () => {
     let disposeCount = 0;
-    const operation = Promise.reject(
+    const operation = Effect.fail(
       new StackReadinessError({
         target: "stack",
         timeoutMs: 10,
@@ -29,12 +29,14 @@ describe("foreground operation lifecycle", () => {
     );
 
     await expect(
-      runForegroundOperation(
-        operation,
-        async () => true,
-        async () => {
-          disposeCount += 1;
-        },
+      Effect.runPromise(
+        runForegroundOperation(
+          operation,
+          Effect.succeed(true),
+          Effect.sync(() => {
+            disposeCount += 1;
+          }),
+        ),
       ),
     ).rejects.toMatchObject({ code: "STACK_READINESS_TIMEOUT" });
     expect(disposeCount).toBe(1);
@@ -44,12 +46,14 @@ describe("foreground operation lifecycle", () => {
     let disposeCount = 0;
 
     await expect(
-      runForegroundOperation(
-        Promise.reject(new Error("service startup failed")),
-        async () => true,
-        async () => {
-          disposeCount += 1;
-        },
+      Effect.runPromise(
+        runForegroundOperation(
+          Effect.fail(new Error("service startup failed")),
+          Effect.succeed(true),
+          Effect.sync(() => {
+            disposeCount += 1;
+          }),
+        ),
       ),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(1);
@@ -59,12 +63,14 @@ describe("foreground operation lifecycle", () => {
     let disposeCount = 0;
 
     await expect(
-      runForegroundOperation(
-        Promise.reject(new Error("failed")),
-        async () => false,
-        async () => {
-          disposeCount += 1;
-        },
+      Effect.runPromise(
+        runForegroundOperation(
+          Effect.fail(new Error("failed")),
+          Effect.succeed(false),
+          Effect.sync(() => {
+            disposeCount += 1;
+          }),
+        ),
       ),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
     expect(disposeCount).toBe(0);

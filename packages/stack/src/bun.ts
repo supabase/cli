@@ -3,11 +3,8 @@ import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import { selectStackRuntime } from "./ContainerRuntime.ts";
-import {
-  createStack as createStackCore,
-  type ResolveConfigPromise,
-  type StackHandle,
-} from "./createStack.ts";
+import { createStack as createStackCore, type ResolveConfigEffect } from "./createStack.ts";
+import { toStackHandle, type StackHandle } from "./stackHandle.ts";
 import { toStackError } from "./errors.ts";
 import {
   prefetch as prefetchEffect,
@@ -24,7 +21,10 @@ import {
   type ResolveConfigOptions,
 } from "./StackConfigResolver.ts";
 
-const resolveConfigPromise: ResolveConfigPromise = (config, options) =>
+const resolveConfigEffectForPlatform: ResolveConfigEffect = (config, options) =>
+  resolveConfigEffect(config, options);
+
+const resolveConfigPromise = (config?: StackConfig, options?: ResolveConfigOptions) =>
   Effect.runPromise(resolveConfigEffect(config, options).pipe(Effect.provide(BunServices.layer)));
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
@@ -33,7 +33,12 @@ export async function createStack(config?: StackConfig): Promise<StackHandle> {
   ).catch((error: unknown) => {
     throw toStackError(error);
   });
-  return createStackCore(config, platformFactory, runtime, resolveConfigPromise);
+  const handle = await Effect.runPromise(
+    createStackCore(config, platformFactory, runtime, resolveConfigEffectForPlatform).pipe(
+      Effect.provide(BunServices.layer),
+    ),
+  );
+  return toStackHandle(handle);
 }
 
 export async function resolveConfig(config?: StackConfig, options?: ResolveConfigOptions) {
