@@ -14,6 +14,7 @@ import {
   mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
+  mockStdin,
   mockTelemetryRuntime,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -106,6 +107,7 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
 function setupLegacyFeedbackDelete(
   opts: {
     output?: Parameters<typeof mockOutput>[0];
+    stdinIsTTY?: boolean;
     client?: MockClientOpts;
     yes?: boolean;
     /** Simulates the Go-compat `-o`/`--output` global flag. */
@@ -124,6 +126,7 @@ function setupLegacyFeedbackDelete(
     out.layer,
     client.layer,
     telemetryState.layer,
+    mockStdin(opts.stdinIsTTY ?? true),
     mockTelemetryRuntime({
       cliVersion: "9.9.9",
       distinctId: opts.distinctId,
@@ -225,6 +228,43 @@ describe("legacy feedback delete", () => {
 
   it.live("--yes skips the confirmation prompt", () => {
     const { layer, out, client } = setupLegacyFeedbackDelete({ yes: true });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackDelete(deleteArgs());
+
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("refuses to confirm from piped stdin, even with a TTY stdout", () => {
+    // `printf 'y' | supabase feedback delete <token>` in a terminal: stdout is
+    // a TTY (so `output.interactive` is true) but the confirm would answer on a
+    // single keypress read from the pipe, deleting without --yes. It must fail
+    // as non-interactive instead of consuming the piped byte.
+    const { layer, out, client } = setupLegacyFeedbackDelete({ stdinIsTTY: false });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackDelete(deleteArgs()).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("refuses to confirm when stdout is not interactive, even on a TTY stdin", () => {
+    const { layer, out, client } = setupLegacyFeedbackDelete({ output: { interactive: false } });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackDelete(deleteArgs()).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "NonInteractiveError" });
+      expect(out.promptConfirmCalls).toHaveLength(0);
+      expect(client.deleteCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--yes deletes without prompting when stdin is piped", () => {
+    // The documented escape hatch for non-interactive contexts.
+    const { layer, out, client } = setupLegacyFeedbackDelete({ yes: true, stdinIsTTY: false });
     return Effect.gen(function* () {
       yield* legacyFeedbackDelete(deleteArgs());
 

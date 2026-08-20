@@ -2,6 +2,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyFeedbackClientLayer, legacyFeedbackCliConfigLayer } from "../feedback.layers.ts";
@@ -46,6 +47,7 @@ export const legacyFeedbackDeleteCommand = Command.make("delete", config).pipe(
   Command.withHandler(legacyFeedbackDeleteHandler),
   Command.provide(commandRuntimeLayer(["feedback", "delete"])),
   Command.provide(legacyTelemetryStateLayer),
+  Command.provide(stdinLayer),
   // `Layer.provide` does not share to siblings: the handler and the feedback
   // client each get their own cli-config provision (legacy CLAUDE.md item 5).
   Command.provide(legacyFeedbackClientLayer),

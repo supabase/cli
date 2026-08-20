@@ -1,6 +1,8 @@
 import { Effect, Option } from "effect";
 import { FeedbackClient } from "../../../../shared/feedback/feedback-client.service.ts";
+import { NonInteractiveError } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { LegacyOutputFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -84,11 +86,23 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
       yield* output.info(`Found feedback: "${feedbackText}"`);
     }
 
-    // `--yes`/`SUPABASE_YES` auto-confirms; otherwise prompt. In non-interactive
-    // contexts (json/stream-json, or piped text mode) the prompt fails loudly
-    // with NonInteractiveError rather than silently deleting — pass --yes there.
+    // `--yes`/`SUPABASE_YES` auto-confirms; otherwise prompt. Non-interactive
+    // contexts fail loudly with NonInteractiveError rather than silently
+    // deleting — pass --yes there. `output.interactive` is stdout-derived and
+    // clack's confirm answers on a single y/n keypress from any stdin, so both
+    // streams must be TTYs — otherwise `printf 'y' | feedback delete` could
+    // confirm a permanent delete without --yes (same gate as the add prompt).
     const yes = yield* legacyResolveYes;
     if (!yes) {
+      const stdin = yield* Stdin;
+      if (!stdin.isTTY || !output.interactive) {
+        return yield* Effect.fail(
+          new NonInteractiveError({
+            detail: "Cannot prompt for confirmation in a non-interactive context",
+            suggestion: "Pass --yes to delete without confirmation",
+          }),
+        );
+      }
       const confirmed = yield* output.promptConfirm("Permanently delete this feedback?", {
         defaultValue: false,
       });
