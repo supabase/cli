@@ -128,7 +128,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
       );
     }
 
-    // Go-compat `-o json` wins over `--output-format` (legacy CLAUDE.md item 6):
+    // `-o json` takes priority over `--output-format` (legacy shell invariant 6):
     // stdout carries the machine payload only. `pretty` (or unset) falls through.
     if (goFmt === "json") {
       yield* output.raw(encodeGoJson({ feedback: feedbackText }));

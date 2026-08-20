@@ -105,7 +105,6 @@ Also requires `--yes`.
 
 ## Notes
 
-- TS-only command — no Go CLI counterpart, so no Go-parity constraints apply.
 - Telemetry records `command: "feedback delete"`.
 - The token is validated client-side against the UUID shape before any request
   (avoids PostgREST's cryptic uuid-cast error) and lowercased for the backend.

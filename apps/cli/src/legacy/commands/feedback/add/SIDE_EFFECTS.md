@@ -94,7 +94,6 @@ terminal, a "What's on your mind?" text prompt collects it first.
 
 ## Notes
 
-- TS-only command — no Go CLI counterpart, so no Go-parity constraints apply.
 - Telemetry records `command: "feedback add"`.
 - Messages starting with a dash need the `--` end-of-options sentinel:
   `supabase feedback add -- "--yes should be the default"`.
