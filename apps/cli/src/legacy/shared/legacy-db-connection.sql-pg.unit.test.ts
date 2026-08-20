@@ -329,7 +329,7 @@ describe("legacyBuildRawPgConfig", () => {
     expect("ssl" in c).toBe(false);
   });
 
-  it("enables TCP keepalive with pgconn's five-minute idle delay on both config forms", () => {
+  it("enables TCP keepalive with a five-minute idle delay on both config forms", () => {
     const discrete = legacyBuildRawPgConfig({ ...base }, "db.example.com", 5432, false, 10);
     expect(discrete.keepAlive).toBe(true);
     expect(discrete.keepAliveInitialDelayMillis).toBe(300_000);

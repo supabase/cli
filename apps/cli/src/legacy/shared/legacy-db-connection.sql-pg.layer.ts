@@ -210,11 +210,11 @@ const LEGACY_BATCH_CONNECTION_LOST =
 export type LegacyBatchOutcome = "unsent" | "poisoned" | "submitted";
 
 /**
- * pgconn's keepalive period (its default dialer, 5 minutes). Go applies that period to both
- * the idle time and the probe interval; Node only sets the idle time and leaves the probe
- * schedule to the runtime and OS, so a silently dead peer surfaces sooner here than under Go.
+ * Idle time before TCP starts probing a silent peer. Node applies this as the idle delay only,
+ * leaving the probe interval and count to the runtime and OS, so a connection whose peer died
+ * without a FIN or RST surfaces some minutes after this elapses rather than when it elapses.
  */
-const LEGACY_PGCONN_KEEPALIVE_MILLIS = 300_000;
+const LEGACY_DB_KEEPALIVE_IDLE_MILLIS = 300_000;
 
 /**
  * Maps a failed migration batch to its public error. A batch that never reached the wire
@@ -580,7 +580,7 @@ export function legacyBuildRawPgConfig(
     ...(sslOption === undefined ? {} : { ssl: sslOption }),
     connectionTimeoutMillis: connectTimeoutSeconds * 1000,
     keepAlive: true,
-    keepAliveInitialDelayMillis: LEGACY_PGCONN_KEEPALIVE_MILLIS,
+    keepAliveInitialDelayMillis: LEGACY_DB_KEEPALIVE_IDLE_MILLIS,
   };
 }
 
