@@ -6970,6 +6970,9 @@
               }
             }
           },
+          "400": {
+            "description": "Project must be active and healthy, or metrics are not available for this project"
+          },
           "401": {
             "description": "Unauthorized"
           },
