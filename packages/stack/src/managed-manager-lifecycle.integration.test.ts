@@ -46,7 +46,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const [apiPort, dbPort] = yield* freePorts(2);
         if (apiPort === undefined || dbPort === undefined) {
-          throw new Error("expected interrupted-delete ports");
+          throw new Error("expected free managed stack ports");
         }
         const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
@@ -78,6 +78,55 @@ describe("managed stack lifecycle journeys", () => {
         yield* stopManagedStack(input);
         const stopped = yield* manager.inspectStack(stackId);
         expect(stopped?.lifecycle).toBe("stopped");
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
+  it.live("updates launch metadata before a runtime has been selected", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const [apiPort, dbPort] = yield* freePorts(2);
+        if (apiPort === undefined || dbPort === undefined) {
+          throw new Error("expected free managed stack ports");
+        }
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (owner._tag !== "Owned") throw new Error("expected stack control ownership");
+        const started = yield* manager.startStack({
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: exactCoreDocument(apiPort, dbPort),
+          ownership: owner,
+          lifecycle: "running",
+        });
+        yield* releaseLease(started);
+        yield* owner.close;
+
+        const updated = yield* updateManagedLaunch({
+          workspacePath: workspace,
+          stackName: "default",
+          launch: {
+            versions: { postgres: "17.6.1" },
+            excludedServices: ["studio"],
+            lastNotifiedUpdateFingerprint: "fingerprint",
+          },
+        });
+
+        expect(updated.launch).toEqual({
+          versions: { postgres: "17.6.1" },
+          excludedServices: ["studio"],
+          lastNotifiedUpdateFingerprint: "fingerprint",
+        });
       }),
     ).pipe(
       Effect.provide(layer),

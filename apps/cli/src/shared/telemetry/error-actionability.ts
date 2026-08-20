@@ -1055,7 +1055,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     ...actionability.stopStack,
     fingerprint_suffix: "managed_attached",
   }),
-  ManagedStackLaunchMissingError: () => actionability.startStack,
   ManagedWorkspaceRepairConflictError: () => ({
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_workspace_repair",

@@ -53,12 +53,12 @@ describe("selected-field port allocation", () => {
       expect(unavailable._tag).toBe("Failure");
 
       await Effect.runPromise(lease.release(["apiPort"]));
-      const rebound = await Effect.runPromise(
+      const unavailableWhileLeaseIsActive = await Effect.runPromise(
         allocatePortSet([
           { field: "apiPort", selection: { kind: "exact", port: lease.ports.apiPort! } },
-        ]),
+        ]).pipe(Effect.exit),
       );
-      expect(rebound.apiPort).toBe(lease.ports.apiPort);
+      expect(unavailableWhileLeaseIsActive._tag).toBe("Failure");
 
       await Effect.runPromise(lease.reserve(["apiPort"]));
       const unavailableAgain = await Effect.runPromise(

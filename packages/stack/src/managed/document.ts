@@ -28,6 +28,7 @@ const managedStackLaunchSchema = Schema.Union([
     containerRuntime: Schema.Literals(["docker", "podman"] as const),
     ...managedStackLaunchFields,
   }),
+  Schema.Struct(managedStackLaunchFields),
 ]);
 
 export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;

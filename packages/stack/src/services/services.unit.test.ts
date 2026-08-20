@@ -149,20 +149,16 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain("/usr/bin/sh");
     expect(def.args?.at(-2)).toBe("-c");
     expect(def.args?.at(-1)).toContain("hba_file=/tmp/supabase-cli-pg_hba.conf");
-    // Health check uses docker exec + pg_isready inside the container (host has no postgres tools)
+    // Health check waits for the final postgres PID 1 process before probing it.
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
       command: "docker",
       args: [
         "exec",
         `supabase-postgres-${API_PORT}`,
-        "pg_isready",
-        "-h",
-        "127.0.0.1",
-        "-p",
-        "54322",
-        "-U",
-        "postgres",
+        "sh",
+        "-ec",
+        'case "$(readlink /proc/1/exe)" in */postgres|*/.postgres-wrapped) pg_isready -h 127.0.0.1 -p 54322 -U postgres ;; *) exit 1 ;; esac',
       ],
     });
     expect(def.dependencies).toEqual([]);

@@ -115,7 +115,11 @@ export const stopManagedStack = (
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
       const containerRuntime =
-        document.launch?.mode === "docker" ? (document.launch.containerRuntime ?? "docker") : null;
+        document.launch !== undefined &&
+        "mode" in document.launch &&
+        document.launch.mode === "docker"
+          ? document.launch.containerRuntime
+          : null;
       const acquisition = yield* manager.acquireControl(stackId);
       const revalidatedStackId = yield* stackIdForInput(manager, input);
       if (revalidatedStackId !== stackId) {

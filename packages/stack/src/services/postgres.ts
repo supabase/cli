@@ -67,12 +67,14 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
 });
 
 /**
- * Docker postgres health check using pg_isready inside the container.
+ * Docker postgres health check using the final postgres process and pg_isready
+ * inside the container.
  *
- * TCP alone is insufficient because the supabase/postgres image accepts TCP
- * connections during its init phase (running init scripts) but drops real
- * queries with "unexpected EOF". We use `docker exec` to run pg_isready
- * inside the container, which verifies postgres is accepting commands.
+ * The supabase/postgres image briefly accepts connections while its entrypoint
+ * runs initialization. During that phase PID 1 is still the shell and the
+ * temporary server is stopped before the final postgres process starts. Gate
+ * readiness on the final Postgres executable as PID 1 and pg_isready so
+ * dependents never race that handoff.
  */
 const postgresDockerHealthCheck = (
   runtime: DockerPostgresOptions["runtime"],
@@ -82,8 +84,11 @@ const postgresDockerHealthCheck = (
   dockerExecHealthCheck(
     runtime,
     containerName,
-    "pg_isready",
-    ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres"],
+    "sh",
+    [
+      "-ec",
+      `case "$(readlink /proc/1/exe)" in */postgres|*/.postgres-wrapped) pg_isready -h 127.0.0.1 -p ${port} -U postgres ;; *) exit 1 ;; esac`,
+    ],
     {
       ...stackHealthBudgets.postgresDocker,
     },

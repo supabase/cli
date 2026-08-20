@@ -752,12 +752,137 @@ describe("Stack", () => {
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
-
       expect(Exit.isFailure(yield* stack.start().pipe(Effect.exit))).toBe(true);
       yield* stack.start();
-
       expect(buildAttempts).toBe(2);
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("can retry start after asset preparation fails before services start", () => {
+    const resolver = mockBinaryResolver({
+      failOnceServices: ["postgres"],
+    });
+    const config = {
+      ...defaultConfig,
+      postgrest: false,
+      auth: false,
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        postgrest: "off",
+        auth: "off",
+      },
+    } satisfies ResolvedStackConfig;
+    const { layer } = setupLayer(config, noopPortLease(config.ports), undefined, resolver);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      expect(Exit.isFailure(yield* stack.start().pipe(Effect.exit))).toBe(true);
+      yield* stack.start();
+      expect((yield* stack.getState("postgres")).status).toBe("Healthy");
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("restarts activated companions after stopping the stack", () => {
+    const graph = Effect.runSync(
+      buildGraph([
+        {
+          name: "postgres",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+        {
+          name: "postgrest",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+        {
+          name: "pgmeta",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+        {
+          name: "studio",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+        {
+          name: "analytics",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+        {
+          name: "vector",
+          command: process.execPath,
+          restart: "no",
+          healthCheck: { probe: { _tag: "Exec", command: "true", args: [] } },
+        },
+      ]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([
+            ["postgres", { visibility: "public" as const }],
+            ["postgrest", { visibility: "public" as const }],
+            ["pgmeta", { visibility: "public" as const }],
+            ["studio", { visibility: "public" as const }],
+            ["analytics", { visibility: "public" as const }],
+            ["vector", { visibility: "public" as const }],
+          ]),
+        }),
+    });
+    const config = {
+      ...defaultConfig,
+      mode: "docker",
+      containerRuntime: "docker",
+      pgmeta: { port: defaultPorts.pgmetaPort, version: DEFAULT_VERSIONS.pgmeta },
+      studio: {
+        port: defaultPorts.studioPort,
+        apiUrl: "http://127.0.0.1:54321",
+        version: DEFAULT_VERSIONS.studio,
+      },
+      analytics: {
+        port: defaultPorts.analyticsPort,
+        version: DEFAULT_VERSIONS.analytics,
+        backend: "postgres",
+        apiKey: "test-api-key",
+      },
+      vector: { version: DEFAULT_VERSIONS.vector },
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        auth: "lazy",
+        pgmeta: "eager",
+        studio: "eager",
+        analytics: "eager",
+        vector: "eager",
+      },
+    } satisfies ResolvedStackConfig;
+    const { resolver, spawner } = setupLayer(config, noopPortLease(config.ports));
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(spawner.layer),
+      Layer.provide(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      yield* stack.stop();
+      yield* stack.start();
+
+      expect((yield* stack.getState("studio")).status).toBe("Healthy");
+      expect((yield* stack.getState("analytics")).status).toBe("Healthy");
+      expect((yield* stack.getState("vector")).status).toBe("Healthy");
+    }).pipe(Effect.provide(layer), Effect.timeout("10 seconds"));
   });
 
   it.live("rejects a cached start when disposal begins during startup", () =>

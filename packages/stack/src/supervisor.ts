@@ -467,12 +467,17 @@ const runManaged = (
       }
     }
     const existing = yield* manager.inspectStack(stackId);
-    const requestedMode = configInput.mode ?? input.launch?.mode;
+    const requestedMode =
+      configInput.mode ??
+      (input.launch !== undefined && "mode" in input.launch ? input.launch.mode : undefined);
+    const existingLaunch = existing?.launch;
     const persistedRuntime: StackRuntimeSelection | undefined =
-      existing?.launch?.mode === "native"
+      existingLaunch !== undefined && "mode" in existingLaunch && existingLaunch.mode === "native"
         ? { mode: "native", containerRuntime: null }
-        : existing?.launch?.mode === "docker"
-          ? { mode: "docker", containerRuntime: existing.launch.containerRuntime }
+        : existingLaunch !== undefined &&
+            "mode" in existingLaunch &&
+            existingLaunch.mode === "docker"
+          ? { mode: "docker", containerRuntime: existingLaunch.containerRuntime }
           : undefined;
     if (
       persistedRuntime !== undefined &&

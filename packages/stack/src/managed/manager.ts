@@ -153,16 +153,6 @@ export class ManagedStackAttachedError extends Data.TaggedError("ManagedStackAtt
   }
 }
 
-export class ManagedStackLaunchMissingError extends Data.TaggedError(
-  "ManagedStackLaunchMissingError",
-)<{
-  readonly stackId: string;
-}> {
-  override get message(): string {
-    return `Managed stack ${this.stackId} has no selected runtime`;
-  }
-}
-
 export class ManagedWorkspaceRepairConflictError extends Data.TaggedError(
   "ManagedWorkspaceRepairConflictError",
 )<{
@@ -189,7 +179,6 @@ export const workspaceRepairConflict = (
 export type ManagedStackManagerError =
   | ManagedStackControlRequiredError
   | ManagedStackAttachedError
-  | ManagedStackLaunchMissingError
   | ManagedWorkspaceRepairConflictError
   | ManagedStackNotFoundError
   | ManagedStackNotStoppedError
@@ -863,11 +852,6 @@ const makeManager = (
           if (current === undefined) {
             return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
           }
-          if (current.launch === undefined) {
-            return yield* Effect.fail(
-              new ManagedStackLaunchMissingError({ stackId: update.stackId }),
-            );
-          }
           const metadata = {
             versions: update.launch.versions,
             ...(update.launch.excludedServices === undefined
@@ -880,13 +864,15 @@ const makeManager = (
                 }),
           };
           const launch: NonNullable<ManagedStackDocument["launch"]> =
-            current.launch.mode === "native"
-              ? { ...metadata, mode: "native" }
-              : {
-                  ...metadata,
-                  mode: "docker",
-                  containerRuntime: current.launch.containerRuntime,
-                };
+            current.launch === undefined || !("mode" in current.launch)
+              ? metadata
+              : current.launch.mode === "native"
+                ? { ...metadata, mode: "native" }
+                : {
+                    ...metadata,
+                    mode: "docker",
+                    containerRuntime: current.launch.containerRuntime,
+                  };
           const next: ManagedStackDocument = {
             ...current,
             launch,
@@ -1011,9 +997,13 @@ const makeManager = (
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
           yield* acquisition.setState("deleting", false);
-          if (current.launch?.mode === "docker") {
+          if (
+            current.launch !== undefined &&
+            "mode" in current.launch &&
+            current.launch.mode === "docker"
+          ) {
             yield* dockerForceRemove(
-              current.launch.containerRuntime ?? "docker",
+              current.launch.containerRuntime,
               SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
             );
           }

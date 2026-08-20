@@ -87,7 +87,7 @@ const modeFlag = Flag.choice("mode", startModes).pipe(
 
 interface StartVersionStateShape {
   readonly launch: {
-    readonly mode: StartMode;
+    readonly mode?: StartMode;
     readonly versions: Readonly<Record<string, string>>;
     readonly excludedServices: ReadonlyArray<ExcludedStackService>;
   };
@@ -251,7 +251,7 @@ export const startCommand = Command.make("start", flags).pipe(
         stackLayer,
         startVersionState: StartVersionState.of({
           launch: {
-            mode: summary.launch.mode,
+            mode: "mode" in summary.launch ? summary.launch.mode : undefined,
             versions: serviceVersionContext.pinnedBaseline,
             excludedServices: flags.exclude,
           },

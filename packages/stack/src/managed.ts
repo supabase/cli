@@ -53,7 +53,6 @@ export {
   deriveRepairOwnershipId,
   ManagedStackControlRequiredError,
   ManagedStackAttachedError,
-  ManagedStackLaunchMissingError,
   ManagedWorkspaceRepairConflictError,
 } from "./managed/manager.ts";
 export type {

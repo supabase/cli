@@ -40,12 +40,11 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
   const current = yield* resolveStackSummary(input);
   const loaded = yield* loadProjectConfig(input.projectDir);
   const excluded = (current.launch?.excludedServices ?? []).filter(isExcludedStackService);
+  const mode =
+    current.launch !== undefined && "mode" in current.launch ? current.launch.mode : undefined;
   return yield* resolveStackSummary({
     ...input,
-    portDocument: managedPortIntents(
-      toStartStackConfig(excluded, current.launch?.mode),
-      loaded ?? undefined,
-    ),
+    portDocument: managedPortIntents(toStartStackConfig(excluded, mode), loaded ?? undefined),
   });
 });
 

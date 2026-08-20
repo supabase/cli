@@ -821,7 +821,6 @@ export const localStackLayer = (
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
             yield* configureFunctions(config, yield* Ref.get(functionsBundleRef));
-            serviceStartupBegan = true;
 
             const eager = eagerServices(enabledServices, config.servicePolicies);
             const allServicesEager = eager.length === enabledServices.length;
@@ -832,6 +831,7 @@ export const localStackLayer = (
               if (
                 runtime.graph.startOrder.some((definition) => definition.name === "postgres-init")
               ) {
+                serviceStartupBegan = true;
                 yield* runtime.orchestrator
                   .startService("postgres-init", serviceStartOptions)
                   .pipe(
@@ -851,9 +851,10 @@ export const localStackLayer = (
               }
               for (const service of eager) {
                 yield* requireMutable("start");
+                serviceStartupBegan = true;
                 const started = yield* beginStartTargets(
                   service,
-                  new Set(lifecycleTargetsForService(enabledServices, service)),
+                  new Set(activationTargetsForService(enabledServices, service)),
                 );
                 readiness.push(waitForTargets(started));
               }
@@ -864,6 +865,7 @@ export const localStackLayer = (
             } else {
               yield* prepareServices(enabledServices);
               yield* requireMutable("start");
+              serviceStartupBegan = true;
               yield* runtime.orchestrator.start(serviceStartOptions);
               yield* runtime.orchestrator
                 .waitAllReady()

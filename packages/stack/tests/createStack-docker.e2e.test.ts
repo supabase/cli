@@ -51,7 +51,15 @@ dockerDescribe("createStack e2e (docker mode)", () => {
     }
 
     const dbPort = parseInt(new URL(stack.dbUrl).port);
-    await setupTestTable(dbPort);
+    try {
+      await setupTestTable(dbPort);
+    } catch (error) {
+      const status = await stack.getStatus();
+      const logs = await stack.logHistory("postgres");
+      throw new Error(
+        `setupTestTable failed: ${String(error)}\nstatus=${JSON.stringify(status)}\nlogs=${JSON.stringify(logs)}`,
+      );
+    }
 
     apiPort = new URL(stack.url).port;
     supabase = createClient(stack.url, stack.publishableKey);

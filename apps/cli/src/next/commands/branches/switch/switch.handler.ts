@@ -145,18 +145,18 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     // TODO: run `supabase pull` against the new branch before restarting the stack
     // so the local config reflects the branch's migrations and seed state.
     // `pull` does not exist yet.
+    const launch = stackCheck.value.launch;
     const launchConfig =
-      stackCheck.value.launch === undefined
+      launch === undefined
         ? toStartStackConfig([], undefined)
         : withServiceVersions(
             toStartStackConfig(
-              stackCheck.value.launch.excludedServices?.filter(
-                (service): service is ExcludedStackService =>
-                  excludedStackServices.some((candidate) => candidate === service),
+              launch.excludedServices?.filter((service): service is ExcludedStackService =>
+                excludedStackServices.some((candidate) => candidate === service),
               ) ?? [],
-              stackCheck.value.launch.mode,
+              "mode" in launch ? launch.mode : undefined,
             ),
-            stackCheck.value.launch.versions,
+            launch.versions,
           );
     const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
@@ -166,7 +166,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       projectDir: projectHome.projectRoot,
       name: stackName,
       portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
-      ...(stackCheck.value.launch !== undefined && { launch: stackCheck.value.launch }),
+      ...(launch !== undefined && { launch }),
       ...launchConfig,
     });
 

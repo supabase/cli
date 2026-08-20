@@ -101,6 +101,10 @@ class PullAttemptError extends Error {
   }
 }
 
+const pullRetrySchedule = Schedule.exponential(Duration.seconds(1)).pipe(
+  Schedule.upTo({ times: 5 }),
+);
+
 const resolveDockerImageForService = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   runtime: ContainerRuntime,
@@ -333,9 +337,7 @@ const pullImage = (
     const attempt = runPullCommand(spawner, runtime, image).pipe(
       Effect.retry({
         while: (error) => shouldRetryPull(error.detail),
-        schedule: Schedule.recurs(1).pipe(
-          Schedule.addDelay(() => Effect.succeed(Duration.millis(500))),
-        ),
+        schedule: pullRetrySchedule,
       }),
     );
     const result = yield* Effect.exit(attempt);
