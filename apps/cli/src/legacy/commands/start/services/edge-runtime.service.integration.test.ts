@@ -204,7 +204,9 @@ describe("legacyStartEdgeRuntimeContainer", () => {
 
         const runCall = mock.runCall!;
         const ulimitIndex = runCall.args.indexOf("--ulimit");
-        expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin"));
+        expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
+        // Off Linux the raise is never clamped, so no clamp warning is emitted.
+        expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
       }),
   );
 

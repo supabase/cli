@@ -46,18 +46,29 @@ describe("clampNofileLimit", () => {
 
 describe("edgeRuntimeNofileUlimit", () => {
   it("keeps the full 65536 raise off Linux, where the daemon runs in a VM", () => {
-    expect(edgeRuntimeNofileUlimit("darwin")).toBe("nofile=65536:65536");
-    expect(edgeRuntimeNofileUlimit("win32")).toBe("nofile=65536:65536");
+    expect(edgeRuntimeNofileUlimit("darwin")).toEqual({ arg: "nofile=65536:65536", limit: 65536 });
+    expect(edgeRuntimeNofileUlimit("win32")).toEqual({ arg: "nofile=65536:65536", limit: 65536 });
   });
 
   it("produces a matched soft:hard arg within Go's 65536 raise on Linux", () => {
-    const ulimit = edgeRuntimeNofileUlimit("linux");
-    const match = /^nofile=(\d+):(\d+)$/.exec(ulimit);
-    expect(match).not.toBeNull();
-    const [, soft, hard] = match!;
-    expect(soft).toBe(hard);
-    const limit = Number(soft);
+    const { arg, limit, clampWarning } = edgeRuntimeNofileUlimit("linux");
+    expect(arg).toBe(`nofile=${limit}:${limit}`);
     expect(limit).toBeGreaterThan(0);
     expect(limit).toBeLessThanOrEqual(65536);
+    // The warning exists exactly when this host's cap forced a reduction.
+    expect(clampWarning !== undefined).toBe(limit < 65536);
+  });
+
+  it("carries a warning when a lower host hard limit forces a clamp (CLI-2220's 20000-cap sandbox)", () => {
+    const clamped = edgeRuntimeNofileUlimit("linux", 20000);
+    expect(clamped.arg).toBe("nofile=20000:20000");
+    expect(clamped.limit).toBe(20000);
+    expect(clamped.clampWarning).toContain("lowered to 20000");
+    expect(clamped.clampWarning).toContain("65536");
+  });
+
+  it("omits the warning when the host limit does not constrain the raise", () => {
+    expect(edgeRuntimeNofileUlimit("linux", 1048576).clampWarning).toBeUndefined();
+    expect(edgeRuntimeNofileUlimit("linux", 65536).clampWarning).toBeUndefined();
   });
 });

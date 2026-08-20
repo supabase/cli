@@ -238,4 +238,5 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   container instead of failing outright (CLI-2220). The CLI process's own limit is used as a
   proxy for the daemon's — exact in the sandboxes this targets, where both share the cap; a
   Linux client more constrained than its daemon (remote `DOCKER_HOST`, mounted socket) just
-  gets a smaller fd budget, never a failed start.
+  gets a smaller fd budget, never a failed start. When the clamp lowers the request, the CLI
+  emits a warning naming the reduced limit so the smaller fd budget is visible.

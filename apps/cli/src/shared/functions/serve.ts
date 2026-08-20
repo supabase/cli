@@ -1749,6 +1749,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);
+      const nofile = edgeRuntimeNofileUlimit(input.platform);
+      if (nofile.clampWarning !== undefined) {
+        yield* output.warn(nofile.clampWarning);
+      }
       const command = [
         "create",
         "--name",
@@ -1759,7 +1763,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "edge_runtime",
         ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
         "--ulimit",
-        edgeRuntimeNofileUlimit(input.platform),
+        nofile.arg,
         "--label",
         `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
         "--label",

@@ -408,7 +408,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(def.args).toContain(`--policy=per_worker`);
       expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
       expect(def.args).toContain("--ulimit");
-      expect(def.args).toContain(edgeRuntimeNofileUlimit("linux"));
+      expect(def.args).toContain(edgeRuntimeNofileUlimit("linux").arg);
       expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
       expect(def.healthCheck?.probe).toEqual({
         _tag: "Http",

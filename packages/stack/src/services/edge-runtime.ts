@@ -95,7 +95,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
       `${bootstrapDir}:${bootstrapMountDir}:ro`,
       ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
     ],
-    args: ["--ulimit", edgeRuntimeNofileUlimit(opts.platformOs)],
+    args: ["--ulimit", edgeRuntimeNofileUlimit(opts.platformOs).arg],
     env: {
       ...edgeRuntimeEnv(opts),
       FUNCTIONS_RUNTIME_CONFIG_PATH: `${bootstrapMountDir}/functions-runtime-config.json`,

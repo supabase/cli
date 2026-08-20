@@ -31,7 +31,29 @@ const hostHardNofileLimit = (platformOs: string): number | undefined =>
 export const clampNofileLimit = (hardLimit: number | undefined): number =>
   hardLimit === undefined ? desiredNofile : Math.min(desiredNofile, hardLimit);
 
-export const edgeRuntimeNofileUlimit = (platformOs: string): string => {
-  const limit = clampNofileLimit(hostHardNofileLimit(platformOs));
-  return `nofile=${limit}:${limit}`;
+interface EdgeRuntimeNofileUlimit {
+  /** The docker `--ulimit` value, `nofile=<limit>:<limit>`. */
+  readonly arg: string;
+  readonly limit: number;
+  /** Present only when the host's hard cap forced the request below the 65536 raise. */
+  readonly clampWarning?: string;
+}
+
+// `hostHardLimit` defaults to the real host probe and exists as a parameter so
+// callers with no host dependence (tests) can pin the clamp decision.
+export const edgeRuntimeNofileUlimit = (
+  platformOs: string,
+  hostHardLimit: number | undefined = hostHardNofileLimit(platformOs),
+): EdgeRuntimeNofileUlimit => {
+  const limit = clampNofileLimit(hostHardLimit);
+  return {
+    arg: `nofile=${limit}:${limit}`,
+    limit,
+    ...(limit < desiredNofile && {
+      clampWarning:
+        `Edge Runtime file descriptor limit lowered to ${limit}: ` +
+        `the host's hard limit (ulimit -Hn) is below the default ${desiredNofile}. ` +
+        `Heavy Edge Function workloads may exhaust file descriptors.`,
+    }),
+  };
 };
