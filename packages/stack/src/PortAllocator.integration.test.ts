@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
-import { Effect, FileSystem } from "effect";
+import { Cause, Effect, Exit, FileSystem } from "effect";
 import { allocatePortSet, reservePortSet, type PortReservationRequest } from "./PortAllocator.ts";
 
 const PORT_LEASE_CHILD = resolve(import.meta.dirname, "../tests/helpers/port-lease-child.ts");
@@ -98,6 +100,37 @@ const automatic = (field: PortReservationRequest["field"]): PortReservationReque
 const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeFileSystem.layer)));
 
+const claimRoot = resolve(
+  tmpdir(),
+  `supabase-stack-port-claims-${
+    process.getuid?.() === undefined
+      ? `user-${process.env.USER ?? "unknown"}`
+      : `uid-${process.getuid()}`
+  }`,
+);
+
+const claimPath = (port: number) => resolve(claimRoot, `port-${port}`);
+
+const staleClaim = (port: number, token: string) => {
+  mkdirSync(claimRoot, { recursive: true });
+  const path = claimPath(port);
+  writeFileSync(path, JSON.stringify({ pid: 999_999_999, token }));
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(path, old, old);
+  return path;
+};
+
+const withFileSystem = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem>,
+  customize: (fs: FileSystem.FileSystem) => FileSystem.FileSystem,
+) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* effect.pipe(Effect.provideService(FileSystem.FileSystem, customize(fs)));
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
 describe("selected-field port allocation", () => {
   it("requires an Effect FileSystem service for claim inspection", async () => {
     const exit = await Effect.runPromise(
@@ -108,6 +141,120 @@ describe("selected-field port allocation", () => {
     );
 
     expect(exit._tag).toBe("Failure");
+  });
+
+  it("reclaims a stale claim before probing an exact port", async () => {
+    const port = 25_951;
+    const path = staleClaim(port, "stale-recovery");
+
+    try {
+      const ports = await run(
+        allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]),
+      );
+      expect(ports.apiPort).toBe(port);
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it("does not delete a fresh replacement while reclaimers race", async () => {
+    const port = 25_952;
+    const path = staleClaim(port, "stale-race");
+    let raced = false;
+
+    try {
+      const exit = await withFileSystem(
+        allocatePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
+          Effect.exit,
+        ),
+        (fs) => ({
+          ...fs,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (!raced && from === path) {
+                raced = true;
+                yield* fs.rename(from, `${from}.competing`);
+                yield* fs.writeFileString(
+                  from,
+                  JSON.stringify({ pid: process.pid, token: "fresh" }),
+                );
+              }
+              yield* fs.rename(from, to);
+            }),
+        }),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+          _tag: "Some",
+          value: { _tag: "PortAllocationError", port },
+        });
+      }
+      expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
+        pid: process.pid,
+        token: "fresh",
+      });
+    } finally {
+      rmSync(path, { force: true });
+      rmSync(`${path}.competing`, { force: true });
+    }
+  });
+
+  it("removes a claim file when creation is interrupted during the write", async () => {
+    const port = 25_953;
+    const path = claimPath(port);
+    rmSync(path, { force: true });
+
+    try {
+      const exit = await withFileSystem(
+        reservePortSet([{ field: "apiPort", selection: { kind: "exact", port } }]).pipe(
+          Effect.exit,
+        ),
+        (fs) => ({
+          ...fs,
+          open: (filePath, options) =>
+            fs.open(filePath, options).pipe(
+              Effect.map((handle) => ({
+                ...handle,
+                stat: handle.stat,
+                writeAll: () => Effect.interrupt,
+              })),
+            ),
+        }),
+      );
+
+      expect(exit._tag).toBe("Failure");
+      expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it("closes a random bind when claim acquisition is interrupted", async () => {
+    let interruptedPort: number | undefined;
+
+    const exit = await withFileSystem(
+      reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]).pipe(Effect.exit),
+      (fs) => ({
+        ...fs,
+        open: (path) => {
+          interruptedPort = Number(path.slice(path.lastIndexOf("-") + 1));
+          return Effect.interrupt;
+        },
+      }),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(interruptedPort).toBeGreaterThan(0);
+    const reboundExit = await run(
+      reservePortSet([
+        { field: "apiPort", selection: { kind: "exact", port: interruptedPort! } },
+      ]).pipe(Effect.exit),
+    );
+    expect(reboundExit._tag).toBe("Success");
+    if (reboundExit._tag === "Success") await run(reboundExit.value.releaseAll);
   });
 
   it("holds only requested fields and can release and re-reserve them", async () => {

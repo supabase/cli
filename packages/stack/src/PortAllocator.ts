@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Data, Effect, FileSystem, Option, Schema, Semaphore } from "effect";
-import type { PlatformError } from "effect/PlatformError";
+import { PlatformError } from "effect/PlatformError";
 import { PortSetSchema, type PortField, type PortSet } from "./PortCatalog.ts";
 
 export class PortAllocationError extends Data.TaggedError("PortAllocationError")<{
@@ -163,6 +163,12 @@ interface ClaimRecord {
   readonly token: string;
 }
 
+interface ClaimSnapshot {
+  readonly contents: string;
+  readonly record: ClaimRecord | undefined;
+  readonly info: FileSystem.File.Info;
+}
+
 const claimNamespace = (): string => {
   const uid = process.getuid?.();
   if (uid !== undefined) return `uid-${uid}`;
@@ -192,9 +198,23 @@ const isProcessAlive = (pid: number): boolean => {
 const isNotFound = (error: PlatformError): boolean => error.reason._tag === "NotFound";
 const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag === "AlreadyExists";
 
-const readClaimRecord = (
+const parseClaimRecord = (contents: string): ClaimRecord | undefined => {
+  try {
+    const value: unknown = JSON.parse(contents);
+    if (typeof value !== "object" || value === null) return undefined;
+    const pid = Reflect.get(value, "pid");
+    const token = Reflect.get(value, "token");
+    return typeof pid === "number" && Number.isInteger(pid) && pid > 0 && typeof token === "string"
+      ? { pid, token }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const readClaimSnapshot = (
   path: string,
-): Effect.Effect<ClaimRecord | undefined, PlatformError, FileSystem.FileSystem> =>
+): Effect.Effect<ClaimSnapshot | undefined, PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const contents = yield* fs
@@ -205,27 +225,6 @@ const readClaimRecord = (
         ),
       );
     if (contents === undefined) return undefined;
-    try {
-      const value: unknown = JSON.parse(contents);
-      if (typeof value !== "object" || value === null) return undefined;
-      const pid = Reflect.get(value, "pid");
-      const token = Reflect.get(value, "token");
-      return typeof pid === "number" &&
-        Number.isInteger(pid) &&
-        pid > 0 &&
-        typeof token === "string"
-        ? { pid, token }
-        : undefined;
-    } catch {
-      return undefined;
-    }
-  });
-
-const claimIsStale = (path: string): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const record = yield* readClaimRecord(path);
-    if (record !== undefined) return !isProcessAlive(record.pid);
     const info = yield* fs
       .stat(path)
       .pipe(
@@ -233,28 +232,115 @@ const claimIsStale = (path: string): Effect.Effect<boolean, PlatformError, FileS
           isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
         ),
       );
-    return (
-      info === undefined ||
-      Date.now() - Option.getOrElse(info.mtime, () => new Date()).getTime() > CLAIM_STALE_AFTER_MS
-    );
+    if (info === undefined) return undefined;
+    return { contents, record: parseClaimRecord(contents), info };
   });
+
+const claimIsStale = (snapshot: ClaimSnapshot): boolean => {
+  if (snapshot.info.type !== "File") return false;
+  if (snapshot.record !== undefined) return !isProcessAlive(snapshot.record.pid);
+  return (
+    Option.isSome(snapshot.info.mtime) &&
+    Date.now() - snapshot.info.mtime.value.getTime() > CLAIM_STALE_AFTER_MS
+  );
+};
+
+const inspectClaim = (
+  path: string,
+): Effect.Effect<
+  { readonly snapshot: ClaimSnapshot; readonly stale: boolean } | undefined,
+  PlatformError,
+  FileSystem.FileSystem
+> =>
+  readClaimSnapshot(path).pipe(
+    Effect.map((snapshot) =>
+      snapshot === undefined ? undefined : { snapshot, stale: claimIsStale(snapshot) },
+    ),
+  );
+
+const claimIdentityMatches = (expected: ClaimSnapshot, current: ClaimSnapshot): boolean => {
+  if (expected.record !== undefined || current.record !== undefined) {
+    return (
+      expected.record !== undefined &&
+      current.record !== undefined &&
+      expected.record.pid === current.record.pid &&
+      expected.record.token === current.record.token
+    );
+  }
+  if (expected.contents !== current.contents) return false;
+  if (Option.isSome(expected.info.ino) && Option.isSome(current.info.ino)) {
+    return expected.info.ino.value === current.info.ino.value;
+  }
+  return false;
+};
+
+const removeCreatedClaim = (
+  path: string,
+  contents: string,
+  openedInfo: FileSystem.File.Info | undefined,
+  fs: FileSystem.FileSystem,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (openedInfo === undefined) return;
+    const current = yield* readClaimSnapshot(path).pipe(Effect.orElseSucceed(() => undefined));
+    if (current === undefined) return;
+    if (Option.isSome(openedInfo.ino) && Option.isSome(current.info.ino)) {
+      if (openedInfo.ino.value !== current.info.ino.value) return;
+    } else {
+      if (current.contents !== contents) return;
+      if (
+        !Option.isSome(openedInfo.mtime) ||
+        !Option.isSome(current.info.mtime) ||
+        openedInfo.mtime.value.getTime() !== current.info.mtime.value.getTime()
+      ) {
+        return;
+      }
+    }
+    yield* fs.remove(path, { force: true }).pipe(Effect.ignore);
+  }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+
+const readClaimRecord = (
+  path: string,
+): Effect.Effect<ClaimRecord | undefined, PlatformError, FileSystem.FileSystem> =>
+  readClaimSnapshot(path).pipe(Effect.map((snapshot) => snapshot?.record));
 
 const quarantineClaim = (
   path: string,
+  expected: ClaimSnapshot,
 ): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const quarantine = staleClaimPath(path);
-    const renamed = yield* fs
-      .rename(path, quarantine)
-      .pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          isNotFound(error) ? Effect.succeed(false) : Effect.fail(error),
-        ),
-      );
+    const renamed = yield* fs.rename(path, quarantine).pipe(
+      Effect.as(true),
+      Effect.catchTag("PlatformError", (error) =>
+        isNotFound(error) ? Effect.succeed(false) : Effect.fail(error),
+      ),
+    );
     if (!renamed) return false;
-    yield* fs.remove(quarantine, { force: true });
-    return true;
+    const current = yield* readClaimSnapshot(quarantine).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (current !== undefined && claimIdentityMatches(expected, current)) {
+      yield* fs
+        .remove(quarantine, { force: true })
+        .pipe(
+          Effect.catchTag("PlatformError", (error) =>
+            isNotFound(error) ? Effect.void : Effect.fail(error),
+          ),
+        );
+      return true;
+    }
+    if (current !== undefined) {
+      yield* fs
+        .rename(quarantine, path)
+        .pipe(
+          Effect.catchTag("PlatformError", (error) =>
+            isNotFound(error) || isAlreadyExists(error) ? Effect.void : Effect.fail(error),
+          ),
+        );
+    }
+    return false;
   });
 
 const acquirePortClaimInternal = (
@@ -272,23 +358,32 @@ const acquirePortClaimInternal = (
     const contents = JSON.stringify({ pid: process.pid, token });
 
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt += 1) {
+      let openedInfo: FileSystem.File.Info | undefined;
       const opened = yield* Effect.exit(
         Effect.scoped(
-          fs
-            .open(path, { flag: "wx", mode: 0o600 })
-            .pipe(Effect.flatMap((handle) => handle.writeAll(new TextEncoder().encode(contents)))),
+          fs.open(path, { flag: "wx", mode: 0o600 }).pipe(
+            Effect.flatMap((handle) =>
+              handle.stat.pipe(
+                Effect.tap((info) => Effect.sync(() => (openedInfo = info))),
+                Effect.andThen(handle.writeAll(new TextEncoder().encode(contents))),
+              ),
+            ),
+          ),
         ),
       );
       if (opened._tag === "Success") return { path, port, token };
+      yield* Effect.uninterruptible(removeCreatedClaim(path, contents, openedInfo, fs));
       const failure = Cause.findErrorOption(opened.cause);
       if (Option.isNone(failure)) return yield* Effect.failCause(opened.cause);
       if (!isAlreadyExists(failure.value)) {
         return yield* Effect.fail(failure.value);
       }
-      if (!(yield* claimIsStale(path))) {
+      const inspection = yield* inspectClaim(path);
+      if (inspection === undefined) continue;
+      if (!inspection.stale) {
         return yield* new PortClaimCollisionError({ port });
       }
-      if (!(yield* quarantineClaim(path))) continue;
+      if (!(yield* quarantineClaim(path, inspection.snapshot))) continue;
     }
     return yield* new PortAllocationError({
       detail: `Failed to claim port ${port} after ${MAX_CLAIM_ATTEMPTS} attempts`,
@@ -346,25 +441,14 @@ const claimedPorts = (): Effect.Effect<
       const port = Number(entry.slice("port-".length));
       if (!Number.isInteger(port) || port <= 0 || port > 65_535) continue;
       const path = join(CLAIM_ROOT, entry);
-      const info = yield* fs
-        .stat(path)
-        .pipe(
-          Effect.catchTag("PlatformError", (error) =>
-            isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
-          ),
-        );
-      if (info === undefined || info.type !== "File") continue;
-      while (yield* claimIsStale(path)) {
-        if (yield* quarantineClaim(path)) break;
-        const exists = yield* fs.stat(path).pipe(
-          Effect.as(true),
-          Effect.catchTag("PlatformError", (error) =>
-            isNotFound(error) ? Effect.succeed(false) : Effect.fail(error),
-          ),
-        );
-        if (!exists) break;
+      let inspection = yield* inspectClaim(path);
+      if (inspection === undefined || inspection.snapshot.info.type !== "File") continue;
+      while (inspection.stale) {
+        if (yield* quarantineClaim(path, inspection.snapshot)) break;
+        inspection = yield* inspectClaim(path);
+        if (inspection === undefined) break;
       }
-      if (!(yield* claimIsStale(path))) ports.add(port);
+      if (inspection !== undefined && !inspection.stale) ports.add(port);
     }
     return ports;
   }).pipe(
@@ -485,11 +569,13 @@ const claimAndBind = (
   const existingClaim = claims.get(field);
   return (
     existingClaim === undefined
-      ? acquirePortClaim(port).pipe(Effect.provideService(FileSystem.FileSystem, fs))
+      ? Effect.interruptible(
+          acquirePortClaim(port).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+        )
       : Effect.succeed(existingClaim)
   ).pipe(
     Effect.flatMap((claim) =>
-      bindPort(port).pipe(
+      Effect.interruptible(bindPort(port)).pipe(
         Effect.onError(() =>
           existingClaim === undefined ? releasePortClaim(claim, fs) : Effect.void,
         ),
@@ -604,30 +690,42 @@ const reserveRandomPort = (
       }),
     );
   }
-  return Effect.flatMap(bindPort(0), (bound) =>
-    exclude.has(bound.port)
-      ? closeServer(bound.server).pipe(
-          Effect.andThen(reserveRandomPort(exclude, field, claims, fs, attempt + 1)),
-        )
-      : acquirePortClaimInternal(bound.port).pipe(
+  return Effect.gen(function* () {
+    const bound = yield* Effect.interruptible(bindPort(0));
+    if (exclude.has(bound.port)) {
+      yield* closeServer(bound.server);
+      return yield* reserveRandomPort(exclude, field, claims, fs, attempt + 1);
+    }
+
+    const claimExit = yield* Effect.exit(
+      Effect.interruptible(
+        acquirePortClaimInternal(bound.port).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.tap((claim) => Effect.sync(() => claims.set(field, claim))),
-          Effect.map(() => bound),
-          Effect.catchTag("PortClaimCollisionError", () =>
-            closeServer(bound.server).pipe(
-              Effect.andThen(reserveRandomPort(exclude, field, claims, fs, attempt + 1)),
-            ),
-          ),
-          Effect.catchTag("PlatformError", (cause) =>
-            closeServer(bound.server).pipe(
-              Effect.andThen(Effect.fail(portAllocationFromCause(bound.port, cause))),
-            ),
-          ),
-          Effect.catchTag("PortAllocationError", (error) =>
-            closeServer(bound.server).pipe(Effect.andThen(Effect.fail(error))),
-          ),
         ),
-  );
+      ),
+    );
+    if (claimExit._tag === "Success") return bound;
+
+    yield* closeServer(bound.server);
+    const failure = Cause.findErrorOption(claimExit.cause);
+    if (Option.isSome(failure) && failure.value instanceof PortClaimCollisionError) {
+      return yield* reserveRandomPort(exclude, field, claims, fs, attempt + 1);
+    }
+    if (Option.isSome(failure) && failure.value instanceof PlatformError) {
+      return yield* Effect.fail(portAllocationFromCause(bound.port, failure.value));
+    }
+    if (Option.isSome(failure) && failure.value instanceof PortAllocationError) {
+      return yield* Effect.fail(failure.value);
+    }
+    return yield* Effect.failCause(
+      Cause.map(claimExit.cause, (error) =>
+        error instanceof PortClaimCollisionError || error instanceof PortAllocationError
+          ? error
+          : portAllocationFromCause(bound.port, error),
+      ),
+    );
+  });
 };
 
 const resolveSelection = (
@@ -691,20 +789,18 @@ export const reservePortSet = (
           field: PortField,
           acquisition: Effect.Effect<BoundPort, PortAllocationError | PortClaimCollisionError>,
         ) =>
-          Effect.uninterruptibleMask((restore) =>
+          Effect.uninterruptibleMask(() =>
             Effect.gen(function* () {
-              const result = yield* restore(
-                acquisition.pipe(
-                  Effect.mapError((error) =>
-                    error instanceof PortClaimCollisionError
-                      ? new PortAllocationError({
-                          detail: `Port ${error.port} is not available`,
-                          field,
-                          port: error.port,
-                          reason: "unavailable",
-                        })
-                      : withPortField(field, error),
-                  ),
+              const result = yield* acquisition.pipe(
+                Effect.mapError((error) =>
+                  error instanceof PortClaimCollisionError
+                    ? new PortAllocationError({
+                        detail: `Port ${error.port} is not available`,
+                        field,
+                        port: error.port,
+                        reason: "unavailable",
+                      })
+                    : withPortField(field, error),
                 ),
               );
               reservations.set(field, result.server);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
-import { Effect } from "effect";
+import { Cause, Effect, Exit, FileSystem } from "effect";
+import { systemError } from "effect/PlatformError";
 import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { StackBuildError } from "./errors.ts";
 
@@ -8,6 +9,37 @@ const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
   Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
 
 describe("resolved service preparation policies", () => {
+  it("maps temporary-root filesystem failures to StackBuildError", async () => {
+    const exit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const failingFs = {
+          ...fs,
+          makeTempDirectory: () =>
+            Effect.fail(
+              systemError({
+                _tag: "PermissionDenied",
+                module: "test",
+                method: "makeTempDirectory",
+              }),
+            ),
+        };
+        return yield* resolveConfigEffect().pipe(
+          Effect.provideService(FileSystem.FileSystem, failingFs),
+          Effect.exit,
+        );
+      }).pipe(Effect.provide(NodeFileSystem.layer)),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+        _tag: "Some",
+        value: { _tag: "StackBuildError" },
+      });
+    }
+  });
+
   it("applies explicit policies and catalog defaults while keeping Postgres eager", async () => {
     const config = await resolveConfig({
       servicePolicies: { postgrest: "eager", mailpit: "eager" },

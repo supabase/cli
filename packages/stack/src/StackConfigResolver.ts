@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, FileSystem, Record, Schema } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { StackBuildError } from "./errors.ts";
 import {
   resolvedFunctionsBundleSchemaForProject,
@@ -81,37 +81,51 @@ interface ResolvedRoots {
   readonly autoManagedPaths: ReadonlyArray<string>;
 }
 
-const makeTempRoot = (prefix: string) => mkdtempSync(join(shortTempPrefixRoot(), prefix));
+const tempRootError = (prefix: string, cause: PlatformError): StackBuildError =>
+  new StackBuildError({
+    detail: `Failed to create temporary ${prefix} directory`,
+    cause,
+  });
 
-const resolveRoots = (config: StackConfig, opts: ResolveConfigOptions): ResolvedRoots => {
-  const cacheRoot = config.cacheRoot ?? defaultCacheRoot();
-  const autoManagedPaths: string[] = [];
+const makeTempRoot = (
+  prefix: string,
+): Effect.Effect<string, StackBuildError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs
+      .makeTempDirectory({ directory: shortTempPrefixRoot(), prefix })
+      .pipe(Effect.mapError((cause) => tempRootError(prefix, cause)));
+  });
 
-  const stackRoot =
-    opts.stackRoot ??
-    config.stackRoot ??
-    (() => {
-      const dir = makeTempRoot("sb-stack-");
-      autoManagedPaths.push(dir);
-      return dir;
-    })();
+const resolveRoots = (
+  config: StackConfig,
+  opts: ResolveConfigOptions,
+): Effect.Effect<ResolvedRoots, StackBuildError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const cacheRoot = config.cacheRoot ?? defaultCacheRoot();
+    const autoManagedPaths: string[] = [];
 
-  const runtimeRoot =
-    opts.runtimeRoot ??
-    config.runtimeRoot ??
-    (() => {
-      const dir = makeTempRoot("sb-run-");
-      autoManagedPaths.push(dir);
-      return dir;
-    })();
+    const stackRoot =
+      opts.stackRoot ??
+      config.stackRoot ??
+      (yield* makeTempRoot("sb-stack-").pipe(
+        Effect.tap((dir) => Effect.sync(() => autoManagedPaths.push(dir))),
+      ));
 
-  return {
-    cacheRoot,
-    stackRoot,
-    runtimeRoot,
-    autoManagedPaths,
-  };
-};
+    const runtimeRoot =
+      opts.runtimeRoot ??
+      config.runtimeRoot ??
+      (yield* makeTempRoot("sb-run-").pipe(
+        Effect.tap((dir) => Effect.sync(() => autoManagedPaths.push(dir))),
+      ));
+
+    return {
+      cacheRoot,
+      stackRoot,
+      runtimeRoot,
+      autoManagedPaths,
+    };
+  });
 
 const resolveDataDir = (
   explicitDir: string | undefined,
@@ -504,7 +518,7 @@ export function resolveConfig(
     const projectDir = config.projectDir ?? process.cwd();
     const instanceId = resolveInstanceId(config.instanceId);
     const functions = yield* resolveFunctionsConfig(config, projectDir);
-    const roots = resolveRoots(config, opts);
+    const roots = yield* resolveRoots(config, opts);
     const postgresInput = config.postgres ?? {};
     const postgrestInput =
       servicePolicies.postgrest !== "off" && config.postgrest !== false
