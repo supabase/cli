@@ -34,6 +34,10 @@ const controlTransport: ControlTransport["Service"] = {
         const server = yield* BunHttpServer.make({
           hostname: endpoint.hostname,
           port: endpoint.port,
+          // Stack lifecycle requests can legitimately take up to the configured
+          // readiness deadline. Bun's 10-second default would otherwise close
+          // the control connection while the stack continues starting.
+          idleTimeout: 0,
           disablePreemptiveShutdown: true,
           routes: {
             [CONTROL_STATUS_PATH]: {

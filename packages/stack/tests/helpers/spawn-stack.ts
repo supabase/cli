@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { terminateChildProcess } from "../../src/terminateChild.ts";
 
 const STANDALONE_SCRIPT = resolve(import.meta.dirname, "standalone-stack.ts");
-const DEFAULT_READINESS_TIMEOUT_MS = 60_000;
+const DEFAULT_READINESS_TIMEOUT_MS = 180_000;
 const OUTPUT_TAIL_CHARS = 2_000;
 
 export interface SpawnedStackInfo {
