@@ -212,6 +212,10 @@ describe("ApiProxy", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
     expect(res.headers.get("access-control-allow-methods")).toContain("GET");
     expect(res.headers.get("access-control-allow-headers")).toContain("apikey");
+    // supabase-js sends this header on every request; missing it from the
+    // preflight allowlist breaks all browser clients.
+    expect(res.headers.get("access-control-allow-headers")).toContain("X-Supabase-Api-Version");
+    expect(res.headers.get("access-control-allow-headers")).toContain("Prefer");
     expect(res.headers.get("access-control-expose-headers")).toContain("Content-Range");
     expect(res.headers.get("access-control-expose-headers")).toContain("sb-error-code");
     expect(res.headers.get("access-control-max-age")).toBe("86400");
@@ -220,6 +224,16 @@ describe("ApiProxy", () => {
   test("non-OPTIONS responses include CORS headers", async () => {
     const res = await fetch(`${proxyUrl}/health`);
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
+  });
+
+  // GoTrue's `POST /logout` carries no request body; streaming a nonexistent
+  // body upstream used to surface as a 502 transport error.
+  test("forwards a POST without a request body", async () => {
+    const res = await fetch(`${proxyUrl}/auth/v1/logout?scope=global`, { method: "POST" });
+    expect(res.status).toBe(200);
+    const echoed = (await res.json()) as { path: string; method: string };
+    expect(echoed.method).toBe("POST");
+    expect(echoed.path).toBe("/logout?scope=global");
   });
 
   test("activates the routed service before forwarding", async () => {

@@ -24,3 +24,4 @@ packages/cli-*/bin/
 # Nx
 .nx/cache
 .nx/workspace-data
+packages/stack/.supabase/

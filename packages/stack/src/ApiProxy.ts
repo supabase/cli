@@ -93,7 +93,10 @@ function sanitizeProxyResponseHeaders(headers: Headers.Headers): Headers.Headers
 const CORS_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ["access-control-allow-origin", "*"],
   ["access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"],
-  ["access-control-allow-headers", "Authorization, Content-Type, apikey, X-Client-Info"],
+  [
+    "access-control-allow-headers",
+    "Authorization, Content-Type, apikey, X-Client-Info, X-Supabase-Api-Version, Prefer, Accept-Profile, Content-Profile, Range, X-Upsert",
+  ],
   ["access-control-expose-headers", "Content-Range, Range, sb-error-code"],
   ["access-control-max-age", "86400"],
 ];
@@ -174,8 +177,15 @@ function makeProxyHandler(
       const noBodyMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
       const contentType = Option.getOrUndefined(Headers.get(req.headers, "content-type"));
 
+      // Streaming a bodyless request (e.g. GoTrue's bare `POST /logout`)
+      // makes the upstream fetch fail with a transport error, so detect
+      // "no body" from the request framing headers and send an empty body.
+      const contentLength = Option.getOrUndefined(Headers.get(req.headers, "content-length"));
+      const isChunked = Option.isSome(Headers.get(req.headers, "transfer-encoding"));
+      const hasRequestBody = contentLength !== undefined ? contentLength !== "0" : isChunked;
+
       let body: HttpBody.HttpBody;
-      if (noBodyMethods.has(req.method)) {
+      if (noBodyMethods.has(req.method) || !hasRequestBody) {
         body = HttpBody.empty;
       } else if (opts.retryColdStart === true) {
         // Buffer the body so the request can be safely re-sent if we retry.
