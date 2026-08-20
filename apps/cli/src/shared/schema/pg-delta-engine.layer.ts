@@ -27,6 +27,7 @@ import {
 } from "./pg-delta-engine.service.ts";
 import { prepareDeclarativeShadow } from "./prepare-declarative-shadow.ts";
 import { schemaIsolatedPlanOptions } from "./schema-plan-options.ts";
+import { formatSchemaSql, SCHEMA_SQL_FORMAT_DEFAULTS } from "./sql-format-defaults.ts";
 import type { SchemaHazardSummary, SchemaPlanView, SchemaRenderedFile } from "./schema-types.ts";
 
 const engineError = (detail: string, suggestion = "Inspect diagnostics and retry.") =>
@@ -52,7 +53,7 @@ function toPlanView(
   const files: Array<SchemaRenderedFile> = rendered.files.map((file, index) => ({
     sequence: index + 1,
     suffix: file.suffix,
-    sql: file.contents,
+    sql: formatSchemaSql(file.contents, SCHEMA_SQL_FORMAT_DEFAULTS),
     transactional: file.transactional,
     actionCount: file.actionCount,
   }));
@@ -106,6 +107,7 @@ export const pgDeltaSchemaEngineLayer = Layer.effect(
               profile: supabaseProfile,
               scope: "database",
               redactSecrets: true,
+              format: SCHEMA_SQL_FORMAT_DEFAULTS,
             });
             const ctx = await resolveProfile(pool, supabaseProfile, { redactSecrets: true });
             const extracted = await ctx.extract(pool, { redactSecrets: true });

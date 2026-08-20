@@ -114,6 +114,13 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `supabase start`, `db start`, `--from-backup`, and shadow containers (the last is why the
   shadow baseline cache's cold export can stop/start in ~1s). Timing is not part of the
   Go-parity surface (ADR 0016).
+- Bundled pg-delta SQL for `db diff`/`db pull`/`db schema declarative generate`/`sync`
+  defaults to uppercase keywords, indent 2, width 180, trailing commas, and column/key
+  alignment when `[experimental.pgdelta] format_options` is unset. `format_options = "null"`
+  emits raw renderer output; partial JSON overlays those defaults. `schema pull`/`schema
+  generate` always use the same defaults (they do not read `format_options`). The Go
+  edge-runtime engine already defaulted to upper + width 180 (library fills the rest);
+  TS now makes indent/align explicit on the next-engine path.
 - `db schema declarative generate`/`sync` default declarative directory is `supabase/schemas`;
   the old Go CLI reference (pre-`7b469f5b3`) used `supabase/database`. The move aligns the
   default with the product-wide declarative-schemas convention. To keep the upgrade visible,

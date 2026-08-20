@@ -481,7 +481,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
           pool: targetPool,
         });
         expect(state.exportInputs[1]).toMatchObject({
-          format: { keywordCase: "lower", maxWidth: 180 },
+          format: {
+            keywordCase: "upper",
+            indent: 2,
+            maxWidth: 180,
+            commaStyle: "trailing",
+            alignColumns: true,
+            alignKeyValues: true,
+          },
         });
 
         const planned = yield* adapter.planDeclarativeSchema({

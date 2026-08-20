@@ -20,7 +20,11 @@ import {
 import { classifyPlanHazards, plan, serializePlan } from "@supabase/pg-delta/plan";
 import type { Plan as PgDeltaPlan } from "@supabase/pg-delta/plan";
 import type { Policy } from "@supabase/pg-delta/policy";
-import { formatSqlStatements, type SqlFormatOptions } from "@supabase/pg-delta/sql-format";
+import type { SqlFormatOptions } from "@supabase/pg-delta/sql-format";
+import {
+  formatSchemaSql,
+  SCHEMA_SQL_FORMAT_DEFAULTS,
+} from "../../../../shared/schema/sql-format-defaults.ts";
 
 import {
   LegacyPgDeltaNextAdapter,
@@ -319,17 +323,12 @@ export function legacyPgDeltaNextProfile(
   return { ...supabaseProfile, policy };
 }
 
-const legacyPgDeltaNextHumanFormatOptions: SqlFormatOptions = {
-  keywordCase: "lower",
-  maxWidth: 180,
-};
-
 function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptions | undefined {
-  if (raw === undefined || raw.trim().length === 0) return legacyPgDeltaNextHumanFormatOptions;
+  if (raw === undefined || raw.trim().length === 0) return SCHEMA_SQL_FORMAT_DEFAULTS;
   const parsed: unknown = JSON.parse(raw);
   if (parsed === null) return undefined;
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return legacyPgDeltaNextHumanFormatOptions;
+    return SCHEMA_SQL_FORMAT_DEFAULTS;
   }
   const value = (key: string): unknown => Reflect.get(parsed, key);
   const keywordCase = value("keywordCase");
@@ -342,7 +341,7 @@ function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptio
   const preserveViewBodies = value("preserveViewBodies");
   const preserveRuleBodies = value("preserveRuleBodies");
   return {
-    ...legacyPgDeltaNextHumanFormatOptions,
+    ...SCHEMA_SQL_FORMAT_DEFAULTS,
     ...(keywordCase === "upper" || keywordCase === "lower" || keywordCase === "preserve"
       ? { keywordCase }
       : {}),
@@ -357,11 +356,6 @@ function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptio
   };
 }
 
-function legacyTerminatePgDeltaNextStatement(sql: string): string {
-  const trimmed = sql.trimEnd();
-  return trimmed.endsWith(";") ? trimmed : `${trimmed};`;
-}
-
 function legacyFormatPgDeltaNextRenderedFiles(
   files: readonly LegacyPgDeltaNextLibraryRenderedFile[],
   format: SqlFormatOptions | undefined,
@@ -369,9 +363,7 @@ function legacyFormatPgDeltaNextRenderedFiles(
   if (format === undefined) return files;
   return files.map((file) => ({
     ...file,
-    contents: `${formatSqlStatements([file.contents], format)
-      .map(legacyTerminatePgDeltaNextStatement)
-      .join("\n\n")}\n`,
+    contents: formatSchemaSql(file.contents, format),
   }));
 }
 
