@@ -7,16 +7,28 @@ import { legacyMigrationsList } from "./list.handler.ts";
 
 const config = {
   against: Flag.string("against").pipe(
-    Flag.withDescription("Target to compare: local, linked, or a connection string."),
-    Flag.optional,
+    Flag.withDescription(
+      "Database to compare. Defaults to local. Also accepts linked or a connection string.",
+    ),
+    Flag.withDefault("local"),
   ),
 } as const;
 
 export type LegacyMigrationsListFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyMigrationsListCommand = Command.make("list", config).pipe(
-  Command.withDescription("Compare local migration files with target migration history."),
+  Command.withDescription(
+    "Show which migration files are present locally vs on a database.\n\n" +
+      "Defaults to the local database. Pass --against linked to compare the linked project.",
+  ),
   Command.withShortDescription("List local and remote migrations"),
+  Command.withExamples([
+    { command: "supabase migrations list", description: "Compare files to the local database" },
+    {
+      command: "supabase migrations list --against linked",
+      description: "Compare files to the linked project",
+    },
+  ]),
   Command.withHandler((flags) =>
     legacyMigrationsList(flags).pipe(
       withLegacyCommandInstrumentation({ flags, config }),

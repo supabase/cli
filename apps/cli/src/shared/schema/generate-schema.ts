@@ -89,6 +89,9 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
           if (!input.dryRun && !plan.changes) {
             yield* state.clearJournal;
           }
+          const nextActions = plan.changes
+            ? [`Write this plan as a migration with \`supabase schema generate --name ${name}\`.`]
+            : [];
           return {
             status: plan.changes ? "needs_approval" : "clean",
             message: plan.changes
@@ -103,9 +106,9 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
               files_written: [],
               mutated_database: false,
               mutated_files: false,
-              next_actions: plan.changes ? [`supabase schema generate --name ${name}`] : [],
+              next_actions: nextActions,
             },
-            nextActions: plan.changes ? [`supabase schema generate --name ${name}`] : [],
+            nextActions,
             mutatedDatabase: false,
             mutatedFiles: false,
           } satisfies SchemaCommandResult;
@@ -141,19 +144,18 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
 
           yield* state.clearJournal;
 
-          const nextActions = [
-            "Review the migration files, commit them, then deploy with migrations push.",
-            ...(input.baseline
-              ? [
-                  `If the remote already has this schema, record it without re-applying: ${formatMigrationRepairCommand(
-                    {
-                      status: "applied",
-                      versions: written.map((file) => file.version),
-                    },
-                  )}`,
-                ]
-              : []),
-          ];
+          const nextActions = input.baseline
+            ? [
+                `Review the new files in supabase/migrations. If the remote already has this schema, record it without re-applying: ${formatMigrationRepairCommand(
+                  {
+                    status: "applied",
+                    versions: written.map((file) => file.version),
+                  },
+                )}. Only use \`supabase migrations push\` if the remote is empty.`,
+              ]
+            : [
+                "Review the new files in supabase/migrations, then deploy with `supabase migrations push`.",
+              ];
 
           return {
             status: "generated",

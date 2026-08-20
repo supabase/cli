@@ -1,7 +1,6 @@
 import { Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
-import { authorizeMutation } from "../database/destructive-auth.ts";
 import { applyLocalPending } from "../migrations/apply-local-pending.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import type { MigrationApplyResult } from "../migrations/migration-runner.service.ts";
@@ -18,13 +17,7 @@ import type { SchemaCommandResult, SchemaDraftJournal } from "./schema-types.ts"
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 
-export type ApplySchemaInput = {
-  readonly yes: boolean;
-  readonly projectRef?: string;
-  readonly allowRemote: boolean;
-};
-
-export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySchemaInput) {
+export const applySchema = Effect.fn("schema.apply")(function* () {
   const workspace = yield* SchemaWorkspace;
   const state = yield* SchemaStateStore;
   const engine = yield* PgDeltaSchemaEngine;
@@ -77,15 +70,6 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
         });
 
         yield* assertPlanActionable(plan);
-        yield* authorizeMutation({
-          target,
-          flags: {
-            yes: input.yes,
-            allowRemote: input.allowRemote,
-            ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
-          },
-          command: "schema apply",
-        });
 
         if (!plan.changes) {
           const recorded = pendingResult.recorded ?? [];
@@ -162,6 +146,10 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
           target: target.identity,
           plan,
         });
+        const nextActions = [
+          "Keep editing supabase/schemas and re-run `supabase schema apply` until the local database looks right.",
+          "When you're happy, create a migration with `supabase schema generate --name <feature>`.",
+        ];
 
         return {
           status: "draft",
@@ -174,9 +162,9 @@ export const applySchema = Effect.fn("schema.apply")(function* (input: ApplySche
             journaled: true,
             mutated_database: true,
             mutated_files: false,
-            next_actions: ["Run tests, then supabase schema generate --name <feature>"],
+            next_actions: nextActions,
           },
-          nextActions: ["Run tests, then supabase schema generate --name <feature>"],
+          nextActions,
           mutatedDatabase: true,
           mutatedFiles: false,
         } satisfies SchemaCommandResult;

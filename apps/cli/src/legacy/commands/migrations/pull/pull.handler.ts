@@ -7,7 +7,7 @@ export const legacyMigrationsPull = Effect.fn("legacy.migrations.pull")(function
   flags: LegacyMigrationsPullFlags,
 ) {
   const result = yield* pullMigrations({
-    from: Option.getOrUndefined(flags.from),
+    from: flags.from,
     name: Option.getOrUndefined(flags.name),
   });
   yield* renderSchemaResult("Pull remote migrations", result);

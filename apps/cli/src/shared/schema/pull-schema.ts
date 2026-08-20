@@ -3,7 +3,7 @@ import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector, redactConnectionString } from "../database/database-target.ts";
-import { SchemaDraftConflictError, SchemaTargetRequiredError } from "./schema-errors.ts";
+import { SchemaDraftConflictError } from "./schema-errors.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
@@ -25,14 +25,7 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
   const targets = yield* DatabaseTargetResolver;
   const migrations = yield* MigrationRepository;
 
-  if (input.from === undefined) {
-    return yield* new SchemaTargetRequiredError({
-      detail: "schema pull requires an explicit --from target.",
-      suggestion: "Pass --from local, --from linked, or --from <connection-string>.",
-    });
-  }
-
-  const selector = parseTargetSelector(input.from);
+  const selector = parseTargetSelector(input.from ?? "local");
   const target = yield* targets.resolve(selector);
   const mode = input.output !== undefined ? "output" : input.force ? "force" : "init";
 
@@ -70,11 +63,17 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
         const nextActions =
           mode === "output"
             ? [
-                "Inspect the side-by-side snapshot, then edit supabase/schemas or rerun with --force.",
+                "Inspect the snapshot, then edit supabase/schemas or rerun with --force to replace the managed files.",
               ]
             : localMigrations.length > 0
-              ? ["supabase schema generate --dry-run"]
-              : ["supabase schema generate --baseline --name initial_schema"];
+              ? [
+                  "Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`. No diff means they already agree.",
+                  "Edit supabase/schemas and run `supabase schema apply` to try changes locally. When the shape looks right, create a migration with `supabase schema generate --name <feature>`.",
+                ]
+              : [
+                  "This database has no local migrations yet. Create a baseline with `supabase schema generate --baseline --name initial_schema`.",
+                  "After that, edit supabase/schemas and use `supabase schema apply` to iterate locally.",
+                ];
 
         return {
           status: "clean",

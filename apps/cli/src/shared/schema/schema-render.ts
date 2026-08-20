@@ -13,15 +13,30 @@ export const renderSchemaResult = Effect.fnUntraced(function* (
     return;
   }
   const lines = result.message.split("\n").filter((line) => line.length > 0);
-  const next =
-    result.nextActions.length > 0 ? `Next: ${result.nextActions.join(" | ")}` : undefined;
   if (result.status === "failed") {
     for (const line of lines) yield* output.info(line);
-    if (next !== undefined) yield* output.info(next);
+    yield* writeNextActions(output, result.nextActions);
     yield* output.outro("Failed.");
     return;
   }
   for (const line of lines.slice(1)) yield* output.info(line);
-  if (next !== undefined) yield* output.info(next);
+  yield* writeNextActions(output, result.nextActions);
   yield* output.outro(lines[0] ?? "Done.");
+});
+
+const writeNextActions = Effect.fnUntraced(function* (
+  output: {
+    readonly info: (message: string) => Effect.Effect<void>;
+  },
+  actions: ReadonlyArray<string>,
+) {
+  if (actions.length === 0) return;
+  if (actions.length === 1) {
+    yield* output.info(`Next: ${actions[0]}`);
+    return;
+  }
+  yield* output.info("Next:");
+  for (const [index, action] of actions.entries()) {
+    yield* output.info(`  ${index + 1}. ${action}`);
+  }
 });

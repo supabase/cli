@@ -37,7 +37,9 @@ export const newMigration = Effect.fn("migrations.new")(function* (name: string 
       mutated_files: true,
       mutated_database: false,
     },
-    nextActions: ["Author the SQL, then `supabase migrations apply` locally."],
+    nextActions: [
+      "Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
+    ],
     mutatedDatabase: false,
     mutatedFiles: true,
   } satisfies SchemaCommandResult;

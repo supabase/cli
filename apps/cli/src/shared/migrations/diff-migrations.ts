@@ -2,7 +2,7 @@ import { Effect, FileSystem } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector } from "../database/database-target.ts";
-import { SchemaTargetRequiredError, SchemaWorkspaceIoError } from "../schema/schema-errors.ts";
+import { SchemaWorkspaceIoError } from "../schema/schema-errors.ts";
 import { formatPlanSummary, withCoverageMessage } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
@@ -13,16 +13,9 @@ export type DiffMigrationsInput = {
 };
 
 export const diffMigrations = Effect.fn("migrations.diff")(function* (input: DiffMigrationsInput) {
-  if (input.against === undefined) {
-    return yield* new SchemaTargetRequiredError({
-      detail: "migrations diff requires --against.",
-      suggestion: "Pass --against local, --against linked, or --against <connection-string>.",
-    });
-  }
-
   const targets = yield* DatabaseTargetResolver;
   const engine = yield* PgDeltaSchemaEngine;
-  const live = yield* targets.resolve(parseTargetSelector(input.against));
+  const live = yield* targets.resolve(parseTargetSelector(input.against ?? "local"));
 
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -56,6 +49,7 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
         target: live.identity,
         plan,
       });
+      const nextActions = plan.changes ? nextActionsForDiff(input.against ?? "local") : [];
 
       return {
         status: plan.changes ? "drift" : "clean",
@@ -70,12 +64,29 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
           file: input.file,
           mutated_database: false,
           mutated_files: input.file !== undefined,
-          next_actions: plan.changes ? ["supabase migrations pull"] : [],
+          next_actions: nextActions,
         },
-        nextActions: plan.changes ? ["supabase migrations pull"] : [],
+        nextActions,
         mutatedDatabase: false,
         mutatedFiles: input.file !== undefined,
       } satisfies SchemaCommandResult;
     }),
   );
 });
+
+function nextActionsForDiff(against: string): ReadonlyArray<string> {
+  if (against === "local") {
+    return [
+      "If this extra shape came from supabase/schemas, create a migration with `supabase schema generate --name <feature>`.",
+      "To record the live database as migration files instead, run `supabase migrations pull --from local`.",
+    ];
+  }
+  if (against === "linked") {
+    return [
+      "If the linked project has extra shape you want as files, record it with `supabase migrations pull`.",
+    ];
+  }
+  return [
+    "If that database has extra shape you want as files, record it with `supabase migrations pull --from <connection-string>`.",
+  ];
+}

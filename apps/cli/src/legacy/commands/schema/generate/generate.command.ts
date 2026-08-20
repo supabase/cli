@@ -7,15 +7,15 @@ import { legacySchemaGenerate } from "./generate.handler.ts";
 
 const config = {
   name: Flag.string("name").pipe(
-    Flag.withDescription("Name for the generated migration change set."),
+    Flag.withDescription("Name for the generated migration files."),
     Flag.optional,
   ),
   dryRun: Flag.boolean("dry-run").pipe(
-    Flag.withDescription("Preview the plan without writing migration files."),
+    Flag.withDescription("Show the plan without writing migration files."),
   ),
   baseline: Flag.boolean("baseline").pipe(
     Flag.withDescription(
-      "Generate a baseline migration from an empty replay (existing-database onboarding). Refuses if migration files already exist.",
+      "Write the first migration from supabase/schemas. Refuses if migration files already exist. Use schema pull first if a live database is the source.",
     ),
   ),
 } as const;
@@ -24,20 +24,23 @@ export type LegacySchemaGenerateFlags = CliCommand.Command.Config.Infer<typeof c
 
 export const legacySchemaGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
-    "Compile declarative schema changes into verified migration files.\n\n" +
-      "Always plans from a clean migration replay to the declarations. " +
-      "--dry-run runs the same pipeline and writes nothing.",
+    "Turn supabase/schemas into migration files.\n\n" +
+      "Compares a clean replay of supabase/migrations to supabase/schemas. Does not apply anything to a live database.\n\n" +
+      "--dry-run shows the same plan without writing files. --baseline writes the first migration from supabase/schemas when supabase/migrations is empty.",
   ),
-  Command.withShortDescription("Generate migrations from supabase/schemas"),
+  Command.withShortDescription("Write migrations from supabase/schemas"),
   Command.withExamples([
-    { command: "supabase schema generate --dry-run", description: "Preview the generate plan" },
+    {
+      command: "supabase schema generate --dry-run",
+      description: "Preview the migration without writing files",
+    },
     {
       command: "supabase schema generate --name add_billing",
-      description: "Write the migration change set",
+      description: "Write the migration files",
     },
     {
       command: "supabase schema generate --baseline --name initial_schema",
-      description: "Create a baseline migration for an existing database",
+      description: "Write the first migration from supabase/schemas",
     },
   ]),
   Command.withHandler((flags) =>

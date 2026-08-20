@@ -15,7 +15,10 @@ const config = {
 export type LegacyMigrationsNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyMigrationsNewCommand = Command.make("new", config).pipe(
-  Command.withDescription("Create an empty migration file for manual authoring."),
+  Command.withDescription(
+    "Create an empty migration file to write by hand.\n\n" +
+      "Prefer schema generate when the change lives in supabase/schemas.",
+  ),
   Command.withShortDescription("Create an empty migration"),
   Command.withExamples([
     {

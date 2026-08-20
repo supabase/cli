@@ -7,8 +7,10 @@ import { legacyMigrationsDiff } from "./diff.handler.ts";
 
 const config = {
   against: Flag.string("against").pipe(
-    Flag.withDescription("Live database to compare: local, linked, or a connection string."),
-    Flag.optional,
+    Flag.withDescription(
+      "Live database to compare. Defaults to local. Also accepts linked or a connection string.",
+    ),
+    Flag.withDefault("local"),
   ),
   file: Flag.string("file").pipe(
     Flag.withDescription("Write preview SQL to a file without applying it."),
@@ -21,12 +23,13 @@ export type LegacyMigrationsDiffFlags = CliCommand.Command.Config.Infer<typeof c
 
 export const legacyMigrationsDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
-    "Preview the SQL required to move from migration replay to a live database.\n\n" +
-      "This is the successor to db diff. It never mutates the database.",
+    "Preview the SQL that would make migration replay match a live database.\n\n" +
+      "Does not apply anything. Defaults to the local database.\n\n" +
+      "If the live database has extra shape you want as files, use migrations pull.",
   ),
-  Command.withShortDescription("Diff migration replay against a live database"),
+  Command.withShortDescription("Preview drift between migrations and a database"),
   Command.withExamples([
-    { command: "supabase migrations diff --against local", description: "Preview local drift" },
+    { command: "supabase migrations diff", description: "Preview local drift" },
     { command: "supabase migrations diff --against linked", description: "Preview remote drift" },
   ]),
   Command.withHandler((flags) =>

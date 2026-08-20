@@ -40,6 +40,10 @@ export const applyMigrations = Effect.fn("migrations.apply")(function* () {
           ? [`Applied ${result.applied.length} migration(s): ${result.applied.join(", ")}`]
           : []),
       ];
+      const nextActions =
+        mutatedDatabase === true
+          ? ["If the local database looks right, deploy with `supabase migrations push`."]
+          : [];
       return {
         status: "clean",
         message: parts.length > 0 ? parts.join(". ") : "No pending migrations.",
@@ -51,8 +55,9 @@ export const applyMigrations = Effect.fn("migrations.apply")(function* () {
           target: target.identity,
           mutated_database: mutatedDatabase,
           mutated_files: false,
+          next_actions: nextActions,
         },
-        nextActions: [],
+        nextActions,
         mutatedDatabase,
         mutatedFiles: false,
       } satisfies SchemaCommandResult;

@@ -17,6 +17,29 @@ function result(overrides: Partial<SchemaCommandResult> = {}): SchemaCommandResu
 }
 
 describe("renderSchemaResult", () => {
+  it.live("prints a single next action on one line", () => {
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      yield* renderSchemaResult(
+        "Create migration",
+        result({
+          nextActions: [
+            "Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
+          ],
+        }),
+      ).pipe(Effect.provide(out.layer));
+      expect(out.messages).toEqual([
+        { type: "intro", message: "Create migration" },
+        {
+          type: "info",
+          message:
+            "Next: Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
+        },
+        { type: "outro", message: "Compared 4 migration(s) against local:default." },
+      ]);
+    });
+  });
+
   it.live("prints a single-line success once as the outro", () => {
     const out = mockOutput();
     return Effect.gen(function* () {
@@ -36,13 +59,26 @@ describe("renderSchemaResult", () => {
         result({
           message:
             "Declarations already match migration replay.\n1 unmodeled cast (log_min_messages)",
-          nextActions: ["supabase schema generate --dry-run"],
+          nextActions: [
+            "Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`.",
+            "Edit supabase/schemas and run `supabase schema apply` to try changes locally.",
+          ],
         }),
       ).pipe(Effect.provide(out.layer));
       expect(out.messages).toEqual([
         { type: "intro", message: "Generate schema migrations" },
         { type: "info", message: "1 unmodeled cast (log_min_messages)" },
-        { type: "info", message: "Next: supabase schema generate --dry-run" },
+        { type: "info", message: "Next:" },
+        {
+          type: "info",
+          message:
+            "  1. Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`.",
+        },
+        {
+          type: "info",
+          message:
+            "  2. Edit supabase/schemas and run `supabase schema apply` to try changes locally.",
+        },
         { type: "outro", message: "Declarations already match migration replay." },
       ]);
     });

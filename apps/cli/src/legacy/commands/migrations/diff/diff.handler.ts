@@ -7,7 +7,7 @@ export const legacyMigrationsDiff = Effect.fn("legacy.migrations.diff")(function
   flags: LegacyMigrationsDiffFlags,
 ) {
   const result = yield* diffMigrations({
-    against: Option.getOrUndefined(flags.against),
+    against: flags.against,
     file: Option.getOrUndefined(flags.file),
   });
   yield* renderSchemaResult("Diff migrations", result);

@@ -7,22 +7,26 @@ import { legacyMigrationsPush } from "./push.handler.ts";
 
 const config = {
   yes: Flag.boolean("yes").pipe(
-    Flag.withDescription("Answer ordinary prompts. Does not skip target identity or live verify."),
+    Flag.withDescription(
+      "Skip confirmation prompts. Still checks target identity and live verify.",
+    ),
     Flag.withAlias("y"),
   ),
   projectRef: Flag.string("project-ref").pipe(
-    Flag.withDescription("Must match the resolved linked project."),
+    Flag.withDescription("Must match the linked project."),
     Flag.optional,
   ),
   allowRemote: Flag.boolean("allow-remote").pipe(
-    Flag.withDescription("Acknowledge an unverifiable --db-url target."),
+    Flag.withDescription("Required when pushing to a raw --db-url connection string."),
   ),
   dbUrl: Flag.string("db-url").pipe(
     Flag.withDescription("Raw connection string. Requires --allow-remote."),
     Flag.optional,
   ),
   skipVerify: Flag.boolean("skip-verify").pipe(
-    Flag.withDescription("Skip isolated-shadow declarations-ahead and remote-drift checks."),
+    Flag.withDescription(
+      "Skip checks that schemas and the remote still match the migration files.",
+    ),
   ),
 } as const;
 
@@ -30,11 +34,17 @@ export type LegacyMigrationsPushFlags = CliCommand.Command.Config.Infer<typeof c
 
 export const legacyMigrationsPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
-    "Apply exact pending migration files to the linked platform database.\n\n" +
-      "This is the only CLI path that mutates durable remote schema. " +
-      "It fails closed when declarations are ahead of the migration head or remote drift is detected.",
+    "Apply pending migration files to the linked project.\n\n" +
+      "This is the only CLI command that changes a remote schema.\n\n" +
+      "Fails if supabase/schemas is ahead of the migration files, or if the remote has drifted.",
   ),
-  Command.withShortDescription("Push pending migrations to the platform"),
+  Command.withShortDescription("Push pending migrations to the linked project"),
+  Command.withExamples([
+    {
+      command: "supabase migrations push",
+      description: "Apply pending files to the linked project",
+    },
+  ]),
   Command.withHandler((flags) =>
     legacyMigrationsPush(flags).pipe(
       withLegacyCommandInstrumentation({ flags, config, aliases: { y: "yes" } }),

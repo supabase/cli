@@ -7,7 +7,7 @@ export const legacySchemaPull = Effect.fn("legacy.schema.pull")(function* (
   flags: LegacySchemaPullFlags,
 ) {
   const result = yield* pullSchema({
-    from: Option.getOrUndefined(flags.from),
+    from: flags.from,
     output: Option.getOrUndefined(flags.output),
     force: flags.force,
     pruneUnmanaged: flags.pruneUnmanaged,

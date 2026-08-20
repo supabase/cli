@@ -5,8 +5,18 @@ import { legacySchemaRuntimeLayer } from "../../../schema/legacy-schema-runtime.
 import { legacyMigrationsApply } from "./apply.handler.ts";
 
 export const legacyMigrationsApplyCommand = Command.make("apply").pipe(
-  Command.withDescription("Apply exact pending migration files to the local database."),
+  Command.withDescription(
+    "Apply pending migration files to the local database.\n\n" +
+      "This runs the files in supabase/migrations. It does not read supabase/schemas.\n" +
+      "To try declaration edits without a migration yet, use schema apply.",
+  ),
   Command.withShortDescription("Apply pending migrations locally"),
+  Command.withExamples([
+    {
+      command: "supabase migrations apply",
+      description: "Apply pending files to the local database",
+    },
+  ]),
   Command.withHandler(() =>
     legacyMigrationsApply().pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling),
   ),

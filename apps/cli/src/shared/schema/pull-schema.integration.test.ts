@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Effect, Exit, Layer } from "effect";
 import type { Pool } from "pg";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import type { DatabaseTargetSelector } from "../database/database-target.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { pullSchema } from "./pull-schema.ts";
@@ -49,20 +50,27 @@ function mockEngine(files: Array<{ name: string; sql: string }>) {
 }
 
 function mockTarget() {
-  return Layer.succeed(
-    DatabaseTargetResolver,
-    DatabaseTargetResolver.of({
-      resolve: () =>
-        Effect.succeed({
-          kind: "local",
-          identity: "local:default",
-          connectionString: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
-          disposable: true,
-          durable: false,
-          connectionVerified: true,
-        }),
-    }),
-  );
+  const resolved: DatabaseTargetSelector[] = [];
+  return {
+    resolved,
+    layer: Layer.succeed(
+      DatabaseTargetResolver,
+      DatabaseTargetResolver.of({
+        resolve: (selector) =>
+          Effect.sync(() => {
+            resolved.push(selector);
+            return {
+              kind: "local" as const,
+              identity: "local:default",
+              connectionString: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
+              disposable: true,
+              durable: false,
+              connectionVerified: true,
+            };
+          }),
+      }),
+    ),
+  };
 }
 
 function mockMigrations() {
@@ -85,19 +93,31 @@ function setup(files = [{ name: "public.sql", sql: "create table public.t (id in
     supabaseDir: project.supabaseDir,
     projectHomeDir: project.projectHomeDir,
   }).pipe(Layer.provide(BunServices.layer));
+  const target = mockTarget();
   const layer = Layer.mergeAll(
     out.layer,
     BunServices.layer,
     workspace,
     schemaStateLayer.pipe(Layer.provide(workspace), Layer.provide(BunServices.layer)),
     mockEngine(files),
-    mockTarget(),
+    target.layer,
     mockMigrations(),
   );
-  return { project, layer };
+  return { project, layer, target };
 }
 
 describe("pullSchema", () => {
+  it.live("defaults to the local database when --from is omitted", () => {
+    const { layer, target } = setup();
+    return Effect.gen(function* () {
+      const result = yield* pullSchema({ force: false, pruneUnmanaged: false }).pipe(
+        Effect.provide(layer),
+      );
+      expect(target.resolved).toEqual([{ kind: "local" }]);
+      expect(result.nextActions.join("\n")).toContain("schema generate --baseline");
+    });
+  });
+
   it.live("writes declarations and the export manifest into an empty tree", () => {
     const { project, layer } = setup();
     return Effect.gen(function* () {

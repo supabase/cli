@@ -184,33 +184,48 @@ describe("listMigrations", () => {
   });
 });
 
+function diffLayer() {
+  return Layer.mergeAll(
+    mockOutput({ interactive: false }).layer,
+    localTarget,
+    Layer.succeed(
+      PgDeltaSchemaEngine,
+      PgDeltaSchemaEngine.of({
+        exportSchema: () => Effect.die("unused"),
+        planFiles: () => Effect.die("unused"),
+        diffPools: () => Effect.succeed(planView(true)),
+        applyPlan: () => Effect.die("unused"),
+        provisionShadow: Effect.die("unused"),
+        provisionPlatform: Effect.die("unused"),
+        provisionMigrations: Effect.succeed({
+          url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
+        }),
+      }),
+    ),
+  );
+}
+
 describe("diffMigrations", () => {
   it.live("previews drift against the named target", () => {
-    const layer = Layer.mergeAll(
-      mockOutput({ interactive: false }).layer,
-      localTarget,
-      Layer.succeed(
-        PgDeltaSchemaEngine,
-        PgDeltaSchemaEngine.of({
-          exportSchema: () => Effect.die("unused"),
-          planFiles: () => Effect.die("unused"),
-          diffPools: () => Effect.succeed(planView(true)),
-          applyPlan: () => Effect.die("unused"),
-          provisionShadow: Effect.die("unused"),
-          provisionPlatform: Effect.die("unused"),
-          provisionMigrations: Effect.succeed({
-            url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
-          }),
-        }),
-      ),
-    );
     return Effect.gen(function* () {
       const result = yield* diffMigrations({ against: "local" }).pipe(
-        Effect.provide(layer),
+        Effect.provide(diffLayer()),
         Effect.provide(BunServices.layer),
       );
       expect(result.status).toBe("drift");
       expect(result.mutatedDatabase).toBe(false);
+    });
+  });
+
+  it.live("defaults --against to local and does not send the next step to linked pull", () => {
+    return Effect.gen(function* () {
+      const result = yield* diffMigrations({}).pipe(
+        Effect.provide(diffLayer()),
+        Effect.provide(BunServices.layer),
+      );
+      expect(result.nextActions.join("\n")).toContain("schema generate");
+      expect(result.nextActions.join("\n")).toContain("migrations pull --from local");
+      expect(result.nextActions.join("\n")).not.toContain("`supabase migrations pull`");
     });
   });
 });

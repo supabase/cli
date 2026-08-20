@@ -205,13 +205,11 @@ function setup(
   };
 }
 
-const flags = { yes: true, allowRemote: false } as const;
-
 describe("applySchema", () => {
   it.live("runs pending SQL when the live catalog does not match full replay", () => {
     const ctx = setup();
     return Effect.gen(function* () {
-      const result = yield* applySchema(flags).pipe(Effect.provide(ctx.layer));
+      const result = yield* applySchema().pipe(Effect.provide(ctx.layer));
       expect(result.status).toBe("clean");
       expect(ctx.applyPending).toBe(2);
       expect(ctx.marked).toBe(0);
@@ -222,7 +220,7 @@ describe("applySchema", () => {
   it.live("marks history when the live catalog already matches full replay", () => {
     const ctx = setup({ catalogMatch: true });
     return Effect.gen(function* () {
-      const result = yield* applySchema(flags).pipe(Effect.provide(ctx.layer));
+      const result = yield* applySchema().pipe(Effect.provide(ctx.layer));
       expect(result.status).toBe("clean");
       expect(result.message).toContain("Recorded");
       expect(ctx.marked).toBe(1);
@@ -232,7 +230,7 @@ describe("applySchema", () => {
   it.live("skips file apply while an ungenerated draft is active", () => {
     const ctx = setup({ journal: ungeneratedJournal });
     return Effect.gen(function* () {
-      const result = yield* applySchema(flags).pipe(Effect.provide(ctx.layer));
+      const result = yield* applySchema().pipe(Effect.provide(ctx.layer));
       expect(result.status).toBe("clean");
       expect(ctx.applyPending).toBe(0);
       expect(ctx.marked).toBe(0);
@@ -247,7 +245,7 @@ describe("applySchema", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* applySchema(flags).pipe(Effect.provide(ctx.layer), Effect.exit);
+      const exit = yield* applySchema().pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(ctx.applyPending).toBe(0);
     });
@@ -270,7 +268,7 @@ describe("applySchema", () => {
       },
     });
     return Effect.gen(function* () {
-      const exit = yield* applySchema(flags).pipe(Effect.provide(ctx.layer), Effect.exit);
+      const exit = yield* applySchema().pipe(Effect.provide(ctx.layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
       expect(failure._tag).toBe("Some");
@@ -291,7 +289,7 @@ describe("applySchema", () => {
       planChanges: true,
     });
     return Effect.gen(function* () {
-      const result = yield* applySchema(flags).pipe(Effect.provide(ctx.layer));
+      const result = yield* applySchema().pipe(Effect.provide(ctx.layer));
       expect(result.status).toBe("draft");
       expect(result.mutatedDatabase).toBe(true);
       expect(ctx.journaled).toBe(true);
