@@ -300,6 +300,33 @@ describe("legacy feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("discards ref-file contents that are not a well-formed project ref", () => {
+    // The workdir can be an untrusted checkout where `.temp/project-ref` is a
+    // symlink to a local secret (e.g. an access token). Anything that fails the
+    // PROJECT_REF_PATTERN boundary must be dropped, not sent as `project_ref`.
+    // The fixture is shaped like a credential without matching any real token
+    // format, so secret scanners don't flag the test source itself.
+    const { layer, submitter } = setupLegacyFeedback();
+    writeLinkedProjectRef(tempRoot.current, "fake-access-token-0102030405060708");
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: ["symlinked secret feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("discards an invalid SUPABASE_PROJECT_ID and falls through to the linked ref", () => {
+    // Same validation boundary as the file: a malformed env override is dropped
+    // (matching `legacyResolveSoftLinkedRef`) and resolution continues.
+    const { layer, submitter } = setupLegacyFeedback({ projectIdEnv: "not-a-valid-ref!" });
+    writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF);
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: ["invalid env ref feedback"] });
+
+      expect(submitter.submissions[0]?.projectRef).toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reads the message from piped stdin when no argument is given", () => {
     const { layer, submitter } = setupLegacyFeedback({
       stdinIsTTY: false,
