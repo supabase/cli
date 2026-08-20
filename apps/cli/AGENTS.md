@@ -157,7 +157,7 @@ cleanup task.
 When replacing a wrapper natively:
 
 1. Implement the business logic in `<command>.handler.ts` using Effect services (see the sections below).
-2. Reproduce the old behavior (output, side effects, telemetry) from the pinned Go source at commit `7b469f5b3`.
+2. Reproduce the old behavior (output, side effects, telemetry) from the **current in-tree Go source** in `apps/cli-go/` — that is the shipped implementation, and it can differ from the pre-trim snapshot (e.g. the `db remote --password` precedence entry in `docs/go-cli-divergences.md`). The pinned commits (`7b469f5b3`, `a253ccba2`) are only for commands whose Go source was already deleted.
 3. Update `docs/go-cli-porting-status.md` — the delegation surface table must stay accurate.
 
 ---
