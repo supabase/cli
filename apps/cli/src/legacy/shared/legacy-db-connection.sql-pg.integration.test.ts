@@ -183,6 +183,7 @@ const fakeBatchServer = (
   readonly port: number;
   readonly close: () => void;
   readonly state: FakeBatchServerState;
+  readonly sockets: ReadonlyArray<net.Socket>;
 }> =>
   new Promise((resolve) => {
     const state: FakeBatchServerState = {
@@ -191,7 +192,9 @@ const fakeBatchServer = (
       params: [],
       syncs: 0,
     };
+    const sockets: Array<net.Socket> = [];
     const server = net.createServer((socket) => {
+      sockets.push(socket);
       let sawStartup = false;
       let pending = Buffer.alloc(0);
       let failed = false;
@@ -294,7 +297,7 @@ const fakeBatchServer = (
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close(), state });
+      resolve({ port: address.port, close: () => server.close(), state, sockets });
     });
   });
 
@@ -675,6 +678,42 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           expect(error._tag).toBe("LegacyDbExecError");
           expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
           yield* session.execBatch([{ sql: "SELECT 3" }]);
+        }),
+      );
+    }),
+  );
+
+  it.live("survives an idle raw-client socket death and redials for the next query", () =>
+    // node-postgres emits `error` on an idle client; with no listener that terminates the
+    // process, so a database that dies between two `queryRaw` calls must fail that call
+    // rather than the CLI, and must not leave the corpse cached for the call after it.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer());
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          yield* session.queryRaw("SELECT 1");
+          // `queryRaw` runs on its own client, opened after the pool's, so it is the
+          // newest connection the server has accepted.
+          const rawSocket = server.sockets.at(-1);
+          const openedBeforeRedial = server.sockets.length;
+
+          const closed = new Promise<void>((resolve) => {
+            rawSocket?.on("close", () => resolve());
+          });
+          yield* Effect.sync(() => rawSocket?.destroy());
+          yield* Effect.promise(() => closed);
+
+          const failed = yield* session.queryRaw("SELECT 1").pipe(
+            Effect.flip,
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("queryRaw never settled after the idle socket died"),
+            }),
+          );
+          expect(failed._tag).toBe("LegacyDbExecError");
+
+          yield* session.queryRaw("SELECT 1");
+          expect(server.sockets.length).toBeGreaterThan(openedBeforeRedial);
         }),
       );
     }),

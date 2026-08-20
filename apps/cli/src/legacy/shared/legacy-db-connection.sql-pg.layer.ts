@@ -1009,6 +1009,12 @@ const connect = (
     const acquireRawClient = Effect.gen(function* () {
       if (rawClient !== undefined) return rawClient;
       const fresh = new Pg.Client(winningRawConfig);
+      // node-postgres emits `error` on a cached client whose socket dies while idle; with
+      // no listener that terminates the process, so absorb it and drop the dead client so
+      // the next acquisition redials instead of reusing it.
+      fresh.on("error", () => {
+        if (rawClient === fresh) rawClient = undefined;
+      });
       yield* Effect.tryPromise({
         try: () => fresh.connect(),
         catch: (error) => legacyToConnectError(cfg, options.isLocal, error),
