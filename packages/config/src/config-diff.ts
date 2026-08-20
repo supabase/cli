@@ -116,9 +116,10 @@ export interface DiffProjectConfigOptions {
   /**
    * The raw (pre-decode, post-merge) document the config was loaded from.
    * Declares which paths the file actually sets — the decoded config cannot,
-   * because decoding materializes every default.
+   * because decoding materializes every default. `undefined` (a file that did
+   * not parse to an object) means nothing is declared.
    */
-  readonly declared: Readonly<Record<string, unknown>>;
+  readonly declared: Readonly<Record<string, unknown>> | undefined;
   readonly remote: RemoteProjectConfig;
   /**
    * Baseline for `remote_only` suppression: a remote value equal to this
@@ -223,11 +224,12 @@ export function isEqualConfigValue(a: unknown, b: unknown): boolean {
  */
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
   const defaults = options.defaults ?? getDefaultProjectConfig();
+  const declaredRoot = options.declared ?? {};
   const changes: Array<ConfigChange> = [];
   const masked: Array<string> = [];
 
   for (const property of MANAGED_CONFIG_PROPERTIES) {
-    const declared = isDeclaredAtPath(options.declared, property.path);
+    const declared = isDeclaredAtPath(declaredRoot, property.path);
 
     if (property.secret === true) {
       if (declared) {

@@ -72,6 +72,15 @@ describe("managed surface", () => {
 });
 
 describe("diffProjectConfig classification", () => {
+  test("an undefined declared document means nothing is declared", () => {
+    const result = diffProjectConfig({
+      local: decodeProjectConfig({}),
+      declared: undefined,
+      remote: { api: { max_rows: 250 } },
+    });
+    expect(changeAt(result.changes, "api.max_rows")).toMatchObject({ class: "remote_only" });
+  });
+
   test("declared value differing from remote is an update", () => {
     const result = diffWith(
       { api: { max_rows: 500 } },
