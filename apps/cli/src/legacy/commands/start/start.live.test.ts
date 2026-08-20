@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -198,6 +200,68 @@ describeLive("supabase start (live)", () => {
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
       expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
+    },
+  );
+
+  test(
+    "bypasses an HTTPS proxy for loopback gateway health checks",
+    { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
+    async () => {
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-proxy-"));
+
+      const init = await runSupabaseLive(["init"], {
+        cwd: projectDir,
+        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+      });
+      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+
+      let proxyConnections = 0;
+      const proxy = createServer((socket) => {
+        proxyConnections += 1;
+        socket.destroy();
+      });
+
+      try {
+        proxy.listen(0, "127.0.0.1");
+        await once(proxy, "listening");
+        const address = proxy.address();
+        if (address === null || typeof address === "string") {
+          throw new Error("Failed to allocate a proxy port");
+        }
+
+        const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
+          entry.excludeKey === undefined ||
+          entry.excludeKey === "kong" ||
+          entry.excludeKey === "postgrest"
+            ? []
+            : ["--exclude", entry.excludeKey],
+        );
+        const proxyUrl = `http://127.0.0.1:${address.port}`;
+        const start = await runSupabaseLive(["start", ...excludeArgs], {
+          cwd: projectDir,
+          exitTimeoutMs: START_TIMEOUT_MS,
+          env: {
+            HTTP_PROXY: "",
+            http_proxy: "",
+            HTTPS_PROXY: proxyUrl,
+            https_proxy: proxyUrl,
+            NO_PROXY: "",
+            no_proxy: "",
+            SUPABASE_API_TLS_ENABLED: "true",
+            SUPABASE_SERVICES_HOSTNAME: "127.0.0.1",
+          },
+        });
+
+        expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+        expect(start.stdout).toContain("https://127.0.0.1:");
+        expect(proxyConnections).toBe(0);
+      } finally {
+        if (proxy.listening) {
+          await new Promise<void>((resolve, reject) => {
+            proxy.close((error) => (error === undefined ? resolve() : reject(error)));
+          });
+        }
+      }
     },
   );
 

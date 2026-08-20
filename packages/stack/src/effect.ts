@@ -37,6 +37,8 @@ export {
   generateJwt,
 } from "./JwtGenerator.ts";
 
+export { edgeRuntimeNofileUlimit } from "./services/nofile-limit.ts";
+
 export type {
   AllocatedPorts,
   ConfigPortKey,

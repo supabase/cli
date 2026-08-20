@@ -10,17 +10,17 @@ catalogs:
       specifier: 4.0.0-beta.107
       version: 4.0.0-beta.107
     '@effect/platform-bun':
-      specifier: 4.0.0-beta.107
-      version: 4.0.0-beta.107
+      specifier: 4.0.0-rc.108
+      version: 4.0.0-rc.108
     '@effect/platform-node':
-      specifier: 4.0.0-beta.107
-      version: 4.0.0-beta.107
+      specifier: 4.0.0-rc.108
+      version: 4.0.0-rc.108
     '@effect/sql-pg':
-      specifier: 4.0.0-beta.107
-      version: 4.0.0-beta.107
+      specifier: 4.0.0-rc.108
+      version: 4.0.0-rc.108
     '@effect/vitest':
-      specifier: 4.0.0-beta.107
-      version: 4.0.0-beta.107
+      specifier: 4.0.0-rc.108
+      version: 4.0.0-rc.108
     '@nx/devkit':
       specifier: ^23.1.1
       version: 23.1.1
@@ -43,8 +43,8 @@ catalogs:
       specifier: ^4.1.10
       version: 4.1.10
     effect:
-      specifier: 4.0.0-beta.107
-      version: 4.0.0-beta.107
+      specifier: 4.0.0-rc.108
+      version: 4.0.0-rc.108
     knip:
       specifier: ^6.32.2
       version: 6.32.2
@@ -119,8 +119,8 @@ importers:
         version: 6.2.8
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.228
-        version: 0.3.228(@anthropic-ai/sdk@0.116.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+        specifier: ^0.3.229
+        version: 0.3.229(@anthropic-ai/sdk@0.116.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
       '@anthropic-ai/sdk':
         specifier: ^0.116.0
         version: 0.116.0(zod@4.4.3)
@@ -129,16 +129,16 @@ importers:
         version: 1.7.0
       '@effect/atom-react':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(react@19.2.8)(scheduler@0.27.0)
+        version: 4.0.0-beta.107(effect@4.0.0-rc.108)(react@19.2.8)(scheduler@0.27.0)
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/sql-pg':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(vitest@4.1.10)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(vitest@4.1.10)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.4.3)
@@ -195,7 +195,7 @@ importers:
         version: 17.4.2
       effect:
         specifier: 'catalog:'
-        version: 4.0.0-beta.107
+        version: 4.0.0-rc.108
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -224,8 +224,8 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0
       posthog-node:
-        specifier: ^5.48.1
-        version: 5.48.1
+        specifier: ^5.48.2
+        version: 5.48.2
       prettier:
         specifier: 3.8.1
         version: 3.8.1
@@ -354,13 +354,13 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(ioredis@5.11.1)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(ioredis@5.11.1)
       effect:
         specifier: 'catalog:'
-        version: 4.0.0-beta.107
+        version: 4.0.0-rc.108
       undici:
         specifier: ^8.10.0
         version: 8.10.0
@@ -443,16 +443,16 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(ioredis@5.11.1)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(ioredis@5.11.1)
       dedent:
         specifier: ^1.7.2
         version: 1.7.2
       effect:
         specifier: 'catalog:'
-        version: 4.0.0-beta.107
+        version: 4.0.0-rc.108
       smol-toml:
         specifier: ^1.8.0
         version: 1.8.0
@@ -489,14 +489,14 @@ importers:
     dependencies:
       effect:
         specifier: 'catalog:'
-        version: 4.0.0-beta.107
+        version: 4.0.0-rc.108
     devDependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(vitest@4.1.10)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(vitest@4.1.10)
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.10
@@ -529,20 +529,20 @@ importers:
     dependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)
       '@effect/platform-node':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(ioredis@5.11.1)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(ioredis@5.11.1)
       '@supabase/process-compose':
         specifier: workspace:*
         version: link:../process-compose
       effect:
         specifier: 'catalog:'
-        version: 4.0.0-beta.107
+        version: 4.0.0-rc.108
     devDependencies:
       '@effect/vitest':
         specifier: 'catalog:'
-        version: 4.0.0-beta.107(effect@4.0.0-beta.107)(vitest@4.1.10)
+        version: 4.0.0-rc.108(effect@4.0.0-rc.108)(vitest@4.1.10)
       '@supabase/supabase-js':
         specifier: ^2.112.3
         version: 2.112.3
@@ -604,52 +604,52 @@ packages:
     resolution: {integrity: sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA==}
     engines: {node: '>=18'}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.228':
-    resolution: {integrity: sha512-HuCsV3/5XuYYaWuCbksX+e0JkDDUG/AlFJ8wKhDL3PBW/3hHNd6xBYx88kEWk1Z6B1GLxwHht9624lcmscpsyw==}
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.229':
+    resolution: {integrity: sha512-yVrJwSG9ur001ggDHKPUHlRuHKwbi2ETfby+4wlktRcQ5sAXqcSeS6B4T+IsXk8NDDHKXbCxpAPnCB5dz1Ac9g==}
     cpu: [arm64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.228':
-    resolution: {integrity: sha512-jSUYY5Nd3efvbLZPU+i0tRBaFXskHu8M+4LMGBEw6A0PaklZ3YfGvKlTOWtJGRw6vMc6LzfOFts024xPNm6OrQ==}
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.229':
+    resolution: {integrity: sha512-MOhOwgh9fqnX/rqeVJzy+NNFx+xXX2Kej/jx33xTV+4J5aJ2H1SwjZ+r3f/k1MMQmPvkrE0GHnMYrpu4hfvZ5Q==}
     cpu: [x64]
     os: [darwin]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.228':
-    resolution: {integrity: sha512-4PgfisC3kHKlzJvy3rrm4Oh26g+D78h4ahHjni9fvSKHuJgrvHu9Qgo6aaYmzWdc7v9drL+pgiCk5Ge4Y2ANPA==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.229':
+    resolution: {integrity: sha512-S0XcKhUXLFdEv1Pq+aYiV7fDlTa/n+bajBNkKv12eUzjCUFsM/TfSyU5shnkQg9y7NtoB4owK/rezm5hHD1ybg==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.228':
-    resolution: {integrity: sha512-0Wjv6TiWwGlBZINAmNJX07jN359jKwB/4Sr/uWgQkdjuVIOhe/M8ydk7JL2EPqCsbiW1lc15NjE5MWpZiYqooA==}
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.229':
+    resolution: {integrity: sha512-xSPUmKNik7HEYsbdUFywbjvGzUth0P2KohetJixSOrBha63ZRun449ssEHU55VX3qH+YO5ENn129l5TGFzMNGQ==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.228':
-    resolution: {integrity: sha512-dnXxyiwGCZj27HVk6clYRqGMgrs3KVLVp0vvWYLjkPGBiKbI83qJiDpOfaekEXG2I4elX0M4XikggV1LGWjimg==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.229':
+    resolution: {integrity: sha512-9gJsr0elKyV21ln+Mza5kYiSAsqSAWFiHuaT+MiXAycBK73UbzRVLBg87dajkGagg6H1u5ZtPSkqNXzA2xArmA==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.228':
-    resolution: {integrity: sha512-LmGplObceqMOu5mlrlhTZL/VSrEWdZagF0Bl8awglMu6WeQcNe7StORYkCznZ0BuzV4CwuC3ipV4q8Jrs66wSg==}
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.229':
+    resolution: {integrity: sha512-Cs0NxWVL/Up8kEh//P2cE+3VHrDxoSmWUP3EvI/GU+1RRGZPDD80UN1Rvl3TMC5QPMq+IYPjh1yncnxZ6j8aNw==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.228':
-    resolution: {integrity: sha512-mNS5yIMz/OXSQiDErb84jA8AKBFSlS9RSZ0qn2qyGkxplUx7kVmIDg/KnwOwHmygpzmH4UmR6OCaLXGohupqNA==}
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.229':
+    resolution: {integrity: sha512-2fkljxQweZUa41RrlhLh+VdZrJ4kYzEBHGD8sc+Xy2bjkF8T4GTmsE8eKSWN3NfSCQOLHgK7Bxfm6+2n88WJMg==}
     cpu: [arm64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.228':
-    resolution: {integrity: sha512-DYT3HvdS64Pq0IRvgW3RDO31yjYp5yiUKoKaZolTpLKfALpG5LI/osfnKlya68PZ/bSST1FNAfW9I0EtCnaQ4w==}
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.229':
+    resolution: {integrity: sha512-2M2/KHJTGqzduA8eRZDu1vWSFkMqKl9JZMqJmaJ2THIR2g7jBUAzK0B57UzkO9uQXoXWFH7P91OSKKGA4rwfwQ==}
     cpu: [x64]
     os: [win32]
 
-  '@anthropic-ai/claude-agent-sdk@0.3.228':
-    resolution: {integrity: sha512-OOaME54VCoBLjKMqWqFmHkZGyL/x/FHUA0snhyolmyEhVoeBM0Ub5mrnV2Gx3d5/RcVlk2BnEVvPqu0SpZ9VFw==}
+  '@anthropic-ai/claude-agent-sdk@0.3.229':
+    resolution: {integrity: sha512-ZxSFO7cNSz7jqsOmoGkBtvMT4JGWb2a8PUe6doAydZXH6mm6FsoUf+duSUm2rDrbv7OMoD8HDGwNZv5P3woE3w==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
       '@anthropic-ai/sdk': '>=0.93.0'
@@ -773,10 +773,10 @@ packages:
       react: '>=19.2.7 <20.0.0'
       scheduler: '>=0.27.0 <0.28.0'
 
-  '@effect/platform-bun@4.0.0-beta.107':
-    resolution: {integrity: sha512-nDKutCpgr+xHQX7tgN8Cq6JXtj96GqiElKaJ7AwAkZYl2q9f6onc/3aJgl6CyH/DlUoidw6YaxeU+UaTRmMN1g==}
+  '@effect/platform-bun@4.0.0-rc.108':
+    resolution: {integrity: sha512-27RoALzmzx6Qp4LrPIE8bYJfHe+8ZaAO3xLhJMEE6mVA8fxcPh4HAGwBv09Nk2qTFVh578SlSCY5ojUlqeSJ4A==}
     peerDependencies:
-      effect: ^4.0.0-beta.107
+      effect: ^4.0.0-rc.108
 
   '@effect/platform-node-shared@4.0.0-beta.107':
     resolution: {integrity: sha512-y6BqcRi86BfTJv+tvDrob4ozYVHxxlHYcn/zIQqZjXI9CvKnkgD6ng+38G1o45c4f2ucU+6HRI9POCmFdMoVGA==}
@@ -784,22 +784,22 @@ packages:
     peerDependencies:
       effect: ^4.0.0-beta.107
 
-  '@effect/platform-node@4.0.0-beta.107':
-    resolution: {integrity: sha512-k+6YNbV4Ck0L6YXtlgkvEnuP5tlxWD8EeWOrpn46PDqbGEwt4ONpRltTwm3tn2cyBXD0i+2P11cUH/6sdFagTA==}
+  '@effect/platform-node@4.0.0-rc.108':
+    resolution: {integrity: sha512-Nof78154BaHGdSYr4TPQFZ5+Dg+HkpmbI3SQUdwsby5QNs6yahGJPu2AgdIVqdx7pKZ2w7j/bvdnqoMmkG0PbA==}
     engines: {node: '>=18.0.0'}
     peerDependencies:
-      effect: ^4.0.0-beta.107
+      effect: ^4.0.0-rc.108
       ioredis: '>=5.7.0 <6.0.0'
 
-  '@effect/sql-pg@4.0.0-beta.107':
-    resolution: {integrity: sha512-y5RWMhdLhFqn0picXqZIR4Bevo4Fo+aT2xHNiyZoAR86d8CnbXp6Agq9HmXIGWS/nd5f7Bs4d7Aif7QUTsUofg==}
+  '@effect/sql-pg@4.0.0-rc.108':
+    resolution: {integrity: sha512-K7PZL+J71IDRsOu4CHtIJUCoDpsfD1G9Mdttn/jj9tCsQFA9ySIu2+IFmUlgJAvUUlfdg/OMhkocxkGoVZJTLw==}
     peerDependencies:
-      effect: ^4.0.0-beta.107
+      effect: ^4.0.0-rc.108
 
-  '@effect/vitest@4.0.0-beta.107':
-    resolution: {integrity: sha512-n4/qsx4DnT4dEI/wNgMivxyUeJoeiU1TCSz0WnoHWk/dny40Oxjip2P9IXGQDgPb9fsYVnerF0QRA6nPUuExQA==}
+  '@effect/vitest@4.0.0-rc.108':
+    resolution: {integrity: sha512-XD2GP1JATN28wnIeFGsBqYMuQDCHIodKKgFulGyG91GvuHqgf2gz+WxR2LPdyNoKMtr7lsbRzVj07niSYtIKzA==}
     peerDependencies:
-      effect: ^4.0.0-beta.107
+      effect: ^4.0.0-rc.108
       vitest: '>=4.1.0 <5.0.0'
 
   '@emnapi/core@1.11.1':
@@ -1365,6 +1365,13 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.3
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.3
+
+  '@napi-rs/wasm-runtime@1.2.3':
+    resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
+    peerDependencies:
+      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
+      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
 
   '@next/env@16.3.0':
     resolution: {integrity: sha512-o9r1S0BNiNreHP9Vs+Qnqd9kviDkJh8xIACY7UFZSmiGbbQRzPBBosvHzAU4TULHOIuOj/18RSsyz2qrREmIFw==}
@@ -2260,11 +2267,11 @@ packages:
     resolution: {integrity: sha512-//0sR/cow/s4ICQaYoAobOl4aU8cjU6x/V24V7XkKotb9+O+3zySIYp146vpaobYHnxa4pZX8NkV54Z5AwbDKA==}
     engines: {node: '>=12'}
 
-  '@posthog/core@1.47.0':
-    resolution: {integrity: sha512-LW62V+9yx7G7mLd+EYpwW0PiaPZI8XRJ1tLuhw+9fXHpugLp8XQD5JuCQ2kIXvoUfyx1DpKfGQY3dUnzMOIn7Q==}
+  '@posthog/core@1.47.1':
+    resolution: {integrity: sha512-d38C5DulL3gCox4g0VGyb/Lhn548fBvj9f35LZGVasPspOs3jyApxROJyDXoWwIRivOjCOIShZQAdYkZVn9J3w==}
 
-  '@posthog/types@1.402.2':
-    resolution: {integrity: sha512-ZZTiS4dLwF4/D0YTzS3gGSLFnhuNOY5yu4d9VGS9trGe5GW6FjIXo20p18K5BPW2RZSYSld8sdnSAY3AUXleUQ==}
+  '@posthog/types@1.403.0':
+    resolution: {integrity: sha512-QbkO0epmdq38xhxwP214YRi0vgpZiXqhamaTjKT6kVGJYTtsE5qZ1GTgLp12IYehg/rd+whYYErH3/DeX8pj3Q==}
 
   '@protobufjs/aspromise@1.1.2':
     resolution: {integrity: sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ==}
@@ -4123,8 +4130,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.0-beta.107:
-    resolution: {integrity: sha512-OoBAv8eF+yanc+C6xhgEUnWeXUSHA6ynnscYqpkAY9GSnzZWystsIjBowVqCkLpHGlnRtdIqYT3wHwpOY6JDnQ==}
+  effect@4.0.0-rc.108:
+    resolution: {integrity: sha512-KmI3DlKZWPvCL4QQ2FMaPOuxMt/7DrKMENCY/gQ+MkDR5QYw25wgU5Zmh/wVLboNjIci1gNOgNCFe4xqgxli3A==}
 
   ejs@5.0.1:
     resolution: {integrity: sha512-COqBPFMxuPTPspXl2DkVYaDS3HtrD1GpzOGkNTJ1IYkifq/r9h8SVEFrjA3D9/VJGOEoMQcrlhpntcSUrM8k6A==}
@@ -6109,8 +6116,8 @@ packages:
   postgres-range@1.1.4:
     resolution: {integrity: sha512-i/hbxIE9803Alj/6ytL7UHQxRvZkI9O4Sy+J3HGc4F4oo/2eQAjTSNJ0bfxyse3bH0nuVesCk+3IRLaMtG3H6w==}
 
-  posthog-node@5.48.1:
-    resolution: {integrity: sha512-BxLX2SqGEQhPqCPTalpyo0RRv1NMbf7UaN7q9d/ED77ksD6XOmE7ko2vIKO8F0zPL1NtKxIi+DYXap9lvR0RaA==}
+  posthog-node@5.48.2:
+    resolution: {integrity: sha512-3Ni5upqpbUXL1QM2oU4sL9Y3OycDGgrKI9aJOGHbcF9xkPwR18cq481Tkvn6/CCPbl04p3tjdwQNkGHVveQcag==}
     engines: {node: ^20.20.0 || >=22.22.0}
     peerDependencies:
       rxjs: ^7.0.0
@@ -7318,44 +7325,44 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.228':
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.229':
     optional: true
 
-  '@anthropic-ai/claude-agent-sdk@0.3.228(@anthropic-ai/sdk@0.116.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
+  '@anthropic-ai/claude-agent-sdk@0.3.229(@anthropic-ai/sdk@0.116.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.116.0(zod@4.4.3)
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
       zod: 4.4.3
     optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.228
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.228
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.229
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.229
 
   '@anthropic-ai/sdk@0.116.0(zod@4.4.3)':
     dependencies:
@@ -7522,33 +7529,33 @@ snapshots:
     dependencies:
       '@noble/ciphers': 1.3.0
 
-  '@effect/atom-react@4.0.0-beta.107(effect@4.0.0-beta.107)(react@19.2.8)(scheduler@0.27.0)':
+  '@effect/atom-react@4.0.0-beta.107(effect@4.0.0-rc.108)(react@19.2.8)(scheduler@0.27.0)':
     dependencies:
-      effect: 4.0.0-beta.107
+      effect: 4.0.0-rc.108
       react: 19.2.8
       scheduler: 0.27.0
 
-  '@effect/platform-bun@4.0.0-beta.107(effect@4.0.0-beta.107)':
+  '@effect/platform-bun@4.0.0-rc.108(effect@4.0.0-rc.108)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-beta.107)
-      effect: 4.0.0-beta.107
+      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-rc.108)
+      effect: 4.0.0-rc.108
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node-shared@4.0.0-beta.107(effect@4.0.0-beta.107)':
+  '@effect/platform-node-shared@4.0.0-beta.107(effect@4.0.0-rc.108)':
     dependencies:
       '@types/ws': 8.18.1
-      effect: 4.0.0-beta.107
+      effect: 4.0.0-rc.108
       ws: 8.21.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.0-beta.107(effect@4.0.0-beta.107)(ioredis@5.11.1)':
+  '@effect/platform-node@4.0.0-rc.108(effect@4.0.0-rc.108)(ioredis@5.11.1)':
     dependencies:
-      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-beta.107)
-      effect: 4.0.0-beta.107
+      '@effect/platform-node-shared': 4.0.0-beta.107(effect@4.0.0-rc.108)
+      effect: 4.0.0-rc.108
       ioredis: 5.11.1
       mime: 4.1.0
       undici: 8.10.0
@@ -7556,9 +7563,9 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.0-beta.107(effect@4.0.0-beta.107)':
+  '@effect/sql-pg@4.0.0-rc.108(effect@4.0.0-rc.108)':
     dependencies:
-      effect: 4.0.0-beta.107
+      effect: 4.0.0-rc.108
       pg: 8.23.0
       pg-connection-string: 2.14.0
       pg-cursor: 2.21.0(pg@8.23.0)
@@ -7567,9 +7574,9 @@ snapshots:
     transitivePeerDependencies:
       - pg-native
 
-  '@effect/vitest@4.0.0-beta.107(effect@4.0.0-beta.107)(vitest@4.1.10)':
+  '@effect/vitest@4.0.0-rc.108(effect@4.0.0-rc.108)(vitest@4.1.10)':
     dependencies:
-      effect: 4.0.0-beta.107
+      effect: 4.0.0-rc.108
       vitest: 4.1.10(@types/node@26.2.0)(@vitest/coverage-istanbul@4.1.10)(vite@8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
 
   '@emnapi/core@1.11.1':
@@ -8024,17 +8031,17 @@ snapshots:
       '@emnapi/runtime': 1.4.5
       '@tybys/wasm-util': 0.9.0
 
-  '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
-    dependencies:
-      '@emnapi/core': 1.11.1
-      '@emnapi/runtime': 1.11.1
-      '@tybys/wasm-util': 0.10.3
-    optional: true
-
   '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
     dependencies:
       '@emnapi/core': 1.11.2
       '@emnapi/runtime': 1.11.2
+      '@tybys/wasm-util': 0.10.3
+    optional: true
+
+  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+    dependencies:
+      '@emnapi/core': 1.11.1
+      '@emnapi/runtime': 1.11.1
       '@tybys/wasm-util': 0.10.3
     optional: true
 
@@ -8586,11 +8593,11 @@ snapshots:
       '@pnpm/network.ca-file': 1.0.2
       config-chain: 1.1.13
 
-  '@posthog/core@1.47.0':
+  '@posthog/core@1.47.1':
     dependencies:
-      '@posthog/types': 1.402.2
+      '@posthog/types': 1.403.0
 
-  '@posthog/types@1.402.2': {}
+  '@posthog/types@1.403.0': {}
 
   '@protobufjs/aspromise@1.1.2': {}
 
@@ -9005,7 +9012,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@rolldown/binding-win32-arm64-msvc@1.1.5':
@@ -10365,7 +10372,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.0-beta.107:
+  effect@4.0.0-rc.108:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 4.9.0
@@ -12837,9 +12844,9 @@ snapshots:
 
   postgres-range@1.1.4: {}
 
-  posthog-node@5.48.1:
+  posthog-node@5.48.2:
     dependencies:
-      '@posthog/core': 1.47.0
+      '@posthog/core': 1.47.1
 
   prettier@3.8.1: {}
 
