@@ -71,16 +71,33 @@ export interface StackHandle extends AsyncDisposable {
   logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
 }
 
-export async function createStack(
+const MAX_AUTOMATIC_API_PORT_HANDOFF_ATTEMPTS = 3;
+
+/**
+ * The port lease is intentionally released just before the HTTP server binds.
+ * Another process can claim that port in the small handoff window, so a new
+ * foreground stack may retry its automatic API-port allocation. Explicit API
+ * ports never enter this retry path.
+ */
+const isAddressInUse = (error: unknown, depth = 0): boolean => {
+  if (depth > 8 || typeof error !== "object" || error === null) return false;
+  if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
+  if ("cause" in error) return isAddressInUse(Reflect.get(error, "cause"), depth + 1);
+  return false;
+};
+
+const createStackAttempt = async (
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
   runtime: StackRuntimeSelection,
-): Promise<StackHandle> {
+  preferredApiPort?: number,
+): Promise<StackHandle> => {
   let portLease: PortLease | undefined;
   let resolved: ResolvedStackConfig;
   try {
     resolved = await resolveConfig(config, {
       runtime,
+      ...(preferredApiPort === undefined ? {} : { preferredPorts: { apiPort: preferredApiPort } }),
       portAllocator: (requests, options) =>
         reservePortSet(requests, options).pipe(
           Effect.tap((lease) =>
@@ -174,5 +191,33 @@ export async function createStack(
     );
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
+  }
+};
+
+export async function createStack(
+  config: StackConfig | undefined,
+  platformFactory: PlatformFactory,
+  runtime: StackRuntimeSelection,
+): Promise<StackHandle> {
+  const automaticApiPort = config?.port === undefined;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      // Port zero asks the allocator for an OS-assigned automatic port,
+      // avoiding another attempt at a contended default during handoff.
+      return await createStackAttempt(
+        config,
+        platformFactory,
+        runtime,
+        attempt === 0 ? undefined : 0,
+      );
+    } catch (error) {
+      if (
+        !automaticApiPort ||
+        !isAddressInUse(error) ||
+        attempt + 1 >= MAX_AUTOMATIC_API_PORT_HANDOFF_ATTEMPTS
+      ) {
+        throw error;
+      }
+    }
   }
 }

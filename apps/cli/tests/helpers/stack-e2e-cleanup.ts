@@ -441,7 +441,11 @@ export function createStackE2eCleanupManager(
           failures.push(cleanupErrorDetail(project.dir, error));
         } finally {
           if (home !== undefined) {
-            home.dispose();
+            try {
+              home.dispose();
+            } catch (error) {
+              failures.push(cleanupErrorDetail(home.dir, error));
+            }
           }
         }
       }

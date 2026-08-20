@@ -49,10 +49,6 @@ export function cleanupAutoManagedPaths(config: ResolvedStackConfig): void {
       // Best-effort — temp dir will be cleaned by OS eventually.
     }
   }
-
-  try {
-    rmSync(`${config.postgres.dataDir}_pg_hba_docker.conf`, { force: true });
-  } catch {}
 }
 
 const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.Effect<void> =>
@@ -61,10 +57,10 @@ const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.E
       return;
     }
 
-    const cleanupTargets = [
-      ...config.autoManagedPaths.map((path) => ({ path, recursive: true as const })),
-      { path: `${config.postgres.dataDir}_pg_hba_docker.conf`, recursive: false as const },
-    ];
+    const cleanupTargets = config.autoManagedPaths.map((path) => ({
+      path,
+      recursive: true as const,
+    }));
 
     for (let attempt = 0; attempt < 80; attempt++) {
       yield* Effect.sync(() => {

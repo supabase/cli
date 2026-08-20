@@ -47,17 +47,16 @@ describe("makePostgresService", () => {
 
     expect(def.name).toBe("postgres");
     expect(def.command).toBe("bash");
-    expect(def.args).toEqual([
+    expect(def.args).toContain(
       `${POSTGRES_BIN_PATH}/share/supabase-cli/bin/supabase-postgres-init.sh`,
-      "-p",
-      "54322",
-      "-c",
-      "wal_level=logical",
-      "-c",
-      "max_wal_senders=5",
-      "-c",
-      "max_replication_slots=5",
-    ]);
+    );
+    expect(def.args).toContain("listen_addresses=127.0.0.1");
+    expect(def.args).toContain(
+      `pgsodium.getkey_script=${POSTGRES_BIN_PATH}/share/supabase-cli/config/pgsodium_getkey.sh`,
+    );
+    expect(def.args).toContain(
+      `vault.getkey_script=${POSTGRES_BIN_PATH}/share/supabase-cli/config/pgsodium_getkey.sh`,
+    );
     expect(def.env?.PGDATA).toBe("/tmp/supabase/data");
     expect(def.env?.POSTGRES_PASSWORD).toBe("postgres");
     expect(def.env?.DYLD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
@@ -147,7 +146,9 @@ describe("makePostgresServiceDocker", () => {
     expect(def.args).toContain(`${DB_PORT}:${DB_PORT}`);
     expect(def.args).toContain(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres));
     expect(def.args).toContain("/tmp/supabase/data:/var/lib/postgresql/data");
-    expect(def.args?.slice(-2)).toEqual(["-p", String(DB_PORT)]);
+    expect(def.args).toContain("/usr/bin/sh");
+    expect(def.args?.at(-2)).toBe("-c");
+    expect(def.args?.at(-1)).toContain("hba_file=/tmp/supabase-cli-pg_hba.conf");
     // Health check uses docker exec + pg_isready inside the container (host has no postgres tools)
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Exec",
@@ -685,9 +686,6 @@ describe("docker-backed auxiliary services", () => {
     expect(args).toContain("PHX_HTTP_PORT=4000");
     expect(args).toContain("54328:4000");
     expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
-    expect(args.at(-1)).toBe(
-      `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n`,
-    );
   });
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {

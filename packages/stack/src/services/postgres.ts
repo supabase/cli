@@ -38,12 +38,17 @@ const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
 
 const NATIVE_POSTGRES_RUNTIME_ARGS = [
   "-c",
+  "listen_addresses=127.0.0.1",
+  "-c",
   "wal_level=logical",
   "-c",
   "max_wal_senders=5",
   "-c",
   "max_replication_slots=5",
 ] as const;
+
+const postgresGetKeyScript = (binPath: string): string =>
+  `${binPath}/share/supabase-cli/config/pgsodium_getkey.sh`;
 
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
@@ -86,11 +91,21 @@ const postgresDockerHealthCheck = (
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
+  const getKeyScript = postgresGetKeyScript(opts.binPath);
 
   return {
     name: "postgres",
     command: "bash",
-    args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
+    args: [
+      initScript,
+      "-p",
+      String(opts.port),
+      ...NATIVE_POSTGRES_RUNTIME_ARGS,
+      "-c",
+      `pgsodium.getkey_script=${getKeyScript}`,
+      "-c",
+      `vault.getkey_script=${getKeyScript}`,
+    ],
     env: postgresEnv(opts),
     dependencies: opts.dependencies,
     healthCheck: postgresHealthCheck(opts.binPath, opts.port),
@@ -102,6 +117,28 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const containerName = dockerContainerName("postgres", opts.identity.key);
+  const runtimeArgs = [
+    "-p",
+    String(opts.port),
+    "-c",
+    "listen_addresses=*",
+    "-c",
+    "pgsodium.getkey_script=/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh",
+    "-c",
+    "vault.getkey_script=/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh",
+  ] as const;
+
+  // Native initialization permits only loopback clients. When reusing that
+  // data directory in Docker, route through a temporary HBA copy that adds the
+  // container network rule without mutating the persisted native config.
+  const command = `if [ -s /var/lib/postgresql/data/PG_VERSION ]; then
+  cp /var/lib/postgresql/data/pg_hba.conf /tmp/supabase-cli-pg_hba.conf
+  printf '\\nhost all all all scram-sha-256\\n' >> /tmp/supabase-cli-pg_hba.conf
+  exec /usr/local/bin/entry.sh -c hba_file=/tmp/supabase-cli-pg_hba.conf ${runtimeArgs.join(" ")}
+else
+  exec /usr/local/bin/entry.sh ${runtimeArgs.join(" ")}
+fi`;
+
   return dockerRunService({
     runtime: opts.runtime,
     name: "postgres",
@@ -110,7 +147,8 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],
     env: { POSTGRES_PASSWORD: "postgres" },
-    cmd: ["-p", String(opts.port)],
+    entrypoint: "/usr/bin/sh",
+    cmd: ["-c", command],
     dependencies: opts.dependencies,
     healthCheck: postgresDockerHealthCheck(opts.runtime, containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },

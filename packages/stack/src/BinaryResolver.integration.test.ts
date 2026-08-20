@@ -49,15 +49,34 @@ const makeFixture = (
   return { archive: readFileSync(archive), manifestOverride };
 };
 
+const writeTarOctal = (header: Buffer, offset: number, length: number, value: number): void => {
+  const encoded = `${value.toString(8).padStart(length - 1, "0")}\0`;
+  header.write(encoded, offset, length, "ascii");
+};
+
+const makeTarArchive = (member: string, contents: string): Buffer => {
+  const payload = Buffer.from(contents);
+  const header = Buffer.alloc(512);
+  header.write(member, 0, 100, "utf8");
+  writeTarOctal(header, 100, 8, 0o644);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, payload.length);
+  writeTarOctal(header, 136, 12, 0);
+  header[156] = "0".charCodeAt(0);
+  header.write("ustar\0", 257, 6, "ascii");
+  header.write("00", 263, 2, "ascii");
+  header.fill(0x20, 148, 156);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
+  const padding = Buffer.alloc((512 - (payload.length % 512)) % 512);
+  return Buffer.concat([header, payload, padding, Buffer.alloc(1024)]);
+};
+
 const makeTraversalFixture = (root: string) => {
-  const source = join(root, "traversal-source");
-  const tar = join(root, "postgrest-traversal.tar");
   const archive = join(root, "postgrest-traversal.tar.zst");
-  rmSync(source, { recursive: true, force: true });
-  mkdirSync(source, { recursive: true });
   writeFileSync(join(root, "outside.txt"), "must not extract\n");
-  execFileSync("tar", ["-cf", tar, "-C", source, "../outside.txt"]);
-  writeFileSync(archive, zstdCompressSync(readFileSync(tar)));
+  writeFileSync(archive, zstdCompressSync(makeTarArchive("../outside.txt", "must not extract\n")));
   return { archive: readFileSync(archive), manifestOverride: {} };
 };
 
