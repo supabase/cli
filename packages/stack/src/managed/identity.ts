@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { Effect, FileSystem, PlatformError } from "effect";
-import { claimFileAtomically } from "./atomic-claim.ts";
+import { claimFileAtomically, type FileClaimOutcome } from "./atomic-claim.ts";
 import {
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
@@ -64,6 +64,22 @@ const inaccessibleIdentity = (
   error: PlatformError.PlatformError,
 ): InvalidManagedIdentityError =>
   new InvalidManagedIdentityError({ message: `${label} is inaccessible (${error.message})` });
+
+const claimIdentityFile = (
+  path: string,
+  content: string,
+  label: string,
+  mode?: number,
+): Effect.Effect<FileClaimOutcome, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+  claimFileAtomically(path, content, { mode }).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(
+        new InvalidManagedIdentityError({
+          message: `${label} could not be published at ${path}: ${error.message}. The filesystem must support hard links for managed identity publication.`,
+        }),
+      ),
+    ),
+  );
 
 /** Effect FileSystem variant used by managed discovery. */
 export const canonicalizeManagedWorkspacePathWithFileSystem = (
@@ -147,10 +163,11 @@ export const ensureOrdinaryWorkspaceIdentity = (
       };
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(dirname(markerPath), { recursive: true });
-      const outcome = yield* claimFileAtomically(
+      const outcome = yield* claimIdentityFile(
         markerPath,
         `${JSON.stringify(identity, null, 2)}\n`,
-        { mode: 0o600 },
+        "Ordinary workspace identity",
+        0o600,
       );
       if (outcome === "claimed") return { identity, created: true, markerPath };
 
@@ -232,10 +249,11 @@ export const ensureDetachedContextIdentity = (
       if (existing !== undefined) return { contextId: existing, created: false };
       const contextId = createManagedUuid(idFactory, "contextId");
       const markerPath = gitDetachedContextIdentityPath(gitDirectory);
-      const outcome = yield* claimFileAtomically(
+      const outcome = yield* claimIdentityFile(
         markerPath,
         `${JSON.stringify({ version: DETACHED_CONTEXT_VERSION, contextId }, null, 2)}\n`,
-        { mode: 0o600 },
+        "Detached context identity",
+        0o600,
       );
       if (outcome === "claimed") return { contextId, created: true };
       const winner = yield* readDetachedContextId(gitDirectory);
@@ -318,10 +336,11 @@ export const ensureGitCheckoutLocation = (
       const existing = yield* readGitCheckoutLocation(gitDirectory);
       if (existing !== undefined) return { workspacePath: existing, created: false };
       const markerPath = gitCheckoutLocationPath(gitDirectory);
-      const outcome = yield* claimFileAtomically(
+      const outcome = yield* claimIdentityFile(
         markerPath,
         `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
-        { mode: 0o600 },
+        "Git checkout location",
+        0o600,
       );
       if (outcome === "claimed") return { workspacePath, created: true };
       const winner = yield* readGitCheckoutLocation(gitDirectory);

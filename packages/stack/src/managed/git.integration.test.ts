@@ -18,7 +18,7 @@ import {
   type GitCheckoutInspection,
 } from "./git.ts";
 import { ensureOrdinaryWorkspaceIdentity } from "./identity.ts";
-import { UnsupportedGitWorkspaceError } from "./model.ts";
+import { InvalidManagedIdentityError, UnsupportedGitWorkspaceError } from "./model.ts";
 
 const { makeRoot, removeAll } = temporaryRoots("managed-git-test-");
 const gitLayer = Layer.mergeAll(BunFileSystem.layer, gitConfigStoreLayer);
@@ -227,6 +227,16 @@ describe("managed Git workspace identity", () => {
           entry.startsWith("supabase-checkout.json.tmp."),
         ),
       ).toEqual([]);
+
+      const workspace = makeDirectory(root, "ordinary");
+      const ordinaryFailure = yield* Effect.flip(
+        ensureOrdinaryWorkspaceIdentity(workspace).pipe(Effect.provide(providedLayer)),
+      );
+      expect(ordinaryFailure).toBeInstanceOf(InvalidManagedIdentityError);
+      expect(ordinaryFailure.message).toContain("hard links");
+      const ordinaryMetadata = join(workspace, ".supabase");
+      expect(yield* fs.exists(join(ordinaryMetadata, "identity.json"))).toBe(false);
+      expect(yield* fs.readDirectory(ordinaryMetadata)).toEqual([]);
     }),
   );
 });
