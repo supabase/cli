@@ -35,6 +35,13 @@ const controlTransport: ControlTransport["Service"] = {
           hostname: endpoint.hostname,
           port: endpoint.port,
           disablePreemptiveShutdown: true,
+          // This server is later reused as the daemon's control server (the
+          // supervisor provides it to DaemonServer as HttpServer). idleTimeout: 0
+          // disables Bun.serve's 10s idle kill, which would otherwise sever the
+          // daemon's long-quiet connections: /status/stream SSE goes silent while
+          // nothing changes, and POST /start | /ready block until the stack is
+          // up, which takes minutes on a cold image cache.
+          idleTimeout: 0,
           routes: {
             [CONTROL_STATUS_PATH]: {
               GET: () =>
@@ -124,7 +131,12 @@ export const controlTransportLayer = Layer.succeed(ControlTransport, controlTran
 export const platformFactory: PlatformFactory = ({ apiPort, releaseApiPort }) =>
   Layer.mergeAll(
     BunServices.layer,
-    Layer.unwrap(releaseApiPort.pipe(Effect.as(BunHttpServer.layer({ port: apiPort })))),
+    // idleTimeout: 0 disables Bun.serve's 10s idle kill for the local API
+    // gateway, which proxies long-lived client connections (realtime
+    // websockets/SSE, slow upstream responses) that legitimately go quiet.
+    Layer.unwrap(
+      releaseApiPort.pipe(Effect.as(BunHttpServer.layer({ port: apiPort, idleTimeout: 0 }))),
+    ),
   );
 
 /** Internal source-mode child target. Compiled CLI dispatch still uses the daemon-bun export. */

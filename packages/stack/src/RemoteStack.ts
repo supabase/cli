@@ -343,78 +343,93 @@ export const RemoteStack = {
 
           start: () =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const path = "/start";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
-                yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
-                  Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const path = "/start";
+                  const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
+                  yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
+                    Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
+                  );
+                }),
+              ),
             ),
 
           stop: () =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
-                yield* dieOnNonOkStatus(
-                  endpoint,
-                  path,
-                  HttpClientResponse.filterStatusOk(response),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const path = "/stop";
+                  const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
+                  yield* dieOnNonOkStatus(
+                    endpoint,
+                    path,
+                    HttpClientResponse.filterStatusOk(response),
+                  );
+                }),
+              ),
             ),
 
           dispose: () =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
-                yield* dieOnNonOkStatus(
-                  endpoint,
-                  path,
-                  HttpClientResponse.filterStatusOk(response),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const path = "/stop";
+                  const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
+                  yield* dieOnNonOkStatus(
+                    endpoint,
+                    path,
+                    HttpClientResponse.filterStatusOk(response),
+                  );
+                }),
+              ),
             ),
 
           startService: (name: string) =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/start`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                });
-                yield* expectDaemonOk(endpoint, path, response, name);
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const servicePath = yield* publicServicePath(name);
+                  const path = `/services/${servicePath}/start`;
+                  const response = yield* httpResponse(endpoint, path, {
+                    method: "POST",
+                    signal,
+                  });
+                  yield* expectDaemonOk(endpoint, path, response, name);
+                }),
+              ),
             ),
 
           stopService: (name: string) =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/stop`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                });
-                yield* expectDaemonOk(endpoint, path, response, name).pipe(
-                  Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
-                  Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const servicePath = yield* publicServicePath(name);
+                  const path = `/services/${servicePath}/stop`;
+                  const response = yield* httpResponse(endpoint, path, {
+                    method: "POST",
+                    signal,
+                  });
+                  yield* expectDaemonOk(endpoint, path, response, name).pipe(
+                    Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
+                    Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
+                  );
+                }),
+              ),
             ),
 
           restartService: (name: string) =>
             withHttpTransportClient(
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/restart`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                });
-                yield* expectDaemonOk(endpoint, path, response, name);
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const servicePath = yield* publicServicePath(name);
+                  const path = `/services/${servicePath}/restart`;
+                  const response = yield* httpResponse(endpoint, path, {
+                    method: "POST",
+                    signal,
+                  });
+                  yield* expectDaemonOk(endpoint, path, response, name);
+                }),
+              ),
             ),
 
           reloadFunctions: (opts) =>
