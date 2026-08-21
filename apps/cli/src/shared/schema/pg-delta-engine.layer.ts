@@ -25,7 +25,10 @@ import {
   type SchemaExportResult,
   type SchemaPlanFilesInput,
 } from "./pg-delta-engine.service.ts";
-import { prepareDeclarativeShadow } from "./prepare-declarative-shadow.ts";
+import {
+  filesForDeclarativeShadowLoad,
+  prepareDeclarativeShadow,
+} from "./prepare-declarative-shadow.ts";
 import { schemaIsolatedPlanOptions } from "./schema-plan-options.ts";
 import { formatSchemaSql, SCHEMA_SQL_FORMAT_DEFAULTS } from "./sql-format-defaults.ts";
 import type { SchemaHazardSummary, SchemaPlanView, SchemaRenderedFile } from "./schema-types.ts";
@@ -130,13 +133,13 @@ export const pgDeltaSchemaEngineLayer = Layer.effect(
         }),
       planFiles: (input: SchemaPlanFilesInput) =>
         Effect.gen(function* () {
-          yield* prepareDeclarativeShadow(input.shadowPool);
+          yield* prepareDeclarativeShadow(input.shadowPool, input.files);
           return yield* Effect.tryPromise({
             try: async () => {
               const result = await planSchemaFiles(
                 input.targetPool,
                 input.shadowPool,
-                [...input.files],
+                [...filesForDeclarativeShadowLoad(input.files)],
                 {
                   ...schemaIsolatedPlanOptions,
                   ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),
@@ -186,11 +189,7 @@ export const pgDeltaSchemaEngineLayer = Layer.effect(
                 ),
             };
           },
-          catch: (cause) =>
-            engineCause(
-              cause,
-              "The draft journal recorded the failure. Reset or repair; do not retry blindly.",
-            ),
+          catch: (cause) => engineCause(cause, "Retry `supabase schema apply`."),
         }),
       provisionShadow: shadows.provision,
       provisionPlatform: shadows.provisionPlatform,

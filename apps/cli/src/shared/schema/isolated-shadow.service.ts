@@ -4,9 +4,9 @@ import type { SchemaEngineError } from "./schema-errors.ts";
 import type { SchemaShadow } from "./schema-shadow.ts";
 
 interface IsolatedShadowProvisionerShape {
-  /** Declaration-prep shadow: platform baseline with pgjwt/pgcrypto/uuid-ossp dropped. */
+  /** Platform baseline with webhooks disabled; image extensions stay installed. */
   readonly provision: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;
-  /** Platform baseline with no project migrations and no declaration-prep drops. */
+  /** Platform baseline with no project migrations; webhooks follow config. */
   readonly provisionPlatform: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;
   /** Platform-baselined Docker shadow with local migration files applied. */
   readonly provisionMigrations: Effect.Effect<SchemaShadow, SchemaEngineError, Scope.Scope>;

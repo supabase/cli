@@ -9,7 +9,7 @@ import { applySchema } from "./apply-schema.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
-import type { SchemaDraftJournal, SchemaPlanView } from "./schema-types.ts";
+import type { SchemaApplyOutcome, SchemaDraftJournal, SchemaPlanView } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
 
 function emptyPlan(): Plan {
@@ -91,6 +91,7 @@ function setup(
     catalogMatch?: boolean;
     planChanges?: boolean;
     plan?: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">>;
+    applyPlan?: SchemaApplyOutcome;
   } = {},
 ) {
   const out = mockOutput({ interactive: false });
@@ -184,14 +185,16 @@ function setup(
           planFiles: () => Effect.succeed(planView(opts.planChanges === true, opts.plan ?? {})),
           diffPools: () => Effect.succeed(planView(opts.catalogMatch !== true)),
           applyPlan: () =>
-            Effect.succeed({
-              partial: false,
-              report: {
-                status: "applied",
-                appliedActions: 0,
-                actionStatuses: [],
+            Effect.succeed(
+              opts.applyPlan ?? {
+                partial: false,
+                report: {
+                  status: "applied",
+                  appliedActions: 0,
+                  actionStatuses: [],
+                },
               },
-            }),
+            ),
           provisionPlatform: Effect.succeed({
             url: "postgresql://postgres:postgres@127.0.0.1:1/postgres",
           }),
@@ -280,6 +283,46 @@ describe("applySchema", () => {
         });
       }
       expect(ctx.journaled).toBe(false);
+    });
+  });
+
+  it.live("names the failing SQL when apply stops partway", () => {
+    const ctx = setup({
+      history: [{ version: localFile.version, name: localFile.name }],
+      planChanges: true,
+      applyPlan: {
+        partial: true,
+        report: {
+          status: "failed",
+          appliedActions: 0,
+          actionStatuses: ["unapplied"],
+          error: {
+            actionIndex: 7,
+            sql: 'DROP EXTENSION "pgcrypto"',
+            message: "cannot drop extension pgcrypto because other objects depend on it",
+          },
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* applySchema().pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(failure._tag).toBe("Some");
+      if (failure._tag === "Some") {
+        expect(failure.value).toMatchObject({
+          _tag: "SchemaPartialApplyError",
+          detail: expect.stringMatching(
+            /cannot drop extension pgcrypto because other objects depend on it[\s\S]*DROP EXTENSION "pgcrypto"/,
+          ),
+          suggestion: expect.stringContaining("supabase db reset"),
+        });
+        expect(failure.value).toMatchObject({
+          detail: expect.not.stringMatching(/plan|segment|in-doubt/i),
+          suggestion: expect.not.stringMatching(/plan|segment|in-doubt|repair/i),
+        });
+      }
+      expect(ctx.journaled).toBe(true);
     });
   });
 

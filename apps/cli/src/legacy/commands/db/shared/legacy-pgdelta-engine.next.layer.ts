@@ -1,6 +1,11 @@
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
 import type { Pool } from "pg";
 
+import {
+  filesForDeclarativeShadowLoad,
+  prepareDeclarativeShadow,
+} from "../../../../shared/schema/prepare-declarative-shadow.ts";
+import { SchemaEngineError } from "../../../../shared/schema/schema-errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   legacyLayeredParseEnv,
@@ -42,7 +47,9 @@ function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined 
 
 export const legacyPgDeltaNextEngineError = (cause: unknown) => {
   if (cause instanceof LegacyPgDeltaEngineError) return cause;
-  const suggestion = legacyPgDeltaNextConnectSuggestion(cause);
+  const suggestion =
+    legacyPgDeltaNextConnectSuggestion(cause) ??
+    (cause instanceof SchemaEngineError ? cause.suggestion : undefined);
   const diagnostics = cause instanceof LegacyPgDeltaNextError ? cause.diagnostics : undefined;
   return new LegacyPgDeltaEngineError({
     message:
@@ -350,10 +357,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               ],
               { concurrency: 2 },
             );
+            yield* prepareDeclarativeShadow(declarativePool, input.files);
             const result = yield* adapter.planDeclarativeSchema({
               targetPool: migrationsPool,
               shadowPool: declarativePool,
-              files: input.files,
+              files: filesForDeclarativeShadowLoad(input.files),
               allowDrops: true,
               ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
               debug: input.debug,

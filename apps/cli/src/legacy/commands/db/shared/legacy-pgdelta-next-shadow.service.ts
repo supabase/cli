@@ -50,16 +50,16 @@ interface LegacyPgDeltaNextShadowShape {
     Scope.Scope
   >;
   /**
-   * Platform baseline only: no project migrations, no pgjwt/pgcrypto/uuid-ossp
-   * drop. Shares the migrations cache key (`webhooks: config`). Removed when
-   * the current Effect scope closes.
+   * Platform baseline only: no project migrations. Shares the migrations cache
+   * key (`webhooks: config`). Removed when the current Effect scope closes.
    */
   readonly provisionPlatform: (
     opts: LegacyPgDeltaNextShadowInput,
   ) => Effect.Effect<LegacyPgDeltaNextPlatformShadow, LegacyDeclarativeShadowDbError, Scope.Scope>;
   /**
-   * Provisions only the declarative next-engine shadow (stripped platform
-   * baseline, no project migrations). Removed when the current Effect scope closes.
+   * Platform baseline with webhooks disabled and no project migrations. Image
+   * extensions stay installed; declaration prep runs later when files are known.
+   * Removed when the current Effect scope closes.
    */
   readonly provisionDeclarative: (
     opts: LegacyPgDeltaNextShadowInput,

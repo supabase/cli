@@ -135,9 +135,14 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
         yield* state.writeJournal(journal);
 
         if (outcome.partial) {
+          const failed = outcome.report.error;
           return yield* new SchemaPartialApplyError({
-            detail: "schema apply stopped after a partial or in-doubt segment.",
-            suggestion: "Reset or repair the local database. Do not retry the same plan blindly.",
+            detail:
+              failed === undefined
+                ? "Could not apply schema changes to the local database."
+                : `Could not apply schema changes to the local database.\n${failed.message}\n${failed.sql}`,
+            suggestion:
+              "The local database may be only partly updated. Run `supabase db reset`, fix the failing change in supabase/schemas, then retry `supabase schema apply`.",
           });
         }
 
