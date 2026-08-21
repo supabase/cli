@@ -8,21 +8,6 @@ async function cleanupBranch(
   name: string,
   ref: string,
 ): Promise<void> {
-  const listed = await cli(["branches", "list", "--output", "json", "--project-ref", ref]);
-  if (listed.exitCode !== 0) {
-    throw new Error(
-      `branches list cleanup failed (exit ${listed.exitCode})\n${listed.stdout}\n${listed.stderr}`,
-    );
-  }
-  const branches: unknown = JSON.parse(listed.stdout);
-  const exists =
-    Array.isArray(branches) &&
-    branches.some(
-      (branch) =>
-        typeof branch === "object" && branch !== null && "name" in branch && branch.name === name,
-    );
-  if (!exists) return;
-
   const deleted = await cli(["branches", "delete", name, "--project-ref", ref, "--yes"]);
   if (
     deleted.exitCode !== 0 &&
