@@ -10812,6 +10812,21 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     id: Schema.String.annotate({ description: "Project ref." }),
     attributes: Schema.Struct({
       database: Schema.Struct({
+        major_version: Schema.Number.annotate({
+          description:
+            "The major Postgres version the database runs. `17` covers both Postgres 17 and Oriole on 17, since Oriole is a storage engine rather than a version.",
+        })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
+              expected: "a value greater than or equal to -9007199254740991",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(9007199254740991).annotate({
+              expected: "a value less than or equal to 9007199254740991",
+            }),
+          ),
         ssl_enforced: Schema.Boolean.annotate({
           description: "Whether the database rejects plaintext connections",
         }),

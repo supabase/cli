@@ -126,7 +126,7 @@ export const SERVICE_CATALOG = {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.163",
+    defaultVersion: "17.6.1.165",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgres" },
@@ -172,7 +172,7 @@ export const SERVICE_CATALOG = {
   auth: {
     name: "auth",
     configKey: "auth",
-    defaultVersion: "v2.195.0",
+    defaultVersion: "v2.196.0",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "auth" },
@@ -203,7 +203,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.1",
+    defaultVersion: "v2.129.3",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -215,7 +215,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.70.1",
+    defaultVersion: "v1.70.3",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -275,7 +275,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.3",
+    defaultVersion: "v1.50.4",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
