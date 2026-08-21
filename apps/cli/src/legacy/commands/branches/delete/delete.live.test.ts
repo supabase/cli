@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, testLiveProject } from "../../../../../tests/helpers/live-context.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
-testLiveProject("deletes a preview branch", async ({ run, projectRef, skip }) => {
+test("deletes a preview branch", async ({ run, projectRef, skip }) => {
   const name = `cli-e2e-delete-${randomUUID().slice(0, 8)}`;
   const created = await run(["branches", "create", name, "--project-ref", projectRef]);
   if (

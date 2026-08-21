@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, testLiveProject } from "../../../../../tests/helpers/live-context.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
 async function unsetSecret(
   run: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
@@ -14,7 +14,7 @@ async function unsetSecret(
   }
 }
 
-testLiveProject("unsets a secret from the remote project", async ({ run, projectRef }) => {
+test("unsets a secret from the remote project", async ({ run, projectRef }) => {
   const name = `CLI_E2E_UNSET_${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
   const created = await run(["secrets", "set", `${name}=live-value`, "--project-ref", projectRef]);
   requireLiveSuccess(created, "secrets set setup");

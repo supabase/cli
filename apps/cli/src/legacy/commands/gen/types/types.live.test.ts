@@ -1,13 +1,10 @@
 import { expect } from "vitest";
 
-import { testLiveDataPlane } from "../../../../../tests/helpers/live-context.ts";
+import { test } from "../../../../../tests/helpers/live.ts";
 
-testLiveDataPlane(
-  "generates TypeScript types from the remote schema",
-  async ({ run, dbUrl, projectRef }) => {
-    const targetArgs = dbUrl.length > 0 ? ["--db-url", dbUrl] : ["--project-id", projectRef];
-    const result = await run(["gen", "types", ...targetArgs, "--lang", "typescript"]);
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/export type (Database|Json)/);
-  },
-);
+test("generates TypeScript types from the remote schema", async ({ run, dbUrl, projectRef }) => {
+  const targetArgs = dbUrl.length > 0 ? ["--db-url", dbUrl] : ["--project-id", projectRef];
+  const result = await run(["gen", "types", ...targetArgs, "--lang", "typescript"]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stdout).toMatch(/export type (Database|Json)/);
+});

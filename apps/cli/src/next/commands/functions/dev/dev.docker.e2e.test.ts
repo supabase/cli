@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -7,7 +7,6 @@ import {
   runSupabase,
   spawnSupabase,
 } from "../../../../../tests/helpers/cli.ts";
-import { describeLocalStackLive } from "../../../../../tests/helpers/live.ts";
 import { cleanupRegisteredStackProjects } from "../../../../../tests/helpers/stack-e2e-cleanup.ts";
 
 const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
@@ -73,8 +72,8 @@ async function waitForFunctionResponse(
 
 // This crosses the compiled CLI, detached supervisor, full local stack, file
 // watcher, and HTTP runtime boundaries. Keep the one golden path in the
-// opt-in live suite instead of slowing and destabilizing ordinary e2e shards.
-describeLocalStackLive("supabase functions dev (live)", () => {
+// opt-in e2e suite instead of slowing and destabilizing ordinary e2e shards.
+describe("supabase functions dev (e2e)", () => {
   afterEach(cleanupRegisteredStackProjects);
 
   test(

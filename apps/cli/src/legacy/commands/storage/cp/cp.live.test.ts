@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, testLiveStorage } from "../../../../../tests/helpers/live-context.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
@@ -17,26 +17,29 @@ async function removeObject(
   }
 }
 
-testLiveStorage(
-  "copies a local file to the remote bucket",
-  async ({ run, projectRef, dbPassword, storageBucket, workspace }) => {
-    const suffix = randomUUID().slice(0, 8);
-    const local = join(workspace.path, `upload-${suffix}.txt`);
-    const remote = `ss:///${storageBucket}/upload-${suffix}.txt`;
-    await writeFile(local, "live-e2e storage payload\n");
+test("copies a local file to the remote bucket", async ({
+  run,
+  projectRef,
+  dbPassword,
+  storageBucket,
+  workspace,
+}) => {
+  const suffix = randomUUID().slice(0, 8);
+  const local = join(workspace.path, `upload-${suffix}.txt`);
+  const remote = `ss:///${storageBucket}/upload-${suffix}.txt`;
+  await writeFile(local, "live-e2e storage payload\n");
 
-    const linked = await run(["link", "--project-ref", projectRef], {
-      env: { SUPABASE_DB_PASSWORD: dbPassword },
-    });
-    requireLiveSuccess(linked, "link setup for storage cp");
+  const linked = await run(["link", "--project-ref", projectRef], {
+    env: { SUPABASE_DB_PASSWORD: dbPassword },
+  });
+  requireLiveSuccess(linked, "link setup for storage cp");
 
-    let uploaded = false;
-    try {
-      const result = await run(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
-      expect(result.exitCode, result.stderr).toBe(0);
-      uploaded = true;
-    } finally {
-      if (uploaded) await removeObject(run, remote);
-    }
-  },
-);
+  let uploaded = false;
+  try {
+    const result = await run(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    uploaded = true;
+  } finally {
+    if (uploaded) await removeObject(run, remote);
+  }
+});

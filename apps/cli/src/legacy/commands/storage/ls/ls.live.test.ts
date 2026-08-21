@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, testLiveStorage } from "../../../../../tests/helpers/live-context.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
@@ -17,27 +17,30 @@ async function removeObject(
   }
 }
 
-testLiveStorage(
-  "lists an uploaded object",
-  async ({ run, projectRef, dbPassword, storageBucket, workspace }) => {
-    const suffix = randomUUID().slice(0, 8);
-    const local = join(workspace.path, `upload-${suffix}.txt`);
-    const remote = `ss:///${storageBucket}/upload-${suffix}.txt`;
-    await writeFile(local, "live-e2e storage payload\n");
+test("lists an uploaded object", async ({
+  run,
+  projectRef,
+  dbPassword,
+  storageBucket,
+  workspace,
+}) => {
+  const suffix = randomUUID().slice(0, 8);
+  const local = join(workspace.path, `upload-${suffix}.txt`);
+  const remote = `ss:///${storageBucket}/upload-${suffix}.txt`;
+  await writeFile(local, "live-e2e storage payload\n");
 
-    const linked = await run(["link", "--project-ref", projectRef], {
-      env: { SUPABASE_DB_PASSWORD: dbPassword },
-    });
-    requireLiveSuccess(linked, "link setup for storage ls");
-    const uploaded = await run(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
-    requireLiveSuccess(uploaded, "storage cp setup for storage ls");
+  const linked = await run(["link", "--project-ref", projectRef], {
+    env: { SUPABASE_DB_PASSWORD: dbPassword },
+  });
+  requireLiveSuccess(linked, "link setup for storage ls");
+  const uploaded = await run(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+  requireLiveSuccess(uploaded, "storage cp setup for storage ls");
 
-    try {
-      const result = await run(["storage", "ls", `ss:///${storageBucket}/`, ...STORAGE_FLAGS]);
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(result.stdout).toContain(`upload-${suffix}.txt`);
-    } finally {
-      await removeObject(run, remote);
-    }
-  },
-);
+  try {
+    const result = await run(["storage", "ls", `ss:///${storageBucket}/`, ...STORAGE_FLAGS]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`upload-${suffix}.txt`);
+  } finally {
+    await removeObject(run, remote);
+  }
+});

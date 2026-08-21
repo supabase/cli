@@ -5,10 +5,9 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 
-import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
-import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
+import { requireCliSuccess, runSupabase } from "../../../../tests/helpers/cli.ts";
 import {
   legacySanitizeProjectId,
   legacyServiceContainerName,
@@ -26,7 +25,7 @@ const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
  * `--exclude` values for the 3 heaviest/least-relevant services — same intent
- * `stop.live.test.ts`/`status.live.test.ts` already documented for their own
+ * `stop.e2e.test.ts`/`status.e2e.test.ts` already documented for their own
  * reduced-stack `start` call (Studio's Next.js build, the Logflare/Vector
  * logging pipeline), but "logflare" here, NOT "analytics" like those two
  * siblings. `LEGACY_SERVICE_CATALOG`'s `excludeKey` for the logflare service
@@ -43,10 +42,10 @@ const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare"
  * Services the running-container assertion below must NOT expect to be running, even though
  * they are neither in `EXCLUDED_SERVICE_KEYS` nor `--exclude`d on the `start` call itself:
  *  - `supavisor` — `db.pooler.enabled` defaults to `false` (`packages/config/src/db.ts`,
- *    `defaultPoolerEnabled`), and `runSupabaseLive(["init"], ...)` above writes a config.toml
+ *    `defaultPoolerEnabled`), and `runSupabase(["init"], ...)` above writes a config.toml
  *    with no override, so it's genuinely disabled on this test's stack, not merely unasserted.
  *  - `imgproxy` — gated on `storage.image_transformation.enabled` (`start.gates.ts:169`),
- *    which defaults to `false`/absent; `runSupabaseLive(["init"], ...)` writes a config.toml
+ *    which defaults to `false`/absent; `runSupabase(["init"], ...)` writes a config.toml
  *    with `[storage.image_transformation]` still commented out
  *    (`project-init.templates.ts:132-133`), so imgproxy is genuinely disabled on this test's stack.
  */
@@ -61,18 +60,18 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 
 // `start` is the one local-dev-stack command whose correctness genuinely
 // depends on a real Docker daemon — real label filtering and real container
-// lifecycle, not just CLI exit codes. `describeLocalStackLive` gates the
-// "we're in a configured live runner" signal (see stop.live.test.ts's own
+// lifecycle, not just CLI exit codes. `describe` gates the
+// "we're in a configured e2e runner" signal (see stop.e2e.test.ts's own
 // comment for why this, not a Management-API gate, is correct here). See
-// AGENTS.md's "Live tests" section for the full convention.
-describeLocalStackLive("supabase start (live)", () => {
+// AGENTS.md's "e2e tests" section for the full convention.
+describe("supabase start (e2e)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {
     if (projectDir === undefined) return;
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabaseLive(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
   });
@@ -99,13 +98,13 @@ describeLocalStackLive("supabase start (live)", () => {
         "vector",
       ];
 
-      const init = await runSupabaseLive(["init"], {
+      const init = await runSupabase(["init"], {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      requireLiveSuccess(init, "init setup");
+      requireCliSuccess(init, "init setup");
 
-      const start = await runSupabaseLive(startArgs, {
+      const start = await runSupabase(startArgs, {
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -151,7 +150,7 @@ describeLocalStackLive("supabase start (live)", () => {
         Status: "exited",
       });
 
-      const restart = await runSupabaseLive(startArgs, {
+      const restart = await runSupabase(startArgs, {
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -196,11 +195,11 @@ describeLocalStackLive("supabase start (live)", () => {
         ).toBe(!isExcluded);
       }
 
-      const status = await runSupabaseLive(["status"], {
+      const status = await runSupabase(["status"], {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      requireLiveSuccess(status, "status setup");
+      requireCliSuccess(status, "status setup");
     },
   );
 
@@ -210,11 +209,11 @@ describeLocalStackLive("supabase start (live)", () => {
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-proxy-"));
 
-      const init = await runSupabaseLive(["init"], {
+      const init = await runSupabase(["init"], {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      requireLiveSuccess(init, "init setup");
+      requireCliSuccess(init, "init setup");
 
       let proxyConnections = 0;
       const proxy = createServer((socket) => {
@@ -238,7 +237,7 @@ describeLocalStackLive("supabase start (live)", () => {
             : ["--exclude", entry.excludeKey],
         );
         const proxyUrl = `http://127.0.0.1:${address.port}`;
-        const start = await runSupabaseLive(["start", ...excludeArgs], {
+        const start = await runSupabase(["start", ...excludeArgs], {
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
           env: {
@@ -281,11 +280,11 @@ describeLocalStackLive("supabase start (live)", () => {
       // finds this deliberately broken build and never reaches a registry.
       const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
 
-      const init = await runSupabaseLive(["init"], {
+      const init = await runSupabase(["init"], {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      requireLiveSuccess(init, "init setup");
+      requireCliSuccess(init, "init setup");
 
       // A `scratch` image whose entrypoint is not an executable binary — the
       // kernel refuses it with exactly the "exec format error" this diagnoses.
@@ -306,7 +305,7 @@ describeLocalStackLive("supabase start (live)", () => {
             ? []
             : ["--exclude", entry.excludeKey],
         );
-        const start = await runSupabaseLive(["start", ...excludeArgs], {
+        const start = await runSupabase(["start", ...excludeArgs], {
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
         });

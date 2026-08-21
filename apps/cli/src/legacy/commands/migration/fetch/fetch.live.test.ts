@@ -6,8 +6,8 @@ import { expect } from "vitest";
 import {
   liveDatabaseTargetArgs,
   requireLiveSuccess,
-  testLiveDestructiveDataPlane,
-} from "../../../../../tests/helpers/live-context.ts";
+  test,
+} from "../../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
@@ -34,7 +34,7 @@ function liveMigrationVersion(): string {
 // table then upserts the version from the local file), establishing
 // the table + a row for `fetch` to read back. The shared fixture's pooler URL is
 // passed explicitly so the test does not fall back to a direct IPv6 host.
-testLiveDestructiveDataPlane(
+test(
   "fetches a seeded remote migration into the local migrations directory",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ run, dbUrl, projectRef }) => {

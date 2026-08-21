@@ -473,3 +473,14 @@ export async function runSupabase(
   const result = await spawned.waitForExit();
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
 }
+
+export function requireCliSuccess(
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  command: string,
+): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
+}

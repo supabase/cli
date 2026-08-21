@@ -4,11 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
-import {
-  describeLocalStackLive,
-  runSupabaseLive,
-} from "../../../../../../../tests/helpers/live.ts";
-import { requireLiveSuccess } from "../../../../../../../tests/helpers/live-context.ts";
+import { describe } from "vitest";
+import { requireCliSuccess, runSupabase } from "../../../../../../../tests/helpers/cli.ts";
 
 const COMMAND_TIMEOUT_MS = 280_000;
 const SCENARIO_TIMEOUT_MS = 900_000;
@@ -39,17 +36,17 @@ function migrationFiles(projectDir: string): ReadonlyArray<string> {
     : [];
 }
 
-describeLocalStackLive("db schema declarative sync (live)", () => {
+describe("db schema declarative sync (e2e)", () => {
   let projectDir = "";
 
   beforeAll(async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-live-"));
 
-    const init = await runSupabaseLive(["init"], {
+    const init = await runSupabase(["init"], {
       cwd: projectDir,
       exitTimeoutMs: COMMAND_TIMEOUT_MS,
     });
-    requireLiveSuccess(init, "init setup");
+    requireCliSuccess(init, "init setup");
 
     const configPath = path.join(projectDir, "supabase", "config.toml");
     const config = readFileSync(configPath, "utf8");
@@ -68,7 +65,7 @@ describeLocalStackLive("db schema declarative sync (live)", () => {
     mkdirSync(schemasDir, { recursive: true });
     writeFileSync(path.join(schemasDir, "public.sql"), initialDesiredSchema);
 
-    const start = await runSupabaseLive(
+    const start = await runSupabase(
       [
         "start",
         "--exclude",
@@ -86,12 +83,12 @@ describeLocalStackLive("db schema declarative sync (live)", () => {
       ],
       { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
     );
-    requireLiveSuccess(start, "start setup");
+    requireCliSuccess(start, "start setup");
   }, COMMAND_TIMEOUT_MS);
 
   afterAll(async () => {
     if (projectDir.length === 0) return;
-    await runSupabaseLive(["stop", "--no-backup"], {
+    await runSupabase(["stop", "--no-backup"], {
       cwd: projectDir,
       exitTimeoutMs: COMMAND_TIMEOUT_MS,
     }).catch(() => undefined);
@@ -102,7 +99,7 @@ describeLocalStackLive("db schema declarative sync (live)", () => {
     "applies a representative declarative schema and converges",
     { timeout: SCENARIO_TIMEOUT_MS },
     async () => {
-      const sync = await runSupabaseLive(
+      const sync = await runSupabase(
         [
           "db",
           "schema",
@@ -130,13 +127,13 @@ describeLocalStackLive("db schema declarative sync (live)", () => {
         /CREATE\s+(?:SCHEMA|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(?:auth|storage|realtime)["']?/iu,
       );
 
-      const reset = await runSupabaseLive(["db", "reset", "--local", "--no-seed"], {
+      const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
         cwd: projectDir,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
-      requireLiveSuccess(reset, "db reset setup");
+      requireCliSuccess(reset, "db reset setup");
 
-      const converged = await runSupabaseLive(
+      const converged = await runSupabase(
         ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
         {
           cwd: projectDir,

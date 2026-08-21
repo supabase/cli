@@ -1,52 +1,44 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { localStackLiveEnabled } from "./live-env.ts";
+import { deriveLiveProjectHost, liveApiUrl, validateLiveConfig } from "./live-env.ts";
 
-const originalMode = process.env["SUPABASE_LIVE_MODE"];
-const originalLocalStack = process.env["SUPABASE_LIVE_LOCAL_STACK"];
+const originalApiUrl = process.env["SUPABASE_LIVE_API_URL"];
+const originalToken = process.env["SUPABASE_ACCESS_TOKEN"];
 
 afterEach(() => {
-  if (originalMode === undefined) {
-    delete process.env["SUPABASE_LIVE_MODE"];
-  } else {
-    process.env["SUPABASE_LIVE_MODE"] = originalMode;
-  }
-  if (originalLocalStack === undefined) {
-    delete process.env["SUPABASE_LIVE_LOCAL_STACK"];
-  } else {
-    process.env["SUPABASE_LIVE_LOCAL_STACK"] = originalLocalStack;
-  }
+  if (originalApiUrl === undefined) delete process.env["SUPABASE_LIVE_API_URL"];
+  else process.env["SUPABASE_LIVE_API_URL"] = originalApiUrl;
+  if (originalToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+  else process.env["SUPABASE_ACCESS_TOKEN"] = originalToken;
 });
 
-describe("localStackLiveEnabled", () => {
-  it("defaults to enabled for attached live runs", () => {
-    delete process.env["SUPABASE_LIVE_MODE"];
-    delete process.env["SUPABASE_LIVE_LOCAL_STACK"];
+describe("live environment", () => {
+  it("requires both the API URL and access token", () => {
+    delete process.env["SUPABASE_LIVE_API_URL"];
+    delete process.env["SUPABASE_ACCESS_TOKEN"];
+    expect(() => validateLiveConfig()).toThrow("SUPABASE_LIVE_API_URL is required");
 
-    expect(localStackLiveEnabled()).toBe(true);
+    process.env["SUPABASE_LIVE_API_URL"] = "http://localhost:8080";
+    expect(() => validateLiveConfig()).toThrow("SUPABASE_ACCESS_TOKEN is required");
   });
 
-  it("defaults to disabled for managed live runs", () => {
-    process.env["SUPABASE_LIVE_MODE"] = "managed";
-    delete process.env["SUPABASE_LIVE_LOCAL_STACK"];
-
-    expect(localStackLiveEnabled()).toBe(false);
+  it("normalizes and validates HTTP API URLs", () => {
+    process.env["SUPABASE_LIVE_API_URL"] = "http://localhost:8080///";
+    process.env["SUPABASE_ACCESS_TOKEN"] = " token ";
+    expect(validateLiveConfig()).toEqual({
+      apiUrl: "http://localhost:8080",
+      accessToken: "token",
+    });
+    process.env["SUPABASE_LIVE_API_URL"] = "not-a-url";
+    expect(() => liveApiUrl()).toThrow("absolute HTTP(S) URL");
   });
 
-  it("honors an explicit enabled or disabled value", () => {
-    process.env["SUPABASE_LIVE_MODE"] = "managed";
-    process.env["SUPABASE_LIVE_LOCAL_STACK"] = "1";
-    expect(localStackLiveEnabled()).toBe(true);
-
-    process.env["SUPABASE_LIVE_LOCAL_STACK"] = "0";
-    expect(localStackLiveEnabled()).toBe(false);
-  });
-
-  it("rejects unsupported values", () => {
-    process.env["SUPABASE_LIVE_LOCAL_STACK"] = "yes";
-
-    expect(() => localStackLiveEnabled()).toThrow(
-      'Unsupported SUPABASE_LIVE_LOCAL_STACK "yes"; expected "0" or "1"',
+  it("derives the project host from the typed database host", () => {
+    expect(
+      deriveLiveProjectHost("db.abcdefghijklmnopqrst.supabase.co", "abcdefghijklmnopqrst"),
+    ).toBe("supabase.co");
+    expect(() => deriveLiveProjectHost("postgres.supabase.co", "abcdefghijklmnopqrst")).toThrow(
+      "Cannot derive project host",
     );
   });
 });

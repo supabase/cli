@@ -1,209 +1,71 @@
-/**
- * Environment-only helpers for the `live` Vitest project, with **no Vitest test
- * APIs imported**. Vitest evaluates `globalSetup` (live-global-setup.ts) in a
- * separate context before the test workers, where importing `describe`/`test`
- * is not valid — so the global setup imports the env helpers from here, while
- * the test-facing pieces (`describeLive`, `runSupabaseLive`, …) live in
- * `live.ts` and re-export these.
- *
- * Environment contract (provided by the managed-staging workflow or an
- * attached Supabox/local runner):
- * - `SUPABASE_ACCESS_TOKEN` — required; the platform PAT (supabox seeds a
- *   deterministic `sbp_…` token into its mgmt-api database).
- * - `SUPABASE_PROFILE` — selects the API base URL; defaults to `supabase-local`
- *   (→ `http://localhost:8080`, `project_host: supabase.red`). Note the cli does
- *   NOT honor `SUPABASE_API_URL` (Go parity) — the profile is the override.
- * - `SUPABASE_LIVE_API_URL` — base URL the readiness check probes; attached
- *   mode defaults to `http://localhost:8080`, managed staging defaults to
- *   `https://api.supabase.green`.
- * - `SUPABASE_LIVE_PROJECT_REF` — the shared project; gates project-scoped
- *   suites (functions, branches, db, storage). Managed setup populates it.
- * - `SUPABASE_LIVE_LOCAL_STACK` — whether local Docker-stack lifecycle suites
- *   run. Attached runs default to `1`; managed staging defaults to `0`.
- *   Set explicitly to `0` or `1` to override the mode default.
- * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
- *   inherited by the subprocess via the parent environment.
- */
+/** Environment-only live-suite configuration. */
 
-/** Default profile for the host runner: api_url → localhost:8080, project_host → supabase.red. */
-export const LIVE_DEFAULT_PROFILE = "supabase-local";
-
-export type LiveMode = "attached" | "managed";
-
-/**
- * Selects how the run-scoped live environment is obtained.
- *
- * The default is deliberately attached: a token in a developer's environment
- * must never cause the test suite to create or delete a project. Managed mode
- * is an explicit opt-in for staging runs and is selected with
- * `SUPABASE_LIVE_MODE=managed`.
- */
-export function liveMode(): LiveMode {
-  const value = process.env["SUPABASE_LIVE_MODE"];
-  if (value === undefined || value === "" || value === "attached") {
-    return "attached";
-  }
-  if (value === "managed") {
-    return "managed";
-  }
-  throw new Error(
-    `Unsupported SUPABASE_LIVE_MODE ${JSON.stringify(value)}; expected "attached" or "managed"`,
-  );
-}
-
-export function isManagedLive(): boolean {
-  return liveMode() === "managed";
-}
-
-/**
- * Whether suites that own a local Docker development stack should run.
- * Attached runners preserve the historical default; managed project runners
- * only exercise the remote project unless explicitly opted into local-stack
- * coverage.
- */
-export function localStackLiveEnabled(): boolean {
-  const value = process.env["SUPABASE_LIVE_LOCAL_STACK"];
-  if (value === undefined) {
-    return !isManagedLive();
-  }
-  if (value === "0") {
-    return false;
-  }
-  if (value === "1") {
-    return true;
-  }
-  throw new Error(
-    `Unsupported SUPABASE_LIVE_LOCAL_STACK ${JSON.stringify(value)}; expected "0" or "1"`,
-  );
-}
-
-/**
- * Default subprocess exit timeout for live runs. `runSupabase` otherwise caps at
- * 60s, which would kill a slow-but-valid supabox call before the live tests'
- * own (60–120s+) timeouts fire. Generous, but under the `live` project's 300s
- * cap so the per-test timeout stays the real gate. Callers may override.
- */
 export const LIVE_EXIT_TIMEOUT_MS = 240_000;
 
-/** Management API base URL probed by the live readiness check. */
-export function liveApiBaseUrl(): string {
-  return (
-    process.env["SUPABASE_LIVE_API_URL"] ??
-    (isManagedLive() ? "https://api.supabase.green" : "http://localhost:8080")
-  );
-}
-
-/** Profile used by the CLI subprocess. Attached runs preserve the historical
- * local Supabox default; managed staging runs use the built-in staging profile
- * unless the caller explicitly selected another profile. */
-export function liveProfile(): string {
-  return (
-    process.env["SUPABASE_PROFILE"] ?? (isManagedLive() ? "supabase-staging" : LIVE_DEFAULT_PROFILE)
-  );
-}
-
-/** Host used for project-scoped endpoints such as Edge Functions and Storage. */
-export function liveProjectHost(): string {
-  if (process.env["SUPABASE_LIVE_PROJECT_HOST"] !== undefined) {
-    return process.env["SUPABASE_LIVE_PROJECT_HOST"]!;
+export function liveApiUrl(): string {
+  const value = process.env["SUPABASE_LIVE_API_URL"]?.trim();
+  if (value === undefined || value.length === 0) {
+    throw new Error("SUPABASE_LIVE_API_URL is required to run the live suite");
   }
-
-  switch (liveProfile()) {
-    case "supabase":
-      return "supabase.co";
-    case "supabase-staging":
-    case "supabase-local":
-      return "supabase.red";
-    default:
-      return "supabase.red";
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`SUPABASE_LIVE_API_URL must be an absolute HTTP(S) URL: ${value}`);
   }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`SUPABASE_LIVE_API_URL must use http:// or https://: ${value}`);
+  }
+  return url.toString().replace(/\/+$/u, "");
 }
 
-/** Keep an explicitly managed project alive for debugging instead of deleting it. */
+export function liveAccessToken(): string {
+  const token = process.env["SUPABASE_ACCESS_TOKEN"]?.trim();
+  if (token === undefined || token.length === 0) {
+    throw new Error("SUPABASE_ACCESS_TOKEN is required to run the live suite");
+  }
+  return token;
+}
+
+export function validateLiveConfig(): { readonly apiUrl: string; readonly accessToken: string } {
+  return { apiUrl: liveApiUrl(), accessToken: liveAccessToken() };
+}
+
 export function keepLiveProject(): boolean {
   return process.env["SUPABASE_LIVE_KEEP_PROJECT"] === "1";
 }
 
-/**
- * True when the environment carries a platform access token, i.e. the live
- * suite is expected to run. Used to gate `describeLive` so live tests are inert
- * in the default test loop.
- */
-export function isLiveConfigured(): boolean {
-  return Boolean(process.env["SUPABASE_ACCESS_TOKEN"]);
+export function liveProjectName(): string {
+  return process.env["SUPABASE_LIVE_PROJECT_NAME"]?.trim() || "supabase-cli-live";
 }
 
-/**
- * Project ref for project-scoped live scenarios (functions, branches, db,
- * storage, …). The cli-e2e-ci runner sets this once a project has been
- * provisioned on the stack; absent → those suites skip. Returns `undefined`
- * when unset so callers can branch; use `requireLiveProjectRef` inside a
- * `describeLiveProject` block where presence is already guaranteed.
- */
-export function liveProjectRef(): string | undefined {
-  return process.env["SUPABASE_LIVE_PROJECT_REF"];
+export function liveRegion(): string {
+  return process.env["SUPABASE_LIVE_REGION"]?.trim() || "us-east-1";
 }
 
-/**
- * The live project ref, or a thrown error if unset. Safe to call inside a
- * `describeLiveProject` block (the gate guarantees it is present) and gives a
- * typed `string` without a non-null assertion.
- */
-export function requireLiveProjectRef(): string {
-  const ref = liveProjectRef();
-  if (!ref) {
+export function liveOrgId(): string | undefined {
+  const value = process.env["SUPABASE_LIVE_ORG_ID"]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+/** Resolve `<ref>.<host>` from a database host such as `db.<ref>.supabase.co`. */
+export function deriveLiveProjectHost(databaseHost: string, projectRef: string): string {
+  const prefix = `db.${projectRef}.`;
+  if (!databaseHost.startsWith(prefix)) {
     throw new Error(
-      "SUPABASE_LIVE_PROJECT_REF must be set for project-scoped live tests " +
-        "(managed global setup sets it after provisioning a project).",
+      `Cannot derive project host for ${projectRef} from database host ${databaseHost}; expected a ${prefix}<host> name`,
     );
   }
-  return ref;
+  const host = databaseHost.slice(prefix.length);
+  if (host.length === 0 || host.includes("/")) {
+    throw new Error(`Cannot derive a valid project host from database host ${databaseHost}`);
+  }
+  return host;
 }
 
-/**
- * Whether the live project's *data-plane* — its own Postgres instance — is up
- * and healthy. A control-plane-only platform may expose a project record without
- * a reachable database; commands that talk to project Postgres (migration, db,
- * storage) gate on this and SKIP until the data plane is ready.
- *
- * Probes `GET /v1/projects` (already proven reachable by `projects list`) and
- * matches the live ref. Any failure or missing prerequisite returns `false` —
- * "not ready" is the safe default, so a probe error skips rather than fails the
- * suite.
- */
-export async function liveProjectDataPlaneReady(): Promise<boolean> {
-  const token = process.env["SUPABASE_ACCESS_TOKEN"];
-  const ref = liveProjectRef();
-  if (token === undefined || token.length === 0 || ref === undefined) {
-    return false;
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(`${liveApiBaseUrl()}/v1/projects`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return false;
-    }
-    const projects: unknown = await response.json();
-    if (!Array.isArray(projects)) {
-      return false;
-    }
-    return projects.some(
-      (candidate) =>
-        candidate !== null &&
-        typeof candidate === "object" &&
-        "ref" in candidate &&
-        candidate.ref === ref &&
-        "status" in candidate &&
-        candidate.status === "ACTIVE_HEALTHY",
-    );
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timeout);
-  }
+export function isLiveConfigured(): boolean {
+  return (
+    (process.env["SUPABASE_LIVE_API_URL"]?.trim().length ?? 0) > 0 &&
+    (process.env["SUPABASE_ACCESS_TOKEN"]?.trim().length ?? 0) > 0
+  );
 }

@@ -1,20 +1,14 @@
 import { expect } from "vitest";
 
-import {
-  liveDatabaseTargetArgs,
-  testLiveDataPlane,
-} from "../../../../../tests/helpers/live-context.ts";
+import { liveDatabaseTargetArgs, test } from "../../../../../tests/helpers/live.ts";
 
-testLiveDataPlane(
-  "lists migrations from the remote database",
-  async ({ run, dbUrl, projectRef }) => {
-    const result = await run(["migration", "list", ...liveDatabaseTargetArgs(dbUrl, projectRef)]);
-    expect(result.exitCode, result.stderr).toBe(0);
-    expect(result.stdout).not.toContain("Unauthorized");
-  },
-);
+test("lists migrations from the remote database", async ({ run, dbUrl, projectRef }) => {
+  const result = await run(["migration", "list", ...liveDatabaseTargetArgs(dbUrl, projectRef)]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stdout).not.toContain("Unauthorized");
+});
 
-testLiveDataPlane("emits migration list as JSON", async ({ run, dbUrl, projectRef }) => {
+test("emits migration list as JSON", async ({ run, dbUrl, projectRef }) => {
   const result = await run([
     "migration",
     "list",

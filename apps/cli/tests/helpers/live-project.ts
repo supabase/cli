@@ -1,381 +1,284 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { runSupabase } from "./cli.ts";
-import { keepLiveProject, liveApiBaseUrl, liveProfile, liveProjectHost } from "./live-env.ts";
+import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
+import { Effect } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+
+import {
+  deriveLiveProjectHost,
+  keepLiveProject,
+  liveAccessToken,
+  liveApiUrl,
+  liveOrgId,
+  liveProjectName,
+  liveRegion,
+} from "./live-env.ts";
 
 const PROJECT_REF_RE = /^[a-z]{20}$/u;
 const TERMINAL_BAD_STATUSES = new Set(["INIT_FAILED", "RESTORE_FAILED", "REMOVED"]);
-const DEFAULT_STORAGE_BUCKET = "supabase-cli-live-bucket";
+const PROFILE_NAME = "supabase-cli-live";
 
-export interface LiveProjectEnvironment {
-  readonly projectRef: string;
-  readonly anonKey: string;
-  readonly functionsUrl: string;
-  readonly dbUrl: string;
-  readonly dbPassword: string;
-  readonly storageBucket: string;
-  readonly projectName: string;
-  readonly owned: true;
+type Project = OperationOutput<"v1GetProject">;
+type Organization = OperationOutput<"v1ListAllOrganizations">[number];
+type ApiKey = OperationOutput<"v1GetProjectApiKeys">[number];
+type Region =
+  | "us-east-1"
+  | "us-east-2"
+  | "us-west-1"
+  | "us-west-2"
+  | "ap-east-1"
+  | "ap-southeast-1"
+  | "ap-northeast-1"
+  | "ap-northeast-2"
+  | "ap-southeast-2"
+  | "eu-west-1"
+  | "eu-west-2"
+  | "eu-west-3"
+  | "eu-north-1"
+  | "eu-central-1"
+  | "eu-central-2"
+  | "ca-central-1"
+  | "ap-south-1"
+  | "sa-east-1";
+
+const REGIONS: ReadonlyArray<Region> = [
+  "us-east-1",
+  "us-east-2",
+  "us-west-1",
+  "us-west-2",
+  "ap-east-1",
+  "ap-southeast-1",
+  "ap-northeast-1",
+  "ap-northeast-2",
+  "ap-southeast-2",
+  "eu-west-1",
+  "eu-west-2",
+  "eu-west-3",
+  "eu-north-1",
+  "eu-central-1",
+  "eu-central-2",
+  "ca-central-1",
+  "ap-south-1",
+  "sa-east-1",
+];
+
+function supportedRegion(value: string): Region {
+  const region = REGIONS.find((candidate) => candidate === value);
+  if (region !== undefined) return region;
+  throw new Error(`Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`);
 }
 
-function accessToken(): string {
-  const token = process.env["SUPABASE_ACCESS_TOKEN"];
-  if (token === undefined || token.length === 0) {
+function apiError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function makeLiveApi() {
+  return makeApiClient({ baseUrl: liveApiUrl(), accessToken: liveAccessToken() }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+  );
+}
+
+async function runLiveEffect<T>(effect: Effect.Effect<T, unknown, never>): Promise<T> {
+  return Effect.runPromise(effect);
+}
+
+function uniqueProjectName(): string {
+  const runId = process.env["GITHUB_RUN_ID"] ?? process.env["CI_JOB_ID"] ?? String(Date.now());
+  return `${liveProjectName()}-${runId}-${randomUUID().slice(0, 8)}`;
+}
+
+function databasePassword(): string {
+  return `supabase-cli-live-${randomBytes(12).toString("hex")}`;
+}
+
+async function resolveOrganization(): Promise<Organization> {
+  const api = await runLiveEffect(makeLiveApi());
+  const organizations = await runLiveEffect(api.v1.listAllOrganizations());
+  const requested = liveOrgId();
+  const organization =
+    (requested === undefined
+      ? organizations[0]
+      : organizations.find(
+          (candidate) => candidate.id === requested || candidate.slug === requested,
+        )) ?? undefined;
+  if (organization === undefined) {
     throw new Error(
-      "Managed live mode requires SUPABASE_ACCESS_TOKEN; refusing to provision with an empty token.",
+      requested === undefined
+        ? "No organizations found; cannot create the live project"
+        : `Organization ${requested} was not found; cannot create the live project`,
     );
   }
-  return token;
+  return organization;
 }
 
-function apiBaseUrl(): string {
-  return liveApiBaseUrl().replace(/\/+$/u, "");
-}
-
-/**
- * Keep both connection establishment and response-body consumption inside the
- * caller's wall-clock deadline. A fetch can resolve its headers while a body
- * read remains hung, so the timer intentionally surrounds `consume` too.
- */
-async function fetchWithinDeadline<T>(
-  operation: string,
-  url: string,
-  init: RequestInit,
-  deadline: number,
-  consume: (response: Response) => Promise<T>,
-): Promise<T> {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) {
-    throw new Error(`${operation} exceeded its provisioning deadline before starting: ${url}`);
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), remaining);
-  try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    return await consume(response);
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error(`${operation} exceeded its provisioning deadline: ${url}`, { cause: error });
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function cliEnv(): Record<string, string> {
-  return { SUPABASE_PROFILE: liveProfile() };
-}
-
-async function managementCommand(args: string[]) {
-  return runSupabase(args, {
-    entrypoint: "legacy",
-    env: cliEnv(),
-    exitTimeoutMs: 240_000,
-  });
-}
-
-function jsonError(
-  result: { exitCode: number; stderr: string; stdout: string },
-  command: string,
-): Error {
-  return new Error(
-    `${command} failed (exit ${result.exitCode}): ${result.stderr || result.stdout}`,
+async function createProject(name: string, password: string): Promise<string> {
+  const organization = await resolveOrganization();
+  const api = await runLiveEffect(makeLiveApi());
+  const project = await runLiveEffect(
+    api.v1.createAProject({
+      name,
+      db_pass: password,
+      organization_slug: organization.slug,
+      region: supportedRegion(liveRegion()),
+    }),
   );
-}
-
-async function resolveOrgId(): Promise<string> {
-  const override = process.env["SUPABASE_LIVE_ORG_ID"];
-  if (override !== undefined && override.length > 0) return override;
-
-  const result = await managementCommand(["orgs", "list", "--output", "json"]);
-  if (result.exitCode !== 0) throw jsonError(result, "orgs list");
-  const rows = JSON.parse(result.stdout) as Array<{ id?: string }>;
-  const id = rows[0]?.id;
-  if (id === undefined || id.length === 0) {
-    throw new Error("No organizations found; cannot create the managed live project");
+  if (!PROJECT_REF_RE.test(project.ref)) {
+    throw new Error(`Unexpected project ref from project creation: ${project.ref}`);
   }
-  return id;
+  return project.ref;
 }
 
-function generateDbPassword(): string {
-  return (
-    process.env["SUPABASE_LIVE_DB_PASSWORD"] ??
-    `supabase-cli-live-${randomBytes(12).toString("hex")}`
-  );
+async function deleteProject(ref: string): Promise<void> {
+  const api = await runLiveEffect(makeLiveApi());
+  await runLiveEffect(api.v1.deleteAProject({ ref }));
 }
 
-async function createProject(name: string, orgId: string, dbPassword: string): Promise<string> {
-  const region = process.env["SUPABASE_LIVE_REGION"] ?? "us-east-1";
-  const result = await managementCommand([
-    "projects",
-    "create",
-    name,
-    "--org-id",
-    orgId,
-    "--db-password",
-    dbPassword,
-    "--region",
-    region,
-    "--output",
-    "json",
-  ]);
-  if (result.exitCode !== 0) throw jsonError(result, "projects create");
-
-  const project = JSON.parse(result.stdout) as { id?: string; ref?: string };
-  const ref = project.ref ?? project.id;
-  if (ref === undefined || !PROJECT_REF_RE.test(ref)) {
-    throw new Error(`Unexpected project ref from projects create: ${result.stdout}`);
-  }
-  return ref;
-}
-
-async function deleteProject(projectRef: string): Promise<void> {
-  const result = await managementCommand(["projects", "delete", projectRef, "--yes"]);
-  if (result.exitCode !== 0) throw jsonError(result, `projects delete ${projectRef}`);
-}
-
-async function waitForProjectReady(projectRef: string, timeoutMs = 300_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function waitForProject(ref: string): Promise<Project> {
+  const deadline = Date.now() + 300_000;
   while (Date.now() < deadline) {
-    const result = await fetchWithinDeadline(
-      `Waiting for project ${projectRef} readiness`,
-      `${apiBaseUrl()}/v1/projects/${projectRef}`,
-      { headers: { Authorization: `Bearer ${accessToken()}` } },
-      deadline,
-      async (response) => {
-        if (response.ok) {
-          return {
-            ok: true,
-            project: (await response.json()) as { status?: string },
-          };
-        }
-        await response.body?.cancel();
-        return { ok: false, project: undefined };
-      },
-    );
-    if (result.ok) {
-      if (result.project?.status === "ACTIVE_HEALTHY") return;
-      if (
-        result.project?.status !== undefined &&
-        TERMINAL_BAD_STATUSES.has(result.project.status)
-      ) {
-        throw new Error(
-          `Project ${projectRef} entered terminal status ${result.project.status} during provisioning`,
-        );
-      }
+    const api = await runLiveEffect(makeLiveApi());
+    const project = await runLiveEffect(api.v1.getProject({ ref }));
+    if (project.status === "ACTIVE_HEALTHY") return project;
+    if (TERMINAL_BAD_STATUSES.has(project.status)) {
+      throw new Error(`Project ${ref} entered terminal status ${project.status}`);
     }
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(5_000, remaining)));
+    await Effect.runPromise(Effect.sleep("5 seconds"));
   }
-  throw new Error(`Project ${projectRef} did not become ACTIVE_HEALTHY within ${timeoutMs}ms`);
+  throw new Error(`Project ${ref} did not become ACTIVE_HEALTHY within 300000ms`);
 }
 
-interface ApiKey {
-  readonly name?: string;
-  readonly api_key?: string;
-}
-
-/**
- * API keys are eventually consistent after project readiness. Polling is an
- * intrinsic part of provisioning because the Management API exposes no
- * readiness event; bound it by wall-clock time rather than attempt count.
- */
-async function getProjectKeys(projectRef: string, timeoutMs = 180_000): Promise<ApiKey[]> {
-  const deadline = Date.now() + timeoutMs;
-  let lastStatus = "unknown";
-  while (Date.now() < deadline) {
-    const result = await fetchWithinDeadline(
-      `Resolving API keys for project ${projectRef}`,
-      `${apiBaseUrl()}/v1/projects/${projectRef}/api-keys`,
-      { headers: { Authorization: `Bearer ${accessToken()}` } },
-      deadline,
-      async (response) => {
-        if (response.ok) {
-          return { status: response.status, keys: (await response.json()) as ApiKey[] };
-        }
-        await response.body?.cancel();
-        return { status: response.status, keys: undefined };
-      },
-    );
-    lastStatus = String(result.status);
-    if (result.keys !== undefined && result.keys.length > 0) return result.keys;
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10_000, remaining)));
-  }
-  throw new Error(
-    `Failed to resolve API keys for ${projectRef} within ${timeoutMs}ms (${lastStatus})`,
-  );
-}
-
-async function getAnonKey(projectRef: string): Promise<string> {
-  const keys = await getProjectKeys(projectRef);
-  const anon = keys.find((key) => key.name === "anon" && key.api_key)?.api_key;
-  if (anon !== undefined) return anon;
-  throw new Error(`Project ${projectRef} returned no legacy anon JWT for function invokes`);
-}
-
-async function getServiceRoleKey(projectRef: string): Promise<string> {
-  const keys = await getProjectKeys(projectRef);
+async function resolveKeys(ref: string): Promise<{ anonKey: string; serviceRoleKey: string }> {
+  const api = await runLiveEffect(makeLiveApi());
+  const keys = await runLiveEffect(api.v1.getProjectApiKeys({ ref, reveal: true }));
+  const keyValue = (key: ApiKey): string | undefined =>
+    key.api_key === null || key.api_key === undefined ? undefined : key.api_key;
+  const anon = keys.find((key) => key.name === "anon");
   const serviceRole =
-    keys.find((key) => key.name === "service_role" && key.api_key)?.api_key ??
-    keys.find((key) => key.api_key?.startsWith("sb_secret_"))?.api_key;
-  if (serviceRole !== undefined) return serviceRole;
-  throw new Error(`Project ${projectRef} returned no service-role key`);
-}
-
-interface PoolerConfig {
-  readonly database_type?: string;
-  readonly connection_string?: string;
-}
-
-async function getPoolerSessionUrl(
-  projectRef: string,
-  password: string,
-  timeoutMs = 180_000,
-): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let lastStatus = "unknown";
-  while (Date.now() < deadline) {
-    const result = await fetchWithinDeadline(
-      `Resolving pooler config for project ${projectRef}`,
-      `${apiBaseUrl()}/v1/projects/${projectRef}/config/database/pooler`,
-      { headers: { Authorization: `Bearer ${accessToken()}` } },
-      deadline,
-      async (response) => {
-        if (!response.ok) {
-          await response.body?.cancel();
-          return { status: response.status, connectionString: undefined };
-        }
-        const raw = (await response.json()) as PoolerConfig | PoolerConfig[];
-        const configs = Array.isArray(raw) ? raw : [raw];
-        const primary = configs.find((config) => config.database_type === "PRIMARY") ?? configs[0];
-        return { status: response.status, connectionString: primary?.connection_string };
-      },
-    );
-    lastStatus = String(result.status);
-    if (result.connectionString !== undefined) {
-      const url = new URL(result.connectionString);
-      url.password = password;
-      url.port = "5432";
-      if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
-      return url.toString();
-    }
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10_000, remaining)));
+    keys.find((key) => key.name === "service_role") ??
+    keys.find((key) => key.api_key?.startsWith("sb_secret_"));
+  const anonKey = anon === undefined ? undefined : keyValue(anon);
+  const serviceRoleKey = serviceRole === undefined ? undefined : keyValue(serviceRole);
+  if (anonKey === undefined || serviceRoleKey === undefined) {
+    throw new Error(`Project ${ref} returned no anon and service-role API keys`);
   }
-  throw new Error(
-    `Failed to resolve pooler config for ${projectRef} within ${timeoutMs}ms (${lastStatus})`,
-  );
+  return { anonKey, serviceRoleKey };
+}
+
+async function resolveDbUrl(ref: string, password: string): Promise<string> {
+  const api = await runLiveEffect(makeLiveApi());
+  const config = await runLiveEffect(api.v1.getProjectPgbouncerConfig({ ref }));
+  if (config.connection_string === undefined) {
+    throw new Error(`Project ${ref} returned no pooler connection string`);
+  }
+  const url = new URL(config.connection_string);
+  url.password = password;
+  url.port = "5432";
+  if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
+  return url.toString();
 }
 
 async function createStorageBucket(
-  projectRef: string,
+  ref: string,
+  host: string,
   serviceRoleKey: string,
   bucket: string,
 ): Promise<void> {
-  const url = `https://${projectRef}.${liveProjectHost()}/storage/v1/bucket`;
-  await fetchWithinDeadline(
-    `Creating storage bucket ${bucket}`,
-    url,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ id: bucket, name: bucket, public: false }),
-    },
-    Date.now() + 60_000,
-    async (response) => {
-      if (!response.ok && response.status !== 409) {
-        throw new Error(
-          `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
-        );
-      }
-    },
-  );
+  const response = await fetch(`https://${ref}.${host}/storage/v1/bucket`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+  });
+  if (!response.ok && response.status !== 409) {
+    throw new Error(
+      `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
+    );
+  }
 }
 
-/** Provision one unique staging project and all values needed by project live tests. */
-export async function provisionManagedLiveProject(): Promise<LiveProjectEnvironment> {
-  const orgId = await resolveOrgId();
-  const baseName = process.env["SUPABASE_LIVE_PROJECT_NAME"] ?? "supabase-cli-live";
-  const runId = process.env["GITHUB_RUN_ID"] ?? process.env["CI_JOB_ID"] ?? String(Date.now());
-  const projectName = `${baseName}-${runId}-${randomUUID().slice(0, 8)}`;
-  const dbPassword = generateDbPassword();
-  const projectRef = await createProject(projectName, orgId, dbPassword);
-
+async function writeProfile(
+  projectRef: string,
+  projectHost: string,
+  dbUrl: string,
+): Promise<string> {
+  const directory = await mkdtemp(path.join(tmpdir(), "supabase-live-profile-"));
+  const profilePath = path.join(directory, "profile.yaml");
+  const poolerHost = new URL(dbUrl).hostname;
   try {
-    await waitForProjectReady(projectRef);
-    const anonKey = await getAnonKey(projectRef);
-    const serviceRoleKey = await getServiceRoleKey(projectRef);
-    const dbUrl = await getPoolerSessionUrl(projectRef, dbPassword);
-    const storageBucket = process.env["SUPABASE_LIVE_STORAGE_BUCKET"] ?? DEFAULT_STORAGE_BUCKET;
-    await createStorageBucket(projectRef, serviceRoleKey, storageBucket);
-
-    return {
-      projectRef,
-      anonKey,
-      functionsUrl: `https://${projectRef}.${liveProjectHost()}/functions/v1`,
-      dbUrl,
-      dbPassword,
-      storageBucket,
-      projectName,
-      owned: true,
-    };
+    await writeFile(
+      profilePath,
+      [
+        `name: ${PROFILE_NAME}`,
+        `api_url: ${JSON.stringify(liveApiUrl())}`,
+        `dashboard_url: ${JSON.stringify(liveApiUrl())}`,
+        `project_host: ${projectHost}`,
+        `pooler_host: ${poolerHost}`,
+        `# provisioned project: ${projectRef}`,
+        "",
+      ].join("\n"),
+    );
   } catch (error) {
-    if (!keepLiveProject()) {
-      await deleteProject(projectRef).catch((cleanupError) => {
-        console.error(`Failed to delete managed live project ${projectRef}:`, cleanupError);
-      });
-    }
+    await rm(directory, { recursive: true, force: true });
     throw error;
   }
+  return profilePath;
 }
 
-export async function deleteManagedLiveProject(projectRef: string): Promise<void> {
-  if (keepLiveProject()) {
-    console.log(`SUPABASE_LIVE_KEEP_PROJECT=1 — leaving managed live project ${projectRef} alive`);
-    return;
-  }
-  await deleteProject(projectRef);
-}
-
-/** Read-only API values supplied by an attached Supabox/local harness. */
-export function attachedLiveValues(
-  projectRef: string | undefined,
-): Omit<LiveProjectEnvironment, "owned" | "projectName"> {
-  const anonKey = process.env["SUPABASE_LIVE_ANON_KEY"] ?? "";
-  const dbUrl = process.env["SUPABASE_LIVE_DB_URL"] ?? "";
-  const dbPassword = process.env["SUPABASE_LIVE_DB_PASSWORD"] ?? "";
-  const storageBucket = process.env["SUPABASE_LIVE_STORAGE_BUCKET"] ?? DEFAULT_STORAGE_BUCKET;
-  return {
-    projectRef: projectRef ?? "",
-    anonKey,
-    functionsUrl:
-      process.env["SUPABASE_LIVE_FUNCTIONS_URL"] ??
-      (projectRef === undefined ? "" : `https://${projectRef}.${liveProjectHost()}/functions/v1`),
-    dbUrl,
-    dbPassword,
-    storageBucket,
+export interface LiveProjectEnvironment {
+  readonly project: {
+    readonly ref: string;
+    readonly dbUrl: string;
+    readonly dbPassword: string;
+    readonly anonKey: string;
+    readonly serviceRoleKey: string;
+    readonly functionsUrl: string;
+    readonly storageBucket: string;
   };
+  readonly profilePath: string;
 }
 
-/** Resolve the attached environment without ever creating or deleting a project. */
-export async function assertAttachedLiveReachable(): Promise<void> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+export async function provisionLiveEnvironment(): Promise<LiveProjectEnvironment> {
+  const password = databasePassword();
+  const ref = await createProject(uniqueProjectName(), password);
+  let profilePath: string | undefined;
   try {
-    await fetch(`${apiBaseUrl()}/v1/organizations`, { signal: controller.signal });
+    const project = await waitForProject(ref);
+    const projectHost = deriveLiveProjectHost(project.database.host, ref);
+    const keys = await resolveKeys(ref);
+    const dbUrl = await resolveDbUrl(ref, password);
+    const storageBucket = "supabase-cli-live-bucket";
+    await createStorageBucket(ref, projectHost, keys.serviceRoleKey, storageBucket);
+    profilePath = await writeProfile(ref, projectHost, dbUrl);
+    return {
+      project: {
+        ref,
+        dbUrl,
+        dbPassword: password,
+        anonKey: keys.anonKey,
+        serviceRoleKey: keys.serviceRoleKey,
+        functionsUrl: `https://${ref}.${projectHost}/functions/v1`,
+        storageBucket,
+      },
+      profilePath,
+    };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Live platform is not reachable at ${apiBaseUrl()}/v1/organizations: ${reason}.\n` +
-        "Ensure the Supabox/local API platform is running and reachable.",
-    );
-  } finally {
-    clearTimeout(timeout);
+    if (profilePath !== undefined)
+      await rm(path.dirname(profilePath), { recursive: true, force: true });
+    if (!keepLiveProject()) await deleteProject(ref).catch(() => undefined);
+    throw apiError(error);
   }
+}
+
+export async function cleanupLiveEnvironment(environment: LiveProjectEnvironment): Promise<void> {
+  let profileError: unknown;
+  try {
+    await rm(path.dirname(environment.profilePath), { recursive: true, force: true });
+  } catch (error) {
+    profileError = error;
+  }
+  if (!keepLiveProject()) await deleteProject(environment.project.ref);
+  else console.log(`SUPABASE_LIVE_KEEP_PROJECT=1 — leaving ${environment.project.ref} alive`);
+  if (profileError !== undefined) throw apiError(profileError);
 }

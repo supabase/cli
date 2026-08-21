@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, testLiveProject } from "../../../../../tests/helpers/live-context.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
-testLiveProject("deletes a deployed function", async ({ run, projectRef, workspace }) => {
+test("deletes a deployed function", async ({ run, projectRef, workspace }) => {
   const slug = `cli-e2e-delete-${randomUUID().slice(0, 8)}`;
   const directory = `${workspace.path}/supabase/functions/${slug}`;
   await mkdir(directory, { recursive: true });

@@ -1,6 +1,5 @@
-import { afterEach, expect, test } from "vitest";
-import { makeTempHome, makeTempStackProject } from "../../../../tests/helpers/cli.ts";
-import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { afterEach, describe, expect, test } from "vitest";
+import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
 import { cleanupRegisteredStackProjects } from "../../../../tests/helpers/stack-e2e-cleanup.ts";
 
 const START_TIMEOUT_MS = 180_000;
@@ -32,7 +31,7 @@ const LIGHTWEIGHT_DOCKER_ARGS = [
 
 // Lazy service activation crosses the real proxy, daemon, Docker network, and
 // container lifecycle boundaries, so keep one gated golden-path live test.
-describeLocalStackLive("supabase start lazy lifecycle (live)", () => {
+describe("supabase start lazy lifecycle (e2e)", () => {
   let project: Awaited<ReturnType<typeof makeTempStackProject>> | undefined;
   let home: ReturnType<typeof makeTempHome> | undefined;
 
@@ -49,7 +48,7 @@ describeLocalStackLive("supabase start lazy lifecycle (live)", () => {
       project = await makeTempStackProject("supabase-lazy-start-live-");
       home = makeTempHome();
 
-      const started = await runSupabaseLive([...LIGHTWEIGHT_DOCKER_ARGS], {
+      const started = await runSupabase([...LIGHTWEIGHT_DOCKER_ARGS], {
         ...COMMAND_OPTIONS,
         cwd: project.dir,
         home: home.dir,
@@ -57,7 +56,7 @@ describeLocalStackLive("supabase start lazy lifecycle (live)", () => {
       });
       expect(started.exitCode, `stdout:\n${started.stdout}\nstderr:\n${started.stderr}`).toBe(0);
 
-      const before = await runSupabaseLive(["status"], {
+      const before = await runSupabase(["status"], {
         ...COMMAND_OPTIONS,
         cwd: project.dir,
         home: home.dir,
@@ -70,7 +69,7 @@ describeLocalStackLive("supabase start lazy lifecycle (live)", () => {
       });
       expect(response.ok).toBe(true);
 
-      const after = await runSupabaseLive(["status"], {
+      const after = await runSupabase(["status"], {
         ...COMMAND_OPTIONS,
         cwd: project.dir,
         home: home.dir,

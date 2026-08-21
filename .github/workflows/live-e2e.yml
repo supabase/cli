@@ -99,11 +99,7 @@ jobs:
     # Non-secret config is job-level; the staging token is scoped to only the two
     # steps that need it (run + cleanup) so build/checkout/docker never see it.
     env:
-      SUPABASE_LIVE_MODE: managed
-      SUPABASE_LIVE_LOCAL_STACK: "0"
-      SUPABASE_PROFILE: supabase-staging
       SUPABASE_LIVE_API_URL: https://api.supabase.green
-      SUPABASE_LIVE_PROJECT_HOST: supabase.red
       SUPABASE_LIVE_PROJECT_NAME: supabase-cli-live-${{ matrix.target }}
       CLI_HARNESS_TARGET: ${{ matrix.target }}
     steps:

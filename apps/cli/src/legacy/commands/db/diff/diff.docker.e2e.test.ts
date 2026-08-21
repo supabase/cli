@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
-import { describeLocalStackLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
-import { requireLiveSuccess } from "../../../../../tests/helpers/live-context.ts";
+import { describe } from "vitest";
+import { requireCliSuccess, runSupabase } from "../../../../../tests/helpers/cli.ts";
 
 const START_TIMEOUT_MS = 280_000;
 
@@ -19,14 +19,14 @@ const START_TIMEOUT_MS = 280_000;
 // FUNCTION statement; the REVOKE is silently absent. This suite uses the local
 // Docker-stack gate and never calls the Management API. See AGENTS.md's "Live
 // tests" section.
-describeLocalStackLive("supabase db diff (live, pg-delta declarative privileges)", () => {
+describe("supabase db diff (live, pg-delta declarative privileges)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {
     if (projectDir === undefined) return;
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabaseLive(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
   });
@@ -37,21 +37,21 @@ describeLocalStackLive("supabase db diff (live, pg-delta declarative privileges)
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-live-"));
 
-      const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      requireLiveSuccess(init, "init setup");
+      const init = await runSupabase(["init"], { cwd: projectDir });
+      requireCliSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services — `db diff` only needs the
       // local Postgres container reachable, same rationale as stop/status.
-      const start = await runSupabaseLive(
+      const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      requireLiveSuccess(start, "start setup");
+      requireCliSuccess(start, "start setup");
 
       // Minimal, deterministic repro: execute a fresh function's implicit PUBLIC
       // EXECUTE grant, explicitly revoked, directly against the local database.
       // `db query` is setup only; the command under test remains `db diff`.
-      const query = await runSupabaseLive(
+      const query = await runSupabase(
         [
           "db",
           "query",
@@ -65,9 +65,9 @@ revoke execute on function public.probe_fn() from public;`,
         ],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      requireLiveSuccess(query, "db query setup");
+      requireCliSuccess(query, "db query setup");
 
-      const diff = await runSupabaseLive(
+      const diff = await runSupabase(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
