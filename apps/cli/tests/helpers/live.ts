@@ -13,7 +13,7 @@ import {
 /**
  * Test-facing helpers for the `live` Vitest project (`*.live.test.ts`):
  * black-box CLI subprocess tests that run against a *real* Supabase platform —
- * in CI a local supabox stack (see the `supabase/cli-e2e-ci` harness).
+ * in CI a local Supabox stack or a managed staging project.
  *
  * This module imports Vitest test APIs (`describe`), so it must NOT be imported
  * from `globalSetup` (Vitest evaluates that in a different context). The
@@ -41,8 +41,8 @@ export {
 
 /**
  * `describe` that runs only when the live environment is configured. Use this
- * for every live suite so the file is inert (skipped, not failed) outside the
- * cli-e2e-ci runner.
+ * for every live suite so the file is inert (skipped, not failed) outside a
+ * configured live environment.
  */
 export const describeLive = describe.skipIf(!isLiveConfigured());
 
@@ -59,7 +59,7 @@ function hasDockerDaemon(): boolean {
  * `describe` for local-stack live tests that additionally require a reachable
  * Docker daemon. Composes the configured-live gate (`isLiveConfigured`) with a
  * `docker info` probe so these suites stay inert (skipped, not failed) outside
- * the cli-e2e-ci runner — a machine that merely exposes Docker must never
+ * a configured live runner — a machine that merely exposes Docker must never
  * launch a real stack just by collecting the live Vitest project. The
  * synchronous read-only probe runs once when this helper module is collected,
  * and only when the live environment is configured.
@@ -69,16 +69,14 @@ export const describeDockerLive = describe.skipIf(!isLiveConfigured() || !hasDoc
 /**
  * `describe` for project-scoped live suites: runs only when the live env is
  * configured AND a project ref is available. On a control-plane-only stack
- * (e.g. local macOS where project instances can't be built) these skip rather
- * than fail. See `requireLiveProjectRef`.
+ * these skip rather than fail. See `requireLiveProjectRef`.
  */
 export const describeLiveProject = describe.skipIf(!isLiveConfigured() || !liveProjectRef());
 
 /**
  * `describe` for data-plane live suites (migration / db / storage): runs only
  * when the live env is configured AND the project's own Postgres instance is
- * `ACTIVE_HEALTHY`. On a control-plane-only stack — including the current
- * cli-e2e-ci CI, which omits `supabase-postgres-17` (CLI-1825) — the project DB
+ * `ACTIVE_HEALTHY`. On a control-plane-only stack where the project DB
  * is unreachable, so these SKIP rather than fail. They activate automatically
  * once the full data-plane is provisioned. The readiness probe runs once at
  * collection time (top-level await); see `liveProjectDataPlaneReady`.

@@ -61,7 +61,7 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 // `start` is the one local-dev-stack command whose correctness genuinely
 // depends on a real Docker daemon — real label filtering and real container
 // lifecycle, not just CLI exit codes. `describeLive` is reused purely as the
-// "we're in the full cli-e2e-ci runner" signal (see stop.live.test.ts's own
+// "we're in a configured live runner" signal (see stop.live.test.ts's own
 // comment for why this, not a Management-API gate, is correct here). See
 // AGENTS.md's "Live tests" section for the full convention.
 describeLive("supabase start (live)", () => {

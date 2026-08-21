@@ -6,7 +6,8 @@
  * the test-facing pieces (`describeLive`, `runSupabaseLive`, …) live in
  * `live.ts` and re-export these.
  *
- * Environment contract (provided by the cli-e2e-ci runner):
+ * Environment contract (provided by the managed-staging workflow or an
+ * attached Supabox/local runner):
  * - `SUPABASE_ACCESS_TOKEN` — required; the platform PAT (supabox seeds a
  *   deterministic `sbp_…` token into its mgmt-api database).
  * - `SUPABASE_PROFILE` — selects the API base URL; defaults to `supabase-local`
@@ -15,8 +16,8 @@
  * - `SUPABASE_LIVE_API_URL` — base URL the readiness check probes; attached
  *   mode defaults to `http://localhost:8080`, managed staging defaults to
  *   `https://api.supabase.green`.
- * - `SUPABASE_LIVE_PROJECT_REF` — a provisioned project; gates project-scoped
- *   suites (functions, branches, db, storage).
+ * - `SUPABASE_LIVE_PROJECT_REF` — the shared project; gates project-scoped
+ *   suites (functions, branches, db, storage). Managed setup populates it.
  * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
  *   inherited by the subprocess via the parent environment.
  */
@@ -128,7 +129,7 @@ export function requireLiveProjectRef(): string {
   if (!ref) {
     throw new Error(
       "SUPABASE_LIVE_PROJECT_REF must be set for project-scoped live tests " +
-        "(the cli-e2e-ci runner sets it after provisioning a project).",
+        "(managed global setup sets it after provisioning a project).",
     );
   }
   return ref;
@@ -136,13 +137,9 @@ export function requireLiveProjectRef(): string {
 
 /**
  * Whether the live project's *data-plane* — its own Postgres instance — is up
- * and healthy. This is a stronger gate than `liveProjectRef()`: cli-e2e-ci
- * currently builds the stack WITHOUT `supabase-postgres-17` (CLI-1825), so a
- * provisioned project's *record* exists — Management-API reads (orgs / projects
- * / functions / branches list) work — but the instance never reaches
- * `ACTIVE_HEALTHY` and its database is unreachable. Commands that talk to the
- * project Postgres (migration, db, storage) gate on this and SKIP until the full
- * stack lands, then activate automatically.
+ * and healthy. A control-plane-only platform may expose a project record without
+ * a reachable database; commands that talk to project Postgres (migration, db,
+ * storage) gate on this and SKIP until the data plane is ready.
  *
  * Probes `GET /v1/projects` (already proven reachable by `projects list`) and
  * matches the live ref. Any failure or missing prerequisite returns `false` —

@@ -1,7 +1,7 @@
 name: Live E2E
 
-# Live e2e suite (ADR-0013). Runs the real CLI against the real staging
-# Management API + Docker bundler, then invokes the deployed functions over HTTP.
+# Live e2e suite. Runs the collocated `apps/cli` tests against the real staging
+# Management API + Docker bundler, then invokes deployed functions over HTTP.
 #
 # Non-blocking by construction: this is a standalone workflow, NOT part of the
 # required-checks set, and it never runs on the default PR path of test.yml.
@@ -99,10 +99,11 @@ jobs:
     # Non-secret config is job-level; the staging token is scoped to only the two
     # steps that need it (run + cleanup) so build/checkout/docker never see it.
     env:
-      CLI_E2E_MODE: live
-      CLI_E2E_TARGET_ENV: staging
-      CLI_E2E_API_URL: https://api.supabase.green
-      CLI_E2E_PROJECT_HOST: supabase.red
+      SUPABASE_LIVE_MODE: managed
+      SUPABASE_PROFILE: supabase-staging
+      SUPABASE_LIVE_API_URL: https://api.supabase.green
+      SUPABASE_LIVE_PROJECT_HOST: supabase.red
+      SUPABASE_LIVE_PROJECT_NAME: supabase-cli-live-${{ matrix.target }}
       CLI_HARNESS_TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout
@@ -135,15 +136,15 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
         run: |
-          PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+          PREFIX="supabase-cli-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
           # GitHub runs this step as `bash -e`; use `if cmd; then` (errexit-exempt)
           # so a failing attempt does not abort the step before the retry.
           for attempt in 1 2 3; do
             echo "::group::live e2e attempt ${attempt}"
             if [ "$attempt" -gt 1 ]; then
-              bash .github/scripts/sweep-live-projects.sh "$PREFIX" || true
+              bash apps/cli/scripts/sweep-live-projects.sh "$PREFIX" || true
             fi
-            if pnpm --filter @supabase/cli-e2e test:e2e:live; then
+            if pnpm --filter supabase test:live; then
               echo "::endgroup::"
               exit 0
             fi
@@ -158,7 +159,7 @@ jobs:
         if: always()
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
-        run: bash .github/scripts/sweep-live-projects.sh "cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+        run: bash apps/cli/scripts/sweep-live-projects.sh "supabase-cli-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
 
   # Record that this beta tested green so the next scheduled run skips it. Needs
   # the whole matrix: the marker is saved only if the ts-legacy leg passed (a

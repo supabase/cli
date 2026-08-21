@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, cpSync, appendFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -180,20 +180,6 @@ export function requireLiveSuccess(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
-}
-
-/** Layer deploy-e2e function fixtures onto the generated workspace config. */
-export function seedFunctions(
-  workspacePath: string,
-  sourceDirectory: string,
-  configSnippet: string,
-): void {
-  const supabaseDirectory = path.join(workspacePath, "supabase");
-  cpSync(sourceDirectory, supabaseDirectory, { recursive: true });
-  appendFileSync(
-    path.join(supabaseDirectory, "config.toml"),
-    `\n${readFileSync(configSnippet, "utf8")}`,
-  );
 }
 
 export function expectFunctionOk(

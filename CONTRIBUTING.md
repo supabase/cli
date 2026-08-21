@@ -176,34 +176,36 @@ pnpm run check:all
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements a record-and-replay test harness for testing the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell) against real Supabase Management API responses without hitting staging on every run, plus a separate live suite for smoke-testing real remote behavior. It still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for this suite, but the suite itself no longer compares Go and TS output — that go-target parity harness was retired once the legacy port and the CLI-1970 Go binary trim landed.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
 
 ### Architecture
 
-Replay fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing request/response pairs. Replay runs serve those committed fixtures back to the same CLI, so compatibility tests are fast and deterministic with no network access; live mode is described below.
+Replay fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing request/response pairs. Replay runs serve those committed fixtures back to the same CLI, so compatibility tests are fast and deterministic with no network access. The replay/record suite remains entirely under `apps/cli-e2e`.
 
-The harness works in three modes:
+The replay/record harness has two modes:
 
 | Mode                 | When                 | What it does                                                                                                           |
 | -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Replay** (default) | Every PR / local dev | Loads committed fixtures; serves recorded responses to the CLI subprocess. Fast and deterministic — no network access. |
 | **Record**           | `RECORD=true`        | Proxies CLI traffic to staging and captures request/response pairs as fixture files.                                   |
-| **Live**             | `CLI_E2E_MODE=live`  | Runs selected tests directly against a real staging project and Docker daemon.                                         |
 
 ### Live remote-project coverage
 
-The live suite runs the real `ts-legacy` CLI directly against the staging Management API — it does not use the replay server. Each serial run provisions one ephemeral project, waits for it to become `ACTIVE_HEALTHY`, uses the real Docker daemon for operations such as function deployment, and deletes the project during teardown (including after failures). Tests live in [`apps/cli-e2e/src/tests/live/**/*.live.e2e.test.ts`](apps/cli-e2e/src/tests/live), use the `testLive` fixtures (`run`, `invoke`, `workspace`, `projectRef`, `anonKey`, `functionsUrl`, `dbUrl`, `storageBucket`, and related values), and make **outcome-based assertions** on exit codes, output, HTTP status, and response bodies.
+The live suite lives in `apps/cli/src/**` as collocated `*.live.test.ts` files and runs in the CLI package's `live` Vitest project. Global setup provisions one shared environment per run. Attached mode (the default) preserves the local Supabox contract: `SUPABASE_PROFILE` selects the platform, `SUPABASE_LIVE_API_URL` is used for readiness, and `SUPABASE_LIVE_PROJECT_REF` identifies the existing project; attached teardown never deletes it. Managed mode is explicit (`SUPABASE_LIVE_MODE=managed`) and provisions one uniquely named staging project, shares it across all live tests, then deletes exactly that project during teardown unless `SUPABASE_LIVE_KEEP_PROJECT=1` is set.
 
-Live coverage is smoke coverage, not an exhaustive command matrix. Grow it toward one representative golden-path test for every user-facing CLI command: choose one realistic, common success workflow and let integration tests cover validation, formatting, fallbacks, errors, and other matrices unless the real remote/runtime boundary is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) for the architecture and [`apps/cli-e2e/.env.example`](apps/cli-e2e/.env.example) for environment settings.
+Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
-To run the live suite locally, build the Go binary first, then provide a staging token:
+To run the live suite locally against an attached Supabox/local platform, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), fill in the platform values, and run:
 
 ```sh
-cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
-  SUPABASE_ACCESS_TOKEN=sbp_... \
-  pnpm --filter @supabase/cli-e2e test:e2e:live
+cd apps/cli
+pnpm test:live
 ```
+
+For an explicit managed staging run, set `SUPABASE_LIVE_MODE=managed`,
+`SUPABASE_PROFILE=supabase-staging`, `SUPABASE_LIVE_API_URL=https://api.supabase.green`,
+and `SUPABASE_ACCESS_TOKEN` before invoking the same command. The suite's global setup
+handles project provisioning and teardown.
 
 Live CI is manual or daily scheduled and is not PR-blocking; run it manually on a PR branch when you need pre-merge remote coverage.
 
