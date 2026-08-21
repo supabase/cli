@@ -77,9 +77,11 @@ const config = {
   ),
   persistent: Flag.boolean("persistent").pipe(
     Flag.withDescription("Create a persistent branch (default: ephemeral)."),
+    Flag.withDefault(false),
   ),
   withData: Flag.boolean("with-data").pipe(
     Flag.withDescription("Clone production data to the branch database."),
+    Flag.withDefault(false),
   ),
   notifyUrl: Flag.string("notify-url").pipe(
     Flag.withDescription("HTTP endpoint to notify when the branch becomes active and healthy."),

@@ -11,24 +11,30 @@ const config = {
   interactive: Flag.boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode to configure IDE settings."),
     Flag.withAlias("i"),
+    Flag.withDefault(false),
   ),
   useOrioledb: Flag.boolean("use-orioledb").pipe(
     Flag.withDescription("Use OrioleDB storage engine for Postgres."),
+    Flag.withDefault(false),
   ),
   force: Flag.boolean("force").pipe(
     Flag.withDescription("Overwrite existing supabase/config.toml."),
+    Flag.withDefault(false),
   ),
   withVscodeWorkspace: Flag.boolean("with-vscode-workspace").pipe(
     Flag.withDescription("Generate VS Code workspace."),
     Flag.withHidden,
+    Flag.withDefault(false),
   ),
   withVscodeSettings: Flag.boolean("with-vscode-settings").pipe(
     Flag.withDescription("Generate VS Code settings for Deno."),
     Flag.withHidden,
+    Flag.withDefault(false),
   ),
   withIntellijSettings: Flag.boolean("with-intellij-settings").pipe(
     Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
     Flag.withHidden,
+    Flag.withDefault(false),
   ),
 } as const;
 

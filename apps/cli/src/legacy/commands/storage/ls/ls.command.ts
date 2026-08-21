@@ -23,6 +23,7 @@ const config = {
   recursive: Flag.boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively list a directory."),
+    Flag.withDefault(false),
   ),
   linked: LegacyStorageLinkedFlagDef,
   local: LegacyStorageLocalFlagDef,

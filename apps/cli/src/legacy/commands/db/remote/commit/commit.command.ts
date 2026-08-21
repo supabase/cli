@@ -12,7 +12,10 @@ const config = {
     Flag.withDescription("Connect using the specified Postgres URL (must be percent-encoded)."),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Connect to the linked project.")),
+  linked: Flag.boolean("linked").pipe(
+    Flag.withDescription("Connect to the linked project."),
+    Flag.withDefault(false),
+  ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),

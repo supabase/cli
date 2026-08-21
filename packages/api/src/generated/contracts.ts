@@ -342,17 +342,13 @@ export const ThirdPartyAuth = Schema.Struct({
   resolved_at: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
 }).annotate({ identifier: "ThirdPartyAuth" });
 // recursive definitions
-export type Suspend_ = UpdateCustomHostnameResponseJsonValue;
-export const Suspend_ = Schema.suspend(
-  (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> => UpdateCustomHostnameResponseJsonValue,
-);
 export type UpdateCustomHostnameResponseJsonValue =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<Suspend_>
-  | { readonly [x: string]: Suspend_ };
+  | ReadonlyArray<UpdateCustomHostnameResponseJsonValue>
+  | { readonly [x: string]: UpdateCustomHostnameResponseJsonValue };
 export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
@@ -362,26 +358,30 @@ export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
     ]),
     Schema.Null,
   ]),
-  Schema.Array(Schema.suspend((): Schema.Codec<Suspend_> => Suspend_)),
+  Schema.Array(
+    Schema.suspend(
+      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
+        UpdateCustomHostnameResponseJsonValue,
+    ),
+  ),
   Schema.Record(
     Schema.String,
-    Schema.suspend((): Schema.Codec<Suspend_> => Suspend_),
+    Schema.suspend(
+      (): Schema.Codec<UpdateCustomHostnameResponseJsonValue> =>
+        UpdateCustomHostnameResponseJsonValue,
+    ),
   ),
 ]).annotate({
   description: "Any JSON-serializable value",
   identifier: "UpdateCustomHostnameResponseJsonValue",
 });
-export type Suspend_1 = ListProjectAddonsResponseJsonValue;
-export const Suspend_1 = Schema.suspend(
-  (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
-);
 export type ListProjectAddonsResponseJsonValue =
   | string
   | number
   | boolean
   | null
-  | ReadonlyArray<Suspend_1>
-  | { readonly [x: string]: Suspend_1 };
+  | ReadonlyArray<ListProjectAddonsResponseJsonValue>
+  | { readonly [x: string]: ListProjectAddonsResponseJsonValue };
 export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
@@ -391,10 +391,16 @@ export const ListProjectAddonsResponseJsonValue = Schema.Union([
     ]),
     Schema.Null,
   ]),
-  Schema.Array(Schema.suspend((): Schema.Codec<Suspend_1> => Suspend_1)),
+  Schema.Array(
+    Schema.suspend(
+      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
+    ),
+  ),
   Schema.Record(
     Schema.String,
-    Schema.suspend((): Schema.Codec<Suspend_1> => Suspend_1),
+    Schema.suspend(
+      (): Schema.Codec<ListProjectAddonsResponseJsonValue> => ListProjectAddonsResponseJsonValue,
+    ),
   ),
 ]).annotate({
   description: "Any JSON-serializable value",
@@ -1334,14 +1340,7 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union([
-              Schema.Struct({}),
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.String,
-              Schema.Boolean,
-            ]),
-          ),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -1371,16 +1370,7 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -1918,16 +1908,7 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -2572,7 +2553,7 @@ export const V1GetAFunctionBodyInput = Schema.Struct({
     }),
   ),
 });
-export const V1GetAFunctionBodyOutput = Schema.Struct({});
+export const V1GetAFunctionBodyOutput = Schema.Record(Schema.String, Schema.Never);
 export const V1GetAMigrationInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -2678,16 +2659,7 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -3730,7 +3702,10 @@ export const V1GetDatabaseOpenapiInput = Schema.Struct({
     ),
   schema: Schema.optionalKey(Schema.String),
 });
-export const V1GetDatabaseOpenapiOutput = Schema.Struct({});
+export const V1GetDatabaseOpenapiOutput = Schema.Record(
+  Schema.String,
+  Schema.Json.annotate({ expected: "JSON value" }),
+);
 export const V1GetDiskUtilizationInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -4611,7 +4586,7 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
   ]),
   jwt_secret: Schema.optionalKey(Schema.String),
 });
-export const V1GetProfileInput = Schema.Struct({});
+export const V1GetProfileInput = Schema.Record(Schema.String, Schema.Never);
 export const V1GetProfileOutput = Schema.Struct({
   gotrue_id: Schema.String,
   primary_email: Schema.String,
@@ -6020,9 +5995,9 @@ export const V1ListAllNetworkBansEnrichedOutput = Schema.Struct({
     }),
   ),
 });
-export const V1ListAllOrganizationsInput = Schema.Struct({});
+export const V1ListAllOrganizationsInput = Schema.Record(Schema.String, Schema.Never);
 export const V1ListAllOrganizationsOutput = Schema.Array(OrganizationResponseV1);
-export const V1ListAllProjectsInput = Schema.Struct({});
+export const V1ListAllProjectsInput = Schema.Record(Schema.String, Schema.Never);
 export const V1ListAllProjectsOutput = Schema.Array(V1ProjectWithDatabaseResponse);
 export const V1ListAllSecretsInput = Schema.Struct({
   ref: Schema.String.check(
@@ -6108,16 +6083,7 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(
-                      Schema.Union([
-                        Schema.Struct({}),
-                        Schema.Number.check(
-                          Schema.isFinite().annotate({ expected: "a finite number" }),
-                        ),
-                        Schema.String,
-                        Schema.Boolean,
-                      ]),
-                    ),
+                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                     array: Schema.optionalKey(Schema.Boolean),
                   }),
                 ),
@@ -7277,14 +7243,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union([
-              Schema.Struct({}),
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.String,
-              Schema.Boolean,
-            ]),
-          ),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -7314,16 +7273,7 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Struct({}),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),

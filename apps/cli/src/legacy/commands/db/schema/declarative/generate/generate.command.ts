@@ -14,6 +14,7 @@ import { legacyDbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers
 const config = {
   overwrite: Flag.boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
+    Flag.withDefault(false),
   ),
   // Deliberately NOT named `--output`/`-o`: the legacy root reserves those for
   // the global machine-format flag (`LegacyOutputFlag`, `json|yaml|toml|env|…`),
@@ -30,6 +31,7 @@ const config = {
   ),
   reset: Flag.boolean("reset").pipe(
     Flag.withDescription("Reset local database before generating (local data will be lost)."),
+    Flag.withDefault(false),
   ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),

@@ -27,7 +27,7 @@ These workspaces should generally follow this structure:
 - `name`: `@supabase/<package-name>`
 - `type`: `"module"`
 - Standard scripts: `test`, `types:check`, `lint:check`, `lint:fix`, `fmt:check`, `fmt:fix`, `knip:check`, `knip:fix`
-- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `@typescript/native-preview`, `knip`, `oxfmt`, `oxlint`, `oxlint-tsgolint`
+- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`, `knip`, `oxfmt`, `oxlint`, `oxlint-tsgolint`
 
 Expected exceptions:
 
