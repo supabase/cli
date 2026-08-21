@@ -1,16 +1,4 @@
-import {
-  Cause,
-  Context,
-  Data,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  Queue,
-  Schedule,
-  Stream,
-} from "effect";
+import { Context, Data, Deferred, Duration, Effect, Layer, Queue, Schedule, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ContainerRuntime } from "./ContainerRuntime.ts";
@@ -332,26 +320,22 @@ const pullImage = (
 
     yield* callbacks?.onDownloadStart ?? Effect.void;
 
-    const attempt = runPullCommand(spawner, runtime, image).pipe(
+    return yield* runPullCommand(spawner, runtime, image).pipe(
       Effect.retry({
         while: (error) => shouldRetryPull(error.detail),
         schedule: pullRetrySchedule,
       }),
-    );
-    const result = yield* Effect.exit(attempt);
-    if (Exit.isSuccess(result)) return image;
-
-    const failure = Cause.squash(result.cause);
-    const detail = failure instanceof PullAttemptError ? failure.detail : String(failure);
-    const daemonDown = failure instanceof PullAttemptError && failure.daemonDown;
-
-    return yield* Effect.fail(
-      new DockerPullError({
-        image,
-        detail: `Failed to pull canonical Docker image. ${detail}`,
-        cause: new Error(detail),
-        daemonDown,
-      }),
+      Effect.as(image),
+      Effect.catch((failure) =>
+        Effect.fail(
+          new DockerPullError({
+            image,
+            detail: `Failed to pull canonical Docker image. ${failure.detail}`,
+            cause: new Error(failure.detail),
+            daemonDown: failure.daemonDown,
+          }),
+        ),
+      ),
     );
   });
 

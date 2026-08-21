@@ -318,13 +318,24 @@ const validateHostCompatibility = (
           }),
         );
       }
-      if (floor !== null && floor !== undefined && compareVersions(host, floor) < 0) {
-        return yield* Effect.fail(
-          new BinaryHostCompatibilityError({
-            target,
-            detail: `Host glibc ${host} is below manifest floor ${floor}`,
-          }),
-        );
+      if (floor !== null && floor !== undefined) {
+        const comparison = compareVersions(host, floor);
+        if (comparison === undefined) {
+          return yield* Effect.fail(
+            new BinaryHostCompatibilityError({
+              target,
+              detail: `Host glibc ${host} or manifest floor ${floor} is not a dotted numeric version`,
+            }),
+          );
+        }
+        if (comparison < 0) {
+          return yield* Effect.fail(
+            new BinaryHostCompatibilityError({
+              target,
+              detail: `Host glibc ${host} is below manifest floor ${floor}`,
+            }),
+          );
+        }
       }
     }
     if (
@@ -351,7 +362,16 @@ const validateHostCompatibility = (
           }),
         );
       }
-      if (compareVersions(hostVersion, floor) < 0) {
+      const comparison = compareVersions(hostVersion, floor);
+      if (comparison === undefined) {
+        return yield* Effect.fail(
+          new BinaryHostCompatibilityError({
+            target,
+            detail: `Host macOS ${hostVersion} or manifest floor ${floor} is not a dotted numeric version`,
+          }),
+        );
+      }
+      if (comparison < 0) {
         return yield* Effect.fail(
           new BinaryHostCompatibilityError({
             target,
@@ -362,9 +382,17 @@ const validateHostCompatibility = (
     }
   });
 
-const compareVersions = (left: string, right: string): number => {
-  const a = left.split(".").map((part) => Number(part) || 0);
-  const b = right.split(".").map((part) => Number(part) || 0);
+const parseVersion = (value: string): ReadonlyArray<number> | undefined => {
+  const parts = value.split(".");
+  if (parts.length === 0 || parts.some((part) => !/^\d+$/.test(part))) return undefined;
+  const parsed = parts.map(Number);
+  return parsed.every(Number.isSafeInteger) ? parsed : undefined;
+};
+
+const compareVersions = (left: string, right: string): number | undefined => {
+  const a = parseVersion(left);
+  const b = parseVersion(right);
+  if (a === undefined || b === undefined) return undefined;
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
     const diff = (a[index] ?? 0) - (b[index] ?? 0);
     if (diff !== 0) return diff;

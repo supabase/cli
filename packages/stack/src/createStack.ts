@@ -1,6 +1,5 @@
 import type { LogEntry } from "@supabase/process-compose";
 import {
-  Cause,
   Context,
   Deferred,
   Effect,
@@ -79,13 +78,13 @@ export function runForegroundOperation<A, E>(
   dispose: Effect.Effect<void>,
 ): Effect.Effect<A, StackError> {
   return operation.pipe(
-    Effect.catchCause((cause) =>
+    Effect.catch((error) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
           if (yield* isDisposed) {
             yield* dispose;
           }
-          return yield* Effect.fail(toStackError(Cause.squash(cause)));
+          return yield* Effect.fail(toStackError(error));
         }),
       ),
     ),

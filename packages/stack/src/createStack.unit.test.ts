@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
-import { Effect } from "effect";
+import { Cause, Effect, Exit, Result } from "effect";
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
@@ -107,6 +107,31 @@ describe("foreground operation lifecycle", () => {
         ),
       ),
     ).rejects.toMatchObject({ code: "UNKNOWN" });
+    expect(disposeCount).toBe(0);
+  });
+
+  it("preserves defects without converting them into expected stack failures", async () => {
+    const defect = new Error("unexpected runtime defect");
+    let disposeCount = 0;
+
+    const exit = await Effect.runPromiseExit(
+      runForegroundOperation(
+        Effect.die(defect),
+        Effect.succeed(true),
+        Effect.sync(() => {
+          disposeCount += 1;
+        }),
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const found = Cause.findDefect(exit.cause);
+      expect(Result.isSuccess(found)).toBe(true);
+      if (Result.isSuccess(found)) {
+        expect(found.success).toBe(defect);
+      }
+    }
     expect(disposeCount).toBe(0);
   });
 });

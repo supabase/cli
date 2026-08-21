@@ -255,6 +255,32 @@ describe("BinaryResolver slim-services installer", () => {
     }),
   );
 
+  it.live("fails closed when the manifest host floor is malformed", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        const fixture = makeFixture(root, {
+          os_floor:
+            process.platform === "darwin"
+              ? { kind: "macos", floor: "not-a-version", scanned: 1 }
+              : { kind: "glibc", floor: "not-a-version", scanned: 1 },
+        });
+        const resolverLayer = makeResolverLayer(root, fixture);
+        const failure = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolve({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer), Effect.flip);
+
+        expect(failure).toBeInstanceOf(BinaryHostCompatibilityError);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.live("installs slim archives without requiring an external zstd executable", () =>
     Effect.gen(function* () {
       const root = makeRoot();

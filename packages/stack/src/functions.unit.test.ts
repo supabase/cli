@@ -4,7 +4,7 @@ import { mkdtempSync, symlinkSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Schema } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import {
   resolveConfig as resolveConfigEffect,
   type ResolveConfigOptions,
@@ -141,6 +141,29 @@ describe("stack Functions runtime config", () => {
       staticFiles: [join(root, "functions", "hello-world", "assets", "*")],
       env: { SHARED: "function-value", FUNCTION_ONLY: "function-value" },
     });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects a function bundle when Edge Runtime is disabled", async () => {
+    const root = makeTempProject();
+
+    const error = await resolveConfig({
+      mode: "native",
+      projectDir: root,
+      functions: makeBundle(root),
+    }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
+    if (Predicate.isTagged(error, "StackBuildError")) {
+      expect(error).toMatchObject({
+        reason: "invalid_config",
+        detail: "Edge Functions require Edge Runtime to be enabled",
+      });
+    }
 
     await rm(root, { recursive: true, force: true });
   });

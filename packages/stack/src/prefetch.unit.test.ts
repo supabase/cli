@@ -1,5 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Fiber, Layer, Predicate, Queue, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Queue,
+  Result,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
@@ -18,6 +30,7 @@ const defaultAuthGhcrImage = `ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}
 interface SpawnResult {
   readonly exitCode: number;
   readonly stderr?: ReadonlyArray<string>;
+  readonly defect?: unknown;
 }
 
 function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
@@ -36,6 +49,9 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 
           const result = results[index] ?? { exitCode: 0 };
           index += 1;
+          if (result.defect !== undefined) {
+            return yield* Effect.die(result.defect);
+          }
 
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
@@ -176,6 +192,33 @@ describe("prefetch", () => {
     expect(error).toBeInstanceOf(DockerPullError);
     if (!(error instanceof DockerPullError)) throw error;
     expect(error.daemonDown).toBe(true);
+  });
+
+  test("preserves unexpected image pull defects", async () => {
+    const defect = new Error("container runtime callback defect");
+    const spawner = mockSequenceSpawner([
+      { exitCode: 1, stderr: ["not found"] },
+      { exitCode: 0, defect },
+    ]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(mockBinaryResolver().layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const exit = await Effect.runPromiseExit(
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["auth"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const found = Cause.findDefect(exit.cause);
+      expect(Result.isSuccess(found)).toBe(true);
+      if (Result.isSuccess(found)) {
+        expect(found.success).toBe(defect);
+      }
+    }
   });
 
   test("prefetching one service includes its required preparation dependencies", async () => {

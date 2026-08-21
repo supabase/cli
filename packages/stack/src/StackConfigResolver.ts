@@ -705,6 +705,15 @@ export function resolveConfig(
       const projectDir = config.projectDir ?? process.cwd();
       const instanceId = yield* resolveInstanceId(config.instanceId);
       const functions = yield* resolveFunctionsConfig(config, projectDir);
+      const edgeRuntimeEnabled = servicePolicies["edge-runtime"] !== "off";
+      if (functions !== false && !edgeRuntimeEnabled) {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: "Edge Functions require Edge Runtime to be enabled",
+            reason: "invalid_config",
+          }),
+        );
+      }
       roots = yield* resolveRoots(config, opts);
       const postgresInput = config.postgres ?? {};
       const postgrestInput =
@@ -715,7 +724,6 @@ export function resolveConfig(
         servicePolicies.auth !== "off" && config.auth !== false
           ? (config.auth ?? undefined)
           : undefined;
-      const edgeRuntimeEnabled = servicePolicies["edge-runtime"] !== "off";
       const realtimeEnabled = servicePolicies.realtime !== "off";
       const storageEnabled = servicePolicies.storage !== "off";
       const imgproxyEnabled = servicePolicies.imgproxy !== "off";
