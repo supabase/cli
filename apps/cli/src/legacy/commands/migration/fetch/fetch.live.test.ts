@@ -3,11 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
 
-import {
-  liveDatabaseTargetArgs,
-  requireLiveSuccess,
-  test,
-} from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
@@ -20,7 +16,7 @@ function liveMigrationVersion(): string {
 
 // Destructive data-plane scenario (Postgres over the pooler) — the setup repairs
 // remote migration history and the teardown reverts that exact row. The fixture
-// keeps this opt-in for attached runs and waits for an ACTIVE_HEALTHY project.
+// provisions one ACTIVE_HEALTHY project for the serial live suite.
 //
 // Golden path: `migration fetch` reads the remote `schema_migrations` history and
 // writes each row to `supabase/migrations/<version>_<name>.sql`.
@@ -37,8 +33,8 @@ function liveMigrationVersion(): string {
 test(
   "fetches a seeded remote migration into the local migrations directory",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ run, dbUrl, projectRef }) => {
-    const targetArgs = liveDatabaseTargetArgs(dbUrl, projectRef);
+  async ({ cli, project }) => {
+    const targetArgs = ["--db-url", project.dbUrl];
     const version = liveMigrationVersion();
     const migrationFile = `${version}_${NAME}.sql`;
     const seedDir = await mkdtemp(path.join(tmpdir(), "sb-migration-seed-live-"));
@@ -54,7 +50,7 @@ test(
         path.join(seedDir, "supabase", "migrations", migrationFile),
         "create table if not exists public.cli_live_roundtrip (id int);\n",
       );
-      const repairResult = await run(
+      const repairResult = await cli(
         ["migration", "repair", version, "--status", "applied", ...targetArgs],
         { cwd: seedDir },
       );
@@ -63,7 +59,7 @@ test(
 
       // Fetch into a fresh (empty) dir so no overwrite prompt fires; it reads the
       // remote history and writes <version>_<name>.sql.
-      const fetched = await run(["migration", "fetch", ...targetArgs], { cwd: fetchDir });
+      const fetched = await cli(["migration", "fetch", ...targetArgs], { cwd: fetchDir });
       expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(0);
 
       // fetch wrote the seeded migration back, under its established filename format.
@@ -74,7 +70,7 @@ test(
     } finally {
       if (repaired) {
         try {
-          const reverted = await run(
+          const reverted = await cli(
             ["migration", "repair", version, "--status", "reverted", ...targetArgs],
             { cwd: seedDir },
           );

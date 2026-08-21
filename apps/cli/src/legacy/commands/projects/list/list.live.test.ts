@@ -2,8 +2,8 @@ import { expect } from "vitest";
 
 import { test } from "../../../../../tests/helpers/live.ts";
 
-test("lists the live project for the authenticated token", async ({ run, projectRef }) => {
-  const result = await run(["projects", "list", "--output-format", "json"]);
+test("lists the live project for the authenticated token", async ({ cli, project }) => {
+  const result = await cli(["projects", "list", "--output-format", "json"]);
   expect(result.exitCode, result.stderr).toBe(0);
   const parsed: unknown = JSON.parse(result.stdout);
   expect(parsed).toEqual(expect.objectContaining({ projects: expect.any(Array) }));
@@ -21,11 +21,5 @@ test("lists the live project for the authenticated token", async ({ run, project
     if ("id" in project && typeof project.id === "string") return [project.id];
     return [];
   });
-  expect(refs).toContain(projectRef);
-});
-
-test("emits projects as JSON for an account-level read", async ({ run }) => {
-  const result = await run(["projects", "list", "--output-format", "json"]);
-  expect(result.exitCode, result.stderr).toBe(0);
-  expect(() => JSON.parse(result.stdout)).not.toThrow();
+  expect(refs).toContain(project.ref);
 });

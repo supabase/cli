@@ -84,7 +84,7 @@ interface SpawnedSupabase {
   readonly stdout: () => string;
   readonly stderr: () => string;
   readonly kill: (signal?: NodeJS.Signals) => void;
-  readonly waitForOutput: (pattern: RegExp, timeoutMs?: number) => Promise<void>;
+  readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
 }
 
@@ -139,6 +139,13 @@ async function makeTempProject(prefix = "supabase-project-e2e-") {
       await rm(projectDir, { recursive: true, force: true });
     },
   };
+}
+
+/** Create an isolated CLI project without pre-allocating released ports. */
+export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
+  const project = await makeTempProject(prefix);
+  registerTempStackProject(project);
+  return project;
 }
 
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
@@ -369,8 +376,9 @@ export function spawnSupabase(
         proc.kill(signal);
       } catch {}
     },
-    waitForOutput: async (pattern: RegExp, timeoutMs = 60_000) => {
-      if (pattern.test(stdout)) {
+    waitForOutput: async (pattern: RegExp, timeoutMs = 60_000, startAt = 0) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(stdout.slice(startAt))) {
         return;
       }
       if (closeResult) {
@@ -402,7 +410,8 @@ export function spawnSupabase(
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
-          if (pattern.test(stdout)) {
+          pattern.lastIndex = 0;
+          if (pattern.test(stdout.slice(startAt))) {
             cleanup();
             resolve();
           }

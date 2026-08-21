@@ -2,12 +2,12 @@ import { expect } from "vitest";
 
 import { test } from "../../../../../tests/helpers/live.ts";
 
-test("lists API keys for a project", async ({ run, projectRef }) => {
-  const result = await run([
+test("lists API keys for a project", async ({ cli, project }) => {
+  const result = await cli([
     "projects",
     "api-keys",
     "--project-ref",
-    projectRef,
+    project.ref,
     "--output",
     "json",
   ]);

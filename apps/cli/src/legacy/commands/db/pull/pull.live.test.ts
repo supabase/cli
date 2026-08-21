@@ -2,16 +2,11 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import {
-  liveDatabaseTargetArgs,
-  requireLiveSuccess,
-  test,
-} from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 
 test("pulls the remote schema after a local migration is applied", async ({
-  run,
-  dbUrl,
-  projectRef,
+  cli,
+  project,
   workspace,
 }) => {
   const version = `${Date.now()}${Math.floor(Math.random() * 10_000)
@@ -25,10 +20,10 @@ test("pulls the remote schema after a local migration is applied", async ({
 
   let targetError: unknown;
   try {
-    const pushed = await run(["db", "push", ...liveDatabaseTargetArgs(dbUrl, projectRef), "--yes"]);
+    const pushed = await cli(["db", "push", "--db-url", project.dbUrl, "--yes"]);
     requireLiveSuccess(pushed, "db push setup");
 
-    const result = await run(["db", "pull", ...liveDatabaseTargetArgs(dbUrl, projectRef), "--yes"]);
+    const result = await cli(["db", "pull", "--db-url", project.dbUrl, "--yes"]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(
       /dial|no route|connection refused|could not connect|server closed the connection|i\/o timeout/i,
@@ -58,7 +53,7 @@ test("pulls the remote schema after a local migration is applied", async ({
       }
     }
 
-    const reset = await run(["db", "reset", ...liveDatabaseTargetArgs(dbUrl, projectRef), "--yes"]);
+    const reset = await cli(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
     requireLiveSuccess(reset, "db reset cleanup after db pull");
   } catch (error) {
     cleanupError = error;

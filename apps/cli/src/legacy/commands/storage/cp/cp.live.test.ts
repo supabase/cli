@@ -8,38 +8,32 @@ import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
 async function removeObject(
-  run: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
   remote: string,
 ): Promise<void> {
-  const removed = await run(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
+  const removed = await cli(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
   if (removed.exitCode !== 0) {
     throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
   }
 }
 
-test("copies a local file to the remote bucket", async ({
-  run,
-  projectRef,
-  dbPassword,
-  storageBucket,
-  workspace,
-}) => {
+test("copies a local file to the remote bucket", async ({ cli, project, workspace }) => {
   const suffix = randomUUID().slice(0, 8);
   const local = join(workspace.path, `upload-${suffix}.txt`);
-  const remote = `ss:///${storageBucket}/upload-${suffix}.txt`;
+  const remote = `ss:///${project.storageBucket}/upload-${suffix}.txt`;
   await writeFile(local, "live-e2e storage payload\n");
 
-  const linked = await run(["link", "--project-ref", projectRef], {
-    env: { SUPABASE_DB_PASSWORD: dbPassword },
+  const linked = await cli(["link", "--project-ref", project.ref], {
+    env: { SUPABASE_DB_PASSWORD: project.dbPassword },
   });
   requireLiveSuccess(linked, "link setup for storage cp");
 
   let uploaded = false;
   try {
-    const result = await run(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+    const result = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
     expect(result.exitCode, result.stderr).toBe(0);
     uploaded = true;
   } finally {
-    if (uploaded) await removeObject(run, remote);
+    if (uploaded) await removeObject(cli, remote);
   }
 });

@@ -24,17 +24,9 @@ export interface InvokeResult {
 
 export interface LiveFixtures {
   readonly project: LiveProject;
-  /** Compatibility aliases while command suites migrate to `project`/`cli`. */
-  readonly projectRef: string;
-  readonly dbUrl: string;
-  readonly dbPassword: string;
-  readonly anonKey: string;
-  readonly functionsUrl: string;
-  readonly storageBucket: string;
   readonly workspace: LiveWorkspace;
   readonly home: ReturnType<typeof makeTempHome>;
   readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
-  readonly run: (args: string[], options?: RunOptions) => Promise<RunResult>;
   readonly invoke: (
     slug: string,
     options?: { readonly anonKey?: string; readonly payload?: unknown },
@@ -44,13 +36,6 @@ export interface LiveFixtures {
 const base = vitestTest.extend<LiveFixtures>({
   // eslint-disable-next-line no-empty-pattern
   project: async ({}, use) => use(inject("liveProject")),
-
-  projectRef: async ({ project }, use) => use(project.ref),
-  dbUrl: async ({ project }, use) => use(project.dbUrl),
-  dbPassword: async ({ project }, use) => use(project.dbPassword),
-  anonKey: async ({ project }, use) => use(project.anonKey),
-  functionsUrl: async ({ project }, use) => use(project.functionsUrl),
-  storageBucket: async ({ project }, use) => use(project.storageBucket),
 
   home: async ({ task: _task }, use) => {
     const home = makeTempHome();
@@ -98,8 +83,6 @@ const base = vitestTest.extend<LiveFixtures>({
     );
   },
 
-  run: async ({ cli }, use) => use(cli),
-
   invoke: async ({ project }, use) => {
     await use(async (slug, options) => {
       const key = options?.anonKey ?? project.anonKey;
@@ -137,10 +120,6 @@ export function requireLiveSuccess(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
-}
-
-export function liveDatabaseTargetArgs(dbUrl: string, _projectRef?: string): string[] {
-  return ["--db-url", dbUrl];
 }
 
 export function expectFunctionOk(
