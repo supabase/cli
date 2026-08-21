@@ -6,7 +6,12 @@ import { inject, test } from "vitest";
 
 import { makeTempHome } from "./cli.ts";
 import { runSupabaseLive } from "./live.ts";
-import { isLiveConfigured, liveProjectRef } from "./live-env.ts";
+import {
+  isLiveConfigured,
+  isManagedLive,
+  liveProjectDataPlaneReady,
+  liveProjectRef,
+} from "./live-env.ts";
 
 type RunOptions = NonNullable<Parameters<typeof runSupabaseLive>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabaseLive>>;
@@ -69,7 +74,7 @@ const base = test.extend<LiveFixtures>({
     await use(inject("storageBucket"));
   },
 
-  home: async (_fixtures, use) => {
+  home: async ({ task: _task }, use) => {
     const home = makeTempHome();
     try {
       await use(home);
@@ -140,6 +145,42 @@ export const testLive = base.skipIf(!isLiveConfigured());
 
 /** Fixture for scenarios that require a project ref from managed or attached setup. */
 export const testLiveProject = base.skipIf(!isLiveConfigured() || !liveProjectRef());
+
+/** Fixture for Edge Function deploy/invoke scenarios. */
+export const testLiveFunctions = base.skipIf(
+  !isLiveConfigured() ||
+    !liveProjectRef() ||
+    (!isManagedLive() &&
+      ((process.env["SUPABASE_LIVE_ANON_KEY"] ?? "").length === 0 ||
+        (process.env["SUPABASE_LIVE_FUNCTIONS_URL"] ?? "").length === 0)),
+);
+
+/** Fixture for scenarios that require the project's Postgres data plane. */
+export const testLiveDataPlane = base.skipIf(
+  !(await liveProjectDataPlaneReady()) ||
+    (!isManagedLive() && (process.env["SUPABASE_LIVE_DB_URL"] ?? "").length === 0),
+);
+
+/** Fixture for Storage scenarios requiring a linked database password. */
+export const testLiveStorage = base.skipIf(
+  !(await liveProjectDataPlaneReady()) ||
+    !liveProjectRef() ||
+    (!isManagedLive() &&
+      ((process.env["SUPABASE_LIVE_DB_PASSWORD"] ?? "").length === 0 ||
+        (process.env["SUPABASE_LIVE_STORAGE_BUCKET"] ?? "").length === 0)),
+);
+
+/** Throw with command diagnostics when a setup/teardown command fails. */
+export function requireLiveSuccess(
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  command: string,
+): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
+}
 
 /** Layer deploy-e2e function fixtures onto the generated workspace config. */
 export function seedFunctions(
