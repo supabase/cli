@@ -17,16 +17,15 @@ interface StdinShape {
   readonly pipedBytesStream: Stream.Stream<Uint8Array, PlatformError>;
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
   /**
-   * Reads the *next* line from stdin (trimmed), bounded by `timeoutMillis`. Port of
-   * Go's `Console.ReadLine` (`internal/utils/console.go:38-61`), which reads one line
-   * with a 10-minute timeout on a TTY and 100 ms otherwise. Backed by a single
-   * persistent, lazily-opened reader, so successive calls return successive lines —
-   * a command issuing several confirmations answers each from the next piped line,
-   * exactly as Go's one `bufio.Scanner` does. stdin is not opened until the first
-   * call, so a command that only prompts on a TTY (via clack) never grabs the
-   * keyboard. Returns `None` on timeout, EOF, or a read error (Go treats all of these
-   * as no input). Unlike {@link readPipedText} (a whole-stream collect), this reads
-   * line by line, so it works for an interactive terminal as well as a pipe.
+   * Reads the *next* line from stdin (trimmed), bounded by `timeoutMillis` — callers
+   * pass 10 minutes on a TTY and 100 ms otherwise. Backed by a single persistent,
+   * lazily-opened reader, so successive calls return successive lines: a command
+   * issuing several confirmations answers each from the next piped line. stdin is not
+   * opened until the first call, so a command that only prompts on a TTY (via clack)
+   * never grabs the keyboard. A timeout, EOF, or a read error all return `None`, which
+   * every caller treats as no input and answers with the prompt's default. Unlike
+   * {@link readPipedText} (a whole-stream collect), this reads line by line, so it
+   * works for an interactive terminal as well as a pipe.
    *
    * On a PIPE lines are read ahead into a bounded buffer rather than on demand, so only
    * the first N piped lines are answerable and anything past them is dropped. See
