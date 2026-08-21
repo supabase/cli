@@ -290,7 +290,7 @@ export class StackPreparation extends Context.Service<
                 Effect.map((resolved) => [service, resolved] as const),
               );
             }),
-            { concurrency: "unbounded" },
+            { concurrency: 4 },
           );
           const artifacts = {
             resolutions: Object.fromEntries(entries),

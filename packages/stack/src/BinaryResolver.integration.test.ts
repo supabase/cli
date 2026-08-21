@@ -337,6 +337,84 @@ describe("BinaryResolver slim-services installer", () => {
     }),
   );
 
+  it.live("limits stale staging reconciliation to four filesystem operations", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        const fixture = makeFixture(root);
+        const release = nativeReleaseForService(
+          "postgrest",
+          DEFAULT_VERSIONS.postgrest,
+          yield* detectPlatform,
+        );
+        if (release === undefined) return;
+        const cacheDir = BinaryResolver.cachePath(join(root, "bin"), {
+          service: "postgrest",
+          releaseSet: "slim-services",
+          version: DEFAULT_VERSIONS.postgrest,
+          runtime: "native",
+          target: release.target,
+        });
+        const stalePrefix = join(dirname(cacheDir), `.${release.assetName}.partial-cap-`);
+        const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1_000);
+        for (let index = 0; index < 5; index += 1) {
+          const stalePath = `${stalePrefix}${index}`;
+          mkdirSync(stalePath, { recursive: true });
+          utimesSync(stalePath, old, old);
+        }
+
+        const saturated = yield* Deferred.make<void>();
+        const releaseStats = yield* Deferred.make<void>();
+        let active = 0;
+        let maxActive = 0;
+        const resolverLayer = makeResolverLayer(root, fixture, {
+          transformFileSystem: (fileSystem) =>
+            FileSystem.FileSystem.of({
+              ...fileSystem,
+              stat: (requestedPath) => {
+                if (!requestedPath.startsWith(stalePrefix)) return fileSystem.stat(requestedPath);
+                return Effect.acquireUseRelease(
+                  Effect.sync(() => {
+                    active += 1;
+                    maxActive = Math.max(maxActive, active);
+                    return active;
+                  }).pipe(
+                    Effect.tap((current) =>
+                      current === 4 ? Deferred.succeed(saturated, undefined) : Effect.void,
+                    ),
+                  ),
+                  () =>
+                    Deferred.await(releaseStats).pipe(
+                      Effect.andThen(fileSystem.stat(requestedPath)),
+                    ),
+                  () =>
+                    Effect.sync(() => {
+                      active -= 1;
+                    }),
+                );
+              },
+            }),
+        });
+        const resolving = yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          return yield* resolver.resolve({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer), Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(saturated);
+        yield* Effect.yieldNow;
+        expect(maxActive).toBe(4);
+
+        yield* Deferred.succeed(releaseStats, undefined);
+        yield* Fiber.join(resolving);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
   it.live("replaces caches with invalid identity markers or missing required paths", () =>
     Effect.gen(function* () {
       const root = makeRoot();

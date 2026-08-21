@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Fiber, Layer, Predicate, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Predicate, Queue, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
@@ -81,6 +81,75 @@ describe("prefetch", () => {
     const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
 
     expect(Object.keys(result).sort()).toEqual(["auth", "postgres", "postgrest"]);
+  });
+
+  test("limits concurrent image preparation to four services", async () => {
+    const started = await Effect.runPromise(Queue.unbounded<string>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const services = ["postgres", "imgproxy", "mailpit", "vector", "edge-runtime"] as const;
+    let pullStarts = 0;
+    const spawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const args = standardCommand ? command.args : [];
+          const image = args[1] ?? "unknown";
+          if (args[0] === "pull") {
+            pullStarts += 1;
+            yield* Queue.offer(started, image);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(3000 + pullStarts),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(2000),
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      ),
+    );
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(mockBinaryResolver().layer),
+      Layer.provide(spawner),
+    );
+
+    const preparation = Effect.runFork(
+      prefetch({ mode: "docker", containerRuntime: "docker", services }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+    await Effect.runPromise(
+      Effect.all(
+        Array.from({ length: 4 }, () => Queue.take(started)),
+        { discard: true },
+      ),
+    );
+    expect(pullStarts).toBe(4);
+
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await Effect.runPromise(Fiber.join(preparation));
+    expect(pullStarts).toBe(5);
   });
 
   test("marks a Podman daemon disconnect on DockerPullError", async () => {
