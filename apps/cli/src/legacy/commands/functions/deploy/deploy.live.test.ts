@@ -25,7 +25,7 @@ describeDockerLive("functions deploy (live)", () => {
 
       let deployed = false;
       try {
-        const result = await run(["functions", "deploy", slug, "--project-ref", projectRef]);
+        const result = await run(["functions", "deploy", "--project-ref", projectRef]);
         expect(result.exitCode, result.stderr).toBe(0);
         deployed = true;
         expect(result.stdout).toMatch(/Deployed Function/i);
