@@ -17,7 +17,10 @@ describe("supabase status (e2e)", () => {
 
   afterEach(async () => {
     if (projectDir === undefined) return;
-    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: projectDir,
+    }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
   });
@@ -26,24 +29,27 @@ describe("supabase status (e2e)", () => {
     "reports a running local stack in pretty and json modes",
     { timeout: START_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-status-live-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-status-e2e-"));
 
-      const init = await runSupabase(["init"], { cwd: projectDir });
+      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
       requireCliSuccess(init, "init setup");
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
-      const pretty = await runSupabase(["status"], { cwd: projectDir });
+      const pretty = await runSupabase(["status"], { entrypoint: "legacy", cwd: projectDir });
       expect(pretty.exitCode, `stdout:\n${pretty.stdout}\nstderr:\n${pretty.stderr}`).toBe(0);
       expect(`${pretty.stdout}${pretty.stderr}`).toContain("is running");
       expect(pretty.stdout).toContain("Project URL");
       expect(pretty.stdout).toContain("Database");
 
-      const json = await runSupabase(["status", "-o", "json"], { cwd: projectDir });
+      const json = await runSupabase(["status", "-o", "json"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+      });
       expect(json.exitCode, `stdout:\n${json.stdout}\nstderr:\n${json.stderr}`).toBe(0);
       const parsed: unknown = JSON.parse(json.stdout);
       expect(parsed).toMatchObject({

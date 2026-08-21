@@ -30,7 +30,7 @@ const LIGHTWEIGHT_DOCKER_ARGS = [
 ] as const;
 
 // Lazy service activation crosses the real proxy, daemon, Docker network, and
-// container lifecycle boundaries, so keep one gated golden-path live test.
+// container lifecycle boundaries, so keep one golden-path Docker e2e test.
 describe("supabase start lazy lifecycle (e2e)", () => {
   let project: Awaited<ReturnType<typeof makeTempStackProject>> | undefined;
   let home: ReturnType<typeof makeTempHome> | undefined;
@@ -45,7 +45,7 @@ describe("supabase start lazy lifecycle (e2e)", () => {
     "keeps an HTTP service dormant until its first proxied request",
     { timeout: START_TIMEOUT_MS + 120_000 },
     async () => {
-      project = await makeTempStackProject("supabase-lazy-start-live-");
+      project = await makeTempStackProject("supabase-lazy-start-e2e-");
       home = makeTempHome();
 
       const started = await runSupabase([...LIGHTWEIGHT_DOCKER_ARGS], {

@@ -17,16 +17,19 @@ const START_TIMEOUT_MS = 280_000;
 // (supabase/pg-toolbelt#357). Verified directly against this repo's build: with
 // the pre-fix pin (1.0.0-alpha.32) the migration below contains only the CREATE
 // FUNCTION statement; the REVOKE is silently absent. This suite uses the local
-// Docker-stack gate and never calls the Management API. See AGENTS.md's "Live
-// tests" section.
-describe("supabase db diff (live, pg-delta declarative privileges)", () => {
+// Docker-stack e2e coverage and never calls the Management API. See AGENTS.md's
+// "E2e tests" section.
+describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {
     if (projectDir === undefined) return;
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: projectDir,
+    }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
   });
@@ -35,16 +38,16 @@ describe("supabase db diff (live, pg-delta declarative privileges)", () => {
     "keeps REVOKE ... FROM PUBLIC on a function when diffing a declarative schema against local",
     { timeout: START_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-live-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-e2e-"));
 
-      const init = await runSupabase(["init"], { cwd: projectDir });
+      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
       requireCliSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services — `db diff` only needs the
       // local Postgres container reachable, same rationale as stop/status.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -63,13 +66,13 @@ as $$ select 1; $$;
 revoke execute on function public.probe_fn() from public;`,
           "--local",
         ],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       requireCliSuccess(query, "db query setup");
 
       const diff = await runSupabase(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
 

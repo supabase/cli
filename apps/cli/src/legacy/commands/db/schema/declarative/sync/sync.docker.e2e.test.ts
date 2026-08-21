@@ -40,9 +40,10 @@ describe("db schema declarative sync (e2e)", () => {
   let projectDir = "";
 
   beforeAll(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-live-"));
+    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-e2e-"));
 
     const init = await runSupabase(["init"], {
+      entrypoint: "legacy",
       cwd: projectDir,
       exitTimeoutMs: COMMAND_TIMEOUT_MS,
     });
@@ -81,7 +82,7 @@ describe("db schema declarative sync (e2e)", () => {
         "--exclude",
         "storage-api",
       ],
-      { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+      { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
     );
     requireCliSuccess(start, "start setup");
   }, COMMAND_TIMEOUT_MS);
@@ -89,6 +90,7 @@ describe("db schema declarative sync (e2e)", () => {
   afterAll(async () => {
     if (projectDir.length === 0) return;
     await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
       cwd: projectDir,
       exitTimeoutMs: COMMAND_TIMEOUT_MS,
     }).catch(() => undefined);
@@ -110,7 +112,12 @@ describe("db schema declarative sync (e2e)", () => {
           "initial_declarative",
           "--experimental",
         ],
-        { cwd: projectDir, env: NEXT_ENV, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+        {
+          entrypoint: "legacy",
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
       );
       expect(sync.exitCode, commandFailure(sync)).toBe(0);
 
@@ -128,6 +135,7 @@ describe("db schema declarative sync (e2e)", () => {
       );
 
       const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
+        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
@@ -136,6 +144,7 @@ describe("db schema declarative sync (e2e)", () => {
       const converged = await runSupabase(
         ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
         {
+          entrypoint: "legacy",
           cwd: projectDir,
           env: NEXT_ENV,
           exitTimeoutMs: COMMAND_TIMEOUT_MS,

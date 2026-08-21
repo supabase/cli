@@ -26,7 +26,10 @@ describe("supabase stop (e2e)", () => {
     if (projectDir === undefined) return;
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: projectDir,
+    }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
     projectId = undefined;
@@ -36,12 +39,12 @@ describe("supabase stop (e2e)", () => {
     "starts a real local stack, then stops it and removes its containers",
     { timeout: START_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-live-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-e2e-"));
       // No `project_id` override, so the cli resolves it from the workdir
       // basename (see legacy-docker-ids.ts).
       projectId = path.basename(projectDir);
 
-      const init = await runSupabase(["init"], { cwd: projectDir });
+      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
       requireCliSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services (Next.js Studio build, the
@@ -50,15 +53,15 @@ describe("supabase stop (e2e)", () => {
       // exists to stop.
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
       // Sanity: confirm the stack is actually up before testing `stop` against it.
-      const before = await runSupabase(["status"], { cwd: projectDir });
+      const before = await runSupabase(["status"], { entrypoint: "legacy", cwd: projectDir });
       requireCliSuccess(before, "status setup");
 
-      const stop = await runSupabase(["stop"], { cwd: projectDir });
+      const stop = await runSupabase(["stop"], { entrypoint: "legacy", cwd: projectDir });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
       expect(stop.stdout).toContain("Stopped");
 
@@ -81,18 +84,18 @@ describe("supabase stop (e2e)", () => {
     "stop --no-backup --debug reports real pruned containers, volumes, and network",
     { timeout: START_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-live-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-e2e-"));
       // Sanitizing is a no-op for a `mkdtemp`-generated basename (already
       // alphanumeric/`-`), but mirrors the port's actual resolution rather
       // than assuming that stays true (same note as `start.e2e.test.ts`).
       projectId = legacySanitizeProjectId(path.basename(projectDir));
 
-      const init = await runSupabase(["init"], { cwd: projectDir });
+      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
       requireCliSuccess(init, "init setup");
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -101,7 +104,10 @@ describe("supabase stop (e2e)", () => {
       // backed by parsing REAL `docker`/`podman` prune stdout — the format
       // assumption (`Deleted …:` headers, `Total reclaimed space:` trailer)
       // that mocked integration fixtures cannot validate by construction.
-      const stop = await runSupabase(["stop", "--no-backup", "--debug"], { cwd: projectDir });
+      const stop = await runSupabase(["stop", "--no-backup", "--debug"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+      });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
       expect(stop.stdout).toContain("Stopped");
 

@@ -20,7 +20,7 @@ import { dockerfileServiceImage } from "../../../shared/services/dockerfile-imag
 const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
-const SHORT_LIVE_TIMEOUT_MS = 30_000;
+const SHORT_E2E_TIMEOUT_MS = 30_000;
 const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
@@ -71,7 +71,10 @@ describe("supabase start (e2e)", () => {
     if (projectDir === undefined) return;
     // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
     // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabase(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: projectDir,
+    }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
   });
@@ -80,7 +83,7 @@ describe("supabase start (e2e)", () => {
     "recreates a stopped real stack and preserves database data",
     { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-"));
       // No `project_id` override, so the cli resolves it from the workdir
       // basename (see legacy-docker-ids.ts). Sanitizing is a no-op for a
       // `mkdtemp`-generated basename (already alphanumeric/`-`), but mirrors
@@ -99,12 +102,14 @@ describe("supabase start (e2e)", () => {
       ];
 
       const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
         cwd: projectDir,
-        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
 
       const start = await runSupabase(startArgs, {
+        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -135,7 +140,7 @@ describe("supabase start (e2e)", () => {
       const containerIds = splitNonEmptyLines(containerIdOutput);
       expect(containerIds.length).toBeGreaterThan(0);
       await execFileAsync("docker", ["stop", "--time", "0", ...containerIds], {
-        timeout: SHORT_LIVE_TIMEOUT_MS,
+        timeout: SHORT_E2E_TIMEOUT_MS,
       });
 
       const { stdout: stoppedState } = await execFileAsync("docker", [
@@ -151,6 +156,7 @@ describe("supabase start (e2e)", () => {
       });
 
       const restart = await runSupabase(startArgs, {
+        entrypoint: "legacy",
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
@@ -196,8 +202,9 @@ describe("supabase start (e2e)", () => {
       }
 
       const status = await runSupabase(["status"], {
+        entrypoint: "legacy",
         cwd: projectDir,
-        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(status, "status setup");
     },
@@ -207,11 +214,12 @@ describe("supabase start (e2e)", () => {
     "bypasses an HTTPS proxy for loopback gateway health checks",
     { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-proxy-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-proxy-"));
 
       const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
         cwd: projectDir,
-        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
 
@@ -238,6 +246,7 @@ describe("supabase start (e2e)", () => {
         );
         const proxyUrl = `http://127.0.0.1:${address.port}`;
         const start = await runSupabase(["start", ...excludeArgs], {
+          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
           env: {
@@ -273,7 +282,7 @@ describe("supabase start (e2e)", () => {
     "names the container and its image when a cached image cannot be executed",
     { timeout: START_TIMEOUT_MS + LIFECYCLE_OVERHEAD_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-exec-"));
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-e2e-exec-"));
       const projectId = legacySanitizeProjectId(path.basename(projectDir));
       const mailpitContainer = legacyServiceContainerName("inbucket", projectId);
       // The exact tag `start` resolves for Mailpit, so its already-cached check
@@ -281,8 +290,9 @@ describe("supabase start (e2e)", () => {
       const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
 
       const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
         cwd: projectDir,
-        exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
+        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
 
@@ -306,6 +316,7 @@ describe("supabase start (e2e)", () => {
             : ["--exclude", entry.excludeKey],
         );
         const start = await runSupabase(["start", ...excludeArgs], {
+          entrypoint: "legacy",
           cwd: projectDir,
           exitTimeoutMs: START_TIMEOUT_MS,
         });

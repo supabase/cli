@@ -122,9 +122,6 @@ const ensureFunctionsDirectory = Effect.fnUntraced(function* () {
   yield* fs.makeDirectory(join(projectHome.supabaseDir, "functions"), { recursive: true });
 });
 
-const EDGE_RUNTIME_RELOAD_COMPLETE = "Edge runtime reload complete.";
-const FUNCTIONS_RELOAD_COMPLETE = "Function reload complete.";
-
 function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): boolean {
   if (spec.names === undefined) {
     return true;
@@ -231,13 +228,11 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
             yield* output.info("Edge runtime config changed. Restarting edge-runtime...");
             yield* reloadEdgeRuntime(stack, opts, result.state.config);
             edgeRuntimeState = result.state;
-            yield* output.info(EDGE_RUNTIME_RELOAD_COMPLETE);
             return;
           }
           edgeRuntimeState = result.state;
           yield* output.info("Function files changed. Restarting edge-runtime...");
           yield* stack.reloadFunctions({ functions: yield* resolveFunctionsBundle(opts) });
-          yield* output.info(FUNCTIONS_RELOAD_COMPLETE);
         }).pipe(
           Effect.catch((error) =>
             output.error(error instanceof Error ? error.message : String(error)),

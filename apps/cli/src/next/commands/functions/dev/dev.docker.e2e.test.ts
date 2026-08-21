@@ -13,9 +13,9 @@ import { cleanupRegisteredStackProjects } from "../../../../../tests/helpers/sta
 const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 90_000;
+const FUNCTION_RESPONSE_ATTEMPT_TIMEOUT_MS = 5_000;
+const FUNCTION_RESPONSE_RETRY_BACKOFF_MS = 250;
 const FUNCTION_FILES_RESTART_PATTERN = /Function files changed\. Restarting edge-runtime\./;
-const FUNCTION_RELOAD_COMPLETE_PATTERN = /Function reload complete\./;
-const EDGE_RUNTIME_RELOAD_COMPLETE_PATTERN = /Edge runtime reload complete\./;
 
 type SpawnedSupabase = ReturnType<typeof spawnSupabase>;
 
@@ -23,23 +23,46 @@ async function assertFunctionResponse(
   url: string,
   init: RequestInit,
   assertResponse: (response: Response, body: string) => void,
+  timeoutMs = FUNCTIONS_DEV_STEP_TIMEOUT_MS,
 ): Promise<void> {
-  try {
-    const response = await fetch(url, init);
-    const body = await response.text();
-    assertResponse(response, body);
-  } catch (error) {
-    throw new Error(
-      `Function request ${url} failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  const deadline = Date.now() + timeoutMs;
+  let lastFailure: unknown = new Error("No response received");
+
+  while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    try {
+      const response = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(Math.min(remainingMs, FUNCTION_RESPONSE_ATTEMPT_TIMEOUT_MS)),
+      });
+      const body = await response.text();
+      assertResponse(response, body);
+      return;
+    } catch (error) {
+      lastFailure = error;
+      // Bound request frequency while the worker catches up after a reload;
+      // the wall-clock deadline, rather than an attempt count, remains the guard.
+      const retryDelayMs = Math.min(
+        FUNCTION_RESPONSE_RETRY_BACKOFF_MS,
+        Math.max(0, deadline - Date.now()),
+      );
+      if (retryDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      }
+    }
   }
+
+  throw new Error(
+    `Function request ${url} did not reach the expected response within ${timeoutMs}ms. ` +
+      `Last failure: ${lastFailure instanceof Error ? lastFailure.message : String(lastFailure)}`,
+  );
 }
 
 describe("supabase functions dev (e2e)", () => {
   afterEach(cleanupRegisteredStackProjects);
 
   test(
-    "serves a function created while running and applies live config and source changes",
+    "serves a function created while running and applies config and source changes",
     { timeout: FUNCTIONS_DEV_TEST_TIMEOUT_MS },
     async () => {
       const home = makeTempHome();
@@ -82,18 +105,13 @@ describe("supabase functions dev (e2e)", () => {
           FUNCTIONS_DEV_STEP_TIMEOUT_MS,
           functionOffset,
         );
-        const functionReload = devProc.waitForOutput(
-          FUNCTION_RELOAD_COMPLETE_PATTERN,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          functionOffset,
-        );
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
           cwd: project.dir,
           home: home.dir,
           exitTimeoutMs: FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         });
         expect(newResult.exitCode).toBe(0);
-        await Promise.all([functionRestart, functionReload]);
+        await functionRestart;
 
         await assertFunctionResponse(functionUrl, {}, (response, body) => {
           expect(response.status).toBe(401);
@@ -106,11 +124,6 @@ describe("supabase functions dev (e2e)", () => {
           FUNCTIONS_DEV_STEP_TIMEOUT_MS,
           configOffset,
         );
-        const configReload = devProc.waitForOutput(
-          EDGE_RUNTIME_RELOAD_COMPLETE_PATTERN,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          configOffset,
-        );
         await writeFile(
           join(project.dir, "supabase", "config.toml"),
           `project_id = "functions-dev-e2e"
@@ -119,7 +132,7 @@ describe("supabase functions dev (e2e)", () => {
 verify_jwt = false
 `,
         );
-        await Promise.all([configRestart, configReload]);
+        await configRestart;
 
         await assertFunctionResponse(
           functionUrl,
@@ -140,11 +153,6 @@ verify_jwt = false
           FUNCTIONS_DEV_STEP_TIMEOUT_MS,
           sourceOffset,
         );
-        const sourceReload = devProc.waitForOutput(
-          FUNCTION_RELOAD_COMPLETE_PATTERN,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          sourceOffset,
-        );
         await writeFile(
           functionPath,
           `Deno.serve(() => {
@@ -154,7 +162,7 @@ verify_jwt = false
 });
 `,
         );
-        await Promise.all([sourceRestart, sourceReload]);
+        await sourceRestart;
 
         await assertFunctionResponse(
           functionUrl,

@@ -12,6 +12,7 @@ describe("supabase db start (e2e)", () => {
     const project = await makeTempStackProject("supabase-db-start-e2e-");
     try {
       const started = await runSupabase(["db", "start"], {
+        entrypoint: "legacy",
         cwd: project.dir,
         home: home.dir,
       });
@@ -21,6 +22,7 @@ describe("supabase db start (e2e)", () => {
       );
     } finally {
       await runSupabase(["stop", "--no-backup"], {
+        entrypoint: "legacy",
         cwd: project.dir,
         home: home.dir,
       }).catch(() => undefined);
