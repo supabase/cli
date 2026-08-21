@@ -52,13 +52,13 @@ mise install
 
 `mise install` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-| Tool | Version source |
-| --- | --- |
-| Bun | `.bun-version` |
-| Node.js | `devEngines.runtime` field in `package.json` |
-| pnpm | `packageManager` field in `package.json` |
-| Go | `mise.toml` |
-| golangci-lint | `mise.toml` |
+| Tool          | Version source                               |
+| ------------- | -------------------------------------------- |
+| Bun           | `.bun-version`                               |
+| Node.js       | `devEngines.runtime` field in `package.json` |
+| pnpm          | `packageManager` field in `package.json`     |
+| Go            | `mise.toml`                                  |
+| golangci-lint | `mise.toml`                                  |
 
 The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
 
@@ -105,28 +105,28 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 
 ## Apps
 
-| Workspace | Purpose |
-| --- | --- |
-| `apps/cli` | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts. |
+| Workspace      | Purpose                                                                                                                                |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/cli`     | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts.            |
 | `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TS Legacy port against real Supabase Management API responses. |
-| `apps/docs` | Internal docs site built with Next.js and generated from the CLI docs sources. |
+| `apps/docs`    | Internal docs site built with Next.js and generated from the CLI docs sources.                                                         |
 
 ## Packages
 
-| Workspace | Purpose |
-| --- | --- |
-| `packages/api` | Auto-generated TypeScript client for the Supabase Management API. |
-| `packages/cli-test-helpers` | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
-| `packages/config` | JSON Schema and generated TypeScript types for Supabase configuration. |
-| `packages/process-compose` | TypeScript/Bun port of `process-compose` used for multi-service orchestration. |
-| `packages/stack` | Programmatic local Supabase stack used by the CLI and other tooling. |
-| `packages/cli-darwin-arm64` | Published native CLI binary wrapper for macOS arm64. |
-| `packages/cli-darwin-x64` | Published native CLI binary wrapper for macOS x64. |
-| `packages/cli-linux-arm64` | Published native CLI binary wrapper for Linux arm64 (glibc). |
-| `packages/cli-linux-arm64-musl` | Published native CLI binary wrapper for Linux arm64 (musl). |
-| `packages/cli-linux-x64` | Published native CLI binary wrapper for Linux x64 (glibc). |
-| `packages/cli-linux-x64-musl` | Published native CLI binary wrapper for Linux x64 (musl). |
-| `packages/cli-windows-x64` | Published native CLI binary wrapper for Windows x64. |
+| Workspace                       | Purpose                                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `packages/api`                  | Auto-generated TypeScript client for the Supabase Management API.                                                   |
+| `packages/cli-test-helpers`     | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
+| `packages/config`               | JSON Schema and generated TypeScript types for Supabase configuration.                                              |
+| `packages/process-compose`      | TypeScript/Bun port of `process-compose` used for multi-service orchestration.                                      |
+| `packages/stack`                | Programmatic local Supabase stack used by the CLI and other tooling.                                                |
+| `packages/cli-darwin-arm64`     | Published native CLI binary wrapper for macOS arm64.                                                                |
+| `packages/cli-darwin-x64`       | Published native CLI binary wrapper for macOS x64.                                                                  |
+| `packages/cli-linux-arm64`      | Published native CLI binary wrapper for Linux arm64 (glibc).                                                        |
+| `packages/cli-linux-arm64-musl` | Published native CLI binary wrapper for Linux arm64 (musl).                                                         |
+| `packages/cli-linux-x64`        | Published native CLI binary wrapper for Linux x64 (glibc).                                                          |
+| `packages/cli-linux-x64-musl`   | Published native CLI binary wrapper for Linux x64 (musl).                                                           |
+| `packages/cli-windows-x64`      | Published native CLI binary wrapper for Windows x64.                                                                |
 
 ## Working In The Monorepo
 
@@ -143,22 +143,22 @@ pnpm run fix:all     # run all fixers across every project
 
 All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) expose the following scripts:
 
-| Script | What it does |
-|--------|--------------|
-| `test` | Run the full test suite (unit + integration + e2e) |
-| `test:core` | Run unit and integration tests |
-| `test:unit` | Run unit tests _(inferred by Nx plugin)_ |
-| `test:integration` | Run integration tests _(inferred by Nx plugin)_ |
-| `test:e2e` | Run end-to-end tests _(inferred by Nx plugin)_ |
-| `check:all` | Run all check targets for this project |
-| `fix:all` | Run all fix targets for this project |
-| `types:check` | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_ |
-| `lint:check` | Check for lint errors with `oxlint` _(inferred by Nx plugin)_ |
-| `lint:fix` | Auto-fix lint errors _(inferred by Nx plugin)_ |
-| `fmt:check` | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_ |
-| `fmt:fix` | Auto-fix formatting _(inferred by Nx plugin)_ |
-| `knip:check` | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
-| `knip:fix` | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_ |
+| Script             | What it does                                                                   |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `test`             | Run the full test suite (unit + integration + e2e)                             |
+| `test:core`        | Run unit and integration tests                                                 |
+| `test:unit`        | Run unit tests _(inferred by Nx plugin)_                                       |
+| `test:integration` | Run integration tests _(inferred by Nx plugin)_                                |
+| `test:e2e`         | Run end-to-end tests _(inferred by Nx plugin)_                                 |
+| `check:all`        | Run all check targets for this project                                         |
+| `fix:all`          | Run all fix targets for this project                                           |
+| `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_                       |
+| `lint:check`       | Check for lint errors with `oxlint` _(inferred by Nx plugin)_                  |
+| `lint:fix`         | Auto-fix lint errors _(inferred by Nx plugin)_                                 |
+| `fmt:check`        | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_                |
+| `fmt:fix`          | Auto-fix formatting _(inferred by Nx plugin)_                                  |
+| `knip:check`       | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
+| `knip:fix`         | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_          |
 
 The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`, `lint:*`, `fmt:*`, `knip:*`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
 
@@ -176,18 +176,36 @@ pnpm run check:all
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements a record-and-replay test harness for testing the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell) against real Supabase Management API responses without hitting staging on every run. It still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for this suite, but the suite itself no longer compares Go and TS output — that go-target parity harness was retired once the legacy port and the CLI-1970 Go binary trim landed.
+`apps/cli-e2e` implements a record-and-replay test harness for testing the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell) against real Supabase Management API responses without hitting staging on every run, plus a separate live suite for smoke-testing real remote behavior. It still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for this suite, but the suite itself no longer compares Go and TS output — that go-target parity harness was retired once the legacy port and the CLI-1970 Go binary trim landed.
 
 ### Architecture
 
-Fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing the request/response pairs. Every other run replays those committed fixtures against the same CLI, so tests are fast and deterministic with no network access.
+Replay fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing request/response pairs. Replay runs serve those committed fixtures back to the same CLI, so compatibility tests are fast and deterministic with no network access; live mode is described below.
 
-The harness works in two modes:
+The harness works in three modes:
 
-| Mode | When | What it does |
-|------|------|-------------|
+| Mode                 | When                 | What it does                                                                                                           |
+| -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Replay** (default) | Every PR / local dev | Loads committed fixtures; serves recorded responses to the CLI subprocess. Fast and deterministic — no network access. |
-| **Record** | `RECORD=true` | Proxies CLI traffic to staging and captures request/response pairs as fixture files. |
+| **Record**           | `RECORD=true`        | Proxies CLI traffic to staging and captures request/response pairs as fixture files.                                   |
+| **Live**             | `CLI_E2E_MODE=live`  | Runs selected tests directly against a real staging project and Docker daemon.                                         |
+
+### Live remote-project coverage
+
+The live suite runs the real `ts-legacy` CLI directly against the staging Management API — it does not use the replay server. Each serial run provisions one ephemeral project, waits for it to become `ACTIVE_HEALTHY`, uses the real Docker daemon for operations such as function deployment, and deletes the project during teardown (including after failures). Tests live in [`apps/cli-e2e/src/tests/live/**/*.live.e2e.test.ts`](apps/cli-e2e/src/tests/live), use the `testLive` fixtures (`run`, `invoke`, `workspace`, `projectRef`, `anonKey`, `functionsUrl`, `dbUrl`, `storageBucket`, and related values), and make **outcome-based assertions** on exit codes, output, HTTP status, and response bodies.
+
+Live coverage is smoke coverage, not an exhaustive command matrix. Grow it toward one representative golden-path test for every user-facing CLI command: choose one realistic, common success workflow and let integration tests cover validation, formatting, fallbacks, errors, and other matrices unless the real remote/runtime boundary is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) for the architecture and [`apps/cli-e2e/.env.example`](apps/cli-e2e/.env.example) for environment settings.
+
+To run the live suite locally, build the Go binary first, then provide a staging token:
+
+```sh
+cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
+  SUPABASE_ACCESS_TOKEN=sbp_... \
+  pnpm --filter @supabase/cli-e2e test:e2e:live
+```
+
+Live CI is manual or daily scheduled and is not PR-blocking; run it manually on a PR branch when you need pre-merge remote coverage.
 
 ### Running the tests
 
@@ -303,13 +321,13 @@ supabase --version
 
 ### Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| `Error: Something is already running on port 4873` | Kill the leftover Verdaccio process (`lsof -ti:4873 \| xargs kill`) and retry |
-| `go not found in PATH` (legacy only) | Install Go from https://go.dev/dl/ |
-| `Error: Go CLI source not found` (legacy only) | Run `pnpm repos:install` to clone `apps/cli-go` |
+| Problem                                                                         | Fix                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Error: Something is already running on port 4873`                              | Kill the leftover Verdaccio process (`lsof -ti:4873 \| xargs kill`) and retry                                                                                                                                                                                                                                                                                                                                   |
+| `go not found in PATH` (legacy only)                                            | Install Go from https://go.dev/dl/                                                                                                                                                                                                                                                                                                                                                                              |
+| `Error: Go CLI source not found` (legacy only)                                  | Run `pnpm repos:install` to clone `apps/cli-go`                                                                                                                                                                                                                                                                                                                                                                 |
 | `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
-| `npx` resolves from npm instead of local | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install` |
+| `npx` resolves from npm instead of local                                        | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install`                                                                                                                                                                                                                                                                                                                                     |
 
 ## Using Nx
 
