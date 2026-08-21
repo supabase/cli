@@ -9,7 +9,7 @@ async function unsetSecret(
   projectRef: string,
 ): Promise<void> {
   const cleanup = await run(["secrets", "unset", name, "--project-ref", projectRef, "--yes"]);
-  if (cleanup.exitCode !== 0) {
+  if (cleanup.exitCode !== 0 && !/not found/i.test(`${cleanup.stdout}\n${cleanup.stderr}`)) {
     throw new Error(`secrets unset cleanup failed:\n${cleanup.stdout}\n${cleanup.stderr}`);
   }
 }
@@ -19,11 +19,25 @@ testLiveProject("unsets a secret from the remote project", async ({ run, project
   const created = await run(["secrets", "set", `${name}=live-value`, "--project-ref", projectRef]);
   requireLiveSuccess(created, "secrets set setup");
 
+  let deleted = false;
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
     const result = await run(["secrets", "unset", name, "--project-ref", projectRef, "--yes"]);
     expect(result.exitCode, result.stderr).toBe(0);
+    deleted = true;
     expect(result.stdout).toContain("Finished");
+  } catch (error) {
+    targetError = error;
   } finally {
-    await unsetSecret(run, name, projectRef);
+    if (!deleted) {
+      try {
+        await unsetSecret(run, name, projectRef);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
   }
+  if (targetError !== undefined) throw targetError;
+  if (cleanupError !== undefined) throw cleanupError;
 });

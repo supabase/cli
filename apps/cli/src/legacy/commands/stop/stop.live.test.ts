@@ -5,7 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
-import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
 import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 import { legacySanitizeProjectId } from "../../shared/legacy-docker-ids.ts";
 
@@ -14,12 +14,12 @@ const execFileAsync = promisify(execFile);
 const START_TIMEOUT_MS = 280_000;
 
 // `stop` never calls the Management API — it talks directly to the real local
-// Docker stack `start` creates. `describeLive` is reused
+// Docker stack `start` creates. `describeLocalStackLive` gates
 // purely as the "we're in the full cli-e2e-ci runner" signal (it also has a
 // real Docker daemon, since that's how supabox itself runs); the
 // SUPABASE_ACCESS_TOKEN it gates on is otherwise irrelevant here. See
 // AGENTS.md's "Live tests" section for the full convention.
-describeLive("supabase stop (live)", () => {
+describeLocalStackLive("supabase stop (live)", () => {
   let projectDir: string | undefined;
   let projectId: string | undefined;
 

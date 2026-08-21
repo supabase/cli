@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "vitest";
 import { makeTempHome, makeTempStackProject } from "../../../../tests/helpers/cli.ts";
-import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { cleanupRegisteredStackProjects } from "../../../../tests/helpers/stack-e2e-cleanup.ts";
 
 const START_TIMEOUT_MS = 180_000;
 const COMMAND_OPTIONS = { entrypoint: "next" as const };
@@ -31,20 +32,12 @@ const LIGHTWEIGHT_DOCKER_ARGS = [
 
 // Lazy service activation crosses the real proxy, daemon, Docker network, and
 // container lifecycle boundaries, so keep one gated golden-path live test.
-describeLive("supabase start lazy lifecycle (live)", () => {
+describeLocalStackLive("supabase start lazy lifecycle (live)", () => {
   let project: Awaited<ReturnType<typeof makeTempStackProject>> | undefined;
   let home: ReturnType<typeof makeTempHome> | undefined;
 
   afterEach(async () => {
-    if (project !== undefined && home !== undefined) {
-      await runSupabaseLive(["stop", "--no-backup"], {
-        ...COMMAND_OPTIONS,
-        cwd: project.dir,
-        home: home.dir,
-      }).catch(() => undefined);
-    }
-    await project?.cleanup();
-    home?.[Symbol.dispose]();
+    await cleanupRegisteredStackProjects();
     project = undefined;
     home = undefined;
   });
@@ -70,7 +63,7 @@ describeLive("supabase start lazy lifecycle (live)", () => {
         home: home.dir,
       });
       expect(before.exitCode, `stdout:\n${before.stdout}\nstderr:\n${before.stderr}`).toBe(0);
-      expect(before.stdout).toContain("auth: Pending");
+      expect(before.stdout).toContain("auth: Dormant");
 
       const response = await fetch(`http://127.0.0.1:${project.ports.apiPort}/auth/v1/health`, {
         signal: AbortSignal.timeout(60_000),

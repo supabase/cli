@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
-import { describeDockerLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
-import { requireLiveSuccess } from "../../../../../tests/helpers/live-context.ts";
+import {
+  describeLocalStackLive,
+  runSupabaseLive,
+} from "../../../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../../../../tests/helpers/live-context.ts";
 
 const COMMAND_TIMEOUT_MS = 280_000;
 const SCENARIO_TIMEOUT_MS = 900_000;
@@ -36,7 +39,7 @@ function migrationFiles(projectDir: string): ReadonlyArray<string> {
     : [];
 }
 
-describeDockerLive("pg-delta next local convergence (live)", () => {
+describeLocalStackLive("db schema declarative sync (live)", () => {
   let projectDir = "";
 
   beforeAll(async () => {
@@ -50,16 +53,15 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
 
     const configPath = path.join(projectDir, "supabase", "config.toml");
     const config = readFileSync(configPath, "utf8");
-    expect(config).toContain("schema_paths = []");
-    expect(config).toContain("[experimental.pgdelta]\nenabled = true");
+    if (!config.includes("[experimental.pgdelta]\nenabled = true")) {
+      throw new Error("init setup did not enable experimental pg-delta in config.toml");
+    }
     writeFileSync(
       configPath,
-      config
-        .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
-        .replace(
-          '# declarative_schema_path = "./schemas"',
-          'declarative_schema_path = "./schemas"',
-        ),
+      config.replace(
+        '# declarative_schema_path = "./schemas"',
+        'declarative_schema_path = "./schemas"',
+      ),
     );
 
     const schemasDir = path.join(projectDir, "supabase", "schemas");
@@ -100,13 +102,20 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
     "applies a representative declarative schema and converges",
     { timeout: SCENARIO_TIMEOUT_MS },
     async () => {
-      expect(migrationFiles(projectDir)).toEqual([]);
-
-      const diff = await runSupabaseLive(
-        ["db", "diff", "--local", "--use-pg-delta", "-f", "initial_declarative"],
+      const sync = await runSupabaseLive(
+        [
+          "db",
+          "schema",
+          "declarative",
+          "sync",
+          "--no-apply",
+          "--name",
+          "initial_declarative",
+          "--experimental",
+        ],
         { cwd: projectDir, env: NEXT_ENV, exitTimeoutMs: COMMAND_TIMEOUT_MS },
       );
-      expect(diff.exitCode, commandFailure(diff)).toBe(0);
+      expect(sync.exitCode, commandFailure(sync)).toBe(0);
 
       const migrations = migrationFiles(projectDir);
       expect(migrations.length).toBeGreaterThan(0);
@@ -127,13 +136,16 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
       });
       requireLiveSuccess(reset, "db reset setup");
 
-      const converged = await runSupabaseLive(["db", "diff", "--local", "--use-pg-delta"], {
-        cwd: projectDir,
-        env: NEXT_ENV,
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
+      const converged = await runSupabaseLive(
+        ["db", "schema", "declarative", "sync", "--no-apply", "--experimental"],
+        {
+          cwd: projectDir,
+          env: NEXT_ENV,
+          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        },
+      );
       expect(converged.exitCode, commandFailure(converged)).toBe(0);
-      expect(converged.stderr).toContain("No schema changes found");
+      expect(`${converged.stdout}${converged.stderr}`).toContain("No schema changes found");
     },
   );
 });

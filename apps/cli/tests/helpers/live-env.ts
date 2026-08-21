@@ -18,6 +18,9 @@
  *   `https://api.supabase.green`.
  * - `SUPABASE_LIVE_PROJECT_REF` — the shared project; gates project-scoped
  *   suites (functions, branches, db, storage). Managed setup populates it.
+ * - `SUPABASE_LIVE_LOCAL_STACK` — whether local Docker-stack lifecycle suites
+ *   run. Attached runs default to `1`; managed staging defaults to `0`.
+ *   Set explicitly to `0` or `1` to override the mode default.
  * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
  *   inherited by the subprocess via the parent environment.
  */
@@ -50,6 +53,28 @@ export function liveMode(): LiveMode {
 
 export function isManagedLive(): boolean {
   return liveMode() === "managed";
+}
+
+/**
+ * Whether suites that own a local Docker development stack should run.
+ * Attached runners preserve the historical default; managed project runners
+ * only exercise the remote project unless explicitly opted into local-stack
+ * coverage.
+ */
+export function localStackLiveEnabled(): boolean {
+  const value = process.env["SUPABASE_LIVE_LOCAL_STACK"];
+  if (value === undefined) {
+    return !isManagedLive();
+  }
+  if (value === "0") {
+    return false;
+  }
+  if (value === "1") {
+    return true;
+  }
+  throw new Error(
+    `Unsupported SUPABASE_LIVE_LOCAL_STACK ${JSON.stringify(value)}; expected "0" or "1"`,
+  );
 }
 
 /**

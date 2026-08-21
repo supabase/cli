@@ -15,15 +15,36 @@ testLiveProject("deletes a preview branch", async ({ run, projectRef, skip }) =>
   requireLiveSuccess(created, "branches create");
 
   let deleted = false;
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
     const removed = await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
     expect(removed.exitCode, removed.stderr).toBe(0);
-    expect(removed.stdout).toContain("Deleted preview branch");
     deleted = true;
+    expect(removed.stderr).toContain("Deleted preview branch");
+  } catch (error) {
+    targetError = error;
   } finally {
     if (!deleted) {
-      const cleanup = await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
-      requireLiveSuccess(cleanup, "branches delete cleanup");
+      try {
+        const cleanup = await run([
+          "branches",
+          "delete",
+          name,
+          "--project-ref",
+          projectRef,
+          "--yes",
+        ]);
+        if (cleanup.exitCode !== 0 && !/not found/i.test(`${cleanup.stdout}\n${cleanup.stderr}`)) {
+          cleanupError = new Error(
+            `branches delete cleanup failed:\n${cleanup.stdout}\n${cleanup.stderr}`,
+          );
+        }
+      } catch (error) {
+        cleanupError = error;
+      }
     }
   }
+  if (targetError !== undefined) throw targetError;
+  if (cleanupError !== undefined) throw cleanupError;
 });

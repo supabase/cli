@@ -7,7 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
-import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
 import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 import {
   legacySanitizeProjectId,
@@ -61,11 +61,11 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 
 // `start` is the one local-dev-stack command whose correctness genuinely
 // depends on a real Docker daemon — real label filtering and real container
-// lifecycle, not just CLI exit codes. `describeLive` is reused purely as the
+// lifecycle, not just CLI exit codes. `describeLocalStackLive` gates the
 // "we're in a configured live runner" signal (see stop.live.test.ts's own
 // comment for why this, not a Management-API gate, is correct here). See
 // AGENTS.md's "Live tests" section for the full convention.
-describeLive("supabase start (live)", () => {
+describeLocalStackLive("supabase start (live)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {

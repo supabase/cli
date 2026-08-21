@@ -39,6 +39,10 @@ mode, not a `replay-server.ts` branch.
   deletes exactly that project during teardown unless explicitly kept.
 - `replay-server.ts` is untouched — no `live` branch, no live Docker or storage
   proxy.
+- Local Docker-stack lifecycle suites are gated separately by
+  `SUPABASE_LIVE_LOCAL_STACK`: attached Supabox/local runs default to enabled,
+  while managed staging defaults to disabled. Docker-dependent remote scenarios
+  such as `functions deploy` retain the broader Docker gate.
 - Assertions are **outcome-based**, modeled on the manual deploy playbook:
   1. run the real CLI (`run([...])`) and assert `exitCode` / `stdout`;
   2. **invoke the deployed function over HTTP directly** and assert HTTP status +
@@ -106,8 +110,9 @@ values without changing test code.
 - Explicit managed runs provision and tear down one real staging project, so those
   runs are inherently slower and subject to provisioning flake. The default attached
   mode uses the caller-provided Supabox/local project; global setup never deletes it.
-  Managed provisioning is mitigated by a CI-level re-run (up to 3×) rather than
-  in-setup retry.
+  Managed CI runs the live suite once with a 20-minute step timeout and always runs
+  the separate scoped project-cleanup step; it does not amplify deterministic failures
+  by retrying the entire suite.
 - A second wiring path now exists for the same harness (replay-via-server vs
   live-direct); contributors must know which mode wires the CLI how.
 

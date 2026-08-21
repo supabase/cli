@@ -3,16 +3,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
-import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { describeLocalStackLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
 import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 
 const START_TIMEOUT_MS = 280_000;
 
-// See stop.live.test.ts for why `describeLive` (not a Management-API gate) is
+// See stop.live.test.ts for why `describeLocalStackLive` (not a Management-API gate) is
 // the right reuse here: `status` never calls the Management API, only the real
 // Docker daemon the cli-e2e-ci runner provides. See AGENTS.md's "Live tests"
 // section for the full convention.
-describeLive("supabase status (live)", () => {
+describeLocalStackLive("supabase status (live)", () => {
   let projectDir: string | undefined;
 
   afterEach(async () => {

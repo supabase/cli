@@ -5,6 +5,7 @@ import { runSupabase } from "./cli.ts";
 import {
   isLiveConfigured,
   LIVE_EXIT_TIMEOUT_MS,
+  localStackLiveEnabled,
   liveProjectDataPlaneReady,
   liveProfile,
   liveProjectRef,
@@ -29,6 +30,7 @@ export {
   LIVE_EXIT_TIMEOUT_MS,
   liveApiBaseUrl,
   isManagedLive,
+  localStackLiveEnabled,
   keepLiveProject,
   liveProjectDataPlaneReady,
   liveMode,
@@ -65,6 +67,15 @@ function hasDockerDaemon(): boolean {
  * and only when the live environment is configured.
  */
 export const describeDockerLive = describe.skipIf(!isLiveConfigured() || !hasDockerDaemon());
+
+/**
+ * `describe` for suites that own a local Docker development stack. Attached
+ * Supabox/local runners enable these by default; managed staging only runs
+ * them when `SUPABASE_LIVE_LOCAL_STACK=1` is explicitly set.
+ */
+export const describeLocalStackLive = describe.skipIf(
+  !isLiveConfigured() || !localStackLiveEnabled() || !hasDockerDaemon(),
+);
 
 /**
  * `describe` for project-scoped live suites: runs only when the live env is

@@ -1,9 +1,9 @@
 import { expect } from "vitest";
 
-import { describeDockerLive } from "../../../../../tests/helpers/live.ts";
+import { describeLocalStackLive } from "../../../../../tests/helpers/live.ts";
 import { testLive } from "../../../../../tests/helpers/live-context.ts";
 
-describeDockerLive("supabase db start (live)", () => {
+describeLocalStackLive("supabase db start (live)", () => {
   testLive(
     "boots the local database",
     async ({ run }) => {

@@ -100,6 +100,7 @@ jobs:
     # steps that need it (run + cleanup) so build/checkout/docker never see it.
     env:
       SUPABASE_LIVE_MODE: managed
+      SUPABASE_LIVE_LOCAL_STACK: "0"
       SUPABASE_PROFILE: supabase-staging
       SUPABASE_LIVE_API_URL: https://api.supabase.green
       SUPABASE_LIVE_PROJECT_HOST: supabase.red
@@ -132,26 +133,11 @@ jobs:
       - name: Docker preflight
         run: docker info
 
-      - name: Run live e2e (retry up to 3x)
+      - name: Run live e2e
+        timeout-minutes: 20
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
-        run: |
-          PREFIX="supabase-cli-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
-          # GitHub runs this step as `bash -e`; use `if cmd; then` (errexit-exempt)
-          # so a failing attempt does not abort the step before the retry.
-          for attempt in 1 2 3; do
-            echo "::group::live e2e attempt ${attempt}"
-            if [ "$attempt" -gt 1 ]; then
-              bash apps/cli/scripts/sweep-live-projects.sh "$PREFIX" || true
-            fi
-            if pnpm --filter supabase test:live; then
-              echo "::endgroup::"
-              exit 0
-            fi
-            echo "::endgroup::"
-            echo "attempt ${attempt} failed"
-          done
-          exit 1
+        run: pnpm --filter supabase test:live
 
       # Backstop: delete any project this job created that survived a crash.
       # The script exits non-zero (failing this step) if any delete failed.
