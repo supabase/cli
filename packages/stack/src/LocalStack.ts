@@ -455,10 +455,12 @@ export const localStackLayer = (
 
           const effect = Effect.gen(function* () {
             const prepared = yield* ensurePlanned;
-            const { graph, serviceProjection, cleanupTargets } = yield* builder.build(
-              config,
-              prepared,
-            );
+            const { graph, serviceProjection, cleanupTargets } = yield* builder
+              .build(config, prepared)
+              .pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Scope.Scope, scope),
+              );
             exactCleanupTargets = cleanupTargets;
 
             const orchLayer = Orchestrator.layer(graph).pipe(
@@ -1049,7 +1051,12 @@ export const localStackLayer = (
               const nextBundle = requestedBundle ?? currentBundle;
               const prepared = yield* ensurePlanned;
               const runtime = yield* ensureRuntime;
-              const buildResult = yield* builder.build(nextConfig, prepared);
+              const buildResult = yield* builder
+                .build(nextConfig, prepared)
+                .pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Scope.Scope, scope),
+                );
               const edgeRuntimeDef = buildResult.graph.startOrder.find(
                 (def) => def.name === "edge-runtime",
               );

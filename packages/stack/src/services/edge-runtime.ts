@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ServiceDef } from "@supabase/process-compose";
+import { Effect, FileSystem } from "effect";
 import { dockerNetworkArgs } from "../Platform.ts";
+import { StackBuildError } from "../errors.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
@@ -24,29 +26,55 @@ interface EdgeRuntimeOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
-interface NativeEdgeRuntimeOptions extends EdgeRuntimeOptions {
-  readonly binPath: string;
-}
-
 interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly identity: StackIdentity;
   readonly platformOs: string;
+  readonly bootstrapDir: string;
 }
 
 const bootstrapFileName = "index.ts";
 const bootstrapMountDir = "/workspace";
-const bootstrapSourcePath = new URL("./edge-runtime-main.ts", import.meta.url);
-const resolvedBootstrapSource =
-  bootstrapSource === "" ? readFileSync(bootstrapSourcePath, "utf8") : bootstrapSource;
+const bootstrapSourcePath = fileURLToPath(new URL("./edge-runtime-main.ts", import.meta.url));
 
-function ensureBootstrapScript(runtimeRoot: string): string {
-  const bootstrapDir = join(runtimeRoot, "edge-runtime");
-  mkdirSync(bootstrapDir, { recursive: true });
-  const filePath = join(bootstrapDir, bootstrapFileName);
-  writeFileSync(filePath, resolvedBootstrapSource);
-  return bootstrapDir;
-}
+export const prepareEdgeRuntimeBootstrap = (
+  runtimeRoot: string,
+): Effect.Effect<string, StackBuildError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const bootstrapDir = join(runtimeRoot, "edge-runtime");
+    yield* fs.makeDirectory(bootstrapDir, { recursive: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to create the Edge Runtime bootstrap directory",
+            cause,
+          }),
+      ),
+    );
+    const source =
+      bootstrapSource === ""
+        ? yield* fs.readFileString(bootstrapSourcePath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: "Failed to read the Edge Runtime bootstrap script",
+                  cause,
+                }),
+            ),
+          )
+        : bootstrapSource;
+    yield* fs.writeFileString(join(bootstrapDir, bootstrapFileName), source).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to write the Edge Runtime bootstrap script",
+            cause,
+          }),
+      ),
+    );
+    return bootstrapDir;
+  });
 
 const edgeRuntimeEnv = (opts: EdgeRuntimeOptions): Record<string, string> => ({
   ...opts.env,
@@ -74,24 +102,7 @@ const edgeRuntimeHealthCheck = (port: number): ServiceDef["healthCheck"] =>
     ...stackHealthBudgets.edgeRuntime,
   });
 
-export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): ServiceDef => {
-  const bootstrapDir = ensureBootstrapScript(opts.runtimeRoot);
-
-  return {
-    name: "edge-runtime",
-    command: `${opts.binPath}/bin/edge-runtime`,
-    args: [...edgeRuntimeArgs(opts, bootstrapDir)],
-    env: edgeRuntimeEnv(opts),
-    dependencies: opts.dependencies,
-    healthCheck: edgeRuntimeHealthCheck(opts.port),
-    supervision: {},
-    restart: "unless-stopped",
-  };
-};
-
 export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): ServiceDef => {
-  const bootstrapDir = ensureBootstrapScript(opts.runtimeRoot);
-
   return dockerRunService({
     runtime: opts.runtime,
     name: "edge-runtime",
@@ -99,7 +110,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [
-      `${bootstrapDir}:${bootstrapMountDir}:ro`,
+      `${opts.bootstrapDir}:${bootstrapMountDir}:ro`,
       ...(opts.projectDir === undefined ? [] : [`${opts.projectDir}:${opts.projectDir}:ro`]),
     ],
     args: ["--ulimit", edgeRuntimeNofileUlimit(opts.platformOs).arg],

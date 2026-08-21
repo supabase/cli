@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Deferred, Effect, FileSystem, Layer, Scope, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -188,6 +189,7 @@ function builderLayer(
 ) {
   return Layer.mergeAll(
     StackBuilder.layer,
+    NodeFileSystem.layer,
     StackPreparation.layer.pipe(Layer.provide(resolver.layer), Layer.provide(spawnerLayer)),
   );
 }
@@ -196,7 +198,7 @@ const prepareAndBuild = (
   builder: typeof StackBuilder.Service,
   preparation: typeof StackPreparation.Service,
   config: ResolvedStackConfig,
-): Effect.Effect<BuildResult, unknown> =>
+): Effect.Effect<BuildResult, unknown, FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
     const shared = {
       services: enabledServicesForConfig(config),
@@ -209,7 +211,14 @@ const prepareAndBuild = (
           ? yield* Effect.die("Docker test config is missing its container runtime")
           : { ...shared, mode: "docker", containerRuntime: config.containerRuntime };
     const prepared = yield* preparation.prepare(input);
-    return yield* builder.build(config, prepared);
+    const fs = yield* FileSystem.FileSystem;
+    const scope = yield* Effect.scope;
+    return yield* builder
+      .build(config, prepared)
+      .pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Scope.Scope, scope),
+      );
   });
 
 describe("StackBuilder", () => {

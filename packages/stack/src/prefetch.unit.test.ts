@@ -82,15 +82,13 @@ describe("prefetch", () => {
     expect(Object.keys(result).sort()).toEqual(["auth", "postgres", "postgrest"]);
   });
 
-  test("preparation fails with DockerPullError when the canonical image fails", async () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
+  test("marks a Podman daemon disconnect on DockerPullError", async () => {
+    const resolver = mockBinaryResolver();
     // One image inspect followed by one canonical pull. Preparation must fail
     // rather than defer the pull to startup.
     const spawner = mockSequenceSpawner([
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["manifest unknown"] },
+      { exitCode: 1, stderr: ["not found"] },
+      { exitCode: 1, stderr: ["Cannot connect to Podman"] },
     ]);
 
     const layer = StackPreparation.layer.pipe(
@@ -99,14 +97,15 @@ describe("prefetch", () => {
     );
 
     const error = await Effect.runPromise(
-      prefetch({ mode: "docker", containerRuntime: "docker", services: ["auth"] }).pipe(
+      prefetch({ mode: "docker", containerRuntime: "podman", services: ["auth"] }).pipe(
         Effect.provide(layer),
         Effect.flip,
       ),
     );
 
     expect(error).toBeInstanceOf(DockerPullError);
-    expect(spawner.spawned).toHaveLength(2);
+    if (!(error instanceof DockerPullError)) throw error;
+    expect(error.daemonDown).toBe(true);
   });
 
   test("prefetching one service includes its required preparation dependencies", async () => {

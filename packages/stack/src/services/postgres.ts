@@ -1,8 +1,5 @@
-import { createHash } from "node:crypto";
-import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
-import { shortTempPrefixRoot } from "../paths.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
@@ -57,8 +54,6 @@ const orphanCleanup = (opts: PostgresServiceOptions) =>
 const postgresGetKeyScript = (binPath: string): string =>
   `${binPath}/share/supabase-cli/config/pgsodium_getkey.sh`;
 
-const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-
 const postgresHealthCheck = (binPath: string, port: number) => ({
   probe: {
     _tag: "Exec" as const,
@@ -103,29 +98,16 @@ const postgresDockerHealthCheck = (
   );
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
-  // The bundled initializer persists absolute artifact paths in postgresql.conf.
-  // pgsodium executes its getkey path through a shell, so use a stable no-space
-  // alias for the whole bundle when the cache root itself contains whitespace.
-  const bundleKey = createHash("sha256").update(opts.dataDir).digest("hex").slice(0, 16);
-  const bundlePath = join(
-    shortTempPrefixRoot(),
-    `supabase-stack-postgres-${process.getuid?.() ?? process.pid}-${bundleKey}`,
-  );
-  const initScript = `${bundlePath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
-  const getKeyScript = postgresGetKeyScript(bundlePath);
-  const launchScript = `
-set -e
-ln -sfn ${shellQuote(opts.binPath)} ${shellQuote(bundlePath)}
-exec ${shellQuote(initScript)} "$@"
-`;
+  // The bundle path is a private, scope-owned alias prepared by StackBuilder.
+  // It intentionally does not persist between handles: the initializer only
+  // needs a no-space path while this service definition is active.
+  const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
+  const getKeyScript = postgresGetKeyScript(opts.binPath);
 
   return {
     name: "postgres",
-    command: "bash",
+    command: initScript,
     args: [
-      "-c",
-      launchScript,
-      "--",
       "-p",
       String(opts.port),
       ...NATIVE_POSTGRES_RUNTIME_ARGS,

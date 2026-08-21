@@ -1,15 +1,17 @@
+import { join } from "node:path";
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, Context } from "effect";
+import { Context, Effect, FileSystem, Layer, Scope } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { shortTempPrefixRoot } from "./paths.ts";
 import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
-  makeEdgeRuntimeServiceNative,
+  prepareEdgeRuntimeBootstrap,
 } from "./services/edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
@@ -98,6 +100,49 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
 
 const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
   config[serviceMetadata(service).configKey];
+
+const prepareNativePostgresAlias = (
+  preparedPath: string,
+): Effect.Effect<string, StackBuildError, FileSystem.FileSystem | Scope.Scope> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const aliasRoot = yield* Effect.acquireRelease(
+      fs.makeTempDirectory({
+        directory: shortTempPrefixRoot(),
+        prefix: "supabase-stack-postgres-",
+      }),
+      (path) => fs.remove(path, { recursive: true, force: true }).pipe(Effect.ignore),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to create a private native PostgreSQL binary directory",
+            cause,
+          }),
+      ),
+    );
+    const aliasPath = join(aliasRoot, "bundle");
+    if (/\s/.test(aliasPath) || (process.platform !== "darwin" && process.platform !== "linux")) {
+      yield* fs.remove(aliasRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: "Native PostgreSQL requires a Unix temporary path without whitespace",
+          reason: "invalid_config",
+        }),
+      );
+    }
+
+    yield* fs.symlink(preparedPath, aliasPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to publish the native PostgreSQL binary alias",
+            cause,
+          }),
+      ),
+    );
+    return aliasPath;
+  });
 
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
@@ -219,7 +264,7 @@ export class StackBuilder extends Context.Service<
     readonly build: (
       config: ResolvedStackConfig,
       prepared: PreparedStackArtifacts,
-    ) => Effect.Effect<BuildResult, StackBuildError>;
+    ) => Effect.Effect<BuildResult, StackBuildError, FileSystem.FileSystem | Scope.Scope>;
   }
 >()("local/StackBuilder") {
   static layer: Layer.Layer<StackBuilder> = Layer.succeed(this, {
@@ -247,11 +292,6 @@ export class StackBuilder extends Context.Service<
         const authResolution =
           config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
 
-        const edgeRuntimeResolution =
-          config.edgeRuntime === false
-            ? false
-            : yield* requirePreparedResolution(prepared, "edge-runtime");
-
         const postgrestResolution =
           config.postgrest === false
             ? false
@@ -269,26 +309,29 @@ export class StackBuilder extends Context.Service<
         const jwtJwks = generateJwks(config.jwtSecret);
         const identity = stackIdentity(config);
 
+        const postgresService =
+          postgresResolution.type === "binary"
+            ? makePostgresService({
+                binPath: yield* prepareNativePostgresAlias(postgresResolution.path),
+                dataDir: config.postgres.dataDir,
+                port: config.dbPort,
+                cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                dependencies: [],
+              })
+            : makePostgresServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: postgresResolution.image,
+                dataDir: config.postgres.dataDir,
+                port: config.dbPort,
+                platformOs: platform.os,
+                identity,
+                cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                dependencies: [],
+              });
+
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {
-            ...(postgresResolution.type === "binary"
-              ? makePostgresService({
-                  binPath: postgresResolution.path,
-                  dataDir: config.postgres.dataDir,
-                  port: config.dbPort,
-                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
-                  dependencies: [],
-                })
-              : makePostgresServiceDocker({
-                  runtime: yield* requireContainerRuntime,
-                  image: postgresResolution.image,
-                  dataDir: config.postgres.dataDir,
-                  port: config.dbPort,
-                  platformOs: platform.os,
-                  identity,
-                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
-                  dependencies: [],
-                })),
+            ...postgresService,
             enabled: true,
           },
         ];
@@ -387,31 +430,24 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.edgeRuntime !== false && edgeRuntimeResolution !== false) {
+        if (config.edgeRuntime !== false) {
+          const edgeRuntimeImage = yield* requirePreparedDockerImage(prepared, "edge-runtime");
+          const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(config.runtimeRoot);
           defs.push({
-            ...(edgeRuntimeResolution.type === "binary"
-              ? makeEdgeRuntimeServiceNative({
-                  binPath: edgeRuntimeResolution.path,
-                  runtimeRoot: config.runtimeRoot,
-                  port: config.edgeRuntime.port,
-                  inspectorPort: config.edgeRuntime.inspectorPort,
-                  policy: config.edgeRuntime.policy,
-                  env: config.edgeRuntime.env,
-                  dependencies: postgresDependencies,
-                })
-              : makeEdgeRuntimeServiceDocker({
-                  runtime: yield* requireContainerRuntime,
-                  image: edgeRuntimeResolution.image,
-                  identity,
-                  runtimeRoot: config.runtimeRoot,
-                  projectDir,
-                  port: config.edgeRuntime.port,
-                  inspectorPort: config.edgeRuntime.inspectorPort,
-                  policy: config.edgeRuntime.policy,
-                  env: config.edgeRuntime.env,
-                  platformOs: platform.os,
-                  dependencies: postgresDependencies,
-                })),
+            ...makeEdgeRuntimeServiceDocker({
+              runtime: yield* requireContainerRuntime,
+              image: edgeRuntimeImage,
+              identity,
+              runtimeRoot: config.runtimeRoot,
+              bootstrapDir: edgeRuntimeBootstrapDir,
+              projectDir,
+              port: config.edgeRuntime.port,
+              inspectorPort: config.edgeRuntime.inspectorPort,
+              policy: config.edgeRuntime.policy,
+              env: config.edgeRuntime.env,
+              platformOs: platform.os,
+              dependencies: postgresDependencies,
+            }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });

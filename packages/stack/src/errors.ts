@@ -58,6 +58,8 @@ export const isDockerDaemonDownMessage = (message: string): boolean => {
     normalized.includes("docker daemon is not running") ||
     normalized.includes("docker desktop is not running") ||
     normalized.includes("is the docker daemon running") ||
+    normalized.includes("cannot connect to podman") ||
+    normalized.includes("error during connect") ||
     // Spawn succeeds but the socket is not accessible (e.g. a Linux user
     // missing docker group membership) — a local setup problem, not a
     // registry failure.
