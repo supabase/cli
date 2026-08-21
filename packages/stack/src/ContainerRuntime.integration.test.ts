@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { selectStackRuntime } from "./ContainerRuntime.ts";
+import { selectStackRuntime, selectStackRuntimeForPlatform } from "./ContainerRuntime.ts";
 
 const runtimeSpawner = (availability: Readonly<Record<string, boolean>>) => {
   const commands: string[] = [];
@@ -87,6 +87,20 @@ describe("stack runtime selection", () => {
         _tag: "StackBuildError",
         reason: "docker_not_running",
       });
+    }).pipe(Effect.provide(spawner.layer));
+  });
+
+  it.effect("rejects automatic fallback when the host has no native artifacts", () => {
+    const spawner = runtimeSpawner({});
+    return Effect.gen(function* () {
+      const error = yield* selectStackRuntimeForPlatform({ os: "win32", arch: "x64" }).pipe(
+        Effect.flip,
+      );
+      expect(error).toMatchObject({
+        _tag: "StackBuildError",
+        reason: "docker_not_running",
+      });
+      expect(error.detail).toContain("win32-x64");
     }).pipe(Effect.provide(spawner.layer));
   });
 });

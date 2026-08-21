@@ -328,18 +328,12 @@ export const localStackLayer = (
           enabledServices,
           versions: versionsForConfig(config),
         };
-        if (config.mode === "native") return Effect.succeed({ ...shared, mode: "native" });
-        return config.containerRuntime === null
-          ? Effect.fail(
-              new StackBuildError({
-                detail: "Docker mode requires a selected Docker or Podman runtime",
-                reason: "invalid_config",
-              }),
-            )
+        return config.runtime.mode === "native"
+          ? Effect.succeed({ ...shared, mode: "native" })
           : Effect.succeed({
               ...shared,
               mode: "docker",
-              containerRuntime: config.containerRuntime,
+              containerRuntime: config.runtime.containerRuntime,
             });
       };
 

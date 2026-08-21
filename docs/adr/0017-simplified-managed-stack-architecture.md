@@ -27,6 +27,13 @@ deterministic cleanup keyed by stack id. Delete also requires owned control;
 stale running or failed documents are reconciled and cleaned before removal,
 while a live owner is never deleted underneath.
 
+Every managed document records one concrete launch selection. Native launch
+state has `mode: "native"`; container launch state has `mode: "docker"` and
+the selected Docker or Podman executable. The document never stores an
+unresolved or mode-less launch. Runtime configuration uses the same correlated
+union, so impossible mode/runtime combinations are not representable after
+selection.
+
 Read-only discovery never acquires control ownership. It probes `/owner` and
 treats an unreachable, incompatible, or colliding listener as non-live;
 mutations still bind the endpoint and fail on a conflict. The endpoint maps
@@ -70,4 +77,7 @@ The architecture is smaller and has one source of truth for managed lifecycle
 state. Refactors update the manager/facade and its real consumers together;
 there is no fixture adapter or compatibility layer to keep in sync. The private
 document format may change with the current build, while destructive cleanup
-and control ownership remain explicit safeguards.
+and control ownership remain explicit safeguards. A supervisor that attaches
+and later takes ownership re-reads this source of truth before choosing the
+runtime or cleaning stale resources; it does not act on a pre-takeover
+snapshot.

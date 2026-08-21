@@ -148,6 +148,11 @@ const causeMessage = (cause: unknown): string => {
   return typeof cause === "string" ? cause : String(cause);
 };
 
+const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
+  launch.mode === "native"
+    ? { mode: "native", containerRuntime: null }
+    : { mode: "docker", containerRuntime: launch.containerRuntime };
+
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
 
@@ -372,19 +377,10 @@ const runManaged = (
         new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
       );
     }
-    const requestedMode =
-      configInput.mode ??
-      (input.launch !== undefined && "mode" in input.launch ? input.launch.mode : undefined);
+    const requestedMode = configInput.mode ?? input.launch?.mode;
     const existing = yield* manager.inspectStack(stackId);
-    const existingLaunch = existing?.launch;
     const persistedRuntime: StackRuntimeSelection | undefined =
-      existingLaunch !== undefined && "mode" in existingLaunch && existingLaunch.mode === "native"
-        ? { mode: "native", containerRuntime: null }
-        : existingLaunch !== undefined &&
-            "mode" in existingLaunch &&
-            existingLaunch.mode === "docker"
-          ? { mode: "docker", containerRuntime: existingLaunch.containerRuntime }
-          : undefined;
+      existing === undefined ? undefined : runtimeSelectionForLaunch(existing.launch);
     if (
       isControlAttached(initialAcquisition) &&
       persistedRuntime !== undefined &&
@@ -480,9 +476,9 @@ const runManaged = (
     }
     const ownership = acquisition;
     owner = ownership;
+    const ownedExisting = yield* manager.inspectStack(stackId);
     if (isControlAttached(initialAcquisition) && !attachedOwnerWasStopping) {
-      const existing = yield* manager.inspectStack(stackId);
-      if (existing?.lifecycle === "stopped") {
+      if (ownedExisting?.lifecycle === "stopped") {
         yield* ownership.close;
         return yield* Effect.fail(
           new SupervisorStartError({
@@ -492,21 +488,23 @@ const runManaged = (
         );
       }
     }
+    const ownedPersistedRuntime =
+      ownedExisting === undefined ? undefined : runtimeSelectionForLaunch(ownedExisting.launch);
     if (
-      persistedRuntime !== undefined &&
+      ownedPersistedRuntime !== undefined &&
       requestedMode !== undefined &&
-      persistedRuntime.mode !== requestedMode
+      ownedPersistedRuntime.mode !== requestedMode
     ) {
       return yield* Effect.fail(
         new SupervisorStartError({
-          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+          message: `Stack runtime is already ${ownedPersistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
         }),
       );
     }
     const runtime =
-      persistedRuntime === undefined
+      ownedPersistedRuntime === undefined
         ? yield* selectStackRuntime(requestedMode)
-        : yield* validateStackRuntime(persistedRuntime);
+        : yield* validateStackRuntime(ownedPersistedRuntime);
     const activeFields = portFieldsForConfigInput({ ...configInput, mode: runtime.mode });
     const activeFieldSet = new Set(activeFields);
     const portIntents: ManagedPortIntentDocument = {
@@ -521,18 +519,18 @@ const runManaged = (
     yield* portRequestsForConfig(configInput, { runtime });
     const launchInput = input.launch ?? { versions: {} };
     const launch: ManagedStackLaunch =
-      runtime.containerRuntime === null
+      runtime.mode === "native"
         ? { ...launchInput, mode: "native" }
         : { ...launchInput, mode: "docker", containerRuntime: runtime.containerRuntime };
     const startup = Effect.gen(function* () {
       if (
-        existing !== undefined &&
-        (existing.lifecycle === "starting" ||
-          existing.lifecycle === "running" ||
-          existing.lifecycle === "failed" ||
-          existing.lifecycle === "deleting")
+        ownedExisting !== undefined &&
+        (ownedExisting.lifecycle === "starting" ||
+          ownedExisting.lifecycle === "running" ||
+          ownedExisting.lifecycle === "failed" ||
+          ownedExisting.lifecycle === "deleting")
       ) {
-        if (runtime.containerRuntime !== null) {
+        if (runtime.mode === "docker") {
           yield* dockerForceRemove(
             runtime.containerRuntime,
             SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),

@@ -168,7 +168,7 @@ describe("resolveConfig edge runtime defaults", () => {
   it("disables edge runtime when omitted in native mode", async () => {
     const config = await resolveConfig({ mode: "native" });
 
-    expect(config.mode).toBe("native");
+    expect(config.runtime).toEqual({ mode: "native", containerRuntime: null });
     expect(config.edgeRuntime).toBe(false);
   });
 
@@ -180,7 +180,7 @@ describe("resolveConfig edge runtime defaults", () => {
       },
     );
 
-    expect(config.mode).toBe("docker");
+    expect(config.runtime).toEqual({ mode: "docker", containerRuntime: "docker" });
     expect(config.edgeRuntime).toEqual(
       expect.objectContaining({
         enabled: true,
@@ -201,8 +201,7 @@ describe("resolveConfig edge runtime defaults", () => {
       runtime: { mode: "docker", containerRuntime: "podman" },
     });
 
-    expect(config.mode).toBe("docker");
-    expect(config.containerRuntime).toBe("podman");
+    expect(config.runtime).toEqual({ mode: "docker", containerRuntime: "podman" });
     expect(config.edgeRuntime).toEqual(
       expect.objectContaining({
         enabled: true,
@@ -214,7 +213,7 @@ describe("resolveConfig edge runtime defaults", () => {
   it("preserves explicit edge runtime opt-in in native mode for builder validation", async () => {
     const config = await resolveConfig({ mode: "native", edgeRuntime: {} });
 
-    expect(config.mode).toBe("native");
+    expect(config.runtime).toEqual({ mode: "native", containerRuntime: null });
     expect(config.edgeRuntime).toEqual(
       expect.objectContaining({
         enabled: true,

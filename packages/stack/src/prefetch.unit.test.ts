@@ -346,6 +346,25 @@ describe("prefetch", () => {
     });
   });
 
+  test("native preparation applies the catalog v prefix before binary resolution", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    await Effect.runPromise(
+      prefetch({
+        mode: "native",
+        services: ["postgrest"],
+        versions: { postgrest: "16.1" },
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(resolver.resolved).toContainEqual({ service: "postgrest", version: "v16.1" });
+  });
+
   test("native mode rejects services that have no native runtime", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([]);

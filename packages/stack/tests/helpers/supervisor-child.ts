@@ -2,7 +2,7 @@ import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
-import { existsSync, type FSWatcher, watch, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   runSupervisor,
@@ -23,6 +23,7 @@ import {
 import { PORT_FIELDS } from "../../src/PortCatalog.ts";
 import type { PortLease } from "../../src/PortAllocator.ts";
 import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
+import { watchDirectoryWithRetry } from "./file-watch.ts";
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 const FILE_WAIT_TIMEOUT = "30 seconds";
@@ -34,10 +35,10 @@ const waitForFile = (path: string): Effect.Effect<void> =>
       return Effect.void;
     }
     let settled = false;
-    let watcher: FSWatcher | undefined;
+    let stopWatching: (() => void) | undefined;
     const cleanup = () => {
-      watcher?.close();
-      watcher = undefined;
+      stopWatching?.();
+      stopWatching = undefined;
     };
     const settle = (result: Effect.Effect<void>) => {
       if (settled) return;
@@ -48,13 +49,10 @@ const waitForFile = (path: string): Effect.Effect<void> =>
     const check = () => {
       if (existsSync(path)) settle(Effect.void);
     };
-    try {
-      watcher = watch(dirname(path), check);
-      watcher.once("error", (cause) => settle(Effect.die(cause)));
-      check();
-    } catch (cause) {
-      settle(Effect.die(cause));
-    }
+    stopWatching = watchDirectoryWithRetry(dirname(path), check, (cause) =>
+      settle(Effect.die(cause)),
+    );
+    check();
     return Effect.sync(cleanup);
   }).pipe(
     Effect.timeout(FILE_WAIT_TIMEOUT),
@@ -183,10 +181,10 @@ const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
   if (readyFile === undefined || releaseFile === undefined) return Effect.void;
   return Effect.callback<void>((resume) => {
     let settled = false;
-    let watcher: FSWatcher | undefined;
+    let stopWatching: (() => void) | undefined;
     const cleanup = () => {
-      watcher?.close();
-      watcher = undefined;
+      stopWatching?.();
+      stopWatching = undefined;
     };
     const settle = (result: Effect.Effect<void>) => {
       if (settled) return;
@@ -197,23 +195,10 @@ const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
     const resolveIfReleased = () => {
       if (existsSync(releaseFile)) settle(Effect.void);
     };
-    // Re-arm on ENOENT watcher errors: the runtime's directory watcher can
-    // report ENOENT when a watched entry vanishes mid-scan.
-    const arm = () => {
-      if (settled) return;
-      watcher = watch(dirname(releaseFile), () => resolveIfReleased());
-      watcher.once("error", (cause) => {
-        watcher?.close();
-        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-          arm();
-          resolveIfReleased();
-          return;
-        }
-        settle(Effect.die(cause));
-      });
-    };
     try {
-      arm();
+      stopWatching = watchDirectoryWithRetry(dirname(releaseFile), resolveIfReleased, (cause) =>
+        settle(Effect.die(cause)),
+      );
       writeFileSync(readyFile, "ready");
       resolveIfReleased();
     } catch (cause) {

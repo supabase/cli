@@ -148,17 +148,6 @@ export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
-    if (
-      (config.mode === "native" && config.containerRuntime !== null) ||
-      (config.mode === "docker" && config.containerRuntime === null)
-    ) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: `Resolved ${config.mode} mode has an inconsistent container runtime`,
-          reason: "invalid_config",
-        }),
-      );
-    }
     if (config.instanceId !== undefined && !INSTANCE_ID_PATTERN.test(config.instanceId)) {
       return yield* Effect.fail(
         new StackBuildError({
@@ -168,7 +157,7 @@ export const validateResolvedConfig = (
       );
     }
 
-    if (config.mode === "native") {
+    if (config.runtime.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,
       );
@@ -273,14 +262,14 @@ export class StackBuilder extends Context.Service<
         yield* validateResolvedConfig(config);
 
         const requireContainerRuntime = Effect.suspend(() =>
-          config.containerRuntime === null
+          config.runtime.mode === "native"
             ? Effect.fail(
                 new StackBuildError({
                   detail: "A Docker service requires a selected container runtime",
                   reason: "invalid_config",
                 }),
               )
-            : Effect.succeed(config.containerRuntime),
+            : Effect.succeed(config.runtime.containerRuntime),
         );
 
         const platform = yield* detectPlatform;
@@ -664,8 +653,8 @@ export class StackBuilder extends Context.Service<
           defs.some(
             (def) =>
               def.name === service &&
-              config.containerRuntime !== null &&
-              def.command === config.containerRuntime,
+              config.runtime.mode === "docker" &&
+              def.command === config.runtime.containerRuntime,
           ),
         ).map((service) => dockerContainerName(service, identity.key));
 

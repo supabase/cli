@@ -25,6 +25,7 @@ import {
   automaticDocument,
   cleanupRoots,
   setupManagedManager,
+  startManagedStack,
   startWithOwner,
 } from "../tests/helpers/managed-manager.ts";
 
@@ -42,7 +43,7 @@ describe("managed stack projects journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const ownership = yield* acquireControl({ stackId });
         if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
-        const initial = yield* manager.startStack({
+        const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
           stackName: "default",
           portDocument: automaticDocument(),
@@ -71,15 +72,13 @@ describe("managed stack projects journeys", () => {
           });
         }
 
-        const copiedStart = yield* manager
-          .startStack({
-            workspacePath: copied,
-            stackName: "default",
-            portDocument: automaticDocument(),
-            ownership,
-            lifecycle: "stopped",
-          })
-          .pipe(Effect.exit);
+        const copiedStart = yield* startManagedStack(manager, {
+          workspacePath: copied,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        }).pipe(Effect.exit);
         expect(Exit.isFailure(copiedStart)).toBe(true);
         if (Exit.isFailure(copiedStart)) {
           const error = Cause.squash(copiedStart.cause);
@@ -100,7 +99,7 @@ describe("managed stack projects journeys", () => {
         const movedDiscovery = yield* manager.discoverWorkspace(copied);
         expect(movedDiscovery.state).toBe("ready");
         writeFileSync(workspace, "stale workspace path");
-        const moved = yield* manager.startStack({
+        const moved = yield* startManagedStack(manager, {
           workspacePath: copied,
           stackName: "default",
           portDocument: automaticDocument(),

@@ -110,7 +110,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       stackName: flags.stack,
       launch: {
         versions: serviceVersionContext.candidateBaseline,
-        excludedServices: existingSummary.value.launch?.excludedServices ?? [],
+        excludedServices: existingSummary.value.launch.excludedServices ?? [],
         ...(existingSummary.value.lastNotifiedUpdateFingerprint === undefined
           ? {}
           : {

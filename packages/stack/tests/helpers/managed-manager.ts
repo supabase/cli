@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type {
   ManagedStackManagerShape,
   ManagedStackStartResult,
+  StartStackRequest,
 } from "../../src/managed/manager.ts";
 import { managedStackManagerLayer } from "../../src/managed/manager.ts";
 import type { ManagedPortIntentDocument } from "../../src/managed/model.ts";
@@ -181,7 +182,19 @@ export const startWithOwner = (
       portDocument,
       ownership,
       lifecycle,
+      launch: { mode: "native", versions: {} },
     });
+  });
+
+export const startManagedStack = (
+  manager: ManagedStackManagerShape,
+  request: Omit<StartStackRequest, "launch"> & {
+    readonly launch?: StartStackRequest["launch"];
+  },
+) =>
+  manager.startStack({
+    ...request,
+    launch: request.launch ?? { mode: "native", versions: {} },
   });
 
 export const releaseLease = (result: ManagedStackStartResult): Effect.Effect<void> =>

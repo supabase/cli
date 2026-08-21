@@ -39,6 +39,7 @@ import {
   controlStack,
   releaseLease,
   setupManagedManager,
+  startManagedStack,
   startWithOwner,
 } from "../tests/helpers/managed-manager.ts";
 
@@ -88,7 +89,7 @@ const startWithIsolatedOwner = (
   Effect.scoped(
     Effect.gen(function* () {
       const { stackName, ownership } = yield* acquireIsolatedStackOwner(workspacePath);
-      const result = yield* manager.startStack({
+      const result = yield* startManagedStack(manager, {
         workspacePath,
         stackName,
         portDocument,
@@ -153,7 +154,7 @@ describe("managed stack recovery journeys", () => {
         yield* Deferred.await(readStarted);
         const startFiber = yield* Effect.forkScoped(
           Effect.gen(function* () {
-            const started = yield* manager.startStack({
+            const started = yield* startManagedStack(manager, {
               workspacePath: workspace,
               portDocument: automaticDocument(),
               ownership,
@@ -216,14 +217,12 @@ describe("managed stack recovery journeys", () => {
           yield* Effect.promise(() => repairDaemon.runPromise(DaemonServer));
           const stackOwner = yield* acquireIsolatedStackOwner(workspace);
           const stackId = deriveStackId(environment.identity, stackOwner.stackName);
-          const startFiber = yield* manager
-            .startStack({
-              workspacePath: workspace,
-              stackName: stackOwner.stackName,
-              portDocument: automaticDocument(),
-              ownership: stackOwner.ownership,
-            })
-            .pipe(Effect.forkScoped);
+          const startFiber = yield* startManagedStack(manager, {
+            workspacePath: workspace,
+            stackName: stackOwner.stackName,
+            portDocument: automaticDocument(),
+            ownership: stackOwner.ownership,
+          }).pipe(Effect.forkScoped);
           yield* Deferred.await(repairRead).pipe(Effect.timeout("30 seconds"));
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;

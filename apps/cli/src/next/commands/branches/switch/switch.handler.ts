@@ -146,18 +146,15 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     // so the local config reflects the branch's migrations and seed state.
     // `pull` does not exist yet.
     const launch = stackCheck.value.launch;
-    const launchConfig =
-      launch === undefined
-        ? toStartStackConfig([], undefined)
-        : withServiceVersions(
-            toStartStackConfig(
-              launch.excludedServices?.filter((service): service is ExcludedStackService =>
-                excludedStackServices.some((candidate) => candidate === service),
-              ) ?? [],
-              "mode" in launch ? launch.mode : undefined,
-            ),
-            launch.versions,
-          );
+    const launchConfig = withServiceVersions(
+      toStartStackConfig(
+        launch.excludedServices?.filter((service): service is ExcludedStackService =>
+          excludedStackServices.some((candidate) => candidate === service),
+        ) ?? [],
+        launch.mode,
+      ),
+      launch.versions,
+    );
     const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
@@ -166,7 +163,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       projectDir: projectHome.projectRoot,
       name: stackName,
       portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
-      ...(launch !== undefined && { launch }),
+      launch,
       ...launchConfig,
     });
 

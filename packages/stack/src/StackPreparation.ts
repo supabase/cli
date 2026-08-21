@@ -15,6 +15,7 @@ import {
   DEFAULT_VERSIONS,
   SERVICE_NAMES,
   dockerImageForService,
+  normalizeServiceVersions,
   type ServiceName,
   type VersionManifest,
 } from "./versions.ts";
@@ -126,6 +127,11 @@ const selectedServices = (input: StackPreparationInput): ReadonlyArray<ServiceNa
   return preparationClosure(input.services ?? defaults, input.enabledServices);
 };
 
+const versionsForInput = (input: StackPreparationInput): VersionManifest => ({
+  ...DEFAULT_VERSIONS,
+  ...normalizeServiceVersions(input.versions ?? {}),
+});
+
 const plannedResolution = (
   resolver: BinaryResolver["Service"],
   service: ServiceName,
@@ -149,9 +155,9 @@ const plannedResolution = (
 const planAssetsWithDependencies = (
   resolver: BinaryResolver["Service"],
   input: StackPreparationInput,
+  versions = versionsForInput(input),
 ): Effect.Effect<PreparedStackArtifacts, BinaryNotFoundError> =>
   Effect.gen(function* () {
-    const versions = { ...DEFAULT_VERSIONS, ...input.versions };
     const services = selectedServices(input);
     const results = yield* Effect.all(
       services.map((service) =>
@@ -198,6 +204,7 @@ export class StackPreparation extends Context.Service<
       const materialize = (
         service: ServiceName,
         resolution: ServiceResolution,
+        version: string,
         input: StackPreparationInput,
         publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
       ): Effect.Effect<ServiceResolution, StackPreparationError> =>
@@ -227,7 +234,6 @@ export class StackPreparation extends Context.Service<
             if (existing !== undefined) return restore(Deferred.await(existing));
             const deferred = Deferred.makeUnsafe<ServiceResolution, StackPreparationError>();
             inFlight.set(key, deferred);
-            const version = input.versions?.[service] ?? DEFAULT_VERSIONS[service];
             const effect: Effect.Effect<ServiceResolution, StackPreparationError> =
               resolution.type === "docker"
                 ? input.mode === "docker"
@@ -269,12 +275,13 @@ export class StackPreparation extends Context.Service<
         publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
       ): Effect.Effect<PreparedStackArtifacts, StackPreparationError> =>
         Effect.gen(function* () {
-          const planned = yield* planAssetsWithDependencies(resolver, input);
+          const versions = versionsForInput(input);
+          const planned = yield* planAssetsWithDependencies(resolver, input, versions);
           const entries = yield* Effect.all(
             selectedServices(input).map((service) => {
               const resolution = planned.resolutions[service];
               if (resolution === undefined) return Effect.die(`Missing plan for ${service}`);
-              return materialize(service, resolution, input, publishEvent).pipe(
+              return materialize(service, resolution, versions[service], input, publishEvent).pipe(
                 Effect.map((resolved) => [service, resolved] as const),
               );
             }),

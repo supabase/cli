@@ -39,9 +39,8 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
 }) {
   const current = yield* resolveStackSummary(input);
   const loaded = yield* loadProjectConfig(input.projectDir);
-  const excluded = (current.launch?.excludedServices ?? []).filter(isExcludedStackService);
-  const mode =
-    current.launch !== undefined && "mode" in current.launch ? current.launch.mode : undefined;
+  const excluded = (current.launch.excludedServices ?? []).filter(isExcludedStackService);
+  const mode = current.launch.mode;
   return yield* resolveStackSummary({
     ...input,
     portDocument: managedPortIntents(toStartStackConfig(excluded, mode), loaded ?? undefined),
@@ -96,7 +95,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
   );
 
-  if (layer._tag === "None") {
+  if (Option.isNone(layer)) {
     const summary = yield* resolveConfiguredSummary({
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
@@ -107,7 +106,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
       Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
     );
 
-    if (summary._tag === "None") {
+    if (Option.isNone(summary)) {
       const message = "No local Supabase stack is running for this project.";
       if (output.format === "text") {
         yield* output.outro(message);

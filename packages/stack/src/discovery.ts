@@ -26,7 +26,7 @@ export interface StackSummary {
   readonly dbUrl?: string;
   readonly startedAt?: string;
   readonly lastNotifiedUpdateFingerprint?: string;
-  readonly launch?: ManagedStackDocument["launch"];
+  readonly launch: ManagedStackDocument["launch"];
   readonly drift?: ReadonlyArray<ManagedPortDrift>;
 }
 
@@ -59,10 +59,10 @@ const summaryForDocument = (
       apiPort,
       dbPort,
     },
-    versions: document.launch?.versions ?? {},
-    ...(document.launch === undefined ? {} : { launch: document.launch }),
+    versions: document.launch.versions,
+    launch: document.launch,
     ...(document.drift === undefined ? {} : { drift: document.drift }),
-    ...(document.launch?.lastNotifiedUpdateFingerprint === undefined
+    ...(document.launch.lastNotifiedUpdateFingerprint === undefined
       ? {}
       : { lastNotifiedUpdateFingerprint: document.launch.lastNotifiedUpdateFingerprint }),
     ...(document.runtime === undefined ? {} : { pid: document.runtime.pid }),

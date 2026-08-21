@@ -93,9 +93,9 @@ export const cleanupLocalStackResources = (opts: {
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client
     // may not stop the container.
-    if (opts.config.containerRuntime !== null) {
+    if (opts.config.runtime.mode === "docker") {
       yield* dockerForceRemove(
-        opts.config.containerRuntime,
+        opts.config.runtime.containerRuntime,
         opts.cleanupTargets.dockerContainerNames,
       );
     }

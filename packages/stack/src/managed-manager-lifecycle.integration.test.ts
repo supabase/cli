@@ -33,6 +33,7 @@ import {
   freePorts,
   releaseLease,
   setupManagedManager,
+  startManagedStack,
 } from "../tests/helpers/managed-manager.ts";
 
 const roots: Array<string> = [];
@@ -54,7 +55,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
-        const started = yield* manager.startStack({
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           stackName: "default",
           portDocument,
@@ -90,7 +91,7 @@ describe("managed stack lifecycle journeys", () => {
     );
   });
 
-  it.live("updates launch metadata before a runtime has been selected", () => {
+  it.live("preserves launch mode while updating metadata without a runtime owner", () => {
     const { layer, workspace } = setup();
     return Effect.scoped(
       Effect.gen(function* () {
@@ -103,7 +104,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
-        const started = yield* manager.startStack({
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           stackName: "default",
           portDocument: exactCoreDocument(apiPort, dbPort),
@@ -124,6 +125,7 @@ describe("managed stack lifecycle journeys", () => {
         });
 
         expect(updated.launch).toEqual({
+          mode: "native",
           versions: { postgres: "17.6.1" },
           excludedServices: ["studio"],
           lastNotifiedUpdateFingerprint: "fingerprint",
@@ -148,7 +150,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
-        const started = yield* manager.startStack({
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -248,7 +250,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
-        const initial = yield* manager.startStack({
+        const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -304,7 +306,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const previousOwner = yield* acquireControl({ stackId });
         if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
-        const starting = yield* manager.startStack({
+        const starting = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: previousOwner,
@@ -314,7 +316,7 @@ describe("managed stack lifecycle journeys", () => {
         yield* previousOwner.close;
         const nextOwner = yield* acquireControl({ stackId });
         if (!isControlOwnership(nextOwner)) throw new Error("expected reattached ownership");
-        const recovered = yield* manager.startStack({
+        const recovered = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: {
             activeFields: [],
@@ -346,7 +348,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
-        const running = yield* manager.startStack({
+        const running = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -405,7 +407,7 @@ describe("managed stack lifecycle journeys", () => {
           const originalStackId = deriveStackId(originalEnvironment.identity, "default");
           const originalOwner = yield* acquireControl({ stackId: originalStackId });
           if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
-          const original = yield* manager.startStack({
+          const original = yield* startManagedStack(manager, {
             workspacePath: workspace,
             portDocument: automaticDocument(),
             ownership: originalOwner,
@@ -419,7 +421,7 @@ describe("managed stack lifecycle journeys", () => {
           const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
           const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
           if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
-          const copiedStack = yield* manager.startStack({
+          const copiedStack = yield* startManagedStack(manager, {
             workspacePath: copied,
             portDocument: automaticDocument(),
             ownership: copiedOwner,
@@ -485,7 +487,7 @@ describe("managed stack lifecycle journeys", () => {
         const originalStackId = deriveStackId(originalEnvironment.identity, "default");
         const originalOwner = yield* acquireControl({ stackId: originalStackId });
         if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
-        const original = yield* manager.startStack({
+        const original = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: originalOwner,
@@ -499,7 +501,7 @@ describe("managed stack lifecycle journeys", () => {
         const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
         const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
         if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
-        const copiedStack = yield* manager.startStack({
+        const copiedStack = yield* startManagedStack(manager, {
           workspacePath: copied,
           portDocument: automaticDocument(),
           ownership: copiedOwner,
@@ -539,7 +541,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
-        const started = yield* manager.startStack({
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -583,7 +585,7 @@ describe("managed stack lifecycle journeys", () => {
         const stackId = deriveStackId(environment.identity, "default");
         const previousOwner = yield* acquireControl({ stackId });
         if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
-        const previous = yield* manager.startStack({
+        const previous = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument,
           ownership: previousOwner,
@@ -598,7 +600,7 @@ describe("managed stack lifecycle journeys", () => {
 
         const nextOwner = yield* acquireControl({ stackId });
         if (!isControlOwnership(nextOwner)) throw new Error("expected recovered ownership");
-        const restarted = yield* manager.startStack({
+        const restarted = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument,
           ownership: nextOwner,

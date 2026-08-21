@@ -139,9 +139,9 @@ const createStackAttempt = (
         if (resolved === undefined) {
           return;
         }
-        if (resolved.containerRuntime !== null) {
+        if (resolved.runtime.mode === "docker") {
           yield* dockerForceRemove(
-            resolved.containerRuntime,
+            resolved.runtime.containerRuntime,
             candidateCleanupTargets(resolved).dockerContainerNames,
           ).pipe(Effect.ignore);
         }

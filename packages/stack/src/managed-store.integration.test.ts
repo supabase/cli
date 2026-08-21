@@ -100,6 +100,7 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
     { key: "db.port", port: 54322, intent: "automatic" },
   ],
   lifecycle: "stopped",
+  launch: { mode: "native", versions: {} },
   createdAt: "2026-08-16T00:00:00.000Z",
   updatedAt: "2026-08-16T00:00:00.000Z",
   ...overrides,
@@ -164,6 +165,22 @@ describe("managed stack document store", () => {
         STACK_ID,
         JSON.stringify({ ...document(), launch: { mode: "auto", versions: {} } }),
       );
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
+      }
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects managed documents without a concrete launch selection", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      const { launch: _launch, ...withoutLaunch } = document();
+      writeRawStackDocument(store.stateRoot, STACK_ID, JSON.stringify(withoutLaunch));
 
       const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);

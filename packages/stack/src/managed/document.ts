@@ -28,9 +28,6 @@ const managedStackLaunchSchema = Schema.Union([
     containerRuntime: Schema.Literals(["docker", "podman"] as const),
     ...managedStackLaunchFields,
   }),
-  Schema.Struct({
-    ...managedStackLaunchFields,
-  }),
 ]);
 
 export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
@@ -59,7 +56,7 @@ export interface ManagedStackDocument {
     readonly controlEndpoint: string;
     readonly protocolVersion: 1;
   };
-  readonly launch?: ManagedStackLaunch;
+  readonly launch: ManagedStackLaunch;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -114,7 +111,7 @@ const managedStackDocumentSchema = Schema.Struct({
       protocolVersion: Schema.Literal(1),
     }),
   ),
-  launch: Schema.optionalKey(managedStackLaunchSchema),
+  launch: managedStackLaunchSchema,
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -135,52 +132,16 @@ export class InvalidManagedStackDocumentError extends Data.TaggedError(
   }
 }
 
-const validateLaunchDiscriminant = (
-  path: string,
-  content: string,
-): Effect.Effect<void, InvalidManagedStackDocumentError> =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(content).pipe(
-    Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
-    Effect.flatMap((value) => {
-      if (typeof value !== "object" || value === null) return Effect.void;
-      const launch = Reflect.get(value, "launch");
-      if (typeof launch !== "object" || launch === null) return Effect.void;
-      const mode = Reflect.get(launch, "mode");
-      const hasContainerRuntime = Reflect.has(launch, "containerRuntime");
-      if (mode === undefined) {
-        return hasContainerRuntime
-          ? Effect.fail(new InvalidManagedStackDocumentError({ path }))
-          : Effect.void;
-      }
-      if (mode === "native") {
-        return hasContainerRuntime
-          ? Effect.fail(new InvalidManagedStackDocumentError({ path }))
-          : Effect.void;
-      }
-      if (mode === "docker") {
-        const containerRuntime = Reflect.get(launch, "containerRuntime");
-        return containerRuntime === "docker" || containerRuntime === "podman"
-          ? Effect.void
-          : Effect.fail(new InvalidManagedStackDocumentError({ path }));
-      }
-      return Effect.fail(new InvalidManagedStackDocumentError({ path }));
-    }),
-  );
-
 export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  validateLaunchDiscriminant(path, content).pipe(
-    Effect.andThen(
-      Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
-        Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
-        Effect.flatMap((document) =>
-          hasCorePortAssignments(document)
-            ? Effect.succeed(document)
-            : Effect.fail(new InvalidManagedStackDocumentError({ path })),
-        ),
-      ),
+  Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+    Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    Effect.flatMap((document) =>
+      hasCorePortAssignments(document)
+        ? Effect.succeed(document)
+        : Effect.fail(new InvalidManagedStackDocumentError({ path })),
     ),
   );
 

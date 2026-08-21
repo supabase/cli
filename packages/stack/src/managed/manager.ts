@@ -87,7 +87,7 @@ export interface StartStackRequest {
   readonly ownership: ControlOwnership;
   readonly lifecycle?: ManagedStackDocument["lifecycle"];
   readonly runtime?: ManagedStackDocument["runtime"];
-  readonly launch?: ManagedStackDocument["launch"];
+  readonly launch: ManagedStackDocument["launch"];
 }
 
 export interface AllocateManagedPortsRequest {
@@ -760,9 +760,7 @@ const makeManager = (
             ports: allocation.assignments,
             lifecycle: request.lifecycle ?? "stopped",
             ...(request.runtime && { runtime: request.runtime }),
-            ...((request.launch ?? current?.launch) && {
-              launch: request.launch ?? current?.launch,
-            }),
+            launch: request.launch,
             createdAt: current?.createdAt ?? timestamp,
             updatedAt: timestamp,
           };
@@ -845,16 +843,14 @@ const makeManager = (
                   lastNotifiedUpdateFingerprint: update.launch.lastNotifiedUpdateFingerprint,
                 }),
           };
-          const launch: NonNullable<ManagedStackDocument["launch"]> =
-            current.launch === undefined || !("mode" in current.launch)
-              ? metadata
-              : current.launch.mode === "native"
-                ? { ...metadata, mode: "native" }
-                : {
-                    ...metadata,
-                    mode: "docker",
-                    containerRuntime: current.launch.containerRuntime,
-                  };
+          const launch: ManagedStackDocument["launch"] =
+            current.launch.mode === "native"
+              ? { ...metadata, mode: "native" }
+              : {
+                  ...metadata,
+                  mode: "docker",
+                  containerRuntime: current.launch.containerRuntime,
+                };
           const next: ManagedStackDocument = {
             ...current,
             launch,
@@ -981,11 +977,7 @@ const makeManager = (
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
           yield* acquisition.setState("deleting", false);
-          if (
-            current.launch !== undefined &&
-            "mode" in current.launch &&
-            current.launch.mode === "docker"
-          ) {
+          if (current.launch.mode === "docker") {
             yield* dockerForceRemove(
               current.launch.containerRuntime,
               SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),

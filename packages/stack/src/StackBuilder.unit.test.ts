@@ -47,8 +47,7 @@ const baseConfig: ResolvedStackConfig = {
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
-  mode: "native",
-  containerRuntime: null,
+  runtime: { mode: "native", containerRuntime: null },
   servicePolicies: {
     postgres: "eager",
     postgrest: "eager",
@@ -111,8 +110,7 @@ const baseConfig: ResolvedStackConfig = {
 
 const dockerConfig: ResolvedStackConfig = {
   ...baseConfig,
-  mode: "docker",
-  containerRuntime: "docker",
+  runtime: { mode: "docker", containerRuntime: "docker" },
 };
 
 /**
@@ -135,8 +133,7 @@ const siblingManagedConfig: ResolvedStackConfig = {
 
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...baseConfig,
-  mode: "docker",
-  containerRuntime: "docker",
+  runtime: { mode: "docker", containerRuntime: "docker" },
   servicePolicies: { ...baseConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
@@ -205,11 +202,9 @@ const prepareAndBuild = (
       versions: versionsForConfig(config),
     };
     const input: StackPreparationInput =
-      config.mode === "native"
+      config.runtime.mode === "native"
         ? { ...shared, mode: "native" }
-        : config.containerRuntime === null
-          ? yield* Effect.die("Docker test config is missing its container runtime")
-          : { ...shared, mode: "docker", containerRuntime: config.containerRuntime };
+        : { ...shared, mode: "docker", containerRuntime: config.runtime.containerRuntime };
     const prepared = yield* preparation.prepare(input);
     const fs = yield* FileSystem.FileSystem;
     const scope = yield* Effect.scope;
@@ -303,7 +298,10 @@ describe("StackBuilder", () => {
     return Effect.gen(function* () {
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
-      const config = { ...dockerConfig, containerRuntime: "podman" } satisfies ResolvedStackConfig;
+      const config = {
+        ...dockerConfig,
+        runtime: { mode: "docker", containerRuntime: "podman" },
+      } satisfies ResolvedStackConfig;
       const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, config);
 
       expect(graph.startOrder.length).toBe(4);

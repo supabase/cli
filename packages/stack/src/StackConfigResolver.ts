@@ -675,9 +675,11 @@ export function resolveConfig(
 
     return Effect.gen(function* () {
       const inputConfig = input ?? {};
-      const resolvedMode = opts.runtime?.mode ?? inputConfig.mode ?? "native";
-      const containerRuntime = opts.runtime?.containerRuntime ?? null;
-      const config: StackConfig = { ...inputConfig, mode: resolvedMode };
+      const runtime: StackRuntimeSelection = opts.runtime ?? {
+        mode: "native",
+        containerRuntime: null,
+      };
+      const config: StackConfig = { ...inputConfig, mode: runtime.mode };
       // Deliberately first: unsupported policies must not create roots or reserve ports.
       const requests = yield* portRequestsForConfig(inputConfig, { runtime: opts.runtime });
       for (const request of requests) {
@@ -762,8 +764,7 @@ export function resolveConfig(
         stackRoot: roots.stackRoot,
         runtimeRoot: roots.runtimeRoot,
         projectDir,
-        mode: resolvedMode,
-        containerRuntime,
+        runtime,
         servicePolicies,
         readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
         readinessSource:

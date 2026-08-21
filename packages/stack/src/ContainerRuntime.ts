@@ -1,6 +1,7 @@
 import { Effect, Exit } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { StackBuildError } from "./errors.ts";
+import { detectPlatform, nativeTargetForPlatform, type PlatformInfo } from "./Platform.ts";
 import type { StackMode } from "./StackConfig.ts";
 
 export type ContainerRuntime = "docker" | "podman";
@@ -27,7 +28,7 @@ export const validateStackRuntime = (
   StackBuildError,
   ChildProcessSpawner.ChildProcessSpawner
 > =>
-  selection.containerRuntime === null
+  selection.mode === "native"
     ? Effect.succeed(selection)
     : probeContainerRuntime(selection.containerRuntime).pipe(
         Effect.flatMap((usable) =>
@@ -42,12 +43,21 @@ export const validateStackRuntime = (
         ),
       );
 
-export const selectStackRuntime = (
+export const selectStackRuntimeForPlatform = (
+  platform: PlatformInfo,
   requestedMode?: StackMode,
 ): Effect.Effect<StackRuntimeSelection, StackBuildError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     if (requestedMode === "native") {
-      return { mode: "native", containerRuntime: null };
+      if (nativeTargetForPlatform(platform) !== undefined) {
+        return { mode: "native", containerRuntime: null };
+      }
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `Native mode is unavailable on ${platform.os}-${platform.arch}. Use a supported Linux or Apple silicon macOS host, or install and start Docker or Podman.`,
+          reason: "invalid_config",
+        }),
+      );
     }
 
     const runtimes = ["docker", "podman"] as const satisfies ReadonlyArray<ContainerRuntime>;
@@ -71,5 +81,20 @@ export const selectStackRuntime = (
       );
     }
 
-    return { mode: "native", containerRuntime: null };
+    if (nativeTargetForPlatform(platform) !== undefined) {
+      return { mode: "native", containerRuntime: null };
+    }
+    return yield* Effect.fail(
+      new StackBuildError({
+        detail: `No usable Docker or Podman runtime was found, and native mode is unavailable on ${platform.os}-${platform.arch}. Install and start Docker or Podman.`,
+        reason: "docker_not_running",
+      }),
+    );
   });
+
+export const selectStackRuntime = (
+  requestedMode?: StackMode,
+): Effect.Effect<StackRuntimeSelection, StackBuildError, ChildProcessSpawner.ChildProcessSpawner> =>
+  detectPlatform.pipe(
+    Effect.flatMap((platform) => selectStackRuntimeForPlatform(platform, requestedMode)),
+  );

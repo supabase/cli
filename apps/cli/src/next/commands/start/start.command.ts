@@ -197,8 +197,9 @@ export const startCommand = Command.make("start", flags).pipe(
       if (deprecationWarning !== undefined) {
         yield* output.warn(deprecationWarning);
       }
+      const effectiveMode = flags.mode ?? existingSummary?.launch.mode;
       const baseStackConfig = withServiceVersions(
-        toStartStackConfig(flags.exclude, flags.mode),
+        toStartStackConfig(flags.exclude, effectiveMode),
         serviceVersionContext.runtimeVersions,
       );
       const stackConfig = {
@@ -243,15 +244,11 @@ export const startCommand = Command.make("start", flags).pipe(
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       });
-      if (summary.launch === undefined) {
-        return yield* Effect.die("Managed stack started without persisted launch settings");
-      }
-
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
           launch: {
-            mode: "mode" in summary.launch ? summary.launch.mode : undefined,
+            mode: summary.launch.mode,
             versions: serviceVersionContext.pinnedBaseline,
             excludedServices: flags.exclude,
           },

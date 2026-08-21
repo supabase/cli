@@ -139,8 +139,9 @@ runtime requests; it never edits the document directly.
    discovery, and refuses to continue if the identity no longer derives the
    same id.
 3. The child supervisor removes stale named container resources when required;
-   the manager resolves the existing document, allocates or reuses ports, and
-   records `starting`.
+   after acquiring ownership it re-reads the existing document, selects or
+   validates its concrete runtime, then the manager allocates or reuses ports
+   and records `starting`.
 4. The child builds the direct runtime and `DaemonServer`, records `running`
    with its control endpoint, and sends the endpoint to the parent.
 5. The parent returns a `RemoteStack` layer. The CLI then calls
@@ -178,6 +179,12 @@ The next managed start acquires control, reconciles named container resources by
 stack id, and reuses sticky ports according to their persisted `exact` or
 `automatic` intent. No PID file, process scan, second metadata file, or registry
 surgery is needed for recovery.
+
+Every document contains a concrete launch selection. Native documents record
+`mode: "native"`; container documents record `mode: "docker"` together with
+the selected `docker` or `podman` executable. Inputs may omit a mode to request
+selection, but unresolved launch state is never persisted. Resolved direct
+runtime configuration uses the same correlated native-or-container union.
 
 ## Identity and state
 
@@ -245,14 +252,15 @@ status, service operations, logs, graceful stop, and launch-update routes;
 ## Service execution and `ApiProxy`
 
 `StackPreparation` resolves each enabled service to a verified native binary or
-a Docker image. `mode: "native"` uses the supported native services and rejects
-Docker-only services; `mode: "docker"` resolves every service to an image;
-`mode: "auto"` prefers native artifacts and falls back to Docker. The
-`StackBuilder` turns those resolutions into one process-compose graph, so a
-stack can run native and Docker-backed services together. Docker resources are
-namespaced with the managed stack id; when native Postgres is combined with
-Docker services, the graph supplies the platform-specific host address so the
-containers can reach it.
+a Docker image. Explicit `mode: "native"` uses the supported native services
+and rejects Docker-only services; explicit `mode: "docker"` requires a usable
+Docker or Podman runtime and resolves every service to an image. When mode is
+omitted, selection prefers a usable Docker or Podman runtime and otherwise uses
+native mode only on a host for which native artifacts are published. The
+selected runtime is then fixed for the stack. Service versions are normalized
+to their catalog form before either binary resolution or Docker image
+resolution, and `StackBuilder` turns the results into one process-compose
+graph. Docker resources are namespaced with the managed stack id.
 
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,

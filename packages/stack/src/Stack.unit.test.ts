@@ -51,8 +51,7 @@ const defaultConfig: ResolvedStackConfig = {
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
-  mode: "native",
-  containerRuntime: null,
+  runtime: { mode: "native", containerRuntime: null },
   servicePolicies: {
     postgres: "eager",
     postgrest: "eager",
@@ -115,8 +114,7 @@ const defaultConfig: ResolvedStackConfig = {
 
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...defaultConfig,
-  mode: "docker",
-  containerRuntime: "docker",
+  runtime: { mode: "docker", containerRuntime: "docker" },
   servicePolicies: { ...defaultConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
@@ -617,8 +615,7 @@ describe("Stack", () => {
   it.effect("rejects unsupported native services before resource planning", () => {
     const config = {
       ...edgeRuntimeConfig,
-      mode: "native",
-      containerRuntime: null,
+      runtime: { mode: "native", containerRuntime: null },
     } satisfies ResolvedStackConfig;
     const { layer } = setupLayer(config, noopPortLease(config.ports));
 
@@ -875,8 +872,7 @@ describe("Stack", () => {
     });
     const config = {
       ...defaultConfig,
-      mode: "docker",
-      containerRuntime: "docker",
+      runtime: { mode: "docker", containerRuntime: "docker" },
       pgmeta: { port: defaultPorts.pgmetaPort, version: DEFAULT_VERSIONS.pgmeta },
       studio: {
         port: defaultPorts.studioPort,
@@ -1368,8 +1364,7 @@ describe("Stack", () => {
       const mailpitReleaseStarted = yield* Deferred.make<void>();
       const config = {
         ...defaultConfig,
-        mode: "docker",
-        containerRuntime: "docker",
+        runtime: { mode: "docker", containerRuntime: "docker" },
         servicePolicies: {
           ...defaultConfig.servicePolicies,
           postgrest: "lazy",

@@ -7,13 +7,11 @@ import {
   cpSync,
   chmodSync,
   existsSync,
-  type FSWatcher,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
-  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,6 +29,7 @@ import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
 import { git } from "../tests/helpers/git-workspace.ts";
+import { watchDirectoryWithRetry } from "../tests/helpers/file-watch.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -91,43 +90,6 @@ const workspace = async (): Promise<{
     return { root, stateRoot, stackId };
   }
   throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
-};
-
-/**
- * Watches a directory, re-arming on ENOENT watcher errors: the runtime's
- * directory watcher can report ENOENT when a watched entry (for example an
- * atomic-write temp file) vanishes mid-scan. Callers keep their own timeout
- * as the guard. Returns a close function.
- */
-const watchDirectoryWithRetry = (
-  directory: string,
-  onEvent: () => void,
-  onError: (cause: unknown) => void,
-): (() => void) => {
-  let watcher: FSWatcher | undefined;
-  let closed = false;
-  const arm = () => {
-    if (closed) return;
-    try {
-      watcher = watch(directory, () => onEvent());
-      watcher.once("error", (cause) => {
-        watcher?.close();
-        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-          arm();
-          onEvent();
-          return;
-        }
-        onError(cause);
-      });
-    } catch (cause) {
-      onError(cause);
-    }
-  };
-  arm();
-  return () => {
-    closed = true;
-    watcher?.close();
-  };
 };
 
 const waitForFile = (path: string): Promise<void> =>
@@ -1131,6 +1093,53 @@ describe("detached supervisor child journeys", () => {
       await expect(owner.started).rejects.toThrow();
       await contender.managedStarted;
       expect(await fetchOwner(restartedEndpoint)).toMatchObject({ state: "starting" });
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("re-reads persisted Docker state after taking over an owner that published during attach", async () => {
+    const roots = await workspace();
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const dockerBin = join(roots.root, "fake-docker-bin");
+    const dockerCleanup = join(roots.root, "docker-cleanup");
+    mkdirSync(dockerBin);
+    const docker = join(dockerBin, "docker");
+    writeFileSync(
+      docker,
+      `#!/bin/sh\nif [ "$1" = "rm" ]; then printf cleaned > "${dockerCleanup}"; fi\nexit 0\n`,
+    );
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const input = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${dockerBin}:${process.env.PATH ?? ""}` };
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: {
+        ...environment,
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      contender = spawnChild(input, { testMode: "hold-start", environment });
+      void contender.started.catch(() => undefined);
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      await owner.managedStarted;
+      await kill(owner.child);
+      await contender.managedStarted;
+
+      expect(readFileSync(dockerCleanup, "utf8")).toBe("cleaned");
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);

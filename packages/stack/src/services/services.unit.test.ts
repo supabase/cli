@@ -10,7 +10,7 @@ import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
 import { makePgmetaServiceDocker } from "./pgmeta.ts";
-import { makePostgresInitService } from "./postgres-init.ts";
+import { makePostgresInitService, makePostgresInitServiceDocker } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
 import { makeRealtimeServiceDocker } from "./realtime.ts";
@@ -350,6 +350,37 @@ describe("makePostgresInitService", () => {
     expect(def.env?.LD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
     expect(def.supervision).toBeDefined();
   });
+
+  it.each(["native", "docker"] as const)(
+    "%s initialization revokes default Data API privileges only when auto-exposure is disabled",
+    (mode) => {
+      const commandFor = (autoExposeNewTables: boolean): string => {
+        const common = {
+          dbPort: DB_PORT,
+          autoExposeNewTables,
+          dependencies: [{ service: "postgres", condition: "healthy" }] as const,
+        };
+        const definition =
+          mode === "native"
+            ? makePostgresInitService({ ...common, postgresDir: POSTGRES_BIN_PATH })
+            : makePostgresInitServiceDocker({
+                ...common,
+                runtime: "docker",
+                jwtSecret: JWT_SECRET,
+                jwtExpiry: 3600,
+                identity: EPHEMERAL_IDENTITY,
+              });
+        return definition.args?.join("\n") ?? "";
+      };
+
+      expect(commandFor(true)).not.toContain(
+        "alter default privileges for role postgres in schema public",
+      );
+      expect(commandFor(false)).toContain(
+        "alter default privileges for role postgres in schema public",
+      );
+    },
+  );
 });
 
 describe("docker-backed auxiliary services", () => {
