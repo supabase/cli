@@ -41,12 +41,16 @@ import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPaths } from "./managed/paths.ts";
-import { PORT_CATALOG, PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
+import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
-import type { PortAllocationError, PortLease } from "./PortAllocator.ts";
-import { resolveConfig, type DaemonConfigInput } from "./StackConfigResolver.ts";
+import type { PortLease } from "./PortAllocator.ts";
+import {
+  portRequestsForConfig,
+  resolveConfig,
+  type DaemonConfigInput,
+} from "./StackConfigResolver.ts";
 import type { ResolvedDaemonConfig } from "./StackConfig.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
@@ -267,18 +271,6 @@ const waitForSignal = (): Effect.Effect<"SIGINT" | "SIGTERM"> =>
     process.once("SIGTERM", onSigterm);
     return Effect.sync(cleanup);
   });
-
-const leaseFacade = (lease: {
-  readonly ports: PortSet;
-  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
-  readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
-  readonly releaseAll: Effect.Effect<void>;
-}): PortLease => ({
-  ports: lease.ports,
-  reserve: lease.reserve,
-  release: lease.release,
-  releaseAll: lease.releaseAll,
-});
 
 const startDaemon = (input: {
   readonly config: ResolvedDaemonConfig;
@@ -515,6 +507,9 @@ const runManaged = (
         (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
       ),
     };
+    // Validate policies and explicit ports before manager.startStack writes
+    // `starting` or acquires the managed lease.
+    yield* portRequestsForConfig(configInput, { runtime });
     const launchInput = input.launch ?? { versions: {} };
     const launch: ManagedStackLaunch =
       runtime.containerRuntime === null
@@ -552,7 +547,7 @@ const runManaged = (
           runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
           instanceId: started.stack.id,
         },
-        { runtime, portAllocator: () => Effect.succeed(started.lease.ports) },
+        { runtime, ports: started.lease.ports },
       );
       const config: ResolvedDaemonConfig = {
         ...resolved,
@@ -565,7 +560,7 @@ const runManaged = (
       });
       const built = yield* startDaemon({
         config,
-        lease: leaseFacade(started.lease),
+        lease: started.lease,
         ownership,
         platform,
         scope,

@@ -640,7 +640,7 @@ describe("detached supervisor child journeys", () => {
         {
           stackRoot: paths.root,
           runtimeRoot: paths.runtime,
-          portAllocator: () => Effect.succeed({ apiPort: 55001, dbPort: 55002 }),
+          ports: { apiPort: 55001, dbPort: 55002 },
         },
       );
       expect(managedStackDocumentPath(roots.stateRoot, stackId)).toBe(

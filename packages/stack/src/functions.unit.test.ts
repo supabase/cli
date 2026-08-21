@@ -5,7 +5,11 @@ import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
+import {
+  resolveConfig as resolveConfigEffect,
+  type ResolveConfigOptions,
+} from "./StackConfigResolver.ts";
+import type { PortSet } from "./PortCatalog.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   clearFunctionsRuntimeConfig,
@@ -17,8 +21,36 @@ import {
 } from "./functions.ts";
 import { verifyRequest } from "./services/edge-runtime-main.ts";
 
-const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
-  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeServices.layer)));
+const testPorts: PortSet = {
+  apiPort: 40_000,
+  dbPort: 40_001,
+  authPort: 40_002,
+  postgrestPort: 40_003,
+  postgrestAdminPort: 40_004,
+  edgeRuntimePort: 40_005,
+  edgeRuntimeInspectorPort: 40_006,
+  realtimePort: 40_007,
+  storagePort: 40_008,
+  imgproxyPort: 40_009,
+  mailpitPort: 40_010,
+  mailpitSmtpPort: 40_011,
+  mailpitPop3Port: 40_012,
+  pgmetaPort: 40_013,
+  studioPort: 40_014,
+  analyticsPort: 40_015,
+  poolerPort: 40_016,
+  poolerApiPort: 40_017,
+};
+
+const resolveConfig = (
+  config?: Parameters<typeof resolveConfigEffect>[0],
+  options?: Partial<ResolveConfigOptions>,
+) =>
+  Effect.runPromise(
+    resolveConfigEffect(config, { ...options, ports: options?.ports ?? testPorts }).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));

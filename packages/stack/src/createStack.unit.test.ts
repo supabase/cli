@@ -9,13 +9,47 @@ import { runForegroundOperation } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import { shortTempPrefixRoot } from "./paths.ts";
 import {
+  portRequestsForConfig,
   resolveConfig as resolveConfigEffect,
+  type ResolveConfigOptions,
   sanitizeDaemonConfigInput,
 } from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
+import type { PortField, PortSet } from "./PortCatalog.ts";
 
-const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
-  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
+const testPorts = (config?: Parameters<typeof resolveConfigEffect>[0]): PortSet => {
+  const ports = {
+    apiPort: 40_000,
+    dbPort: 40_001,
+    authPort: 40_002,
+    postgrestPort: 40_003,
+    postgrestAdminPort: 40_004,
+    edgeRuntimePort: 40_005,
+    edgeRuntimeInspectorPort: 40_006,
+    realtimePort: 40_007,
+    storagePort: 40_008,
+    imgproxyPort: 40_009,
+    mailpitPort: 40_010,
+    mailpitSmtpPort: 40_011,
+    mailpitPop3Port: 40_012,
+    pgmetaPort: 40_013,
+    studioPort: 40_014,
+    analyticsPort: 40_015,
+    poolerPort: 40_016,
+    poolerApiPort: 40_017,
+  } satisfies Record<PortField, number>;
+  return { ...ports, apiPort: config?.port ?? ports.apiPort };
+};
+
+const resolveConfig = (
+  config?: Parameters<typeof resolveConfigEffect>[0],
+  options?: Partial<ResolveConfigOptions>,
+) =>
+  Effect.runPromise(
+    resolveConfigEffect(config, { ...options, ports: options?.ports ?? testPorts(config) }).pipe(
+      Effect.provide(NodeFileSystem.layer),
+    ),
+  );
 
 describe("foreground operation lifecycle", () => {
   it("disposes the foreground runtime after a direct readiness timeout", async () => {
@@ -99,7 +133,9 @@ describe("resolveConfig edge runtime defaults", () => {
   it("enables edge runtime when omitted in Docker mode", async () => {
     const config = await resolveConfig(
       { mode: "docker" },
-      { runtime: { mode: "docker", containerRuntime: "docker" } },
+      {
+        runtime: { mode: "docker", containerRuntime: "docker" },
+      },
     );
 
     expect(config.mode).toBe("docker");
@@ -148,22 +184,10 @@ describe("resolveConfig edge runtime defaults", () => {
 
 describe("resolveConfig explicit keyless ports", () => {
   it("rejects an explicit zero port before invoking allocation", async () => {
-    let allocatorCalled = false;
-    await expect(
-      resolveConfig(
-        { mode: "native", port: 0 },
-        {
-          portAllocator: () => {
-            allocatorCalled = true;
-            return Effect.die(new Error("allocator should not run"));
-          },
-        },
-      ),
-    ).rejects.toMatchObject({
+    await expect(resolveConfig({ mode: "native", port: 0 })).rejects.toMatchObject({
       _tag: "StackBuildError",
       reason: "invalid_config",
     });
-    expect(allocatorCalled).toBe(false);
   });
 
   it.each([1.5, -1, 65_536])("rejects an explicit invalid port %s", async (port) => {
@@ -182,41 +206,35 @@ describe("resolveConfig explicit keyless ports", () => {
         auth: false,
         pooler: { port: 42423, apiPort: 42424 },
       },
-      { runtime: { mode: "docker", containerRuntime: "docker" } },
+      {
+        runtime: { mode: "docker", containerRuntime: "docker" },
+        ports: { ...testPorts(), poolerPort: 42423, poolerApiPort: 42424 },
+      },
     );
 
     expect(config.ports.poolerPort).toBe(42423);
     expect(config.ports.poolerApiPort).toBe(42424);
   });
 
-  it("orders explicit ports before omitted fields claim their preferred values", async () => {
+  it("orders explicit ports before automatic requests", async () => {
     const sharedCandidate = 61_234;
-    const config = await resolveConfig(
-      {
-        mode: "native",
-        edgeRuntime: false,
-        postgrest: false,
-        auth: false,
-        analytics: { port: sharedCandidate },
-      },
-      {
-        preferredPorts: { dbPort: sharedCandidate },
-        portAllocator: (requests) => {
-          expect(requests[0]).toEqual({
-            field: "analyticsPort",
-            selection: { kind: "exact", port: sharedCandidate },
-          });
-          return Effect.succeed({
-            apiPort: 61_233,
-            dbPort: 61_235,
-            analyticsPort: sharedCandidate,
-          });
+    const requests = await Effect.runPromise(
+      portRequestsForConfig(
+        {
+          mode: "native",
+          edgeRuntime: false,
+          postgrest: false,
+          auth: false,
+          analytics: { port: sharedCandidate },
         },
-      },
+        { preferredPorts: { dbPort: sharedCandidate } },
+      ),
     );
-
-    expect(config.ports.analyticsPort).toBe(sharedCandidate);
-    expect(config.ports.dbPort).not.toBe(sharedCandidate);
+    expect(requests[0]).toEqual({
+      field: "analyticsPort",
+      selection: { kind: "exact", port: sharedCandidate },
+    });
+    expect(requests[1]?.field).toBe("apiPort");
   });
 });
 

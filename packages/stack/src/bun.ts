@@ -16,16 +16,10 @@ import { defaultCacheRoot } from "./paths.ts";
 import { platformFactory } from "./platform-bun.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackConfig } from "./StackConfig.ts";
-import {
-  resolveConfig as resolveConfigEffect,
-  type ResolveConfigOptions,
-} from "./StackConfigResolver.ts";
+import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 
 const resolveConfigEffectForPlatform: ResolveConfigEffect = (config, options) =>
   resolveConfigEffect(config, options);
-
-const resolveConfigPromise = (config?: StackConfig, options?: ResolveConfigOptions) =>
-  Effect.runPromise(resolveConfigEffect(config, options).pipe(Effect.provide(BunServices.layer)));
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
   const runtime = await Effect.runPromise(
@@ -39,10 +33,6 @@ export async function createStack(config?: StackConfig): Promise<StackHandle> {
     ),
   );
   return toStackHandle(handle);
-}
-
-export async function resolveConfig(config?: StackConfig, options?: ResolveConfigOptions) {
-  return resolveConfigPromise(config, options);
 }
 
 export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {

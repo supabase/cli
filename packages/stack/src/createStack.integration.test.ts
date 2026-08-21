@@ -12,9 +12,30 @@ import {
 } from "./createStack.ts";
 import { platformFactory } from "./platform-node.ts";
 import { resolveConfig, resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
+import type { PortSet } from "./PortCatalog.ts";
 import { toStackHandle } from "./stackHandle.ts";
 
 const handles: ForegroundStackHandle[] = [];
+const testPorts: PortSet = {
+  apiPort: 40_000,
+  dbPort: 40_001,
+  authPort: 40_002,
+  postgrestPort: 40_003,
+  postgrestAdminPort: 40_004,
+  edgeRuntimePort: 40_005,
+  edgeRuntimeInspectorPort: 40_006,
+  realtimePort: 40_007,
+  storagePort: 40_008,
+  imgproxyPort: 40_009,
+  mailpitPort: 40_010,
+  mailpitSmtpPort: 40_011,
+  mailpitPop3Port: 40_012,
+  pgmetaPort: 40_013,
+  studioPort: 40_014,
+  analyticsPort: 40_015,
+  poolerPort: 40_016,
+  poolerApiPort: 40_017,
+};
 
 afterEach(() => {
   const owned = handles.splice(0);
@@ -81,7 +102,7 @@ describe("direct createStack port ownership", () => {
                     .pipe(Effect.tap((path) => Effect.sync(() => createdPaths.push(path)))),
             ),
         };
-        const resolver = resolveConfigEffect({ mode: "native" });
+        const resolver = resolveConfigEffect({ mode: "native" }, { ports: testPorts });
         const firstConfig = yield* resolver.pipe(
           Effect.provideService(FileSystem.FileSystem, trackingFs),
         );
@@ -118,15 +139,7 @@ describe("direct createStack port ownership", () => {
     const leasedPort = Deferred.makeUnsafe<number>();
     const resolveBlocked: ResolveConfigEffect = (_config, options) =>
       Effect.gen(function* () {
-        const portAllocator = options?.portAllocator;
-        if (portAllocator === undefined) {
-          return yield* Effect.die("test resolver requires a port allocator");
-        }
-        const ports = yield* portAllocator(
-          [{ field: "apiPort", selection: { kind: "automatic" } }],
-          {},
-        );
-        yield* Deferred.succeed(leasedPort, ports.apiPort!);
+        yield* Deferred.succeed(leasedPort, options?.ports.apiPort ?? 0);
         return yield* Effect.never;
       });
 

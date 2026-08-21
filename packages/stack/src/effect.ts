@@ -54,7 +54,7 @@ export type {
   PortSelection,
   PortSelectionOptions,
 } from "./PortAllocator.ts";
-export { allocatePortSet, PortAllocationError, reservePortSet } from "./PortAllocator.ts";
+export { PortAllocationError, reservePortSet } from "./PortAllocator.ts";
 export {
   AllocatedPortsSchema,
   DEFAULT_API_PORT,
@@ -149,7 +149,8 @@ export { NoRunningStackError } from "./managed/model.ts";
 
 export type { PartialVersionManifest } from "./versions.ts";
 export { PartialVersionManifestSchema } from "./versions.ts";
-export { resolveConfig } from "./StackConfigResolver.ts";
+export { portRequestsForConfig, resolveConfig } from "./StackConfigResolver.ts";
+export type { PortRequestOptions, ResolveConfigOptions } from "./StackConfigResolver.ts";
 
 export { DaemonStartError } from "./layers.ts";
 export type { ManagedDaemonConfigInput } from "./layers.ts";

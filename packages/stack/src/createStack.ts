@@ -24,7 +24,7 @@ import { reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
-import type { ResolveConfigOptions } from "./StackConfigResolver.ts";
+import { portRequestsForConfig, type ResolveConfigOptions } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 
 type PlatformServices =
@@ -44,8 +44,8 @@ interface PlatformFactoryOptions {
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
 export type ResolveConfigEffect = (
-  input?: StackConfig,
-  options?: ResolveConfigOptions,
+  input: StackConfig | undefined,
+  options: ResolveConfigOptions,
 ) => Effect.Effect<ResolvedStackConfig, unknown, FileSystem.FileSystem>;
 
 /** The internal foreground handle; public adapters live at the package edge. */
@@ -141,27 +141,20 @@ const createStackAttempt = (
     );
 
     const attempt = Effect.gen(function* () {
-      resolved = yield* resolveConfig(config, {
+      const requests = yield* portRequestsForConfig(config, {
         runtime: runtimeSelection,
         ...(preferredApiPort === undefined
           ? {}
           : { preferredPorts: { apiPort: preferredApiPort } }),
-        portAllocator: (requests, options) =>
-          reservePortSet(requests, options).pipe(
-            Effect.tap((lease) =>
-              Effect.sync(() => {
-                portLease = lease;
-              }),
-            ),
-            Effect.map((lease) => lease.ports),
-          ),
+      });
+      const lease = yield* reservePortSet(requests);
+      portLease = lease;
+      resolved = yield* resolveConfig(config, {
+        runtime: runtimeSelection,
+        ports: lease.ports,
       });
 
-      if (portLease === undefined) {
-        return yield* Effect.die("Stack port allocation completed without a port lease");
-      }
-
-      const fullLayer = foregroundLayer(resolved, platformFactory, portLease);
+      const fullLayer = foregroundLayer(resolved, platformFactory, lease);
       const managedRuntime = ManagedRuntime.make(fullLayer);
       disposeRuntime = managedRuntime.disposeEffect;
       return yield* Effect.gen(function* () {

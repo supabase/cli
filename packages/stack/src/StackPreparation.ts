@@ -35,8 +35,6 @@ export interface PreparedStackArtifacts {
   readonly resolutions: Partial<Record<ServiceName, ServiceResolution>>;
 }
 
-export type PlannedStackArtifacts = PreparedStackArtifacts;
-
 export type ServiceResolution =
   | { readonly type: "binary"; readonly path: string }
   | { readonly type: "docker"; readonly image: string };
@@ -163,7 +161,7 @@ const plannedResolution = (
 const planAssetsWithDependencies = (
   resolver: BinaryResolver["Service"],
   input: StackPreparationInput,
-): Effect.Effect<PlannedStackArtifacts, BinaryNotFoundError> =>
+): Effect.Effect<PreparedStackArtifacts, BinaryNotFoundError> =>
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input.versions };
     const services = selectedServices(input);
@@ -177,7 +175,7 @@ const planAssetsWithDependencies = (
     );
     return {
       resolutions: Object.fromEntries(results),
-    } satisfies PlannedStackArtifacts;
+    } satisfies PreparedStackArtifacts;
   });
 
 export class StackPreparation extends Context.Service<
@@ -185,7 +183,7 @@ export class StackPreparation extends Context.Service<
   {
     readonly plan: (
       input: StackPreparationInput,
-    ) => Effect.Effect<PlannedStackArtifacts, BinaryNotFoundError>;
+    ) => Effect.Effect<PreparedStackArtifacts, BinaryNotFoundError>;
     readonly prepare: (
       input: StackPreparationInput,
     ) => Effect.Effect<PreparedStackArtifacts, StackPreparationError>;

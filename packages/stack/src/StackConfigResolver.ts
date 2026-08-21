@@ -13,12 +13,7 @@ import {
   generateJwt,
 } from "./JwtGenerator.ts";
 import { defaultCacheRoot, shortTempPrefixRoot } from "./paths.ts";
-import {
-  allocatePortSet,
-  type PortReservationRequest,
-  type PortAllocationError,
-  type PortSelectionOptions,
-} from "./PortAllocator.ts";
+import { type PortReservationRequest } from "./PortAllocator.ts";
 import { PORT_CATALOG, type PortField, type PortSet, type ResolvedPorts } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
@@ -63,14 +58,10 @@ import {
 import type { ServiceName } from "./ServiceName.ts";
 
 export interface ResolveConfigOptions {
+  /** Ports selected by the caller-owned lease. Resolution never allocates ports. */
+  readonly ports: PortSet;
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
-  readonly preferredPorts?: PortSet;
-  readonly reservedPorts?: ReadonlySet<number>;
-  readonly portAllocator?: (
-    requests: ReadonlyArray<PortReservationRequest>,
-    options: PortSelectionOptions,
-  ) => Effect.Effect<PortSet, PortAllocationError, FileSystem.FileSystem>;
   readonly runtime?: StackRuntimeSelection;
 }
 
@@ -251,20 +242,20 @@ function resolveFunctionsConfig(
   );
 }
 
-function resolveInstanceId(instanceId: string | undefined): string | undefined {
-  if (instanceId === undefined) {
-    return undefined;
-  }
-  try {
-    return Schema.decodeUnknownSync(InstanceIdSchema)(instanceId);
-  } catch (cause) {
-    throw new StackBuildError({
-      detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
-      cause,
-      reason: "invalid_config",
-    });
-  }
-}
+const resolveInstanceId = (
+  instanceId: string | undefined,
+): Effect.Effect<string | undefined, StackBuildError> =>
+  instanceId === undefined
+    ? Effect.succeed(undefined)
+    : Effect.try({
+        try: () => Schema.decodeUnknownSync(InstanceIdSchema)(instanceId),
+        catch: (cause) =>
+          new StackBuildError({
+            detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+            cause,
+            reason: "invalid_config",
+          }),
+      });
 
 function resolveStorageConfig(
   input: StorageConfig | undefined,
@@ -438,77 +429,207 @@ const preparationPolicyRank: Readonly<Record<ServicePolicy, number>> = {
  * Resolve policy declarations before roots, ports, or config-dependent effects
  * are acquired. This keeps unsupported policies a pure user/configuration error.
  */
-const resolveServicePolicies = (config: StackConfig): ServicePolicyManifest => {
-  const policies: Record<ServiceName, ServicePolicy> = Record.map(SERVICE_CATALOG, () => "off");
-  const requestedPolicies = config.servicePolicies ?? {};
-  for (const service of SERVICE_NAMES) {
-    const requested = requestedPolicies[service];
-    if (service === "postgres" && requested !== undefined && requested !== "eager") {
-      throw new StackBuildError({
-        detail: "postgres supports only the eager service preparation policy",
-        reason: "invalid_config",
-      });
-    }
-
-    const enabled = rawServiceEnabled(config, service);
-    if (!enabled && requested !== undefined && requested !== "off") {
-      throw new StackBuildError({
-        detail: `${service} cannot use the ${requested} service preparation policy because the service is not configured`,
-        reason: "invalid_config",
-      });
-    }
-    if (!enabled || requested === "off") {
-      policies[service] = "off";
-      continue;
-    }
-
-    const policy: Exclude<ServicePolicy, "off"> =
-      requested === undefined ? DEFAULT_SERVICE_POLICIES[service] : requested;
-    if (!serviceMetadata(service).preparation.supported.includes(policy)) {
-      throw new StackBuildError({
-        detail: `${service} does not support the ${policy} service preparation policy`,
-        reason: "invalid_config",
-      });
-    }
-    policies[service] = policy;
-  }
-
-  let promoted = true;
-  while (promoted) {
-    promoted = false;
+const resolveServicePolicies = (
+  config: StackConfig,
+): Effect.Effect<ServicePolicyManifest, StackBuildError> =>
+  Effect.gen(function* () {
+    const policies: Record<ServiceName, ServicePolicy> = Record.map(SERVICE_CATALOG, () => "off");
+    const requestedPolicies = config.servicePolicies ?? {};
     for (const service of SERVICE_NAMES) {
-      const policy = policies[service];
-      if (policy === "off") continue;
-      for (const dependency of serviceMetadata(service).activation.activates) {
-        const dependencyPolicy = policies[dependency];
-        if (
-          dependencyPolicy === "off" ||
-          preparationPolicyRank[dependencyPolicy] <= preparationPolicyRank[policy]
-        ) {
-          continue;
-        }
-        if (requestedPolicies[service] !== undefined) {
-          throw new StackBuildError({
-            detail: `${dependency} uses the ${dependencyPolicy} preparation policy but requires ${service} to be at least ${dependencyPolicy}`,
+      const requested = requestedPolicies[service];
+      if (service === "postgres" && requested !== undefined && requested !== "eager") {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: "postgres supports only the eager service preparation policy",
             reason: "invalid_config",
-          });
+          }),
+        );
+      }
+
+      const enabled = rawServiceEnabled(config, service);
+      if (!enabled && requested !== undefined && requested !== "off") {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: `${service} cannot use the ${requested} service preparation policy because the service is not configured`,
+            reason: "invalid_config",
+          }),
+        );
+      }
+      if (!enabled || requested === "off") {
+        policies[service] = "off";
+        continue;
+      }
+
+      const policy: Exclude<ServicePolicy, "off"> =
+        requested === undefined ? DEFAULT_SERVICE_POLICIES[service] : requested;
+      if (!serviceMetadata(service).preparation.supported.includes(policy)) {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: `${service} does not support the ${policy} service preparation policy`,
+            reason: "invalid_config",
+          }),
+        );
+      }
+      policies[service] = policy;
+    }
+
+    let promoted = true;
+    while (promoted) {
+      promoted = false;
+      for (const service of SERVICE_NAMES) {
+        const policy = policies[service];
+        if (policy === "off") continue;
+        for (const dependency of serviceMetadata(service).activation.activates) {
+          const dependencyPolicy = policies[dependency];
+          if (
+            dependencyPolicy === "off" ||
+            preparationPolicyRank[dependencyPolicy] <= preparationPolicyRank[policy]
+          ) {
+            continue;
+          }
+          if (requestedPolicies[service] !== undefined) {
+            return yield* Effect.fail(
+              new StackBuildError({
+                detail: `${dependency} uses the ${dependencyPolicy} preparation policy but requires ${service} to be at least ${dependencyPolicy}`,
+                reason: "invalid_config",
+              }),
+            );
+          }
+          policies[service] = dependencyPolicy;
+          promoted = true;
         }
-        policies[service] = dependencyPolicy;
-        promoted = true;
       }
     }
-  }
-  return policies;
-};
+    return policies;
+  });
+
+export interface PortRequestOptions {
+  readonly preferredPorts?: PortSet;
+  readonly runtime?: StackRuntimeSelection;
+}
+
+/**
+ * Validate the allocation-relevant parts of a stack configuration and return
+ * exact requests before automatic requests. The helper is allocation-free;
+ * callers reserve the returned requests and pass the resulting ports into
+ * `resolveConfig`.
+ */
+export const portRequestsForConfig = (
+  input: StackConfig = {},
+  options: PortRequestOptions = {},
+): Effect.Effect<ReadonlyArray<PortReservationRequest>, StackBuildError> =>
+  Effect.gen(function* () {
+    if (
+      input.mode !== undefined &&
+      options.runtime !== undefined &&
+      input.mode !== options.runtime.mode
+    ) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `Selected ${options.runtime.mode} runtime does not match requested ${input.mode} mode`,
+          reason: "invalid_config",
+        }),
+      );
+    }
+    const mode = options.runtime?.mode ?? input.mode ?? "native";
+    const config: StackConfig = { ...input, mode };
+    if (mode === "docker" && options.runtime?.containerRuntime == null) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: "Docker mode requires a selected Docker or Podman runtime",
+          reason: "invalid_config",
+        }),
+      );
+    }
+
+    // Deliberately first: unsupported policies and invalid explicit ports must
+    // fail before a caller acquires any OS resource.
+    yield* resolveServicePolicies(config);
+    const postgresInput = config.postgres ?? {};
+    const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
+    const edgeRuntimeInput = config.edgeRuntime !== false ? config.edgeRuntime : undefined;
+    const realtimeInput = config.realtime !== false ? (config.realtime ?? undefined) : undefined;
+    const storageInput = config.storage !== false ? (config.storage ?? undefined) : undefined;
+    const imgproxyInput = config.imgproxy !== false ? (config.imgproxy ?? undefined) : undefined;
+    const mailpitInput = config.mailpit !== false ? (config.mailpit ?? undefined) : undefined;
+    const pgmetaInput = config.pgmeta !== false ? (config.pgmeta ?? undefined) : undefined;
+    const studioInput = config.studio !== false ? (config.studio ?? undefined) : undefined;
+    const analyticsInput = config.analytics !== false ? (config.analytics ?? undefined) : undefined;
+    const poolerInput = config.pooler !== false ? (config.pooler ?? undefined) : undefined;
+    const explicitPortForField = (field: PortField): number | undefined => {
+      switch (field) {
+        case "apiPort":
+          return config.port;
+        case "dbPort":
+          return postgresInput.port;
+        case "authPort":
+          return authInput?.port;
+        case "edgeRuntimePort":
+          return edgeRuntimeInput?.port;
+        case "edgeRuntimeInspectorPort":
+          return edgeRuntimeInput?.inspectorPort;
+        case "realtimePort":
+          return realtimeInput?.port;
+        case "storagePort":
+          return storageInput?.port;
+        case "imgproxyPort":
+          return imgproxyInput?.port;
+        case "mailpitPort":
+          return mailpitInput?.port;
+        case "mailpitSmtpPort":
+          return mailpitInput?.smtpPort;
+        case "mailpitPop3Port":
+          return mailpitInput?.pop3Port;
+        case "pgmetaPort":
+          return pgmetaInput?.port;
+        case "studioPort":
+          return studioInput?.port;
+        case "analyticsPort":
+          return analyticsInput?.port;
+        case "poolerPort":
+          return poolerInput?.port;
+        case "poolerApiPort":
+          return poolerInput?.apiPort;
+        case "postgrestPort":
+        case "postgrestAdminPort":
+          return undefined;
+      }
+    };
+    const activeFields = portFieldsForConfigInput(config);
+    for (const field of activeFields) {
+      const explicit = explicitPortForField(field);
+      if (
+        explicit !== undefined &&
+        (!Number.isInteger(explicit) || explicit < 1 || explicit > 65_535)
+      ) {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
+            reason: "invalid_config",
+          }),
+        );
+      }
+    }
+    const unorderedRequests = activeFields.map((field) => {
+      const explicit = explicitPortForField(field);
+      if (explicit !== undefined) {
+        return { field, selection: { kind: "exact", port: explicit } } as const;
+      }
+      const preferred = options.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
+      return preferred === undefined
+        ? ({ field, selection: { kind: "automatic" } } as const)
+        : ({ field, selection: { kind: "automatic", preferred } } as const);
+    });
+    return [
+      ...unorderedRequests.filter((request) => request.selection.kind === "exact"),
+      ...unorderedRequests.filter((request) => request.selection.kind === "automatic"),
+    ];
+  });
 
 export function resolveConfig(
-  input?: StackConfig,
-  opts: ResolveConfigOptions = {},
-): Effect.Effect<
-  ResolvedStackConfig,
-  StackBuildError | PortAllocationError,
-  FileSystem.FileSystem
-> {
+  input: StackConfig | undefined,
+  opts: ResolveConfigOptions,
+): Effect.Effect<ResolvedStackConfig, StackBuildError, FileSystem.FileSystem> {
   return Effect.suspend(() => {
     let roots: ResolvedRoots | undefined;
     const cleanup = () =>
@@ -516,29 +637,24 @@ export function resolveConfig(
 
     return Effect.gen(function* () {
       const inputConfig = input ?? {};
-      if (
-        inputConfig.mode !== undefined &&
-        opts.runtime !== undefined &&
-        inputConfig.mode !== opts.runtime.mode
-      ) {
-        throw new StackBuildError({
-          detail: `Selected ${opts.runtime.mode} runtime does not match requested ${inputConfig.mode} mode`,
-          reason: "invalid_config",
-        });
-      }
       const resolvedMode = opts.runtime?.mode ?? inputConfig.mode ?? "native";
-      if (resolvedMode === "docker" && opts.runtime?.containerRuntime == null) {
-        throw new StackBuildError({
-          detail: "Docker mode requires a selected Docker or Podman runtime",
-          reason: "invalid_config",
-        });
-      }
       const containerRuntime = opts.runtime?.containerRuntime ?? null;
       const config: StackConfig = { ...inputConfig, mode: resolvedMode };
       // Deliberately first: unsupported policies must not create roots or reserve ports.
-      const servicePolicies = resolveServicePolicies(config);
+      yield* portRequestsForConfig(inputConfig, { runtime: opts.runtime });
+      const servicePolicies = yield* resolveServicePolicies(config);
+      for (const field of portFieldsForConfigInput(config)) {
+        if (opts.ports[field] === undefined) {
+          return yield* Effect.fail(
+            new StackBuildError({
+              detail: `Missing resolved port for active field ${field}`,
+              reason: "invalid_config",
+            }),
+          );
+        }
+      }
       const projectDir = config.projectDir ?? process.cwd();
-      const instanceId = resolveInstanceId(config.instanceId);
+      const instanceId = yield* resolveInstanceId(config.instanceId);
       const functions = yield* resolveFunctionsConfig(config, projectDir);
       roots = yield* resolveRoots(config, opts);
       const postgresInput = config.postgres ?? {};
@@ -573,76 +689,8 @@ export function resolveConfig(
 
       const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
 
-      const explicitPortForField = (field: PortField): number | undefined => {
-        switch (field) {
-          case "apiPort":
-            return config.port;
-          case "dbPort":
-            return postgresInput.port;
-          case "authPort":
-            return authInput?.port;
-          case "edgeRuntimePort":
-            return edgeRuntimeInput?.port;
-          case "edgeRuntimeInspectorPort":
-            return edgeRuntimeInput?.inspectorPort;
-          case "realtimePort":
-            return realtimeInput?.port;
-          case "storagePort":
-            return storageInput?.port;
-          case "imgproxyPort":
-            return imgproxyInput?.port;
-          case "mailpitPort":
-            return mailpitInput?.port;
-          case "mailpitSmtpPort":
-            return mailpitInput?.smtpPort;
-          case "mailpitPop3Port":
-            return mailpitInput?.pop3Port;
-          case "pgmetaPort":
-            return pgmetaInput?.port;
-          case "studioPort":
-            return studioInput?.port;
-          case "analyticsPort":
-            return analyticsInput?.port;
-          case "poolerPort":
-            return poolerInput?.port;
-          case "poolerApiPort":
-            return poolerInput?.apiPort;
-          case "postgrestPort":
-          case "postgrestAdminPort":
-            return undefined;
-        }
-      };
-
-      for (const field of portFieldsForConfigInput(config)) {
-        const port = explicitPortForField(field);
-        if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65_535)) {
-          throw new StackBuildError({
-            detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
-            reason: "invalid_config",
-          });
-        }
-      }
-
-      const unorderedRequests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(
-        config,
-      ).map((field) => {
-        const explicit = explicitPortForField(field);
-        if (explicit !== undefined) {
-          return { field, selection: { kind: "exact", port: explicit } };
-        }
-        const preferred = opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
-        return preferred === undefined
-          ? { field, selection: { kind: "automatic" } }
-          : { field, selection: { kind: "automatic", preferred } };
-      });
-      const requests: ReadonlyArray<PortReservationRequest> = [
-        ...unorderedRequests.filter((request) => request.selection.kind === "exact"),
-        ...unorderedRequests.filter((request) => request.selection.kind === "automatic"),
-      ];
-
-      const ports = yield* (opts.portAllocator ?? allocatePortSet)(requests, {
-        reserved: opts.reservedPorts,
-      });
+      // Port selection is owned by the caller. Resolve the provided lease result only.
+      const ports = opts.ports;
 
       const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
       const anonJwt = generateJwt(jwtSecret, "anon");

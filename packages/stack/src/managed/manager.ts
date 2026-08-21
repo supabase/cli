@@ -13,13 +13,8 @@ import {
   Scope,
 } from "effect";
 import { isAbsolute, relative, resolve } from "node:path";
-import { PORT_CATALOG, type PortField, type PortSet } from "../PortCatalog.ts";
-import {
-  reservePortSet,
-  type PortAllocationError,
-  type PortLease,
-  type PortReservationRequest,
-} from "../PortAllocator.ts";
+import { PORT_CATALOG, type PortSet } from "../PortCatalog.ts";
+import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
@@ -100,7 +95,7 @@ export interface AllocateManagedPortsRequest {
 
 export interface ManagedPortAllocation {
   readonly assignments: ReadonlyArray<ManagedPortAssignment>;
-  readonly lease: ManagedPortLease;
+  readonly lease: PortLease;
 }
 
 interface ManagedStackStartResultBase {
@@ -109,7 +104,7 @@ interface ManagedStackStartResultBase {
 
 export type ManagedStackStartResult = ManagedStackStartResultBase & {
   /** The lease remains live until the caller's Effect scope closes. */
-  readonly lease: ManagedPortLease;
+  readonly lease: PortLease;
 };
 
 export interface ManagedStackLifecycleUpdate {
@@ -124,12 +119,7 @@ export interface ManagedStackLaunchUpdateRequest {
   readonly launch: ManagedStackLaunchUpdate;
 }
 
-export interface ManagedPortLease {
-  readonly ports: PortSet;
-  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
-  readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
-  readonly releaseAll: Effect.Effect<void>;
-}
+export type ManagedPortLease = PortLease;
 
 export type ManagedDeleteResult =
   | { readonly outcome: "removed"; readonly stackId: string }
@@ -318,11 +308,29 @@ const stackDrift = (
   });
 };
 
-const portRequests = (plan: ManagedPortPlan): ReadonlyArray<PortReservationRequest> =>
+const portRequests = (
+  plan: ManagedPortPlan,
+  automaticExcluded: ReadonlySet<number> = new Set(),
+): ReadonlyArray<PortReservationRequest> =>
   [...plan.durable]
-    .sort((left, right) => Number(right.intent === "exact") - Number(left.intent === "exact"))
-    .map(({ field, selection }) => ({ field, selection }))
-    .concat(plan.runtimeOnly);
+    .sort(
+      (left, right) =>
+        Number(right.selection.kind === "exact") - Number(left.selection.kind === "exact"),
+    )
+    .map(({ field, selection }) => ({
+      field,
+      selection:
+        selection.kind === "automatic" ? { ...selection, excluded: automaticExcluded } : selection,
+    }))
+    .concat(
+      plan.runtimeOnly.map(({ field, selection }) => ({
+        field,
+        selection:
+          selection.kind === "automatic"
+            ? { ...selection, excluded: automaticExcluded }
+            : selection,
+      })),
+    );
 
 const managedAssignments = (
   plan: ManagedPortPlan,
@@ -467,9 +475,6 @@ const makeManager = (
             persisted,
             preferCatalogDefaults,
           });
-          const requests = portRequests(plan);
-          const exactRequests = requests.filter((item) => item.selection.kind === "exact");
-          const automaticRequests = requests.filter((item) => item.selection.kind === "automatic");
           const invalidPersistedAutomatic = plan.durable.find(
             (entry) =>
               entry.intent === "automatic" &&
@@ -533,6 +538,19 @@ const makeManager = (
           for (const assignment of plan.inactiveAssignments) {
             strictReserved.add(assignment.port);
           }
+          const automaticExcluded = new Set<number>();
+          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
+            automaticExcluded.add(port);
+          }
+          for (const port of strictReserved) automaticExcluded.add(port);
+          for (const [port] of owners) automaticExcluded.add(port);
+          for (const assignment of plan.inactiveAssignments) {
+            automaticExcluded.add(assignment.port);
+          }
+          for (const port of exactReserved) automaticExcluded.add(port);
+
+          const requests = portRequests(plan, automaticExcluded);
+          const exactRequests = requests.filter((item) => item.selection.kind === "exact");
           const requestedAssignments = exactRequests.flatMap((item) => {
             const entry = plan.durable.find((candidate) => candidate.field === item.field);
             if (entry?.selection.kind !== "exact") return [];
@@ -544,6 +562,16 @@ const makeManager = (
               } satisfies ManagedPortAssignment,
             ];
           });
+          for (const assignment of requestedAssignments) {
+            if (!exactReserved.has(assignment.port)) continue;
+            return yield* Effect.fail(
+              new ManagedExactPortOccupiedError({
+                key: assignment.key,
+                port: assignment.port,
+                stackId: request.stackId,
+              }),
+            );
+          }
           for (const assignment of requestedAssignments) {
             const owner = (owners.get(assignment.port) ?? []).find((candidate) => {
               const lifecycle =
@@ -575,90 +603,29 @@ const makeManager = (
               );
             }
           }
-          const exactLease =
-            exactRequests.length === 0
-              ? undefined
-              : yield* reservePortSet(exactRequests, { reserved: exactReserved }).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.mapError((cause) => {
-                    const entry =
-                      cause.field === undefined
-                        ? undefined
-                        : plan.durable.find((candidate) => candidate.field === cause.field);
-                    const key =
-                      entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
-                    return key !== undefined && cause.port !== undefined
-                      ? new ManagedExactPortOccupiedError({
-                          key,
-                          port: cause.port,
-                          stackId: request.stackId,
-                        })
-                      : new ManagedPortAllocationError({
-                          fields: exactRequests.map((item) => item.field),
-                          cause,
-                        });
-                  }),
-                );
-          if (exactLease !== undefined) partialLeases.push(exactLease);
-          const automaticReserved = new Set<number>();
-          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
-            automaticReserved.add(port);
-          }
-          for (const port of strictReserved) automaticReserved.add(port);
-          for (const [port] of owners) {
-            automaticReserved.add(port);
-          }
-          if (exactLease !== undefined) {
-            for (const port of Object.values(exactLease.ports)) {
-              if (port !== undefined) automaticReserved.add(port);
-            }
-          }
-          const automaticLease =
-            automaticRequests.length === 0
-              ? undefined
-              : yield* reservePortSet(automaticRequests, { reserved: automaticReserved }).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.mapError(
-                    (cause) =>
-                      new ManagedPortAllocationError({
-                        fields: automaticRequests.map((item) => item.field),
-                        cause,
-                      }),
-                  ),
-                );
-          if (automaticLease !== undefined) partialLeases.push(automaticLease);
-          const ports: PortSet = {
-            ...exactLease?.ports,
-            ...automaticLease?.ports,
-          };
-          const assignments = yield* managedAssignments(plan, ports);
-          const lease: ManagedPortLease = {
-            ports,
-            reserve: (fields) =>
-              Effect.all(
-                [
-                  exactLease?.reserve(
-                    fields.filter((field) => exactLease.ports[field] !== undefined),
-                  ) ?? Effect.void,
-                  automaticLease?.reserve(
-                    fields.filter((field) => automaticLease.ports[field] !== undefined),
-                  ) ?? Effect.void,
-                ],
-                { discard: true },
-              ),
-            release: (fields) =>
-              Effect.all(
-                [
-                  exactLease?.release(fields) ?? Effect.void,
-                  automaticLease?.release(fields) ?? Effect.void,
-                ],
-                { discard: true },
-              ),
-            releaseAll: Effect.all(
-              [exactLease?.releaseAll ?? Effect.void, automaticLease?.releaseAll ?? Effect.void],
-              { discard: true },
-            ),
-          };
+          const lease = yield* reservePortSet(requests, { reserved: exactReserved }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.mapError((cause) => {
+              const entry =
+                cause.field === undefined
+                  ? undefined
+                  : plan.durable.find((candidate) => candidate.field === cause.field);
+              const key =
+                entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
+              return key !== undefined && cause.port !== undefined
+                ? new ManagedExactPortOccupiedError({
+                    key,
+                    port: cause.port,
+                    stackId: request.stackId,
+                  })
+                : new ManagedPortAllocationError({
+                    fields: requests.map((item) => item.field),
+                    cause,
+                  });
+            }),
+          );
+          partialLeases.push(lease);
+          const assignments = yield* managedAssignments(plan, lease.ports);
           return { assignments, lease };
         });
         const guardedAttempt = Effect.exit(attempt).pipe(

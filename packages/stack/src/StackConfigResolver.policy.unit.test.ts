@@ -2,11 +2,41 @@ import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem } from "effect";
 import { systemError } from "effect/PlatformError";
-import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
+import {
+  resolveConfig as resolveConfigEffect,
+  type ResolveConfigOptions,
+} from "./StackConfigResolver.ts";
 import { StackBuildError } from "./errors.ts";
+import type { PortSet } from "./PortCatalog.ts";
 
-const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
-  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
+const testPorts: PortSet = {
+  apiPort: 40_000,
+  dbPort: 40_001,
+  authPort: 40_002,
+  postgrestPort: 40_003,
+  postgrestAdminPort: 40_004,
+  realtimePort: 40_005,
+  storagePort: 40_006,
+  imgproxyPort: 40_007,
+  mailpitPort: 40_008,
+  mailpitSmtpPort: 40_009,
+  mailpitPop3Port: 40_010,
+  pgmetaPort: 40_011,
+  studioPort: 40_012,
+  analyticsPort: 40_013,
+  poolerPort: 40_014,
+  poolerApiPort: 40_015,
+};
+
+const resolveConfig = (
+  config?: Parameters<typeof resolveConfigEffect>[0],
+  options?: Partial<ResolveConfigOptions>,
+) =>
+  Effect.runPromise(
+    resolveConfigEffect(config, { ...options, ports: options?.ports ?? testPorts }).pipe(
+      Effect.provide(NodeFileSystem.layer),
+    ),
+  );
 
 describe("resolved service preparation policies", () => {
   it("maps temporary-root filesystem failures to StackBuildError", async () => {
@@ -24,7 +54,7 @@ describe("resolved service preparation policies", () => {
               }),
             ),
         };
-        return yield* resolveConfigEffect().pipe(
+        return yield* resolveConfigEffect(undefined, { ports: testPorts }).pipe(
           Effect.provideService(FileSystem.FileSystem, failingFs),
           Effect.exit,
         );
@@ -55,19 +85,9 @@ describe("resolved service preparation policies", () => {
   });
 
   it("rejects an unsupported lazy policy before port allocation", async () => {
-    let allocated = false;
-    await expect(
-      resolveConfig(
-        { servicePolicies: { postgres: "lazy" } },
-        {
-          portAllocator: () => {
-            allocated = true;
-            throw new Error("must not allocate");
-          },
-        },
-      ),
-    ).rejects.toBeInstanceOf(StackBuildError);
-    expect(allocated).toBe(false);
+    await expect(resolveConfig({ servicePolicies: { postgres: "lazy" } })).rejects.toBeInstanceOf(
+      StackBuildError,
+    );
   });
 
   it("rejects disabling postgres through the service policy manifest", async () => {
@@ -91,25 +111,15 @@ describe("resolved service preparation policies", () => {
   });
 
   it("rejects an eager service whose required public dependency is lazy before allocating ports", async () => {
-    let allocated = false;
     await expect(
-      resolveConfig(
-        {
-          analytics: {},
-          vector: {},
-          servicePolicies: { analytics: "lazy", vector: "eager" },
-        },
-        {
-          portAllocator: () => {
-            allocated = true;
-            throw new Error("must not allocate");
-          },
-        },
-      ),
+      resolveConfig({
+        analytics: {},
+        vector: {},
+        servicePolicies: { analytics: "lazy", vector: "eager" },
+      }),
     ).rejects.toMatchObject({
       _tag: "StackBuildError",
       reason: "invalid_config",
     });
-    expect(allocated).toBe(false);
   });
 });
