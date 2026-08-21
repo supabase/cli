@@ -805,10 +805,10 @@ describe("legacy sso add integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           // URL validation runs against the consumed token, not the parsed
-          // Option — `--name-id-format` is not a valid HTTPS URL, so the
-          // command fails before any request, like Go.
+          // Option — it is not a valid HTTPS URL, so the command fails before
+          // any request, like Go. URL implementations do not consistently
+          // include the rejected input in their exception text.
           expect(dump).toContain("LegacySsoAddMetadataFileError");
-          expect(dump).toContain("--name-id-format");
           expect(dump).toContain("Use --skip-url-validation to suppress this error");
         }
         expect(api.requests.some((r) => r.method === "POST")).toBe(false);
