@@ -43,6 +43,30 @@ afterEach(() => {
 });
 
 describe("direct createStack port ownership", () => {
+  it("retries an automatic API port when the platform bind reports EADDRINUSE as a defect", async () => {
+    let attempts = 0;
+    const bindError = Object.assign(new Error("address already in use"), { code: "EADDRINUSE" });
+    const collidingPlatformFactory: PlatformFactory = (options) => {
+      attempts += 1;
+      const platform = platformFactory(options);
+      return attempts < 3
+        ? Layer.mergeAll(platform, Layer.effectDiscard(Effect.die(bindError)))
+        : platform;
+    };
+
+    const stack = await Effect.runPromise(
+      createStack(
+        { mode: "native", postgrest: false, auth: false },
+        collidingPlatformFactory,
+        { mode: "native", containerRuntime: null },
+        resolveConfig,
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+    handles.push(stack);
+
+    expect(attempts).toBe(3);
+  });
+
   it("allocates only active service fields without managed state", async () => {
     const stack = await Effect.runPromise(
       createStack(

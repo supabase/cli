@@ -59,12 +59,14 @@ export function normalizeServiceVersion(service: ServiceName, version: string): 
   const metadata = serviceMetadata(service);
   const tagPrefix = metadata.artifact.docker.tagPrefix;
   const withoutDockerTagPrefix =
-    tagPrefix !== undefined && normalized.startsWith(tagPrefix)
+    tagPrefix !== undefined &&
+    normalized.slice(0, tagPrefix.length).toLowerCase() === tagPrefix.toLowerCase()
       ? normalized.slice(tagPrefix.length)
       : normalized;
-  return metadata.defaultVersion.startsWith("v") && !withoutDockerTagPrefix.startsWith("v")
-    ? `v${withoutDockerTagPrefix}`
-    : withoutDockerTagPrefix;
+  if (!metadata.defaultVersion.startsWith("v")) return withoutDockerTagPrefix;
+  return withoutDockerTagPrefix.slice(0, 1).toLowerCase() === "v"
+    ? `v${withoutDockerTagPrefix.slice(1)}`
+    : `v${withoutDockerTagPrefix}`;
 }
 
 export function normalizeServiceVersions(

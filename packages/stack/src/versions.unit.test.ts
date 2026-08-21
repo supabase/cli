@@ -135,6 +135,7 @@ describe("normalizeServiceVersion", () => {
   it("normalizes bare versions for services with v-prefixed catalog releases", () => {
     expect(normalizeServiceVersion("mailpit", "1.30.2")).toBe("v1.30.2");
     expect(normalizeServiceVersion("imgproxy", "3.8.0")).toBe("v3.8.0");
+    expect(normalizeServiceVersion("mailpit", "V1.30.2")).toBe("v1.30.2");
   });
 
   it("passes through other services unchanged", () => {
@@ -143,6 +144,7 @@ describe("normalizeServiceVersion", () => {
 
   it("normalizes a prefixed pgmeta override to its catalog tag", () => {
     expect(normalizeServiceVersion("pgmeta", "v0.98.0")).toBe("0.98.0");
+    expect(normalizeServiceVersion("pgmeta", "V0.98.0")).toBe("0.98.0");
     expect(dockerImageForService("pgmeta", normalizeServiceVersion("pgmeta", "v0.98.0"))).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.98.0",
     );

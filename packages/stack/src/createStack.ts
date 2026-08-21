@@ -1,5 +1,6 @@
 import type { LogEntry } from "@supabase/process-compose";
 import {
+  Cause,
   Context,
   Deferred,
   Effect,
@@ -7,7 +8,9 @@ import {
   FileSystem,
   type Layer,
   ManagedRuntime,
+  Option,
   Path,
+  Result,
   Stream,
 } from "effect";
 import { HttpServer } from "effect/unstable/http";
@@ -104,6 +107,13 @@ const isAddressInUse = (error: unknown, depth = 0): boolean => {
   if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
   if ("cause" in error) return isAddressInUse(Reflect.get(error, "cause"), depth + 1);
   return false;
+};
+
+const causeIsAddressInUse = (cause: Cause.Cause<unknown>): boolean => {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isSome(failure)) return isAddressInUse(failure.value);
+  const defect = Cause.findDefect(cause);
+  return Result.isSuccess(defect) && isAddressInUse(defect.success);
 };
 
 const createStackAttempt = (
@@ -254,12 +264,12 @@ export function createStack(
       resolveConfig,
       attempt === 0 ? undefined : 0,
     ).pipe(
-      Effect.catch((error) =>
+      Effect.catchCause((cause) =>
         automaticApiPort &&
-        isAddressInUse(error) &&
+        causeIsAddressInUse(cause) &&
         attempt + 1 < MAX_AUTOMATIC_API_PORT_HANDOFF_ATTEMPTS
           ? Effect.suspend(() => loop(attempt + 1))
-          : Effect.fail(error),
+          : Effect.failCause(cause),
       ),
     );
 
