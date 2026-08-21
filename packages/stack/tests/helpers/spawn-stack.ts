@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { Effect } from "effect";
 import { terminateChildProcess } from "../../src/terminateChild.ts";
 
 const STANDALONE_SCRIPT = resolve(import.meta.dirname, "standalone-stack.ts");
@@ -79,7 +80,7 @@ export function spawnStandaloneStack(
       });
       // Reclaim the unusable child; the 30s window matches the suite's own
       // sweep so SIGKILL doesn't cut a wedged stack's dispose short.
-      void terminateChildProcess(child, { timeoutMs: 30_000 });
+      void Effect.runPromise(terminateChildProcess(child, { timeoutMs: 30_000 }));
     }, readinessTimeoutMs);
 
     child.stdout!.on("data", (chunk: Buffer) => {

@@ -1,7 +1,7 @@
-import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Schema } from "effect";
-import { StackBuildError, toStackError } from "./errors.ts";
+import { Effect, Exit, FileSystem, Schema } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import { StackBuildError } from "./errors.ts";
 import { resolvedFunctionsBundleSchemaForProject } from "./functions.ts";
 import {
   defaultJwtSecret,
@@ -10,12 +10,7 @@ import {
   generateJwt,
 } from "./JwtGenerator.ts";
 import { defaultCacheRoot, shortTempPrefixRoot } from "./paths.ts";
-import {
-  allocatePortSet,
-  type PortReservationRequest,
-  type PortAllocationError,
-  type PortSelectionOptions,
-} from "./PortAllocator.ts";
+import { type PortReservationRequest } from "./PortAllocator.ts";
 import { PORT_CATALOG, type PortField, type PortSet, type ResolvedPorts } from "./PortCatalog.ts";
 import { portFieldsForConfigInput, serviceEnabledForConfig } from "./ServicePorts.ts";
 import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
@@ -53,11 +48,9 @@ export interface ResolveConfigOptions {
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
   readonly preferredPorts?: PortSet;
-  readonly reservedPorts?: ReadonlySet<number>;
-  readonly portAllocator?: (
-    requests: ReadonlyArray<PortReservationRequest>,
-    options: PortSelectionOptions,
-  ) => Effect.Effect<PortSet, PortAllocationError>;
+  /** Ports selected by the owning caller's authoritative lease. */
+  readonly ports?: PortSet;
+  readonly disablePreferredPorts?: ReadonlySet<PortField>;
 }
 
 interface ResolvedRoots {
@@ -67,37 +60,58 @@ interface ResolvedRoots {
   readonly autoManagedPaths: ReadonlyArray<string>;
 }
 
-const makeTempRoot = (prefix: string) => mkdtempSync(join(shortTempPrefixRoot(), prefix));
+const cleanupRoots = (
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, never, FileSystem.FileSystem> =>
+  Effect.uninterruptible(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* Effect.forEach(
+        paths,
+        (path) => fs.remove(path, { recursive: true, force: true }).pipe(Effect.ignoreCause),
+        { discard: true },
+      );
+    }),
+  );
 
-const resolveRoots = (config: StackConfig, opts: ResolveConfigOptions): ResolvedRoots => {
-  const cacheRoot = config.cacheRoot ?? defaultCacheRoot();
-  const autoManagedPaths: string[] = [];
+const tempRootError = (prefix: string, cause: PlatformError): StackBuildError =>
+  new StackBuildError({ detail: `Failed to create temporary ${prefix} directory`, cause });
 
-  const stackRoot =
-    opts.stackRoot ??
-    config.stackRoot ??
-    (() => {
-      const dir = makeTempRoot("sb-stack-");
-      autoManagedPaths.push(dir);
-      return dir;
-    })();
+const makeTempRoot = (
+  prefix: string,
+): Effect.Effect<string, StackBuildError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs
+      .makeTempDirectory({ directory: shortTempPrefixRoot(), prefix })
+      .pipe(Effect.mapError((cause) => tempRootError(prefix, cause)));
+  });
 
-  const runtimeRoot =
-    opts.runtimeRoot ??
-    config.runtimeRoot ??
-    (() => {
-      const dir = makeTempRoot("sb-run-");
-      autoManagedPaths.push(dir);
-      return dir;
-    })();
-
-  return {
-    cacheRoot,
-    stackRoot,
-    runtimeRoot,
-    autoManagedPaths,
-  };
-};
+const resolveRoots = (
+  config: StackConfig,
+  opts: ResolveConfigOptions,
+): Effect.Effect<ResolvedRoots, StackBuildError, FileSystem.FileSystem> =>
+  Effect.suspend(() => {
+    const autoManagedPaths: string[] = [];
+    return Effect.gen(function* () {
+      const cacheRoot = config.cacheRoot ?? defaultCacheRoot();
+      const makeTrackedTempRoot = (prefix: string) =>
+        Effect.uninterruptibleMask((restore) =>
+          restore(makeTempRoot(prefix)).pipe(
+            Effect.tap((dir) => Effect.sync(() => autoManagedPaths.push(dir))),
+          ),
+        );
+      const stackRoot =
+        opts.stackRoot ?? config.stackRoot ?? (yield* makeTrackedTempRoot("sb-stack-"));
+      const runtimeRoot =
+        opts.runtimeRoot ?? config.runtimeRoot ?? (yield* makeTrackedTempRoot("sb-run-"));
+      return { cacheRoot, stackRoot, runtimeRoot, autoManagedPaths };
+    }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) ? Effect.void : cleanupRoots(autoManagedPaths),
+      ),
+    );
+  });
 
 const resolveDataDir = (
   explicitDir: string | undefined,
@@ -105,32 +119,39 @@ const resolveDataDir = (
   suffix: string,
 ): string => explicitDir ?? join(stackRoot, "data", suffix);
 
-const requiredPort = (ports: PortSet, field: PortField): number => {
+const requiredPort = (ports: PortSet, field: PortField): Effect.Effect<number, StackBuildError> => {
   const port = ports[field];
   if (port === undefined) {
-    throw new StackBuildError({
-      detail: `Missing resolved port for active field ${field}`,
-      reason: "invalid_config",
-    });
+    return Effect.fail(
+      new StackBuildError({
+        detail: `Missing resolved port for active field ${field}`,
+        reason: "invalid_config",
+      }),
+    );
   }
-  return port;
+  return Effect.succeed(port);
 };
 
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
   raw: PostgrestConfig | false | undefined,
   ports: PortSet,
-): ResolvedPostgrestConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPostgrestConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "postgrestPort"),
     adminPort: requiredPort(ports, "postgrestAdminPort"),
-    schemas: cfg.schemas ?? ["public", "graphql_public"],
-    extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
-    maxRows: cfg.maxRows ?? 1000,
-    version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
-  };
+  }).pipe(
+    Effect.map(({ port, adminPort }) => ({
+      port,
+      adminPort,
+      schemas: cfg.schemas ?? ["public", "graphql_public"],
+      extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
+      maxRows: cfg.maxRows ?? 1000,
+      version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
+    })),
+  );
 }
 
 function resolveAuthConfig(
@@ -138,143 +159,171 @@ function resolveAuthConfig(
   raw: AuthConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
-): ResolvedAuthConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedAuthConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "authPort"),
-    siteUrl: cfg.siteUrl ?? "http://localhost:3000",
-    jwtExpiry: cfg.jwtExpiry ?? 3600,
-    externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
-    version: cfg.version ?? DEFAULT_VERSIONS.auth,
-  };
+  return requiredPort(ports, "authPort").pipe(
+    Effect.map((port) => ({
+      port,
+      siteUrl: cfg.siteUrl ?? "http://localhost:3000",
+      jwtExpiry: cfg.jwtExpiry ?? 3600,
+      externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
+      version: cfg.version ?? DEFAULT_VERSIONS.auth,
+    })),
+  );
 }
 
 function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
   raw: RealtimeConfig | false | undefined,
   ports: PortSet,
-): ResolvedRealtimeConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedRealtimeConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "realtimePort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.realtime,
-    tenantId: cfg.tenantId ?? "realtime-dev",
-    encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
-    secretKeyBase:
-      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-    maxHeaderLength: cfg.maxHeaderLength ?? 4096,
-  };
+  return requiredPort(ports, "realtimePort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.realtime,
+      tenantId: cfg.tenantId ?? "realtime-dev",
+      encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
+      secretKeyBase:
+        cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+      maxHeaderLength: cfg.maxHeaderLength ?? 4096,
+    })),
+  );
 }
 
 function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
   raw: EdgeRuntimeConfig | false | undefined,
   ports: PortSet,
-): ResolvedEdgeRuntimeConfig | false {
-  if (raw === false || raw?.enabled === false) return false;
+): Effect.Effect<ResolvedEdgeRuntimeConfig | false, StackBuildError> {
+  if (raw === false || raw?.enabled === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    enabled: cfg.enabled ?? true,
+  return Effect.all({
     port: requiredPort(ports, "edgeRuntimePort"),
     inspectorPort: requiredPort(ports, "edgeRuntimeInspectorPort"),
-    policy: cfg.policy ?? "per_worker",
-    version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
-    env: cfg.env ?? {},
-  };
+  }).pipe(
+    Effect.map(({ port, inspectorPort }) => ({
+      enabled: cfg.enabled ?? true,
+      port,
+      inspectorPort,
+      policy: cfg.policy ?? "per_worker",
+      version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
+      env: cfg.env ?? {},
+    })),
+  );
 }
 
-async function resolveFunctionsConfig(config: StackConfig, projectDir: string) {
+const resolveFunctionsConfig = (
+  config: StackConfig,
+  projectDir: string,
+): Effect.Effect<false | NonNullable<ResolvedStackConfig["functions"]>, StackBuildError> => {
   if (config.functions === undefined || config.functions === false) {
-    return false;
+    return Effect.succeed(false);
   }
-  try {
-    return await Schema.decodeUnknownPromise(resolvedFunctionsBundleSchemaForProject(projectDir))(
-      config.functions,
-    );
-  } catch (cause) {
-    throw new StackBuildError({
-      detail: "Invalid Edge Functions bundle",
-      cause,
-      reason: "invalid_config",
-    });
-  }
-}
+  return Schema.decodeUnknownEffect(resolvedFunctionsBundleSchemaForProject(projectDir))(
+    config.functions,
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StackBuildError({
+          detail: "Invalid Edge Functions bundle",
+          cause,
+          reason: "invalid_config",
+        }),
+    ),
+  );
+};
 
-function resolveInstanceId(instanceId: string | undefined): string | undefined {
+const resolveInstanceId = (
+  instanceId: string | undefined,
+): Effect.Effect<string | undefined, StackBuildError> => {
   if (instanceId === undefined) {
-    return undefined;
+    return Effect.succeed(undefined);
   }
-  try {
-    return Schema.decodeUnknownSync(InstanceIdSchema)(instanceId);
-  } catch (cause) {
-    throw new StackBuildError({
-      detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
-      cause,
-      reason: "invalid_config",
-    });
-  }
-}
+  return Schema.decodeUnknownEffect(InstanceIdSchema)(instanceId).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StackBuildError({
+          detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+          cause,
+          reason: "invalid_config",
+        }),
+    ),
+  );
+};
 
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
   ports: PortSet,
-  opts: ResolveConfigOptions,
-): ResolvedStorageConfig | false {
-  if (raw === false) return false;
+  stackRoot: string,
+): Effect.Effect<ResolvedStorageConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "storagePort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.storage,
-    dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
-    fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
-    s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
-  };
+  return requiredPort(ports, "storagePort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.storage,
+      dataDir: resolveDataDir(cfg.dataDir, stackRoot, "storage"),
+      fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
+      s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
+    })),
+  );
 }
 
 function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
   raw: ImgproxyConfig | false | undefined,
   ports: PortSet,
-): ResolvedImgproxyConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedImgproxyConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "imgproxyPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
-  };
+  return requiredPort(ports, "imgproxyPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
+    })),
+  );
 }
 
 function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
   ports: PortSet,
-): ResolvedMailpitConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedMailpitConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "mailpitPort"),
     smtpPort: requiredPort(ports, "mailpitSmtpPort"),
     pop3Port: requiredPort(ports, "mailpitPop3Port"),
-    version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
-    adminEmail: cfg.adminEmail ?? "admin@email.com",
-    senderName: cfg.senderName ?? "Admin",
-  };
+  }).pipe(
+    Effect.map(({ port, smtpPort, pop3Port }) => ({
+      port,
+      smtpPort,
+      pop3Port,
+      version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
+      adminEmail: cfg.adminEmail ?? "admin@email.com",
+      senderName: cfg.senderName ?? "Admin",
+    })),
+  );
 }
 
 function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
   raw: PgmetaConfig | false | undefined,
   ports: PortSet,
-): ResolvedPgmetaConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPgmetaConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "pgmetaPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
-  };
+  return requiredPort(ports, "pgmetaPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
+    })),
+  );
 }
 
 function resolveStudioConfig(
@@ -282,29 +331,33 @@ function resolveStudioConfig(
   raw: StudioConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
-): ResolvedStudioConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedStudioConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "studioPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.studio,
-    apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
-  };
+  return requiredPort(ports, "studioPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.studio,
+      apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
+    })),
+  );
 }
 
 function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
   raw: AnalyticsConfig | false | undefined,
   ports: PortSet,
-): ResolvedAnalyticsConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedAnalyticsConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "analyticsPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.analytics,
-    backend: cfg.backend ?? "postgres",
-    apiKey: cfg.apiKey ?? "api-key",
-  };
+  return requiredPort(ports, "analyticsPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.analytics,
+      backend: cfg.backend ?? "postgres",
+      apiKey: cfg.apiKey ?? "api-key",
+    })),
+  );
 }
 
 function resolveVectorConfig(
@@ -322,21 +375,26 @@ function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
   ports: PortSet,
-): ResolvedPoolerConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPoolerConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "poolerPort"),
     apiPort: requiredPort(ports, "poolerApiPort"),
-    mode: cfg.mode ?? "transaction",
-    version: cfg.version ?? DEFAULT_VERSIONS.pooler,
-    tenantId: cfg.tenantId ?? "pooler-dev",
-    encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
-    secretKeyBase:
-      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-    defaultPoolSize: cfg.defaultPoolSize ?? 20,
-    maxClientConn: cfg.maxClientConn ?? 100,
-  };
+  }).pipe(
+    Effect.map(({ port, apiPort }) => ({
+      port,
+      apiPort,
+      mode: cfg.mode ?? "transaction",
+      version: cfg.version ?? DEFAULT_VERSIONS.pooler,
+      tenantId: cfg.tenantId ?? "pooler-dev",
+      encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
+      secretKeyBase:
+        cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+      defaultPoolSize: cfg.defaultPoolSize ?? 20,
+      maxClientConn: cfg.maxClientConn ?? 100,
+    })),
+  );
 }
 
 const enabledServiceConfig = <Config extends object>(
@@ -344,165 +402,278 @@ const enabledServiceConfig = <Config extends object>(
   config: Config | false | undefined,
 ): Config | undefined => (enabled && config !== false ? config : undefined);
 
-export async function resolveConfig(
+const invalidPort = (field: PortField, port: number): StackBuildError =>
+  new StackBuildError({
+    detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
+    reason: "invalid_config",
+    cause: port,
+  });
+
+/** Validate explicit/preferred intents before any filesystem or socket mutation. */
+const validatePortRequests = (
+  requests: ReadonlyArray<PortReservationRequest>,
+): Effect.Effect<void, StackBuildError> =>
+  Effect.forEach(
+    requests,
+    (request) => {
+      const port =
+        request.selection.kind === "exact" ? request.selection.port : request.selection.preferred;
+      return port === undefined || (Number.isInteger(port) && port >= 1 && port <= 65_535)
+        ? Effect.void
+        : Effect.fail(invalidPort(request.field, port));
+    },
+    { discard: true },
+  );
+
+const validateAuthoritativePorts = (
+  requests: ReadonlyArray<PortReservationRequest>,
+  ports: PortSet,
+): Effect.Effect<void, StackBuildError> =>
+  Effect.forEach(
+    requests,
+    (request) => {
+      const selected = ports[request.field];
+      if (selected === undefined) {
+        return Effect.fail(
+          new StackBuildError({
+            detail: `Missing resolved port for active field ${request.field}`,
+            reason: "invalid_config",
+          }),
+        );
+      }
+      if (!Number.isInteger(selected) || selected < 1 || selected > 65_535) {
+        return Effect.fail(invalidPort(request.field, selected));
+      }
+      if (request.selection.kind === "exact" && selected !== request.selection.port) {
+        return Effect.fail(
+          new StackBuildError({
+            detail: `Authoritative lease changed explicit port for ${request.field}`,
+            reason: "invalid_config",
+          }),
+        );
+      }
+      return Effect.void;
+    },
+    { discard: true },
+  );
+
+export const resolveConfig = (
   input?: StackConfig,
   opts: ResolveConfigOptions = {},
-): Promise<ResolvedStackConfig> {
-  const config = input ?? {};
-  const projectDir = config.projectDir ?? process.cwd();
-  const instanceId = resolveInstanceId(config.instanceId);
-  const functions = await resolveFunctionsConfig(config, projectDir);
-  const resolvedMode = config.mode ?? "auto";
-  const roots = resolveRoots(config, opts);
-  const postgresInput = config.postgres ?? {};
-  const postgrestInput = config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
-  const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
-  const edgeRuntimeEnabled = serviceEnabledForConfig(config, "edge-runtime");
-  const realtimeEnabled = serviceEnabledForConfig(config, "realtime");
-  const storageEnabled = serviceEnabledForConfig(config, "storage");
-  const imgproxyEnabled = serviceEnabledForConfig(config, "imgproxy");
-  const mailpitEnabled = serviceEnabledForConfig(config, "mailpit");
-  const pgmetaEnabled = serviceEnabledForConfig(config, "pgmeta");
-  const studioEnabled = serviceEnabledForConfig(config, "studio");
-  const analyticsEnabled = serviceEnabledForConfig(config, "analytics");
-  const vectorEnabled = serviceEnabledForConfig(config, "vector");
-  const poolerEnabled = serviceEnabledForConfig(config, "pooler");
-  const edgeRuntimeInput = enabledServiceConfig(edgeRuntimeEnabled, config.edgeRuntime);
-  const realtimeInput = enabledServiceConfig(realtimeEnabled, config.realtime);
-  const storageInput = enabledServiceConfig(storageEnabled, config.storage);
-  const imgproxyInput = enabledServiceConfig(imgproxyEnabled, config.imgproxy);
-  const mailpitInput = enabledServiceConfig(mailpitEnabled, config.mailpit);
-  const pgmetaInput = enabledServiceConfig(pgmetaEnabled, config.pgmeta);
-  const studioInput = enabledServiceConfig(studioEnabled, config.studio);
-  const analyticsInput = enabledServiceConfig(analyticsEnabled, config.analytics);
-  const vectorInput = enabledServiceConfig(vectorEnabled, config.vector);
-  const poolerInput = enabledServiceConfig(poolerEnabled, config.pooler);
+): Effect.Effect<ResolvedStackConfig, StackBuildError, FileSystem.FileSystem> =>
+  Effect.suspend(() => {
+    let roots: ResolvedRoots | undefined;
+    return Effect.gen(function* () {
+      const config = input ?? {};
+      const requests = yield* portRequestsForConfig(config, opts);
+      const ports = opts.ports;
+      if (ports === undefined) {
+        return yield* Effect.fail(
+          new StackBuildError({
+            detail: "Config resolution requires an authoritative port lease",
+            reason: "invalid_config",
+          }),
+        );
+      }
+      yield* validateAuthoritativePorts(requests, ports);
+      const projectDir = config.projectDir ?? process.cwd();
+      const instanceId = yield* resolveInstanceId(config.instanceId);
+      const functions = yield* resolveFunctionsConfig(config, projectDir);
+      const resolvedMode = config.mode ?? "auto";
+      const resolvedRoots = yield* resolveRoots(config, opts);
+      roots = resolvedRoots;
+      const postgresInput = config.postgres ?? {};
+      const postgrestInput =
+        config.postgrest !== false ? (config.postgrest ?? undefined) : undefined;
+      const authInput = config.auth !== false ? (config.auth ?? undefined) : undefined;
+      const edgeRuntimeEnabled = serviceEnabledForConfig(config, "edge-runtime");
+      const realtimeEnabled = serviceEnabledForConfig(config, "realtime");
+      const storageEnabled = serviceEnabledForConfig(config, "storage");
+      const imgproxyEnabled = serviceEnabledForConfig(config, "imgproxy");
+      const mailpitEnabled = serviceEnabledForConfig(config, "mailpit");
+      const pgmetaEnabled = serviceEnabledForConfig(config, "pgmeta");
+      const studioEnabled = serviceEnabledForConfig(config, "studio");
+      const analyticsEnabled = serviceEnabledForConfig(config, "analytics");
+      const vectorEnabled = serviceEnabledForConfig(config, "vector");
+      const poolerEnabled = serviceEnabledForConfig(config, "pooler");
+      const edgeRuntimeInput = enabledServiceConfig(edgeRuntimeEnabled, config.edgeRuntime);
+      const realtimeInput = enabledServiceConfig(realtimeEnabled, config.realtime);
+      const storageInput = enabledServiceConfig(storageEnabled, config.storage);
+      const imgproxyInput = enabledServiceConfig(imgproxyEnabled, config.imgproxy);
+      const mailpitInput = enabledServiceConfig(mailpitEnabled, config.mailpit);
+      const pgmetaInput = enabledServiceConfig(pgmetaEnabled, config.pgmeta);
+      const studioInput = enabledServiceConfig(studioEnabled, config.studio);
+      const analyticsInput = enabledServiceConfig(analyticsEnabled, config.analytics);
+      const vectorInput = enabledServiceConfig(vectorEnabled, config.vector);
+      const poolerInput = enabledServiceConfig(poolerEnabled, config.pooler);
 
-  const postgresDataDir = resolveDataDir(postgresInput.dataDir, roots.stackRoot, "postgres");
+      const postgresDataDir = resolveDataDir(
+        postgresInput.dataDir,
+        resolvedRoots.stackRoot,
+        "postgres",
+      );
 
+      const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
+      const anonJwt = generateJwt(jwtSecret, "anon");
+      const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
+      const apiPort = yield* requiredPort(ports, "apiPort");
+      const dbPort = yield* requiredPort(ports, "dbPort");
+      const resolvedPorts: ResolvedPorts = { ...ports, apiPort, dbPort };
+
+      return {
+        instanceId,
+        cacheRoot: resolvedRoots.cacheRoot,
+        stackRoot: resolvedRoots.stackRoot,
+        runtimeRoot: resolvedRoots.runtimeRoot,
+        projectDir,
+        mode: resolvedMode,
+        startupMode: config.startupMode ?? "eager",
+        readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
+        readinessSource:
+          config.readiness === undefined ? ("default" as const) : ("configured" as const),
+        jwtSecret,
+        ports: resolvedPorts,
+        apiPort,
+        dbPort,
+        publishableKey: config.publishableKey ?? defaultPublishableKey,
+        secretKey: config.secretKey ?? defaultSecretKey,
+        functions,
+        autoManagedPaths: resolvedRoots.autoManagedPaths,
+        anonJwt,
+        serviceRoleJwt,
+        postgres: {
+          port: dbPort,
+          dataDir: postgresDataDir,
+          version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+          autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
+        },
+        postgrest: yield* resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
+        auth: yield* resolveAuthConfig(authInput, config.auth, ports, apiPort),
+        edgeRuntime: edgeRuntimeEnabled
+          ? yield* resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
+          : false,
+        realtime: realtimeEnabled
+          ? yield* resolveRealtimeConfig(realtimeInput, config.realtime, ports)
+          : false,
+        storage: storageEnabled
+          ? yield* resolveStorageConfig(
+              storageInput,
+              config.storage,
+              ports,
+              resolvedRoots.stackRoot,
+            )
+          : false,
+        imgproxy: imgproxyEnabled
+          ? yield* resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
+          : false,
+        mailpit: mailpitEnabled
+          ? yield* resolveMailpitConfig(mailpitInput, config.mailpit, ports)
+          : false,
+        pgmeta: pgmetaEnabled
+          ? yield* resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports)
+          : false,
+        studio: studioEnabled
+          ? yield* resolveStudioConfig(studioInput, config.studio, ports, apiPort)
+          : false,
+        analytics: analyticsEnabled
+          ? yield* resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
+          : false,
+        vector: vectorEnabled ? resolveVectorConfig(vectorInput, config.vector) : false,
+        pooler: poolerEnabled
+          ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports)
+          : false,
+      };
+    }).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) || roots === undefined
+          ? Effect.void
+          : cleanupRoots(roots.autoManagedPaths),
+      ),
+    );
+  });
+
+/** Return the active port intents without binding or probing any socket. */
+const buildPortRequestsForConfig = (
+  config: StackConfig = {},
+  opts: Pick<ResolveConfigOptions, "preferredPorts" | "disablePreferredPorts"> = {},
+): ReadonlyArray<PortReservationRequest> => {
   const explicitPortForField = (field: PortField): number | undefined => {
+    const postgres = config.postgres ?? {};
+    const auth = config.auth !== false ? (config.auth ?? undefined) : undefined;
+    const edgeRuntime =
+      config.edgeRuntime !== false ? (config.edgeRuntime ?? undefined) : undefined;
+    const realtime = config.realtime !== false ? (config.realtime ?? undefined) : undefined;
+    const storage = config.storage !== false ? (config.storage ?? undefined) : undefined;
+    const imgproxy = config.imgproxy !== false ? (config.imgproxy ?? undefined) : undefined;
+    const mailpit = config.mailpit !== false ? (config.mailpit ?? undefined) : undefined;
+    const pgmeta = config.pgmeta !== false ? (config.pgmeta ?? undefined) : undefined;
+    const studio = config.studio !== false ? (config.studio ?? undefined) : undefined;
+    const analytics = config.analytics !== false ? (config.analytics ?? undefined) : undefined;
+    const pooler = config.pooler !== false ? (config.pooler ?? undefined) : undefined;
     switch (field) {
       case "apiPort":
         return config.port;
       case "dbPort":
-        return postgresInput.port;
+        return postgres.port;
       case "authPort":
-        return authInput?.port;
+        return auth?.port;
       case "edgeRuntimePort":
-        return edgeRuntimeInput?.port;
+        return edgeRuntime?.port;
       case "edgeRuntimeInspectorPort":
-        return edgeRuntimeInput?.inspectorPort;
+        return edgeRuntime?.inspectorPort;
       case "realtimePort":
-        return realtimeInput?.port;
+        return realtime?.port;
       case "storagePort":
-        return storageInput?.port;
+        return storage?.port;
       case "imgproxyPort":
-        return imgproxyInput?.port;
+        return imgproxy?.port;
       case "mailpitPort":
-        return mailpitInput?.port;
+        return mailpit?.port;
       case "mailpitSmtpPort":
-        return mailpitInput?.smtpPort;
+        return mailpit?.smtpPort;
       case "mailpitPop3Port":
-        return mailpitInput?.pop3Port;
+        return mailpit?.pop3Port;
       case "pgmetaPort":
-        return pgmetaInput?.port;
+        return pgmeta?.port;
       case "studioPort":
-        return studioInput?.port;
+        return studio?.port;
       case "analyticsPort":
-        return analyticsInput?.port;
+        return analytics?.port;
       case "poolerPort":
-        return poolerInput?.port;
+        return pooler?.port;
       case "poolerApiPort":
-        return poolerInput?.apiPort;
+        return pooler?.apiPort;
       case "postgrestPort":
       case "postgrestAdminPort":
         return undefined;
     }
   };
-
-  const unorderedRequests: ReadonlyArray<PortReservationRequest> = portFieldsForConfigInput(
-    config,
-  ).map((field) => {
+  const unordered = portFieldsForConfigInput(config).map((field) => {
     const explicit = explicitPortForField(field);
-    if (explicit !== undefined) {
-      return { field, selection: { kind: "exact", port: explicit } };
-    }
-    const preferred = opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred;
+    if (explicit !== undefined)
+      return { field, selection: { kind: "exact", port: explicit } } as const;
+    const preferred = opts.disablePreferredPorts?.has(field)
+      ? undefined
+      : (opts.preferredPorts?.[field] ?? PORT_CATALOG[field].preferred);
     return preferred === undefined
-      ? { field, selection: { kind: "automatic" } }
-      : { field, selection: { kind: "automatic", preferred } };
+      ? ({ field, selection: { kind: "automatic" } } as const)
+      : ({ field, selection: { kind: "automatic", preferred } } as const);
   });
-  const requests: ReadonlyArray<PortReservationRequest> = [
-    ...unorderedRequests.filter((request) => request.selection.kind === "exact"),
-    ...unorderedRequests.filter((request) => request.selection.kind === "automatic"),
+  return [
+    ...unordered.filter((request) => request.selection.kind === "exact"),
+    ...unordered.filter((request) => request.selection.kind === "automatic"),
   ];
+};
 
-  const ports = await Effect.runPromise(
-    (opts.portAllocator ?? allocatePortSet)(requests, { reserved: opts.reservedPorts }),
-  ).catch((error: unknown) => {
-    throw toStackError(error);
+/** Plan active ports and validate all user-supplied values before mutation. */
+export const portRequestsForConfig = (
+  config: StackConfig = {},
+  opts: Pick<ResolveConfigOptions, "preferredPorts" | "disablePreferredPorts"> = {},
+): Effect.Effect<ReadonlyArray<PortReservationRequest>, StackBuildError> =>
+  Effect.suspend(() => {
+    const requests = buildPortRequestsForConfig(config, opts);
+    return validatePortRequests(requests).pipe(Effect.as(requests));
   });
-
-  const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
-  const anonJwt = generateJwt(jwtSecret, "anon");
-  const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
-  const apiPort = requiredPort(ports, "apiPort");
-  const dbPort = requiredPort(ports, "dbPort");
-  const resolvedPorts: ResolvedPorts = { ...ports, apiPort, dbPort };
-
-  return {
-    instanceId,
-    cacheRoot: roots.cacheRoot,
-    stackRoot: roots.stackRoot,
-    runtimeRoot: roots.runtimeRoot,
-    projectDir,
-    mode: resolvedMode,
-    startupMode: config.startupMode ?? "eager",
-    readiness: resolveReadinessPolicy({ stackPolicy: config.readiness }),
-    readinessSource: config.readiness === undefined ? "default" : "configured",
-    jwtSecret,
-    ports: resolvedPorts,
-    apiPort,
-    dbPort,
-    publishableKey: config.publishableKey ?? defaultPublishableKey,
-    secretKey: config.secretKey ?? defaultSecretKey,
-    functions,
-    autoManagedPaths: roots.autoManagedPaths,
-    anonJwt,
-    serviceRoleJwt,
-    postgres: {
-      port: dbPort,
-      dataDir: postgresDataDir,
-      version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
-      autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
-    },
-    postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
-    auth: resolveAuthConfig(authInput, config.auth, ports, apiPort),
-    edgeRuntime: edgeRuntimeEnabled
-      ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
-      : false,
-    realtime: realtimeEnabled
-      ? resolveRealtimeConfig(realtimeInput, config.realtime, ports)
-      : false,
-    storage: storageEnabled
-      ? resolveStorageConfig(storageInput, config.storage, ports, {
-          ...opts,
-          stackRoot: roots.stackRoot,
-        })
-      : false,
-    imgproxy: imgproxyEnabled
-      ? resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
-      : false,
-    mailpit: mailpitEnabled ? resolveMailpitConfig(mailpitInput, config.mailpit, ports) : false,
-    pgmeta: pgmetaEnabled ? resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports) : false,
-    studio: studioEnabled ? resolveStudioConfig(studioInput, config.studio, ports, apiPort) : false,
-    analytics: analyticsEnabled
-      ? resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
-      : false,
-    vector: vectorEnabled ? resolveVectorConfig(vectorInput, config.vector) : false,
-    pooler: poolerEnabled ? resolvePoolerConfig(poolerInput, config.pooler, ports) : false,
-  };
-}
 
 export type DaemonConfigInput = Omit<StackConfig, "functions"> & {
   readonly cwd: string;

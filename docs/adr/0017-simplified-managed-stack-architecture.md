@@ -23,14 +23,16 @@ Launch updates use the existing owner control route (`POST /managed/launch`).
 An attached caller asks the owner to update launch metadata; a caller with
 owned control updates the document directly. Stop acquires control first,
 waits for the persisted `stopped` lifecycle, and handles a stale owner with
-deterministic cleanup keyed by stack id. Delete requires owned control and a
-stopped document.
+deterministic cleanup keyed by stack id. Delete also requires owned control;
+stale running or failed documents are reconciled and cleaned before removal,
+while a live owner is never deleted underneath.
 
 Read-only discovery never acquires control ownership. It probes `/owner` and
 treats an unreachable, incompatible, or colliding listener as non-live;
-mutations still bind the endpoint and fail on a conflict. The endpoint maps 14
-bits of the stack id into `127.0.0.1:49152..65535`, so collisions are possible
-and deliberately fail closed for start/stop/delete. This is pragmatic
+mutations still bind the endpoint and fail on a conflict. The endpoint maps
+digest bytes from the stack id into the reserved loopback range
+`127.0.0.1:10000..32767`, so collisions are possible and deliberately fail
+closed for start/stop/delete. This is pragmatic
 single-user localhost coordination, not a hostile multi-user security
 boundary. We are not adding control tokens until the threat model or a real
 collision rate justifies more protocol and persistence machinery.

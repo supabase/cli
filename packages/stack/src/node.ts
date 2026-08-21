@@ -2,7 +2,8 @@ import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import { createStack as createStackCore, type StackHandle } from "./createStack.ts";
+import { createStack as createStackCore } from "./createStack.ts";
+import { toStackHandle, type StackHandle } from "./stackHandle.ts";
 import {
   prefetch as prefetchEffect,
   type PrefetchOptions,
@@ -20,7 +21,11 @@ import type { StackConfig } from "./StackConfig.ts";
  */
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
-  return createStackCore(config, platformFactory);
+  return toStackHandle(
+    await Effect.runPromise(
+      createStackCore(config, platformFactory).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
 }
 
 export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResult> {

@@ -2,13 +2,15 @@ import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
-import { existsSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
+import { existsSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import {
   runSupervisor,
   SupervisorStartError,
   type SupervisorPlatform,
 } from "../../src/supervisor.ts";
 import { Stack } from "../../src/Stack.ts";
+import { isControlOwnership } from "../../src/managed/control.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
 import {
@@ -26,11 +28,35 @@ import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
 const waitForFile = (path: string): Effect.Effect<void> =>
-  Effect.suspend(() =>
-    existsSync(path)
-      ? Effect.void
-      : Effect.sleep("10 millis").pipe(Effect.andThen(waitForFile(path))),
-  );
+  Effect.callback((resume) => {
+    let watcher: FSWatcher | undefined;
+    let settled = false;
+    const close = () => {
+      watcher?.close();
+      watcher = undefined;
+    };
+    const finish = (result: Effect.Effect<void>) => {
+      if (settled) return;
+      settled = true;
+      close();
+      resume(result);
+    };
+    if (existsSync(path)) {
+      finish(Effect.void);
+      return Effect.void;
+    }
+    try {
+      watcher = watch(dirname(path), { persistent: false }, (_event, filename) => {
+        const changed = filename === null || filename.toString() === basename(path);
+        if (changed && existsSync(path)) finish(Effect.void);
+      });
+      watcher.once("error", (cause) => finish(Effect.die(cause)));
+      if (existsSync(path)) finish(Effect.void);
+    } catch (cause) {
+      finish(Effect.die(cause));
+    }
+    return Effect.sync(close);
+  });
 
 const testMode = (): TestMode => {
   const value = process.env["SUPABASE_STACK_TEST_RUNTIME_MODE"];
@@ -78,6 +104,10 @@ const testStackLayer = (config: ResolvedDaemonConfig, mode: TestMode): Layer.Lay
     serviceRoleJwt: config.serviceRoleJwt,
     serviceEndpoints: {},
   };
+  const stopBegan = process.env["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
+  const markStopBegan = Effect.sync(() => {
+    if (stopBegan !== undefined) writeFileSync(stopBegan, "began\n");
+  });
   const waitForStopRelease = (): Effect.Effect<void> => {
     const path = process.env["SUPABASE_STACK_TEST_STOP_RELEASE_FILE"];
     if (path === undefined) return Effect.never;
@@ -86,7 +116,8 @@ const testStackLayer = (config: ResolvedDaemonConfig, mode: TestMode): Layer.Lay
   return Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(info),
     start: () => Effect.void,
-    stop: () => (mode === "hold-stop" ? waitForStopRelease() : Effect.void),
+    stop: () =>
+      mode === "hold-stop" ? markStopBegan.pipe(Effect.andThen(waitForStopRelease())) : Effect.void,
     dispose: () => Effect.void,
     startService: () => Effect.void,
     stopService: () => Effect.void,
@@ -186,17 +217,48 @@ const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
     (base) => {
       const readyFile = process.env["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
       const releaseFile = process.env["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
-      if (readyFile === undefined || releaseFile === undefined) return base;
+      const managedStartedFile = process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_FILE"];
+      const controlOwnedFile = process.env["SUPABASE_STACK_TEST_CONTROL_OWNED_FILE"];
+      if (
+        readyFile === undefined &&
+        managedStartedFile === undefined &&
+        controlOwnedFile === undefined
+      )
+        return base;
       return Layer.effect(
         ManagedStackManager,
         ManagedStackManager.pipe(
           Effect.map((manager) => ({
             ...manager,
-            ensureWorkspace: (workspacePath: string) =>
-              Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
-                Effect.andThen(waitForFile(releaseFile)),
-                Effect.andThen(manager.ensureWorkspace(workspacePath)),
-              ),
+            ensureWorkspace: (workspacePath: string) => {
+              const ensure =
+                readyFile === undefined || releaseFile === undefined
+                  ? Effect.void
+                  : Effect.sync(() => writeFileSync(readyFile, "ready\n")).pipe(
+                      Effect.andThen(waitForFile(releaseFile)),
+                    );
+              return ensure.pipe(Effect.andThen(manager.ensureWorkspace(workspacePath)));
+            },
+            acquireControl: (stackId: string) =>
+              manager
+                .acquireControl(stackId)
+                .pipe(
+                  Effect.tap((acquisition) =>
+                    controlOwnedFile !== undefined && isControlOwnership(acquisition)
+                      ? Effect.sync(() => writeFileSync(controlOwnedFile, "owned\n"))
+                      : Effect.void,
+                  ),
+                ),
+            startStack: (request) =>
+              manager
+                .startStack(request)
+                .pipe(
+                  Effect.tap(() =>
+                    managedStartedFile === undefined
+                      ? Effect.void
+                      : Effect.sync(() => writeFileSync(managedStartedFile, "started\n")),
+                  ),
+                ),
           })),
         ),
       ).pipe(Layer.provide(base));

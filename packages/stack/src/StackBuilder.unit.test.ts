@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -415,7 +415,7 @@ describe("StackBuilder", () => {
         instanceId: "../bad:id",
       }).pipe(Effect.flip);
 
-      expect(error._tag).toBe("StackBuildError");
+      expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
       expect(error.reason).toBe("invalid_config");
     });
   });

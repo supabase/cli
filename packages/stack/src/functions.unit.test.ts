@@ -1,11 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import {
+  portRequestsForConfig,
+  resolveConfig,
+  type ResolveConfigOptions,
+} from "./StackConfigResolver.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   clearFunctionsRuntimeConfig,
@@ -16,6 +20,23 @@ import {
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { verifyRequest } from "./services/edge-runtime-main.ts";
+
+const resolveConfigPromise = (
+  config?: Parameters<typeof resolveConfig>[0],
+  options: ResolveConfigOptions = {},
+) => {
+  const ports = Object.fromEntries(
+    Effect.runSync(portRequestsForConfig(config, options)).map((request, index) => [
+      request.field,
+      request.selection.kind === "exact"
+        ? request.selection.port
+        : (request.selection.preferred ?? 40_000 + index),
+    ]),
+  );
+  return Effect.runPromise(
+    resolveConfig(config, { ...options, ports }).pipe(Effect.provide(NodeServices.layer)),
+  );
+};
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
@@ -84,7 +105,10 @@ const authFailureCases = [
 describe("stack Functions runtime config", () => {
   it("projects an explicit bundle without project discovery", async () => {
     const root = makeTempProject();
-    const stackConfig = await resolveConfig({ projectDir: root, functions: makeBundle(root) });
+    const stackConfig = await resolveConfigPromise({
+      projectDir: root,
+      functions: makeBundle(root),
+    });
     const config = resolveFunctionsRuntimeConfig(
       stackConfig,
       { hostname: "127.0.0.1" },
@@ -130,7 +154,7 @@ describe("stack Functions runtime config", () => {
     const bundle = makeBundle(root);
 
     await expect(
-      resolveConfig({
+      resolveConfigPromise({
         projectDir: root,
         functions: {
           ...bundle,
@@ -142,7 +166,7 @@ describe("stack Functions runtime config", () => {
       detail: "Invalid Edge Functions bundle",
     });
     await expect(
-      resolveConfig({
+      resolveConfigPromise({
         projectDir: join(root, "project"),
         functions: bundle,
       }),
@@ -165,7 +189,7 @@ describe("stack Functions runtime config", () => {
     );
 
     await expect(
-      resolveConfig({
+      resolveConfigPromise({
         projectDir: root,
         functions: {
           ...bundle,
@@ -189,7 +213,7 @@ describe("stack Functions runtime config", () => {
   });
 
   it("keeps placeholder mode when no functions are supplied", async () => {
-    const stackConfig = await resolveConfig({ functions: false });
+    const stackConfig = await resolveConfigPromise({ functions: false });
 
     expect(
       resolveFunctionsRuntimeConfig(stackConfig, { hostname: "127.0.0.1" }, undefined),
@@ -211,9 +235,16 @@ describe("stack Functions runtime config", () => {
 
     return Effect.gen(function* () {
       const bundle = makeBundle(cwd);
-      const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({ projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
+      const input = { projectDir: cwd, runtimeRoot: cwd, functions: bundle };
+      const ports = Object.fromEntries(
+        Effect.runSync(portRequestsForConfig(input)).map((request, index) => [
+          request.field,
+          request.selection.kind === "exact"
+            ? request.selection.port
+            : (request.selection.preferred ?? 40_000 + index),
+        ]),
       );
+      const stackConfig = yield* resolveConfig(input, { runtimeRoot: cwd, ports });
       yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
       const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);
       const written = JSON.parse(yield* Effect.promise(() => readFile(filePath, "utf8"))) as {
@@ -229,7 +260,7 @@ describe("stack Functions runtime config", () => {
       yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
       expect(yield* Effect.promise(() => readdir(join(cwd, "edge-runtime")))).toEqual([]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
     );
   });

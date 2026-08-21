@@ -9,6 +9,7 @@ import {
   Equal,
   FileSystem,
   Layer,
+  Match,
   Path,
   Ref,
   Schema,
@@ -284,9 +285,9 @@ export const localStackLayer = (
             )
             .pipe(
               Stream.runForEach((event) => {
-                switch (event._tag) {
-                  case "ServiceDownloadStarted":
-                    return updateState(
+                return Match.valueTags(event, {
+                  ServiceDownloadStarted: (event) =>
+                    updateState(
                       new StackServiceState({
                         name: event.service,
                         status: "Downloading",
@@ -296,9 +297,9 @@ export const localStackLayer = (
                         startedAt: null,
                         error: null,
                       }),
-                    );
-                  case "ServiceDownloadFinished":
-                    return updateState(
+                    ),
+                  ServiceDownloadFinished: (event) =>
+                    updateState(
                       new StackServiceState({
                         name: event.service,
                         status: "Pending",
@@ -308,12 +309,12 @@ export const localStackLayer = (
                         startedAt: null,
                         error: null,
                       }),
-                    );
-                  case "PreparationCompleted":
-                    return Effect.sync(() => {
+                    ),
+                  PreparationCompleted: (event) =>
+                    Effect.sync(() => {
                       prepared = event.artifacts;
-                    });
-                }
+                    }),
+                });
               }),
             );
 
@@ -617,6 +618,7 @@ export const localStackLayer = (
               cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
               Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
               Effect.ensuring(portLease.releaseAll),
               Effect.ensuring(Ref.set(phaseRef, "disposed")),

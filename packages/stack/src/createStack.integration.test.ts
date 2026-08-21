@@ -1,98 +1,148 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Effect } from "effect";
-import { createStack, type StackHandle } from "./createStack.ts";
-import { reservePortSet } from "./PortAllocator.ts";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
+import { createStack, type ForegroundStackHandle, type PlatformFactory } from "./createStack.ts";
 import { platformFactory } from "./platform-node.ts";
+import { toStackHandle } from "./stackHandle.ts";
 
-const handles: StackHandle[] = [];
-
-const isAddressInUse = (error: unknown, depth = 0): boolean => {
-  if (depth > 4 || !(error instanceof Error)) return false;
-  if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
-  const cause: unknown = error.cause;
-  if (typeof cause === "object" && cause !== null && "code" in cause) {
-    if (Reflect.get(cause, "code") === "EADDRINUSE") return true;
-  }
-  return isAddressInUse(cause, depth + 1);
-};
-
-const freshPortPair = async (): Promise<readonly [number, number]> =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.acquireRelease(
-        reservePortSet([
-          { field: "apiPort", selection: { kind: "automatic" } },
-          { field: "dbPort", selection: { kind: "automatic" } },
-        ]),
-        (lease) => lease.releaseAll,
-      ).pipe(
-        Effect.map((lease) => {
-          const apiPort = lease.ports.apiPort;
-          const dbPort = lease.ports.dbPort;
-          if (apiPort === undefined || dbPort === undefined) {
-            throw new Error("Ephemeral port reservation returned an incomplete pair");
-          }
-          return [apiPort, dbPort] as const;
-        }),
-      ),
-    ),
-  );
-
-/** Transfer a fresh exact pair into public createStack across a bounded bind handoff retry. */
-const createStackWithFreshPorts = async (
-  config: Parameters<typeof createStack>[0],
-  platform: Parameters<typeof createStack>[1],
-): Promise<Awaited<ReturnType<typeof createStack>>> => {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const [apiPort, dbPort] = await freshPortPair();
-    try {
-      return await createStack(
-        {
-          ...config,
-          port: apiPort,
-          postgres: { ...config?.postgres, port: dbPort },
-        },
-        platform,
-      );
-    } catch (error) {
-      if (!isAddressInUse(error) || attempt === 2) throw error;
-    }
-  }
-  throw new Error("Direct stack bind handoff exhausted retries");
-};
+const handles: ForegroundStackHandle[] = [];
 
 afterEach(async () => {
-  await Promise.all(handles.splice(0).map((handle) => handle.dispose()));
+  await Promise.all(handles.splice(0).map((handle) => Effect.runPromise(handle.dispose())));
 });
 
 describe("direct createStack port ownership", () => {
+  it("reselects an automatic API port when the platform bind loses the handoff race", async () => {
+    let attempts = 0;
+    const retryingPlatformFactory: PlatformFactory = (options) => {
+      attempts += 1;
+      if (attempts > 1) return platformFactory(options);
+      const addressInUse = Object.assign(new Error("API port was claimed during handoff"), {
+        code: "EADDRINUSE",
+      });
+      return Layer.mergeAll(
+        platformFactory(options),
+        Layer.effectDiscard(Effect.die(addressInUse)),
+      );
+    };
+
+    const stack = await Effect.runPromise(
+      createStack(
+        {
+          mode: "native",
+          startupMode: "lazy",
+          postgrest: false,
+          auth: false,
+          edgeRuntime: false,
+          realtime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
+        },
+        retryingPlatformFactory,
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
+    );
+    handles.push(stack);
+
+    expect(attempts).toBe(2);
+    expect(stack.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+  });
+
   it("allocates only active service fields without managed state", async () => {
-    const stack = await createStackWithFreshPorts(
-      {
-        mode: "native",
-        startupMode: "lazy",
-        postgrest: false,
-        auth: false,
-        edgeRuntime: false,
-        realtime: false,
-        storage: false,
-        imgproxy: false,
-        mailpit: false,
-        pgmeta: false,
-        studio: false,
-        analytics: false,
-        vector: false,
-        pooler: false,
-      },
-      platformFactory,
+    const stack = await Effect.runPromise(
+      createStack(
+        {
+          mode: "native",
+          startupMode: "lazy",
+          postgrest: false,
+          auth: false,
+          edgeRuntime: false,
+          realtime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
+        },
+        platformFactory,
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
     );
     handles.push(stack);
 
     expect(stack.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(stack.dbUrl).toMatch(/127\.0\.0\.1:\d+/);
-    const activeServices = new Set((await stack.getStatus()).map((state) => state.name));
+    const activeServices = new Set(
+      (await Effect.runPromise(stack.getStatus())).map((state) => state.name),
+    );
     expect(activeServices).not.toContain("studio");
     expect(activeServices).not.toContain("analytics");
     expect(activeServices).not.toContain("pooler");
+  });
+
+  it("shares in-flight disposal across concurrent public callers", async () => {
+    const finalizerStarted = Deferred.makeUnsafe<void>();
+    const releaseFinalizer = Deferred.makeUnsafe<void>();
+    const gatedPlatformFactory = (options: Parameters<typeof platformFactory>[0]) =>
+      Layer.mergeAll(
+        platformFactory(options),
+        Layer.effectDiscard(
+          Effect.addFinalizer(() =>
+            Deferred.succeed(finalizerStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFinalizer)),
+              Effect.asVoid,
+            ),
+          ),
+        ),
+      );
+    const stack = await Effect.runPromise(
+      createStack(
+        {
+          mode: "native",
+          postgrest: false,
+          auth: false,
+          edgeRuntime: false,
+          realtime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
+        },
+        gatedPlatformFactory,
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
+    );
+    handles.push(stack);
+    const publicStack = toStackHandle(stack);
+
+    const secondInvoked = Deferred.makeUnsafe<void>();
+    const secondDone = Deferred.makeUnsafe<void>();
+    const firstDisposal = Effect.runFork(Effect.promise(() => publicStack.dispose()));
+    await Effect.runPromise(Deferred.await(finalizerStarted));
+    const secondDisposal = Effect.runFork(
+      Effect.promise(() => {
+        Effect.runSync(Deferred.succeed(secondInvoked, undefined));
+        return publicStack.dispose();
+      }).pipe(Effect.andThen(Deferred.succeed(secondDone, undefined)), Effect.asVoid),
+    );
+
+    await Effect.runPromise(Deferred.await(secondInvoked));
+    expect(await Effect.runPromise(Deferred.isDone(secondDone))).toBe(false);
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+    const [firstExit, secondExit] = await Effect.runPromise(
+      Effect.all([Fiber.await(firstDisposal), Fiber.await(secondDisposal)]),
+    );
+    expect(Exit.isSuccess(firstExit)).toBe(true);
+    expect(Exit.isSuccess(secondExit)).toBe(true);
   });
 });

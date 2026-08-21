@@ -1,6 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Predicate, Scope, Stream } from "effect";
+import type { HttpServer } from "effect/unstable/http";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -63,6 +64,7 @@ function mockStack(
 ) {
   let stopped = false;
   let stopCalls = 0;
+  let daemonScope: Scope.Scope | undefined;
   const serviceCalls: string[] = [];
   const functionReloads: FunctionsReloadConfig[] = [];
 
@@ -149,6 +151,11 @@ function mockStack(
 
   return {
     layer,
+    setDaemonScope: (scope: Scope.Scope) => {
+      daemonScope = scope;
+    },
+    registerScopeFinalizer: (finalizer: Effect.Effect<void>) =>
+      daemonScope === undefined ? Effect.void : Scope.addFinalizer(daemonScope, finalizer),
     get stopped() {
       return stopped;
     },
@@ -182,22 +189,25 @@ function buildDaemonLayer(
   mock: ReturnType<typeof mockStack>,
   beforeShutdown: Effect.Effect<void> = Effect.void,
 ): Layer.Layer<DaemonServer, never, never> {
-  return DaemonServer.layerWithShutdown(beforeShutdown).pipe(
+  const daemonLayer = DaemonServer.layerWithShutdown(beforeShutdown).pipe(
     Layer.provide(mock.layer),
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
   ) as Layer.Layer<DaemonServer, never, never>;
+  return daemonLayer.pipe(
+    Layer.tap(() =>
+      Effect.gen(function* () {
+        mock.setDaemonScope(yield* Effect.scope);
+      }),
+    ),
+  ) as Layer.Layer<DaemonServer, never, never>;
 }
 
-function getUrl(address: {
-  readonly _tag: string;
-  readonly hostname?: string;
-  readonly port?: number;
-}): string {
-  if (address._tag === "TcpAddress") {
+function getUrl(address: HttpServer.Address): string {
+  if (Predicate.isTagged(address, "TcpAddress")) {
     const host = address.hostname === "0.0.0.0" ? "127.0.0.1" : address.hostname;
     return `http://${host}:${address.port}`;
   }
-  throw new Error(`Unexpected address type: ${address._tag}`);
+  throw new Error("Unexpected non-TCP address");
 }
 
 // ---------------------------------------------------------------------------
@@ -507,20 +517,71 @@ describe("DaemonServer", () => {
 
   test("concurrent POST /stop requests share one shutdown", async () => {
     const concurrentMock = mockStack();
+    const releaseBeforeShutdown = await Effect.runPromise(Deferred.make<void>());
     const concurrentRuntime = ManagedRuntime.make(
-      buildDaemonLayer(concurrentMock, Effect.sleep("20 millis")),
+      buildDaemonLayer(concurrentMock, Deferred.await(releaseBeforeShutdown)),
     );
     const concurrentDaemon = await concurrentRuntime.runPromise(DaemonServer);
     const concurrentUrl = getUrl(concurrentDaemon.address);
     try {
-      const responses = await Promise.all([
+      const responsesPromise = Promise.all([
         fetch(`${concurrentUrl}/stop`, { method: "POST" }),
         fetch(`${concurrentUrl}/stop`, { method: "POST" }),
       ]);
+      await Effect.runPromise(Deferred.succeed(releaseBeforeShutdown, void 0));
+      const responses = await responsesPromise;
       expect(responses.map((response) => response.status)).toEqual([200, 200]);
       expect(concurrentMock.stopCalls).toBe(1);
     } finally {
       await concurrentRuntime.dispose();
+    }
+  });
+
+  test("runtime disposal waits for an in-flight shutdown transaction", async () => {
+    const stopEntered = await Effect.runPromise(Deferred.make<void>());
+    const releaseStop = await Effect.runPromise(Deferred.make<void>());
+    const disposalEntered = await Effect.runPromise(Deferred.make<void>());
+    const disposalCompleted = await Effect.runPromise(Deferred.make<void>());
+    let registerScopeFinalizer: (finalizer: Effect.Effect<void>) => Effect.Effect<void> = () =>
+      Effect.void;
+    const gatedMock = mockStack({
+      stopEffect: Effect.gen(function* () {
+        yield* Deferred.succeed(stopEntered, void 0);
+        yield* registerScopeFinalizer(Deferred.succeed(disposalEntered, void 0));
+        yield* Deferred.await(releaseStop);
+      }),
+    });
+    registerScopeFinalizer = gatedMock.registerScopeFinalizer;
+    const gatedRuntime = ManagedRuntime.make(buildDaemonLayer(gatedMock));
+    let disposed = false;
+    let disposalFiber: Fiber.Fiber<void, never> | undefined;
+    try {
+      const daemon = await gatedRuntime.runPromise(DaemonServer);
+      gatedRuntime.runFork(daemon.beginShutdown);
+      await gatedRuntime.runPromise(Deferred.await(stopEntered));
+
+      disposalFiber = Effect.runFork(
+        Effect.promise(() => gatedRuntime.dispose()).pipe(
+          Effect.ensuring(Deferred.succeed(disposalCompleted, void 0)),
+        ),
+      );
+      await Effect.runPromise(Deferred.await(disposalEntered));
+      expect(await Effect.runPromise(Deferred.isDone(disposalCompleted))).toBe(false);
+
+      await Effect.runPromise(Deferred.succeed(releaseStop, void 0));
+      await Effect.runPromise(Fiber.join(disposalFiber));
+      expect(await Effect.runPromise(Deferred.isDone(disposalCompleted))).toBe(true);
+      disposed = true;
+      expect(disposed).toBe(true);
+    } finally {
+      if (!disposed) {
+        await Effect.runPromise(Deferred.succeed(releaseStop, void 0));
+        if (disposalFiber !== undefined) {
+          await Effect.runPromise(Fiber.join(disposalFiber)).catch(() => undefined);
+        } else {
+          await gatedRuntime.dispose().catch(() => undefined);
+        }
+      }
     }
   });
 

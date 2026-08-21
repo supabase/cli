@@ -26,6 +26,7 @@ export {
 } from "./Platform.ts";
 
 export type { ServiceResolution } from "./StackPreparation.ts";
+export { edgeRuntimeNofileUlimit } from "./services/nofile-limit.ts";
 
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
@@ -51,7 +52,8 @@ export type {
   PortSelection,
   PortSelectionOptions,
 } from "./PortAllocator.ts";
-export { allocatePortSet, PortAllocationError, reservePortSet } from "./PortAllocator.ts";
+export { PortAllocationError, reservePortSet } from "./PortAllocator.ts";
+export { portRequestsForConfig } from "./StackConfigResolver.ts";
 export {
   AllocatedPortsSchema,
   DEFAULT_API_PORT,

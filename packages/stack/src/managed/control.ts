@@ -1,4 +1,4 @@
-import { Data, Deferred, Effect, Context, Ref, Result, Schedule, Schema } from "effect";
+import { Data, Deferred, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import {
   ControlOwnerStatusSchema,
@@ -136,6 +136,14 @@ export interface ControlAttached {
 }
 
 export type ControlAcquisition = ControlOwnership | ControlAttached;
+
+export const isControlOwnership = (
+  acquisition: ControlAcquisition,
+): acquisition is ControlOwnership => Predicate.isTagged(acquisition, "Owned");
+
+export const isControlAttached = (
+  acquisition: ControlAcquisition,
+): acquisition is ControlAttached => Predicate.isTagged(acquisition, "Attached");
 
 const invalidId = (ownershipId: string): Effect.Effect<never, InvalidControlOwnershipIdError> =>
   Effect.fail(new InvalidControlOwnershipIdError({ ownershipId }));
@@ -345,9 +353,9 @@ const acquireAtEndpoint = (
     if (error.reason !== "in-use") return yield* Effect.fail(error);
     return yield* attach(endpoint, ownershipId, transport).pipe(
       Effect.mapError((cause) =>
-        cause._tag === "ControlTransportError" && cause.reason === "unreachable"
+        Predicate.isTagged(cause, "ControlTransportError") && cause.reason === "unreachable"
           ? unavailable(endpoint, cause)
-          : cause._tag === "ControlProtocolError"
+          : Predicate.isTagged(cause, "ControlProtocolError")
             ? new ControlAddressConflictError({ endpoint, cause })
             : cause,
       ),
@@ -359,7 +367,7 @@ const acquireAtEndpoint = (
       // Leave explicit margin inside the parent's 35-second startup handshake,
       // even when every owner probe consumes its 500 ms transport timeout.
       schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ times: 30 })),
-      while: (error) => error._tag === "ControlUnavailableError",
+      while: (error) => Predicate.isTagged(error, "ControlUnavailableError"),
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>
       Effect.fail(new ControlAddressConflictError({ endpoint, cause: error.cause })),

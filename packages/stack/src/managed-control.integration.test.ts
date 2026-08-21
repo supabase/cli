@@ -1,5 +1,5 @@
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Predicate, Result, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
@@ -11,6 +11,8 @@ import {
   ControlBindError,
   ControlTransport,
   ControlTransportError,
+  isControlAttached,
+  isControlOwnership,
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
@@ -75,6 +77,18 @@ const closeRaw = (server: Server): Promise<void> =>
     server.close((error) => (error === undefined ? resolve() : reject(error)));
   });
 
+const endpointForRawServer = (server: Server) => {
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("raw control server did not expose a numeric address");
+  }
+  return {
+    hostname: "127.0.0.1",
+    port: address.port,
+    url: `http://127.0.0.1:${address.port}`,
+  };
+};
+
 const spawnBoundChild = (port: number) => {
   const child = spawn(
     process.execPath,
@@ -115,7 +129,7 @@ describe("managed control endpoint", () => {
       live(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const started = { value: false };
           const stackLayer = Layer.succeed(Stack, makeStack(started));
           const daemonRuntime = ManagedRuntime.make(
@@ -151,7 +165,7 @@ describe("managed control endpoint", () => {
       live(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
           expect(before.status).toBe(200);
           expect(yield* Effect.promise(() => before.json())).toMatchObject({ state: "starting" });
@@ -187,7 +201,7 @@ describe("managed control endpoint", () => {
       live(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const stopCalls = { value: 0 };
           const stack = {
             ...makeStack({ value: false }),
@@ -226,7 +240,7 @@ describe("managed control endpoint", () => {
       live(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const daemonRuntime = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
               includeOwnerRoute: false,
@@ -237,7 +251,7 @@ describe("managed control endpoint", () => {
           );
           yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
           const contender = yield* acquireControl({ stackId: STACK_ID });
-          expect(contender._tag).toBe("Attached");
+          expect(isControlAttached(contender)).toBe(true);
           expect(yield* contender.ownerStatus).toMatchObject({
             protocolVersion: 1,
             state: "starting",
@@ -262,7 +276,7 @@ describe("managed control endpoint", () => {
           const secondEndpoint = yield* controlEndpoint(COLLIDING_STACK_ID);
           expect(secondEndpoint.port).toBe(firstEndpoint.port);
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const daemonRuntime = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
               includeOwnerRoute: false,
@@ -293,7 +307,7 @@ describe("managed control endpoint", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const owner = yield* acquireControl({ stackId: STACK_ID });
-            expect(owner._tag).toBe("Owned");
+            expect(isControlOwnership(owner)).toBe(true);
           }),
         );
         const next = yield* Effect.scoped(
@@ -301,7 +315,7 @@ describe("managed control endpoint", () => {
             return yield* acquireControl({ stackId: STACK_ID });
           }),
         );
-        expect(next._tag).toBe("Owned");
+        expect(isControlOwnership(next)).toBe(true);
       }),
     ),
   );
@@ -315,16 +329,11 @@ describe("managed control endpoint", () => {
             Effect.promise(() => listenRaw(endpoint.port)),
             (server) => Effect.promise(() => closeRaw(server)),
           );
-          const result = yield* acquireControl({
-            stackId: STACK_ID,
-          }).pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: "Left" as const, error }),
-              onSuccess: (value) => ({ _tag: "Right" as const, value }),
-            }),
-          );
-          expect(result._tag).toBe("Left");
-          if (result._tag === "Left") expect(result.error._tag).toBe("ControlAddressConflictError");
+          const result = yield* acquireControl({ stackId: STACK_ID }).pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
+          }
           expect(unrelated.listening).toBe(true);
         }),
       ),
@@ -364,6 +373,49 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.live("bounds oversized status responses and owns premature response closes", () =>
+    live(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const oversized = yield* Effect.acquireRelease(
+            Effect.promise(() => listenRawResponse(0, "x".repeat(1_048_577))),
+            (server) => Effect.promise(() => closeRaw(server)),
+          );
+          const reset = yield* Effect.acquireRelease(
+            Effect.promise(
+              () =>
+                new Promise<Server>((resolve, reject) => {
+                  const server = createServer((_request, response) => {
+                    response.writeHead(200, { "content-type": "application/json" });
+                    response.write("{");
+                    response.socket?.destroy();
+                  });
+                  server.once("error", reject);
+                  server.listen(0, "127.0.0.1", () => resolve(server));
+                }),
+            ),
+            (server) => Effect.promise(() => closeRaw(server)),
+          );
+          const transport = yield* ControlTransport;
+          const oversizedResult = yield* transport
+            .read(endpointForRawServer(oversized))
+            .pipe(Effect.result);
+          expect(Result.isFailure(oversizedResult)).toBe(true);
+          if (Result.isFailure(oversizedResult)) {
+            expect(Predicate.isTagged(oversizedResult.failure, "ControlProtocolError")).toBe(true);
+          }
+          const resetResult = yield* transport
+            .read(endpointForRawServer(reset))
+            .pipe(Effect.result);
+          expect(Result.isFailure(resetResult)).toBe(true);
+          if (Result.isFailure(resetResult)) {
+            expect(Predicate.isTagged(resetResult.failure, "ControlTransportError")).toBe(true);
+          }
+        }),
+      ),
+    ),
+  );
+
   it.live("preserves an explicit owner protocol mismatch", () =>
     live(
       Effect.scoped(
@@ -378,17 +430,11 @@ describe("managed control endpoint", () => {
             ),
             (server) => Effect.promise(() => closeRaw(server)),
           );
-          const result = yield* acquireControl({
-            stackId: STACK_ID,
-          }).pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: "Left" as const, error }),
-              onSuccess: (value) => ({ _tag: "Right" as const, value }),
-            }),
-          );
-          expect(result._tag).toBe("Left");
-          if (result._tag === "Left")
-            expect(result.error._tag).toBe("ControlProtocolMismatchError");
+          const result = yield* acquireControl({ stackId: STACK_ID }).pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(Predicate.isTagged(result.failure, "ControlProtocolMismatchError")).toBe(true);
+          }
           expect(unrelated.listening).toBe(true);
         }),
       ),
@@ -400,12 +446,12 @@ describe("managed control endpoint", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (owner._tag !== "Owned") throw new Error("expected control ownership");
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const attached = yield* acquireControl({ stackId: STACK_ID });
-          expect(attached._tag).toBe("Attached");
+          expect(isControlAttached(attached)).toBe(true);
           yield* owner.close;
           const next = yield* acquireControl({ stackId: STACK_ID });
-          expect(next._tag).toBe("Owned");
+          expect(isControlOwnership(next)).toBe(true);
         }),
       ),
     ),
@@ -421,7 +467,7 @@ describe("managed control endpoint", () => {
           child.child.kill("SIGKILL");
           yield* Effect.promise(() => child.exited);
           const owner = yield* acquireControl({ stackId: STACK_ID });
-          expect(owner._tag).toBe("Owned");
+          expect(isControlOwnership(owner)).toBe(true);
         }),
       ),
     ),

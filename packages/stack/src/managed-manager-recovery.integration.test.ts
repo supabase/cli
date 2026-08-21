@@ -15,10 +15,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { deriveRepairOwnershipId, ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
@@ -64,7 +64,7 @@ describe("managed stack recovery journeys", () => {
           const stackId = deriveStackId(environment.identity, "default");
           const repairId = deriveRepairOwnershipId(environment.identity);
           const repairOwner = yield* acquireControl({ stackId: repairId });
-          if (repairOwner._tag !== "Owned") throw new Error("expected repair ownership");
+          if (!isControlOwnership(repairOwner)) throw new Error("expected repair ownership");
           repairEndpointUrl = repairOwner.endpoint.url;
           const repairDaemon = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, repairOwner.ownerStatus).pipe(
@@ -74,7 +74,7 @@ describe("managed stack recovery journeys", () => {
           );
           yield* Effect.promise(() => repairDaemon.runPromise(DaemonServer));
           const stackOwner = yield* acquireControl({ stackId });
-          if (stackOwner._tag !== "Owned") throw new Error("expected stack ownership");
+          if (!isControlOwnership(stackOwner)) throw new Error("expected stack ownership");
           const startFiber = yield* manager
             .startStack({
               workspacePath: workspace,
@@ -106,7 +106,7 @@ describe("managed stack recovery journeys", () => {
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
         const ownership = yield* acquireControl({ stackId: COLLIDING_STACK_A });
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
+        if (!isControlOwnership(ownership)) throw new Error("expected ownership");
         const rejected = yield* manager
           .allocateManagedPorts(ownership, {
             stackId: COLLIDING_STACK_B,
@@ -176,7 +176,7 @@ describe("managed stack recovery journeys", () => {
         expect(Exit.isFailure(deleteBeforeRepair)).toBe(true);
         const blockedId = [originalId, secondaryId].sort().at(-1);
         if (blockedId === undefined) throw new Error("expected affected stack");
-        const blockedRoot = managedStackPaths(stateRoot, blockedId).root;
+        const blockedRoot = (yield* managedStackPathsEffect(stateRoot, blockedId)).root;
         chmodSync(blockedRoot, 0o500);
         const failed = yield* manager.repairWorkspace(discovery.repair).pipe(Effect.exit);
         chmodSync(blockedRoot, 0o700);
@@ -219,8 +219,8 @@ describe("managed stack recovery journeys", () => {
         const stack = yield* startWithOwner(manager, workspace, automaticDocument());
         yield* releaseLease(stack);
         const corruptId = "f".repeat(64);
-        mkdirSync(managedStackPaths(stateRoot, corruptId).root, { recursive: true });
-        writeFileSync(managedStackDocumentPath(stateRoot, corruptId), "not-json");
+        mkdirSync((yield* managedStackPathsEffect(stateRoot, corruptId)).root, { recursive: true });
+        writeFileSync(yield* managedStackDocumentPathEffect(stateRoot, corruptId), "not-json");
         const listings = yield* manager.listStacks();
         expect(listings).toEqual(
           expect.arrayContaining([

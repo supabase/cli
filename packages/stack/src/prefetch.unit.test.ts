@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Match, Predicate, Queue, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
@@ -32,20 +32,16 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const cmd = standardCommand ? command.command : "";
+          const args = standardCommand ? command.args : [];
           spawned.push({ command: cmd, args });
 
           const result = results[index] ?? { exitCode: 0 };
           index += 1;
 
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-          yield* Effect.forkDetach(
-            Effect.andThen(
-              Effect.sleep("1 millis"),
-              Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode)),
-            ),
-          );
+          yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
 
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(2000 + index),
@@ -88,6 +84,74 @@ describe("prefetch", () => {
     const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
 
     expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+  });
+
+  test("limits concurrent image preparation to four services", async () => {
+    const started = await Effect.runPromise(Queue.unbounded<string>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const services = ["postgres", "postgrest", "auth", "realtime", "storage"] as const;
+    let pullStarts = 0;
+    const spawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const args = standardCommand ? command.args : [];
+          const image = args[1] ?? "unknown";
+          if (args[0] === "pull") {
+            pullStarts += 1;
+            yield* Queue.offer(started, image);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(3000 + (yield* Queue.size(started))),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
+
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(2000),
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      ),
+    );
+    const resolver = mockBinaryResolver();
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner),
+    );
+
+    const preparation = Effect.runFork(
+      prefetch({ mode: "docker", services }).pipe(Effect.provide(layer)),
+    );
+    await Effect.runPromise(
+      Effect.all(
+        Array.from({ length: 4 }, () => Queue.take(started)),
+        { discard: true },
+      ),
+    );
+    expect(pullStarts).toBe(4);
+
+    await Effect.runPromise(Deferred.succeed(release, void 0));
+    await Effect.runPromise(Fiber.join(preparation));
+    expect(pullStarts).toBe(5);
   });
 
   test("falls back to Docker Hub after ECR rate limiting", async () => {
@@ -213,7 +277,11 @@ describe("prefetch", () => {
                 event instanceof ServiceDownloadStarted ||
                 event instanceof ServiceDownloadFinished
               ) {
-                events.push(event._tag);
+                events.push(
+                  Predicate.isTagged(event, "ServiceDownloadStarted")
+                    ? "ServiceDownloadStarted"
+                    : "ServiceDownloadFinished",
+                );
               }
             }),
         );
@@ -229,17 +297,15 @@ describe("prefetch", () => {
   });
 
   test("reports per-service download finished events as each service completes", async () => {
+    const releaseDownloads = Deferred.makeUnsafe<void>();
+    const allDownloadsStarted = Deferred.makeUnsafe<void>();
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres", "postgrest", "auth"],
-      downloadDelaysMs: {
-        postgres: 10,
-        auth: 30,
-        postgrest: 50,
-      },
+      downloadGate: Deferred.await(releaseDownloads),
     });
     const events: string[] = [];
 
-    await Effect.runPromise(
+    const preparation = Effect.runFork(
       Effect.gen(function* () {
         const resolverService = yield* BinaryResolver;
         const artifacts = yield* prepareAssetsWithDependencies(
@@ -250,21 +316,27 @@ describe("prefetch", () => {
             services: ["postgres", "postgrest", "auth"],
           },
           (event) =>
-            Effect.sync(() => {
-              switch (event._tag) {
-                case "ServiceDownloadStarted":
-                case "ServiceDownloadFinished":
-                  events.push(`${event._tag}:${event.service}`);
-                  break;
-                case "PreparationCompleted":
-                  events.push("PreparationCompleted");
-                  break;
-              }
+            Effect.suspend(() => {
+              Match.valueTags(event, {
+                ServiceDownloadStarted: (event) =>
+                  events.push(`ServiceDownloadStarted:${event.service}`),
+                ServiceDownloadFinished: (event) =>
+                  events.push(`ServiceDownloadFinished:${event.service}`),
+                PreparationCompleted: () => events.push("PreparationCompleted"),
+              });
+              return events.filter((entry) => entry.startsWith("ServiceDownloadStarted")).length ===
+                3
+                ? Deferred.succeed(allDownloadsStarted, undefined)
+                : Effect.void;
             }),
         );
         expect(Object.keys(artifacts.resolutions)).toEqual(["postgres", "postgrest", "auth"]);
       }).pipe(Effect.provide(resolver.layer)),
     );
+
+    await Effect.runPromise(Deferred.await(allDownloadsStarted));
+    await Effect.runPromise(Deferred.succeed(releaseDownloads, undefined));
+    await Effect.runPromise(Fiber.join(preparation));
 
     expect(events.slice(0, 3)).toEqual([
       "ServiceDownloadStarted:postgres",

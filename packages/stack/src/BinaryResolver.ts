@@ -207,7 +207,7 @@ export class BinaryResolver extends Context.Service<
                     Effect.ignore,
                   );
                 },
-                { concurrency: "unbounded" },
+                { concurrency: 4 },
               ),
             ),
             Effect.ignore,

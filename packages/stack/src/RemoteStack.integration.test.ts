@@ -1,6 +1,16 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
-import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Result, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Predicate,
+  Result,
+  Stream,
+} from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -293,7 +303,7 @@ describe("RemoteStack integration", () => {
     const daemon = await serverRuntime.runPromise(DaemonServer);
 
     const addr = daemon.address;
-    if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+    if (!Predicate.isTagged(addr, "TcpAddress")) throw new Error("Expected TcpAddress");
     const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
     const url = `http://${host}:${addr.port}`;
     clientRuntime = ManagedRuntime.make(buildClientLayer(url));
@@ -337,7 +347,7 @@ describe("RemoteStack integration", () => {
     const exit = await clientRuntime.runPromiseExit(
       Effect.flatMap(Stack, (stack) => stack.getState("unknown")),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(Exit.isFailure(exit)).toBe(true);
   });
 
   test("startService records the call", async () => {
@@ -351,7 +361,7 @@ describe("RemoteStack integration", () => {
     const exit = await clientRuntime.runPromiseExit(
       Effect.flatMap(Stack, (stack) => stack.startService("unknown")),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(Exit.isFailure(exit)).toBe(true);
   });
 
   test("waitReady passes one validated finite override through the daemon", async () => {
@@ -369,7 +379,7 @@ describe("RemoteStack integration", () => {
     const error = await clientRuntime.runPromise(
       Effect.flatMap(Stack, (stack) => stack.waitReady("..")).pipe(Effect.flip),
     );
-    expect(error._tag).toBe("ServiceNotFoundError");
+    expect(Predicate.isTagged(error, "ServiceNotFoundError")).toBe(true);
     expect(mock.serviceCalls).not.toContain("ready:all");
   });
 
@@ -389,15 +399,15 @@ describe("RemoteStack integration", () => {
     try {
       const daemon = await failingServer.runPromise(DaemonServer);
       const addr = daemon.address;
-      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      if (!Predicate.isTagged(addr, "TcpAddress")) throw new Error("Expected TcpAddress");
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
       failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
 
       const error = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
       );
-      expect(error._tag).toBe("StackReadinessError");
-      if (error._tag === "StackReadinessError") {
+      expect(Predicate.isTagged(error, "StackReadinessError")).toBe(true);
+      if (Predicate.isTagged(error, "StackReadinessError")) {
         expect(error.target).toBe("auth");
         expect(error.timeoutMs).toBe(75);
       }
@@ -485,7 +495,12 @@ describe("RemoteStack integration", () => {
 
   test("preserves daemon identity for invalid SSE responses", async () => {
     const scenarios = [
-      { response: () => new Response("failed", { status: 500 }), reason: "status" },
+      {
+        response: () => new Response("failed", { status: 500 }),
+        reason: "status",
+        path: "/logs",
+        stream: "logs",
+      },
       {
         response: () =>
           new Response("data: not-json\n\n", {
@@ -493,6 +508,18 @@ describe("RemoteStack integration", () => {
             headers: { "content-type": "text/event-stream" },
           }),
         reason: "protocol",
+        path: "/logs",
+        stream: "logs",
+      },
+      {
+        response: () =>
+          new Response('data: {"name":"postgres"}\n\n', {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        reason: "protocol",
+        path: "/status/stream",
+        stream: "status",
       },
     ] as const;
 
@@ -504,18 +531,25 @@ describe("RemoteStack integration", () => {
         RemoteStack.layer(testEndpoint()).pipe(Layer.provide(clientLayer)),
       );
       try {
-        const exit = await runtime.runPromise(
-          Effect.flatMap(Stack, (stack) => Stream.runCollect(stack.subscribeAllLogs())).pipe(
-            Effect.exit,
-          ),
-        );
+        const exit: Exit.Exit<unknown, unknown> =
+          scenario.stream === "status"
+            ? await runtime.runPromise(
+                Effect.flatMap(Stack, (stack) => Stream.runCollect(stack.allStateChanges())).pipe(
+                  Effect.exit,
+                ),
+              )
+            : await runtime.runPromise(
+                Effect.flatMap(Stack, (stack) => Stream.runCollect(stack.subscribeAllLogs())).pipe(
+                  Effect.exit,
+                ),
+              );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const defect = Cause.findDefect(exit.cause);
           expect(Result.isSuccess(defect)).toBe(true);
           if (Result.isSuccess(defect)) {
             expect(defect.success).toBeInstanceOf(HttpTransportClientError);
-            expect(defect.success).toMatchObject({ reason: scenario.reason, path: "/logs" });
+            expect(defect.success).toMatchObject({ reason: scenario.reason, path: scenario.path });
           }
         }
       } finally {
@@ -537,31 +571,31 @@ describe("RemoteStack integration", () => {
     try {
       const daemon = await failingServer.runPromise(DaemonServer);
       const addr = daemon.address;
-      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      if (!Predicate.isTagged(addr, "TcpAddress")) throw new Error("Expected TcpAddress");
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
       failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
 
       const startError = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.startService("auth")).pipe(Effect.flip),
       );
-      expect(startError._tag).toBe("StackBuildError");
-      if (startError._tag === "StackBuildError") {
+      expect(Predicate.isTagged(startError, "StackBuildError")).toBe(true);
+      if (Predicate.isTagged(startError, "StackBuildError")) {
         expect(startError.reason).toBe("docker_not_running");
       }
 
       const readyError = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.waitReady("auth")).pipe(Effect.flip),
       );
-      expect(readyError._tag).toBe("StackBuildError");
-      if (readyError._tag === "StackBuildError") {
+      expect(Predicate.isTagged(readyError, "StackBuildError")).toBe(true);
+      if (Predicate.isTagged(readyError, "StackBuildError")) {
         expect(readyError.reason).toBe("invalid_config");
       }
 
       const restartError = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.restartService("auth")).pipe(Effect.flip),
       );
-      expect(restartError._tag).toBe("ServiceReadyError");
-      if (restartError._tag === "ServiceReadyError") {
+      expect(Predicate.isTagged(restartError, "ServiceReadyError")).toBe(true);
+      if (Predicate.isTagged(restartError, "ServiceReadyError")) {
         expect(restartError.reason).toBe("restart failed readiness");
       }
     } finally {
@@ -577,15 +611,15 @@ describe("RemoteStack integration", () => {
     try {
       const daemon = await failingServer.runPromise(DaemonServer);
       const addr = daemon.address;
-      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      if (!Predicate.isTagged(addr, "TcpAddress")) throw new Error("Expected TcpAddress");
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
       failingClient = ManagedRuntime.make(buildClientLayer(`http://${host}:${addr.port}`));
 
       const error = await failingClient.runPromise(
         Effect.flatMap(Stack, (stack) => stack.startService("auth")).pipe(Effect.flip),
       );
-      expect(error._tag).toBe("ServiceReadyError");
-      if (error._tag === "ServiceReadyError") {
+      expect(Predicate.isTagged(error, "ServiceReadyError")).toBe(true);
+      if (Predicate.isTagged(error, "ServiceReadyError")) {
         expect(error.reason).toBe("start failed readiness");
       }
     } finally {
@@ -627,8 +661,8 @@ describe("RemoteStack integration", () => {
     );
 
     expect(error).toBeInstanceOf(StackBuildError);
-    expect(error._tag).toBe("StackBuildError");
-    if (error._tag === "StackBuildError") {
+    expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
+    if (Predicate.isTagged(error, "StackBuildError")) {
       expect(error.detail).toBe("Invalid Edge Functions reload payload");
     }
   });
@@ -686,7 +720,7 @@ describe("RemoteStack integration", () => {
     try {
       const daemon = await freshServer.runPromise(DaemonServer);
       const addr = daemon.address;
-      if (addr._tag !== "TcpAddress") throw new Error("Expected TcpAddress");
+      if (!Predicate.isTagged(addr, "TcpAddress")) throw new Error("Expected TcpAddress");
       const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
       const freshUrl = `http://${host}:${addr.port}`;
 

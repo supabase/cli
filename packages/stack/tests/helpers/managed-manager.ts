@@ -9,7 +9,7 @@ import type {
 } from "../../src/managed/manager.ts";
 import { managedStackManagerLayer } from "../../src/managed/manager.ts";
 import type { ManagedPortIntentDocument } from "../../src/managed/model.ts";
-import { acquireControl } from "../../src/managed/control.ts";
+import { acquireControl, isControlOwnership } from "../../src/managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "../../src/managed/environment.ts";
 import { reservePortSet } from "../../src/PortAllocator.ts";
 import type { Stack } from "../../src/Stack.ts";
@@ -145,7 +145,7 @@ export const startWithOwner = (
     const environment = yield* ensureEnvironment(workspacePath);
     const stackId = deriveStackId(environment.identity, stackName);
     const ownership = yield* acquireControl({ stackId });
-    if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+    if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
     return yield* manager.startStack({
       workspacePath,
       stackName,

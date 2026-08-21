@@ -22,14 +22,21 @@ export class HttpTransportClient extends Context.Service<
 export const httpTransportClientLayer = Layer.succeed(HttpTransportClient, {
   request: (endpoint, path, init) =>
     Effect.tryPromise({
-      try: () =>
-        fetch(`${endpoint.url}${path}`, {
+      try: (effectSignal) => {
+        const signals: AbortSignal[] = [effectSignal];
+        if (init?.signal !== undefined && init.signal !== null) {
+          signals.push(init.signal);
+        } else {
+          signals.push(AbortSignal.timeout(30_000));
+        }
+        return fetch(`${endpoint.url}${path}`, {
           ...init,
-          signal:
-            init?.signal == null
-              ? AbortSignal.timeout(30_000)
-              : AbortSignal.any([init.signal, AbortSignal.timeout(30_000)]),
-        }),
+          // Effect.tryPromise aborts this signal when the request fiber is
+          // interrupted. Keep caller cancellation and the transport timeout
+          // in the same signal tree.
+          signal: AbortSignal.any(signals),
+        });
+      },
       catch: (cause) =>
         new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
     }),

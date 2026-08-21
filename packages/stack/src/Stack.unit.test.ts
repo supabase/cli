@@ -6,7 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { chmod, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { StackBuildError } from "./errors.ts";
@@ -243,15 +243,18 @@ describe("Stack", () => {
         functions: [replacementBundle.functions[0]!, replacementBundle.functions[0]!],
       };
       expect(
-        (yield* stack.reloadFunctions({ functions: duplicateBundle }).pipe(Effect.flip))._tag,
-      ).toBe("StackBuildError");
+        Predicate.isTagged(
+          yield* stack.reloadFunctions({ functions: duplicateBundle }).pipe(Effect.flip),
+          "StackBuildError",
+        ),
+      ).toBe(true);
       expect((yield* readRuntimeConfig).env.SHARED).toBe("replacement-secret");
 
       const runtimeDirectory = join(runtimeRoot, "edge-runtime");
       yield* Effect.promise(() => chmod(runtimeDirectory, 0o500));
       const failedBundle = functionsBundle(runtimeRoot, "failed-secret");
       const error = yield* stack.reloadFunctions({ functions: failedBundle }).pipe(Effect.flip);
-      expect(error._tag).toBe("StackBuildError");
+      expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
 
       yield* Effect.promise(() => chmod(runtimeDirectory, 0o700));
       yield* stack.reloadFunctions();
@@ -423,9 +426,10 @@ describe("Stack", () => {
   });
 
   it.effect("emits Downloading when a service fetches assets before startup", () => {
+    const releaseDownload = Deferred.makeUnsafe<void>();
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres"],
-      downloadDelayMs: 20,
+      downloadGate: Deferred.await(releaseDownload),
     });
     const spawner = mockChildProcessSpawner();
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
@@ -441,24 +445,25 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       const statesFiber = yield* stack.allStateChanges().pipe(
-        Stream.filter((state) => state.name === "postgres"),
-        Stream.take(2),
-        Stream.runCollect,
+        Stream.filter((state) => state.name === "postgres" && state.status === "Downloading"),
+        Stream.runHead,
         Effect.forkChild({ startImmediately: true }),
       );
 
       const startFiber = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
-      const states = yield* Fiber.join(statesFiber);
+      const downloading = yield* Fiber.join(statesFiber);
+      yield* Deferred.succeed(releaseDownload, undefined);
       yield* Fiber.interrupt(startFiber);
 
-      expect(states.map((state) => state.status)).toContain("Downloading");
+      expect(Option.isSome(downloading)).toBe(true);
     }).pipe(Effect.provide(providedLayer));
   });
 
   it.live("starts the readiness deadline after artifact preparation", () => {
+    const releaseDownload = Deferred.makeUnsafe<void>();
     const resolver = mockBinaryResolver({
       downloadedServices: ["postgres"],
-      downloadDelayMs: 300,
+      downloadGate: Deferred.await(releaseDownload),
     });
     const spawner = mockChildProcessSpawner();
     const config = {
@@ -478,10 +483,24 @@ describe("Stack", () => {
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
-      const startedAt = Date.now();
-      const exit = yield* stack.start().pipe(Effect.exit);
+      const downloading = yield* stack.allStateChanges().pipe(
+        Stream.filter((state) => state.name === "postgres" && state.status === "Downloading"),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const startCompleted = yield* Deferred.make<void>();
+      const startFiber = yield* stack
+        .start()
+        .pipe(
+          Effect.ensuring(Deferred.succeed(startCompleted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
 
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+      expect(Option.isSome(yield* Fiber.join(downloading))).toBe(true);
+      expect(yield* Deferred.isDone(startCompleted)).toBe(false);
+      yield* Deferred.succeed(releaseDownload, undefined);
+      const exit = yield* Fiber.await(startFiber);
+
       expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
   });
@@ -492,7 +511,7 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       const exit = yield* stack.getState("postgres-init").pipe(Effect.exit);
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -525,7 +544,7 @@ describe("Stack", () => {
       const stack = yield* Stack;
       const exit = yield* stack.startService("nonexistent").pipe(Effect.exit);
 
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -710,8 +729,8 @@ describe("Stack", () => {
 
       const error = yield* activator.activate("storage").pipe(Effect.flip);
 
-      expect(error._tag).toBe("StackBuildError");
-      if (error._tag === "StackBuildError") {
+      expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
+      if (Predicate.isTagged(error, "StackBuildError")) {
         expect(error.detail).toContain("imgproxy was explicitly stopped");
       }
       yield* stack.stop();
@@ -746,14 +765,18 @@ describe("Stack", () => {
           .activate("auth")
           .pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(spawnStarted);
-        expect((yield* Fiber.join(activeStateFiber))._tag).toBe("Some");
+        expect(Option.isSome(yield* Fiber.join(activeStateFiber))).toBe(true);
         expect((yield* stack.getState("auth")).status).not.toBe("Dormant");
 
-        const readyFiber = yield* stack
-          .waitAllReady()
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Effect.yieldNow;
-        expect(readyFiber.pollUnsafe()).toBeUndefined();
+        const readyInvoked = yield* Deferred.make<void>();
+        const readyCompleted = yield* Deferred.make<void>();
+        const readyFiber = yield* Deferred.succeed(readyInvoked, undefined).pipe(
+          Effect.andThen(stack.waitAllReady()),
+          Effect.ensuring(Deferred.succeed(readyCompleted, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(readyInvoked);
+        expect(yield* Deferred.isDone(readyCompleted)).toBe(false);
 
         yield* stack.stop().pipe(Effect.timeout("1 second"));
         yield* Fiber.interrupt(readyFiber);
@@ -878,19 +901,27 @@ describe("Stack", () => {
         expect(spawner.spawned.some((record) => record.command.endsWith("/auth"))).toBe(false);
 
         const error = yield* activator.activate("auth").pipe(Effect.flip);
-        expect(error._tag).toBe("StackNotRunningError");
+        expect(Predicate.isTagged(error, "StackNotRunningError")).toBe(true);
       }).pipe(Effect.provide(layer));
     }).pipe(Effect.scoped, Effect.timeout("5 seconds")),
   );
 
   it.live("uses the stack readiness deadline for explicit lazy activation and cleans up", () =>
     Effect.gen(function* () {
-      const spawner = mockChildProcessSpawner();
+      const authSpawnStarted = Deferred.makeUnsafe<void>();
+      const spawner = mockChildProcessSpawner({
+        beforeSpawn: (record) =>
+          record.args.some((arg) =>
+            Buffer.from(arg, "base64url").toString().includes('"command":"/cache/auth/'),
+          )
+            ? Deferred.succeed(authSpawnStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+      });
       let releasedAll = false;
       const config = {
         ...defaultConfig,
         startupMode: "lazy",
-        readiness: { mode: "finite", timeoutMs: 100 },
+        readiness: { mode: "finite", timeoutMs: 250 },
         readinessSource: "configured",
       } satisfies ResolvedStackConfig;
       const lease: PortLease = {
@@ -906,18 +937,30 @@ describe("Stack", () => {
         const activator = yield* StackServiceActivator;
         yield* stack.start();
 
-        const error = yield* activator.activate("auth").pipe(Effect.flip);
+        const activation = yield* activator
+          .activate("auth")
+          .pipe(Effect.exit, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(authSpawnStarted);
+        const exit = yield* Fiber.join(activation);
 
-        expect(error._tag).toBe("StackReadinessError");
-        if (error._tag === "StackReadinessError") {
-          expect(error.target).toBe("auth");
-          expect(error.timeoutMs).toBe(100);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+        expect(Option.isSome(error)).toBe(true);
+        expect(Option.isSome(error) && Predicate.isTagged(error.value, "StackReadinessError")).toBe(
+          true,
+        );
+        if (Option.isSome(error) && Predicate.isTagged(error.value, "StackReadinessError")) {
+          expect(error.value.target).toBe("auth");
+          expect(error.value.timeoutMs).toBe(250);
         }
         expect(releasedAll).toBe(true);
         const spawnCountAfterDisposal = spawner.spawned.length;
-        expect((yield* activator.activate("postgres").pipe(Effect.flip))._tag).toBe(
-          "StackNotRunningError",
-        );
+        expect(
+          Predicate.isTagged(
+            yield* activator.activate("postgres").pipe(Effect.flip),
+            "StackNotRunningError",
+          ),
+        ).toBe(true);
         for (const operation of [
           stack.start(),
           stack.startService("postgres"),
@@ -926,7 +969,9 @@ describe("Stack", () => {
           stack.reloadFunctions(),
           stack.reloadEdgeRuntime({ edgeRuntime: {} }),
         ]) {
-          expect((yield* operation.pipe(Effect.flip))._tag).toBe("StackBuildError");
+          expect(Predicate.isTagged(yield* operation.pipe(Effect.flip), "StackBuildError")).toBe(
+            true,
+          );
         }
         yield* stack.stop();
         expect(spawner.spawned).toHaveLength(spawnCountAfterDisposal);
@@ -973,8 +1018,8 @@ describe("Stack", () => {
           .waitAllReady({ mode: "finite", timeoutMs: 25 })
           .pipe(Effect.flip);
 
-        expect(error._tag).toBe("StackReadinessError");
-        if (error._tag === "StackReadinessError") {
+        expect(Predicate.isTagged(error, "StackReadinessError")).toBe(true);
+        if (Predicate.isTagged(error, "StackReadinessError")) {
           expect(error.target).toBe("stack");
           expect(error.timeoutMs).toBe(25);
         }
@@ -1038,11 +1083,11 @@ describe("Stack", () => {
     return Effect.gen(function* () {
       const stack = yield* Stack;
       const beforeStart = yield* stack.waitAllReady().pipe(Effect.flip);
-      expect(beforeStart._tag).toBe("StackBuildError");
+      expect(Predicate.isTagged(beforeStart, "StackBuildError")).toBe(true);
 
       yield* stack.start();
       const authNotActivated = yield* stack.waitReady("auth").pipe(Effect.flip);
-      expect(authNotActivated._tag).toBe("ServiceReadyError");
+      expect(Predicate.isTagged(authNotActivated, "ServiceReadyError")).toBe(true);
 
       yield* stack.stop();
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
@@ -1076,7 +1121,7 @@ describe("Stack", () => {
       yield* stack.stop();
 
       const error = yield* activator.activate("postgres").pipe(Effect.flip);
-      expect(error._tag).toBe("StackNotRunningError");
+      expect(Predicate.isTagged(error, "StackNotRunningError")).toBe(true);
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
@@ -1094,7 +1139,7 @@ describe("Stack", () => {
         Effect.forkChild({ startImmediately: true }),
       );
       yield* stack.stopService("auth");
-      expect((yield* Fiber.join(stopped))._tag).toBe("Some");
+      expect(Option.isSome(yield* Fiber.join(stopped))).toBe(true);
 
       yield* stack.stop();
       yield* stack.start();

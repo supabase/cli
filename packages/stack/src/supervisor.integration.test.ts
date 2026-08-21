@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer } from "effect";
 import { NodeFileSystem } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
@@ -10,10 +10,12 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  watch,
   writeFileSync,
+  type FSWatcher,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
@@ -21,7 +23,7 @@ import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedDaemonLayer } from "./supervisor.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
@@ -223,6 +225,24 @@ const waitForExit = (child: ChildProcess): Promise<void> =>
     child.once("exit", () => resolve());
   });
 
+const waitForExitWithDiagnostic = (child: ChildProcess, description: string): Promise<void> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`timed out waiting for ${description} after 30 seconds`)),
+      30_000,
+    );
+    void waitForExit(child).then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      (cause) => {
+        clearTimeout(timer);
+        reject(cause);
+      },
+    );
+  });
+
 const fetchOwner = async (endpoint: ControlEndpoint): Promise<Record<string, unknown>> => {
   const response = await fetch(`${endpoint.url}/owner`);
   expect(response.status).toBe(200);
@@ -294,42 +314,80 @@ const canBind = (port: number): Promise<boolean> =>
     });
   });
 
+const waitForFile = (path: string, description = path): Promise<void> =>
+  new Promise((resolve, reject) => {
+    let watcher: FSWatcher | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      watcher?.close();
+      watcher = undefined;
+    };
+    const finish = (
+      result: { readonly ok: true } | { readonly ok: false; readonly cause: unknown },
+    ) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (result.ok) {
+        resolve();
+      } else {
+        reject(result.cause);
+      }
+    };
+    timer = setTimeout(
+      () =>
+        finish({
+          ok: false,
+          cause: new Error(`timed out waiting for ${description} after 30 seconds`),
+        }),
+      30_000,
+    );
+    if (existsSync(path)) {
+      finish({ ok: true });
+      return;
+    }
+    try {
+      watcher = watch(dirname(path), { persistent: false }, (_event, filename) => {
+        const changed = filename === null || filename.toString() === basename(path);
+        if (changed && existsSync(path)) finish({ ok: true });
+      });
+      watcher.once("error", (cause) => finish({ ok: false, cause }));
+      if (existsSync(path)) finish({ ok: true });
+    } catch (cause) {
+      finish({ ok: false, cause });
+    }
+  });
+
 const listenStartingOwner = async (
   endpoint: ControlEndpoint,
   ownershipId: string,
 ): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const server = createHttpServer((request, response) => {
-      if (request.method === "GET" && request.url === "/owner") {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            protocolVersion: 1,
-            ownershipId,
-            state: "starting",
-            ready: false,
-          }),
-        );
-        return;
-      }
-      response.writeHead(404);
-      response.end();
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+  const server = createHttpServer((request, response) => {
+    if (request.method === "GET" && request.url === "/owner") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          protocolVersion: 1,
+          ownershipId,
+          state: "starting",
+          ready: false,
+        }),
+      );
+      return;
     }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+    response.writeHead(404);
+    response.end();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(endpoint.port, endpoint.hostname, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
 };
 
 const listenOwnerSequence = async (
@@ -338,45 +396,37 @@ const listenOwnerSequence = async (
   states: ReadonlyArray<"starting" | "stopping">,
   onRead: (state: "starting" | "stopping") => void = () => undefined,
 ): Promise<ReturnType<typeof createHttpServer>> => {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    let reads = 0;
-    const server = createHttpServer((request, response) => {
-      if (request.method !== "GET" || request.url !== "/owner") {
-        response.writeHead(404);
-        response.end();
-        return;
-      }
-      const state = states[Math.min(reads, states.length - 1)] ?? "starting";
-      reads += 1;
-      onRead(state);
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          protocolVersion: 1,
-          ownershipId,
-          state,
-          ready: false,
-        }),
-        () => {
-          if (reads >= states.length) server.close();
-        },
-      );
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
+  let reads = 0;
+  const server = createHttpServer((request, response) => {
+    if (request.method !== "GET" || request.url !== "/owner") {
+      response.writeHead(404);
+      response.end();
+      return;
     }
-  }
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+    const state = states[Math.min(reads, states.length - 1)] ?? "starting";
+    reads += 1;
+    onRead(state);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        protocolVersion: 1,
+        ownershipId,
+        state,
+        ready: false,
+      }),
+      () => {
+        if (reads >= states.length) server.close();
+      },
+    );
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(endpoint.port, endpoint.hostname, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return server;
 };
 
 const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
@@ -397,7 +447,7 @@ const readStackDocument = (roots: {
   const stacksRoot = join(roots.stateRoot, "stacks");
   if (!existsSync(stacksRoot)) return undefined;
   for (const id of readdirSync(stacksRoot)) {
-    const path = managedStackDocumentPath(roots.stateRoot, id);
+    const path = Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, id));
     if (!existsSync(path)) continue;
     return JSON.parse(readFileSync(path, "utf8")) as {
       readonly id: string;
@@ -415,15 +465,94 @@ const waitForStackDocument = async (
   readonly id: string;
   readonly lifecycle: string;
   readonly ports: ReadonlyArray<{ port: number }>;
-}> => {
-  const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    const document = readStackDocument(roots);
-    if (document?.lifecycle === lifecycle) return document;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error(`timed out waiting for stack document lifecycle ${lifecycle}`);
-};
+}> =>
+  new Promise((resolve, reject) => {
+    const watchers = new Map<string, FSWatcher>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const cleanup = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      for (const watcher of watchers.values()) watcher.close();
+      watchers.clear();
+    };
+    const finish = (
+      result:
+        | {
+            readonly ok: true;
+            readonly document: {
+              readonly id: string;
+              readonly lifecycle: string;
+              readonly ports: ReadonlyArray<{ port: number }>;
+            };
+          }
+        | { readonly ok: false; readonly cause: unknown },
+    ) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (result.ok) {
+        resolve(result.document);
+      } else {
+        reject(result.cause);
+      }
+    };
+    const check = () => {
+      if (settled) return;
+      let document:
+        | {
+            readonly id: string;
+            readonly lifecycle: string;
+            readonly ports: ReadonlyArray<{ port: number }>;
+          }
+        | undefined;
+      try {
+        document = readStackDocument(roots);
+      } catch {
+        document = undefined;
+      }
+      if (document?.lifecycle === lifecycle) {
+        finish({ ok: true, document });
+        return;
+      }
+      const stacksRoot = join(roots.stateRoot, "stacks");
+      const directories = [roots.stateRoot];
+      if (existsSync(stacksRoot)) {
+        directories.push(stacksRoot);
+        try {
+          for (const id of readdirSync(stacksRoot)) {
+            const directory = join(stacksRoot, id);
+            if (existsSync(directory)) directories.push(directory);
+          }
+        } catch {
+          // The next filesystem event will retry while the stack directory settles.
+        }
+      }
+      for (const directory of directories) {
+        if (watchers.has(directory)) continue;
+        try {
+          const watcher = watch(directory, { persistent: false }, () => check());
+          watcher.once("error", (cause) => finish({ ok: false, cause }));
+          watchers.set(directory, watcher);
+        } catch (cause) {
+          if ((cause as NodeJS.ErrnoException).code !== "ENOENT") {
+            finish({ ok: false, cause });
+            return;
+          }
+        }
+      }
+    };
+    timer = setTimeout(
+      () =>
+        finish({
+          ok: false,
+          cause: new Error(
+            `timed out waiting for stack document lifecycle ${lifecycle} after 30 seconds`,
+          ),
+        }),
+      30_000,
+    );
+    check();
+  });
 
 describe("detached supervisor child journeys", () => {
   test("rejects an invalid stack name before forking a supervisor", async () => {
@@ -435,8 +564,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "InvalidManagedStackNameError",
         });
@@ -455,8 +584,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "SupervisorStartError",
           message: "Supervisor test runtime failed after binding",
@@ -470,30 +599,32 @@ describe("detached supervisor child journeys", () => {
   test("keeps managed documents, runtime metadata, and persistent data roots separate", async () => {
     const roots = await workspace();
     const stackId = "e".repeat(64);
-    const paths = managedStackPaths(roots.stateRoot, stackId);
+    const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, stackId));
     try {
-      const resolved = await resolveConfig(
-        {
-          projectDir: roots.root,
-          mode: "native",
-          auth: false,
-          postgrest: false,
-          realtime: false,
-          storage: false,
-          imgproxy: false,
-          pgmeta: false,
-          studio: false,
-          analytics: false,
-          vector: false,
-          pooler: false,
-        },
-        {
-          stackRoot: paths.root,
-          runtimeRoot: paths.runtime,
-          portAllocator: () => Effect.succeed({ apiPort: 55001, dbPort: 55002 }),
-        },
+      const resolved = await Effect.runPromise(
+        resolveConfig(
+          {
+            projectDir: roots.root,
+            mode: "native",
+            auth: false,
+            postgrest: false,
+            realtime: false,
+            storage: false,
+            imgproxy: false,
+            pgmeta: false,
+            studio: false,
+            analytics: false,
+            vector: false,
+            pooler: false,
+          },
+          {
+            stackRoot: paths.root,
+            runtimeRoot: paths.runtime,
+            ports: { apiPort: 55001, dbPort: 55002 },
+          },
+        ).pipe(Effect.provide(NodeFileSystem.layer)),
       );
-      expect(managedStackDocumentPath(roots.stateRoot, stackId)).toBe(
+      expect(Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, stackId))).toBe(
         join(paths.root, "stack.json"),
       );
       expect(resolved.postgres.dataDir.startsWith(join(paths.root, "data"))).toBe(true);
@@ -531,21 +662,17 @@ describe("detached supervisor child journeys", () => {
 
   test("publishes stopping before a slow owner shutdown can finish", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
       void fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      let stopping = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          stopping = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(stopping).toBe(true);
+      await waitForFile(stopBegan, "owner stop-began marker");
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);
@@ -554,7 +681,12 @@ describe("detached supervisor child journeys", () => {
 
   test("Bun routes a ready-owner stop through the daemon shutdown transaction", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop", platform: "bun" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      platform: "bun",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       let responseSettled = false;
@@ -567,13 +699,7 @@ describe("detached supervisor child journeys", () => {
           responseSettled = true;
           return undefined;
         });
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan, "Bun owner stop-began marker");
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
       expect(responseSettled).toBe(false);
       await kill(child.child);
@@ -587,22 +713,20 @@ describe("detached supervisor child journeys", () => {
   test("starts after an owner finishes stopping", async () => {
     const roots = await workspace();
     const releaseFile = join(roots.root, "release-stop");
+    const stopBegan = join(roots.root, "stop-began");
     const input = messageFor(roots);
     const owner = spawnChild(input, {
       testMode: "hold-stop",
-      environment: { SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile },
+      environment: {
+        SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile,
+        SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan,
+      },
     });
     let contender: ChildHandle | undefined;
     try {
       const started = await owner.started;
       const stop = fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan, "owner stop-began marker");
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
 
       contender = spawnChild(input);
@@ -633,10 +757,7 @@ describe("detached supervisor child journeys", () => {
     });
     void child.started.catch(() => undefined);
     try {
-      const deadline = Date.now() + 2_000;
-      while (!existsSync(ensureReady) && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(ensureReady, "workspace ensure-ready marker");
       expect(existsSync(ensureReady)).toBe(true);
       const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
       const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
@@ -677,20 +798,21 @@ describe("detached supervisor child journeys", () => {
 
   test("stops a blocked starting owner through its control endpoint", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-start" });
+    const managedStarted = join(roots.root, "managed-started");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_FILE: managedStarted },
+    });
     void child.started.catch(() => undefined);
     try {
-      const document = await waitForStackDocument(roots, "starting");
+      await waitForFile(managedStarted, "managed-started marker");
+      const document = readStackDocument(roots);
+      if (document === undefined) throw new Error("missing managed stack document after start");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
       const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
       expect(response.status).toBe(202);
-      await Promise.race([
-        waitForExit(child.child),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("owner did not stop")), 2_000),
-        ),
-      ]);
+      await waitForExitWithDiagnostic(child.child, "blocked owner");
       const stopped = await waitForStackDocument(roots, "stopped");
       expect(stopped.lifecycle).toBe("stopped");
     } finally {
@@ -702,13 +824,19 @@ describe("detached supervisor child journeys", () => {
   test("does not restart a stopped owner after attached takeover", async () => {
     const roots = await workspace();
     const input = messageFor(roots);
-    const owner = spawnChild(input, { testMode: "hold-start" });
+    const managedStarted = join(roots.root, "managed-started");
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_FILE: managedStarted },
+    });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
     const observedStates: Array<"starting" | "stopping"> = [];
     try {
-      const document = await waitForStackDocument(roots, "starting");
+      await waitForFile(managedStarted, "managed-started marker");
+      const document = readStackDocument(roots);
+      if (document === undefined) throw new Error("missing managed stack document after start");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
       const stopResponse = await fetch(`${endpoint.url}/stop`, { method: "POST" });
@@ -766,33 +894,35 @@ describe("detached supervisor child journeys", () => {
   test("reacquires and restarts after an attached owner dies during readiness", async () => {
     const roots = await workspace();
     const input = messageFor(roots);
-    const owner = spawnChild(input, { testMode: "hold-start" });
+    const managedStarted = join(roots.root, "managed-started");
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_FILE: managedStarted },
+    });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     try {
-      const document = await waitForStackDocument(roots, "starting");
+      await waitForFile(managedStarted, "managed-started marker");
+      const document = readStackDocument(roots);
+      if (document === undefined) throw new Error("missing managed stack document after start");
       const restartedEndpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(restartedEndpoint)).toMatchObject({
         state: "starting",
         ready: false,
       });
 
-      contender = spawnChild(input, { testMode: "hold-start" });
+      const controlOwned = join(roots.root, "control-owned");
+      contender = spawnChild(input, {
+        testMode: "hold-start",
+        environment: { SUPABASE_STACK_TEST_CONTROL_OWNED_FILE: controlOwned },
+      });
       void contender.started.catch(() => undefined);
       await contender.attachedBeforeReady;
 
       await kill(owner.child);
       await expect(owner.started).rejects.toThrow();
-      const deadline = Date.now() + 3_000;
-      let restarted = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(restartedEndpoint).catch(() => undefined))?.state === "starting") {
-          restarted = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      expect(restarted).toBe(true);
+      await waitForFile(controlOwned, "reacquired control ownership marker");
+      expect(await fetchOwner(restartedEndpoint)).toMatchObject({ state: "starting" });
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
@@ -840,12 +970,18 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const input = messageFor(roots);
     const environment = { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" };
-    const owner = spawnChild(input, { testMode: "hold-start", environment });
+    const managedStarted = join(roots.root, "managed-started");
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { ...environment, SUPABASE_STACK_TEST_MANAGED_STARTED_FILE: managedStarted },
+    });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
     let fakeOwner: ReturnType<typeof createHttpServer> | undefined;
     try {
-      const document = await waitForStackDocument(roots, "starting");
+      await waitForFile(managedStarted, "managed-started marker");
+      const document = readStackDocument(roots);
+      if (document === undefined) throw new Error("missing managed stack document after start");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       contender = spawnChild(input, { testMode: "hold-start", environment });
       void contender.started.catch(() => undefined);
@@ -867,10 +1003,16 @@ describe("detached supervisor child journeys", () => {
   test("reallocates after a child is killed during startup", async () => {
     const roots = await workspace();
     const input = messageFor(roots);
-    const killed = spawnChild(input, { testMode: "hold-start" });
+    const managedStarted = join(roots.root, "managed-started");
+    const killed = spawnChild(input, {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_FILE: managedStarted },
+    });
     void killed.started.catch(() => undefined);
     try {
-      const document = await waitForStackDocument(roots, "starting");
+      await waitForFile(managedStarted, "managed-started marker");
+      const document = readStackDocument(roots);
+      if (document === undefined) throw new Error("missing managed stack document after start");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(endpoint).catch(() => undefined)).toMatchObject({
         state: "starting",

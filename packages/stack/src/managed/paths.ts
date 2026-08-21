@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { assertManagedUuid } from "./ids.ts";
-import { UnsafeManagedStackPathError, type ManagedStackPaths } from "./model.ts";
+import { Effect } from "effect";
+import { validateManagedUuid } from "./ids.ts";
+import {
+  InvalidManagedIdentityError,
+  UnsafeManagedStackPathError,
+  type ManagedStackPaths,
+} from "./model.ts";
 
 export interface ManagedStateRootOptions {
   readonly stateRoot?: string;
@@ -15,15 +20,19 @@ const nonEmpty = (value: string | undefined): string | undefined => {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 };
 
-const requireManagedStateRoot = (stateRoot: string): string => {
+const requireManagedStateRoot = (
+  stateRoot: string,
+): Effect.Effect<string, UnsafeManagedStackPathError> => {
   const trimmed = nonEmpty(stateRoot);
   if (trimmed === undefined) {
-    throw new UnsafeManagedStackPathError({
-      path: stateRoot,
-      reason: "Refusing a blank managed state root",
-    });
+    return Effect.fail(
+      new UnsafeManagedStackPathError({
+        path: stateRoot,
+        reason: "Refusing a blank managed state root",
+      }),
+    );
   }
-  return resolve(trimmed);
+  return Effect.succeed(resolve(trimmed));
 };
 
 /**
@@ -31,7 +40,7 @@ const requireManagedStateRoot = (stateRoot: string): string => {
  * directory once, here. A relative root would otherwise be reinterpreted
  * against whatever the process' cwd happens to be at each later use, so a
  * chdir would split persisted stack state across directories and make
- * {@link assertManagedStackRoot} accept a same-shaped path under the new cwd.
+ * {@link assertManagedStackRootEffect} accept a same-shaped path under the new cwd.
  * `homedir()` is absolute by definition and needs no anchoring.
  *
  * An explicit root is a decision, so a blank one is a caller bug and fails
@@ -41,7 +50,9 @@ const requireManagedStateRoot = (stateRoot: string): string => {
  * legitimately be present but empty, so a blank one is treated as unset and
  * falls through to the next source.
  */
-export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): string => {
+export const resolveManagedStateRootEffect = (
+  options: ManagedStateRootOptions = {},
+): Effect.Effect<string, UnsafeManagedStackPathError> => {
   if (options.stateRoot !== undefined) {
     return requireManagedStateRoot(options.stateRoot);
   }
@@ -49,28 +60,32 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
   const env = options.env ?? process.env;
   const configuredHome = nonEmpty(env["SUPABASE_HOME"]);
   if (configuredHome !== undefined) {
-    return join(resolve(configuredHome), "managed");
+    return Effect.succeed(join(resolve(configuredHome), "managed"));
   }
 
   const platform = options.platform ?? process.platform;
   const userHome = options.homeDir ?? homedir();
   if (platform === "darwin") {
-    return join(userHome, "Library", "Application Support", "supabase", "managed");
+    return Effect.succeed(join(userHome, "Library", "Application Support", "supabase", "managed"));
   }
   if (platform === "win32") {
     const localAppData = nonEmpty(env["LOCALAPPDATA"]);
-    return join(
-      localAppData === undefined ? join(userHome, "AppData", "Local") : resolve(localAppData),
-      "Supabase",
-      "managed",
+    return Effect.succeed(
+      join(
+        localAppData === undefined ? join(userHome, "AppData", "Local") : resolve(localAppData),
+        "Supabase",
+        "managed",
+      ),
     );
   }
 
   const stateHome = nonEmpty(env["XDG_STATE_HOME"]);
-  return join(
-    stateHome === undefined ? join(userHome, ".local", "state") : resolve(stateHome),
-    "supabase",
-    "managed",
+  return Effect.succeed(
+    join(
+      stateHome === undefined ? join(userHome, ".local", "state") : resolve(stateHome),
+      "supabase",
+      "managed",
+    ),
   );
 };
 
@@ -79,58 +94,73 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
  *
  * `stateRoot` is required wherever a service is built, but a caller bypassing
  * the type system (or a plain-JS caller) could still pass `undefined`, which
- * would make {@link resolveManagedStateRoot} silently fall back to
+ * would make {@link resolveManagedStateRootEffect} silently fall back to
  * `SUPABASE_HOME` or the user's home directory instead of failing loudly. A root
  * is a decision the caller owes the service, so a missing one is refused here
  * rather than guessed.
  */
-export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): string => {
+export const requireExplicitManagedStateRootEffect = (
+  stateRoot: string | undefined,
+): Effect.Effect<string, UnsafeManagedStackPathError> => {
   if (stateRoot === undefined) {
-    throw new UnsafeManagedStackPathError({
-      path: String(stateRoot),
-      reason: "Refusing to start a managed stack service without an explicit state root",
-    });
+    return Effect.fail(
+      new UnsafeManagedStackPathError({
+        path: String(stateRoot),
+        reason: "Refusing to start a managed stack service without an explicit state root",
+      }),
+    );
   }
-  return resolveManagedStateRoot({ stateRoot });
+  return resolveManagedStateRootEffect({ stateRoot });
 };
 
 export const managedStacksRoot = (stateRoot: string): string => join(stateRoot, "stacks");
 
 const SHA256_STACK_ID_PATTERN = /^[0-9a-f]{64}$/i;
 
-const assertManagedStackId = (stackId: string): string => {
+const validateManagedStackId = (
+  stackId: string,
+): Effect.Effect<string, InvalidManagedIdentityError> => {
   if (SHA256_STACK_ID_PATTERN.test(stackId)) {
-    return stackId;
+    return Effect.succeed(stackId);
   }
-  return assertManagedUuid(stackId, "stackId");
+  return validateManagedUuid(stackId, "stackId");
 };
 
-export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
-  assertManagedStackId(stackId);
-  const root = join(managedStacksRoot(stateRoot), stackId);
-  return {
-    root,
-    data: join(root, "data"),
-    logs: join(root, "logs"),
-    runtime: join(root, "runtime"),
-  };
-};
+export const managedStackPathsEffect = (
+  stateRoot: string,
+  stackId: string,
+): Effect.Effect<ManagedStackPaths, InvalidManagedIdentityError> =>
+  validateManagedStackId(stackId).pipe(
+    Effect.map((id) => {
+      const root = join(managedStacksRoot(stateRoot), id);
+      return {
+        root,
+        data: join(root, "data"),
+        logs: join(root, "logs"),
+        runtime: join(root, "runtime"),
+      };
+    }),
+  );
 
-export const managedStackDocumentPath = (stateRoot: string, stackId: string): string =>
-  join(managedStackPaths(stateRoot, stackId).root, "stack.json");
+export const managedStackDocumentPathEffect = (
+  stateRoot: string,
+  stackId: string,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Effect.map(managedStackPathsEffect(stateRoot, stackId), ({ root }) => join(root, "stack.json"));
 
-export const assertManagedStackRoot = (
+export const assertManagedStackRootEffect = (
   stateRoot: string,
   stackId: string,
   stackRoot: string,
-): string => {
-  const expected = resolve(managedStackPaths(stateRoot, stackId).root);
-  const actual = resolve(stackRoot);
-  if (actual !== expected) {
-    throw new UnsafeManagedStackPathError({ path: stackRoot });
-  }
-  return actual;
-};
+): Effect.Effect<string, InvalidManagedIdentityError | UnsafeManagedStackPathError> =>
+  Effect.gen(function* () {
+    const expected = resolve((yield* managedStackPathsEffect(stateRoot, stackId)).root);
+    const actual = resolve(stackRoot);
+    if (actual !== expected) {
+      return yield* Effect.fail(new UnsafeManagedStackPathError({ path: stackRoot }));
+    }
+    return actual;
+  });
 
 export const ordinaryWorkspaceIdentityPath = (workspacePath: string): string =>
   join(workspacePath, ".supabase", "identity.json");

@@ -35,8 +35,8 @@ sequenceDiagram
 
     CLI->>Parent: daemonLayer(config, port intents, launch)
     Parent->>Child: fork + start message (resolved stack id)
-    Child->>Manager: ensure workspace + verify stack id
     Child->>Control: acquire ownership + bind deterministic endpoint
+    Child->>Manager: ensure workspace + verify stack id
     Child->>Manager: resolve document, allocate/reuse ports
     Child->>Manager: write starting
     Child->>Runtime: build Stack, ApiProxy, and DaemonServer
@@ -74,10 +74,19 @@ transport services to the shared implementation.
 
 ## Direct runtime
 
-`createStack` resolves configuration, reserves a private port lease, and
-prepares/builds a scoped runtime and handle. It does **not** start service
-processes. Asset preparation and process-compose graph construction happen
-when the handle is first started or a service is activated.
+The internal `createStack` Effect validates allocation-free port intents, acquires
+one authoritative lease for every active field, then resolves configuration once
+with those selected ports and builds a scoped runtime and handle. Temporary roots
+created during resolution are tracked and removed on failure. Node and Bun adapt
+that handle to the Promise/`AsyncIterable` facade at the package edge; there is no
+Promise resolver that can expose a placeholder port set. The lease owns each
+socket until its exact runtime consumer takes over the port, and retains every
+remaining reservation until disposal. Automatic API-port handoff may retry with
+an OS-selected port only before the first successful start, while explicit ports
+remain sticky.
+The direct runtime does **not** start service processes. Asset preparation and
+process-compose graph construction happen when the handle is first started or
+a service is activated.
 
 `stack.start()` starts services according to the configured startup mode and
 waits for the selected readiness policy. The handle also exposes status, logs,
@@ -85,6 +94,21 @@ per-service operations, and graceful `stop()`/`dispose()` methods. Its scope
 owns service processes and releases the lease when disposed. A direct stack
 never reads or writes managed documents and never coordinates with a sibling
 stack.
+
+### Concurrency and cleanup
+
+`DaemonServer` creates one lazily-started, uninterruptible shutdown fiber in
+the layer scope. Every stop or terminal-readiness caller joins that fiber, so
+concurrent requests share one transaction and interrupting one caller cannot
+cancel the owner. The short response-flush signal is also a scoped fiber.
+
+`StackPreparation` resolves independent services with a concurrency cap of four.
+Each Docker candidate uses an Effect `Schedule` for its single 500 ms retry;
+registry fallback and failure details remain deterministic. Auto-managed roots
+and the Postgres Docker config are removed through the Effect `FileSystem` with
+a bounded retry schedule, while cleanup remains uninterruptible and scoped to
+the exact paths owned by that stack. Stale binary staging directories use the
+same small concurrency cap during reconciliation.
 
 ## Managed lifecycle
 
@@ -113,8 +137,9 @@ runtime requests; it never edits the document directly.
 2. The child binds the loopback control endpoint first, re-checks workspace
    discovery, and refuses to continue if the identity no longer derives the
    same id.
-3. The manager resolves the existing document, cleans stale Docker resources
-   when required, allocates or reuses ports, and records `starting`.
+3. The child supervisor removes stale named container resources when required;
+   the manager resolves the existing document, allocates or reuses ports, and
+   records `starting`.
 4. The child builds the direct runtime and `DaemonServer`, records `running`
    with its control endpoint, and sends the endpoint to the parent.
 5. The parent returns a `RemoteStack` layer. The CLI then calls
@@ -133,12 +158,13 @@ endpoint; mutating operations acquire control ownership.
 - `stopManagedStack` asks an attached owner to perform a graceful
   `RemoteStack.stop()`, waits for the document to become `stopped`, and lets
   the owner close the runtime before releasing control. If the old owner is
-  gone, the facade acquires control, removes Docker containers named for the
+  gone, the facade acquires control, removes containers named for the
   stack id, records `stopped`, and does not inspect PIDs or scan processes.
-- `deleteManagedStack` requires owned control and removes only a stopped
-  document and its managed data root. The explicit destructive path can also
-  remove an invalid document after ownership is acquired; ordinary status and
-  start operations report corruption instead of guessing.
+- `deleteManagedStack` requires owned control, reconciles any owned running or
+  failed runtime resources, and then removes the document and its managed data
+  root. The explicit destructive path can also remove an invalid document
+  after ownership is acquired; ordinary status and start operations report
+  corruption instead of guessing.
 
 ### Failure and recovery
 
@@ -147,10 +173,10 @@ transitions. A startup error records `failed` and releases the port lease. A
 graceful stop closes the direct runtime before recording `stopped`.
 
 If a supervisor crashes, its document and possible runtime artifacts remain.
-The next managed start acquires control, reconciles Docker resources by stack
-id, and reuses sticky ports according to their persisted `exact` or `automatic`
-intent. No PID file, process scan, second metadata file, or registry surgery is
-needed for recovery.
+The next managed start acquires control, reconciles named container resources by
+stack id, and reuses sticky ports according to their persisted `exact` or
+`automatic` intent. No PID file, process scan, second metadata file, or registry
+surgery is needed for recovery.
 
 ## Identity and state
 

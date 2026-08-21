@@ -1,4 +1,5 @@
 import { type ChildProcess } from "node:child_process";
+import { Effect } from "effect";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,7 +127,7 @@ describe("spawnStandaloneStack", () => {
     const registered: ChildProcess[] = [];
     await spawnStandaloneStack({ command, onSpawn: (c) => registered.push(c) }).catch(() => {});
     expect(registered[0]?.exitCode).toBe(0);
-    await terminateChildProcess(registered[0]!, { timeoutMs: 30_000 });
+    await Effect.runPromise(terminateChildProcess(registered[0]!, { timeoutMs: 30_000 }));
     expect(registered[0]?.exitCode).toBe(0);
   });
 });

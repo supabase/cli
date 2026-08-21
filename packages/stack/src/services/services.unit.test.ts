@@ -7,6 +7,7 @@ import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
+import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 import { makePgmetaServiceDocker } from "./pgmeta.ts";
 import {
   makePostgresInitService,
@@ -407,7 +408,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
       expect(def.args).toContain(`--policy=per_worker`);
       expect(def.args).toContain(`${bootstrapDir}:/workspace:ro`);
       expect(def.args).toContain("--ulimit");
-      expect(def.args).toContain("nofile=65536:65536");
+      expect(def.args).toContain(edgeRuntimeNofileUlimit("linux").arg);
       expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
       expect(def.healthCheck?.probe).toEqual({
         _tag: "Http",

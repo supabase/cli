@@ -1,4 +1,5 @@
 import { type ChildProcess } from "node:child_process";
+import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { terminateChildProcess } from "../src/terminateChild.ts";
 import { type SpawnedStackInfo, spawnStandaloneStack } from "./helpers/spawn-stack.ts";
@@ -24,7 +25,9 @@ describe("parallel stacks (multi-process)", () => {
 
   afterAll(async () => {
     await Promise.allSettled(
-      children.map((child) => terminateChildProcess(child, { timeoutMs: 30_000 })),
+      children.map((child) =>
+        Effect.runPromise(terminateChildProcess(child, { timeoutMs: 30_000 })),
+      ),
     );
     expect(children.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(
       true,

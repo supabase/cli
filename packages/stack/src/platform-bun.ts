@@ -79,13 +79,13 @@ const controlTransport: ControlTransport["Service"] = {
     ),
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
-          signal: AbortSignal.timeout(500),
-        });
-        if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
-        return await response.json();
-      },
+      try: (effectSignal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
+          signal: AbortSignal.any([effectSignal, AbortSignal.timeout(500)]),
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
+          return response.json();
+        }),
       catch: (cause) => {
         if (
           cause instanceof SyntaxError ||
@@ -103,13 +103,13 @@ const controlTransport: ControlTransport["Service"] = {
     }),
   requestStop: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
+      try: (effectSignal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
-          signal: AbortSignal.timeout(500),
-        });
-        if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
-      },
+          signal: AbortSignal.any([effectSignal, AbortSignal.timeout(500)]),
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
+        }),
       catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
     }),
 };

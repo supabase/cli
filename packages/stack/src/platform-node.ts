@@ -22,6 +22,36 @@ const errorCode = (cause: unknown): string | undefined => {
   return undefined;
 };
 
+const readError = (
+  endpoint: ControlEndpoint,
+  cause: unknown,
+): ControlTransportError | ControlProtocolError => {
+  const code = errorCode(cause);
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ECONNRESET" ||
+    code === "EHOSTUNREACH" ||
+    (cause instanceof Error && cause.message === "Control status request timed out")
+  ) {
+    return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+  }
+  if (
+    cause instanceof SyntaxError ||
+    (cause instanceof Error && cause.message.startsWith("Control status response exceeded")) ||
+    (cause instanceof Error &&
+      cause.message.startsWith("Control status request returned") &&
+      !cause.message.endsWith(" 404"))
+  ) {
+    return new ControlProtocolError({ endpoint, cause });
+  }
+  if (cause instanceof Error && cause.message.endsWith(" 404")) {
+    return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+  }
+  return new ControlTransportError({ endpoint, reason: "transport", cause });
+};
+
+const MAX_CONTROL_RESPONSE_BYTES = 1_048_576;
+
 const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
     if (!server.listening) {
@@ -68,101 +98,196 @@ const controlTransport: ControlTransport["Service"] = {
     );
   },
   read: (endpoint: ControlEndpoint) =>
-    Effect.tryPromise({
-      try: async () => {
-        const requestStatus = (host: string) =>
-          new Promise<unknown>((resolve, reject) => {
-            const request = Http.request(
-              {
-                host,
-                port: endpoint.port,
-                path: CONTROL_STATUS_PATH,
-                method: "GET",
-              },
-              (response) => {
-                let body = "";
-                response.setEncoding("utf8");
-                response.on("data", (chunk: string) => {
-                  body += chunk;
-                });
-                response.on("end", () => {
-                  if ((response.statusCode ?? 500) < 200 || (response.statusCode ?? 500) >= 300) {
-                    reject(
-                      new Error(`Control status request returned ${response.statusCode ?? 500}`),
-                    );
-                    return;
-                  }
-                  try {
-                    resolve(JSON.parse(body));
-                  } catch (cause) {
-                    reject(cause);
-                  }
-                });
-              },
-            );
-            request.setTimeout(500, () =>
-              request.destroy(new Error("Control status request timed out")),
-            );
-            request.once("error", reject);
-            request.end();
-          });
-        return await requestStatus("127.0.0.1");
-      },
-      catch: (cause) => {
-        const code = errorCode(cause);
-        if (
-          code === "ECONNREFUSED" ||
-          code === "ECONNRESET" ||
-          code === "EHOSTUNREACH" ||
-          (cause instanceof Error && cause.message === "Control status request timed out")
-        ) {
-          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+    Effect.callback<unknown, unknown>((resume) => {
+      let response: Http.IncomingMessage | undefined;
+      let onData: ((chunk: string) => void) | undefined;
+      let onEnd: (() => void) | undefined;
+      let onResponseError: ((cause: Error) => void) | undefined;
+      let onResponseAborted: (() => void) | undefined;
+      let onResponseClose: (() => void) | undefined;
+      let settled = false;
+      let cleanup = () => {};
+      let dispose = () => {};
+      const finish = (effect: Effect.Effect<unknown, unknown>, shouldDispose = false) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (shouldDispose) dispose();
+        resume(effect);
+      };
+      const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
+      const request = Http.request(
+        {
+          host: "127.0.0.1",
+          port: endpoint.port,
+          path: CONTROL_STATUS_PATH,
+          method: "GET",
+          agent: false,
+        },
+        (incoming) => {
+          response = incoming;
+          let body = "";
+          let bodyBytes = 0;
+          let ended = false;
+          let responseAborted = false;
+          onData = (chunk) => {
+            bodyBytes += Buffer.byteLength(chunk, "utf8");
+            if (bodyBytes > MAX_CONTROL_RESPONSE_BYTES) {
+              finish(
+                Effect.fail(
+                  new Error(`Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`),
+                ),
+                true,
+              );
+              return;
+            }
+            body += chunk;
+          };
+          onEnd = () => {
+            ended = true;
+            if ((incoming.statusCode ?? 500) < 200 || (incoming.statusCode ?? 500) >= 300) {
+              finish(
+                Effect.fail(
+                  new Error(`Control status request returned ${incoming.statusCode ?? 500}`),
+                ),
+              );
+              return;
+            }
+            try {
+              finish(Effect.succeed(JSON.parse(body)));
+            } catch (cause) {
+              finish(Effect.fail(cause), true);
+            }
+          };
+          onResponseError = (cause) => finish(Effect.fail(cause), true);
+          onResponseAborted = () => {
+            responseAborted = true;
+          };
+          onResponseClose = () => {
+            if (responseAborted || !ended) {
+              finish(Effect.fail(new Error("Control status response closed before end")), true);
+            }
+          };
+          incoming.setEncoding("utf8");
+          incoming.on("data", onData);
+          incoming.once("end", onEnd);
+          incoming.once("error", onResponseError);
+          incoming.once("aborted", onResponseAborted);
+          incoming.once("close", onResponseClose);
+        },
+      );
+      dispose = () => {
+        response?.destroy();
+        request.destroy();
+      };
+      cleanup = () => {
+        request.removeListener("error", onRequestError);
+        request.setTimeout(0);
+        if (response !== undefined) {
+          if (onData !== undefined) response.removeListener("data", onData);
+          if (onEnd !== undefined) response.removeListener("end", onEnd);
+          if (onResponseError !== undefined) response.removeListener("error", onResponseError);
+          if (onResponseAborted !== undefined)
+            response.removeListener("aborted", onResponseAborted);
+          if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
         }
-        if (
-          cause instanceof SyntaxError ||
-          (cause instanceof Error &&
-            cause.message.startsWith("Control status request returned") &&
-            !cause.message.endsWith(" 404"))
-        ) {
-          return new ControlProtocolError({ endpoint, cause });
-        }
-        if (cause instanceof Error && cause.message.endsWith(" 404")) {
-          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
-        }
-        return new ControlTransportError({ endpoint, reason: "transport", cause });
-      },
-    }),
+      };
+      request.setTimeout(500, () => request.destroy(new Error("Control status request timed out")));
+      request.once("error", onRequestError);
+      request.end();
+      return Effect.sync(() => {
+        settled = true;
+        cleanup();
+        dispose();
+      });
+    }).pipe(Effect.mapError((cause) => readError(endpoint, cause))),
   requestStop: (endpoint: ControlEndpoint) =>
-    Effect.tryPromise({
-      try: async () => {
-        await new Promise<void>((resolve, reject) => {
-          const request = Http.request(
-            {
-              host: endpoint.hostname,
-              port: endpoint.port,
-              path: CONTROL_STOP_PATH,
-              method: "POST",
-            },
-            (response) => {
-              response.resume();
-              response.once("end", () => {
-                if ((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300) {
-                  resolve();
-                } else {
-                  reject(new Error(`Control stop request returned ${response.statusCode ?? 500}`));
-                }
-              });
-            },
-          );
-          request.setTimeout(500, () =>
-            request.destroy(new Error("Control stop request timed out")),
-          );
-          request.once("error", reject);
-          request.end();
-        });
-      },
-      catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
-    }),
+    Effect.callback<void, unknown>((resume) => {
+      let response: Http.IncomingMessage | undefined;
+      let onEnd: (() => void) | undefined;
+      let onResponseError: ((cause: Error) => void) | undefined;
+      let onResponseAborted: (() => void) | undefined;
+      let onResponseClose: (() => void) | undefined;
+      let settled = false;
+      let cleanup = () => {};
+      let dispose = () => {};
+      const finish = (effect: Effect.Effect<void, unknown>, shouldDispose = false) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (shouldDispose) dispose();
+        resume(effect);
+      };
+      const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
+      const request = Http.request(
+        {
+          host: endpoint.hostname,
+          port: endpoint.port,
+          path: CONTROL_STOP_PATH,
+          method: "POST",
+          agent: false,
+        },
+        (incoming) => {
+          response = incoming;
+          let ended = false;
+          let responseAborted = false;
+          onEnd = () => {
+            ended = true;
+            if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
+              finish(Effect.void);
+            } else {
+              finish(
+                Effect.fail(
+                  new Error(`Control stop request returned ${incoming.statusCode ?? 500}`),
+                ),
+                true,
+              );
+            }
+          };
+          onResponseError = (cause) => finish(Effect.fail(cause), true);
+          onResponseAborted = () => {
+            responseAborted = true;
+          };
+          onResponseClose = () => {
+            if (responseAborted || !ended) {
+              finish(Effect.fail(new Error("Control stop response closed before end")), true);
+            }
+          };
+          incoming.resume();
+          incoming.once("end", onEnd);
+          incoming.once("error", onResponseError);
+          incoming.once("aborted", onResponseAborted);
+          incoming.once("close", onResponseClose);
+        },
+      );
+      dispose = () => {
+        response?.destroy();
+        request.destroy();
+      };
+      cleanup = () => {
+        request.removeListener("error", onRequestError);
+        request.setTimeout(0);
+        if (response !== undefined) {
+          if (onEnd !== undefined) response.removeListener("end", onEnd);
+          if (onResponseError !== undefined) response.removeListener("error", onResponseError);
+          if (onResponseAborted !== undefined)
+            response.removeListener("aborted", onResponseAborted);
+          if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
+        }
+      };
+      request.setTimeout(500, () => request.destroy(new Error("Control stop request timed out")));
+      request.once("error", onRequestError);
+      request.end();
+      return Effect.sync(() => {
+        settled = true;
+        cleanup();
+        dispose();
+      });
+    }).pipe(
+      Effect.mapError(
+        (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+      ),
+    ),
 };
 
 export const controlTransportLayer = Layer.succeed(ControlTransport, controlTransport);

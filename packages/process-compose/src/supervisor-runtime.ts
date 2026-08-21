@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Deferred, Duration, Effect, Fiber, Option, Predicate, Schedule } from "effect";
 import type { ChildProcess } from "effect/unstable/process";
 import type { ExternalCleanupAction } from "./ServiceDef.ts";
 import {
@@ -106,8 +107,7 @@ const cleanupActionFrom = (value: unknown): ExternalCleanupAction | undefined =>
     return undefined;
   }
 
-  const tag = getField(value, "_tag");
-  if (tag === "RunCommand") {
+  if (Predicate.isTagged(value, "RunCommand")) {
     const executable = getField(value, "executable");
     const args = stringArrayFrom(getField(value, "args"));
     const timeoutMs = getField(value, "timeoutMs");
@@ -121,14 +121,14 @@ const cleanupActionFrom = (value: unknown): ExternalCleanupAction | undefined =>
       return undefined;
     }
     return {
-      _tag: tag,
+      _tag: "RunCommand",
       executable,
       args,
       timeoutMs: typeof timeoutMs === "number" ? timeoutMs : undefined,
     };
   }
 
-  if (tag === "RemovePath") {
+  if (Predicate.isTagged(value, "RemovePath")) {
     const path = getField(value, "path");
     const recursive = getField(value, "recursive");
     const force = getField(value, "force");
@@ -137,7 +137,7 @@ const cleanupActionFrom = (value: unknown): ExternalCleanupAction | undefined =>
       (recursive === undefined || typeof recursive === "boolean") &&
       (force === undefined || typeof force === "boolean")
       ? {
-          _tag: tag,
+          _tag: "RemovePath",
           path,
           recursive: typeof recursive === "boolean" ? recursive : undefined,
           force: typeof force === "boolean" ? force : undefined,
@@ -186,224 +186,211 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
   };
 };
 
-export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
-  if (encodedConfig == null) {
-    throw new Error("Missing supervisor config");
-  }
-
-  const config = parseSupervisorRuntimeConfig(encodedConfig);
-  const childEnv = withoutSupervisorRuntimeEnv();
-
-  const isWindows = process.platform === "win32";
-  const child = spawn(config.command, config.args ?? [], {
-    cwd: process.cwd(),
-    env: childEnv,
-    stdio: ["ignore", "pipe", "pipe"],
-    detached: !isWindows,
-  });
-
-  if (child.stdout != null) {
-    child.stdout.pipe(process.stdout);
-  }
-
-  if (child.stderr != null) {
-    child.stderr.pipe(process.stderr);
-  }
-
-  const childExited = new Promise<ChildExit>((resolve) => {
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
-
-  let shuttingDown = false;
-  let ownerWatcher: ReturnType<typeof setInterval> | undefined;
-
-  const waitForChildExit = async (timeoutMs: number): Promise<boolean> => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
+const killProcessTree = (pid: number, signal: ChildProcess.Signal): void => {
+  if (isWindows) {
     try {
-      return await Promise.race([
-        childExited.then(() => true),
-        new Promise<boolean>((resolve) => {
-          timeoutId = setTimeout(() => resolve(false), timeoutMs);
-        }),
-      ]);
-    } finally {
-      if (timeoutId != null) {
-        clearTimeout(timeoutId);
-      }
-    }
-  };
-
-  const killProcessTree = (pid: number, signal: ChildProcess.Signal): void => {
-    if (isWindows) {
-      try {
-        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
-          stdio: "ignore",
-          timeout: 5_000,
-        });
-      } catch {}
-
-      return;
-    }
-
-    try {
-      process.kill(-pid, signal);
-      return;
-    } catch {}
-
-    try {
-      process.kill(pid, signal);
-    } catch {}
-  };
-
-  const killChildTree = (signal: ChildProcess.Signal): void => {
-    if (child.pid != null) {
-      killProcessTree(child.pid, signal);
-    }
-  };
-
-  const runCleanupCommand = (action: RunCommandAction): Promise<void> =>
-    new Promise((resolve) => {
-      const cleanupChild = spawn(action.executable, action.args, {
-        detached: !isWindows,
-        env: childEnv,
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
         stdio: "ignore",
+        timeout: 5_000,
       });
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    } catch {}
 
-      const finish = () => {
-        if (timeoutId != null) {
-          clearTimeout(timeoutId);
+    return;
+  }
+
+  try {
+    process.kill(-pid, signal);
+    return;
+  } catch {}
+
+  try {
+    process.kill(pid, signal);
+  } catch {}
+};
+
+const isWindows = process.platform === "win32";
+
+const waitForExit = (
+  childExit: Deferred.Deferred<ChildExit>,
+  timeoutMs: number,
+): Effect.Effect<boolean> =>
+  Deferred.await(childExit).pipe(
+    Effect.timeoutOption(Duration.millis(timeoutMs)),
+    Effect.map(Option.isSome),
+  );
+
+const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Effect<void> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const childEnv = withoutSupervisorRuntimeEnv();
+      const child = yield* Effect.sync(() =>
+        spawn(config.command, config.args ?? [], {
+          cwd: process.cwd(),
+          env: childEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          detached: !isWindows,
+        }),
+      );
+      if (child.stdout != null) child.stdout.pipe(process.stdout);
+      if (child.stderr != null) child.stderr.pipe(process.stderr);
+
+      const childExit = yield* Deferred.make<ChildExit>();
+      const shutdownRequest = yield* Deferred.make<ChildProcess.Signal>();
+      const onChildExit = (code: number | null, signal: NodeJS.Signals | null) => {
+        Effect.runSync(Deferred.succeed(childExit, { code, signal }));
+      };
+      child.once("exit", onChildExit);
+
+      const ownerPid = typeof config.ownerPid === "number" ? config.ownerPid : undefined;
+      const ownerAlive = () => {
+        if (ownerPid == null) return true;
+        try {
+          process.kill(ownerPid, 0);
+          return true;
+        } catch {
+          return false;
         }
-        resolve();
+      };
+      const requestShutdown = (signal: ChildProcess.Signal) => {
+        Effect.runSync(Deferred.succeed(shutdownRequest, signal));
       };
 
-      cleanupChild.once("error", finish);
-      cleanupChild.once("exit", finish);
-      timeoutId = setTimeout(() => {
-        if (cleanupChild.pid != null) {
-          killProcessTree(cleanupChild.pid, "SIGKILL");
-        }
-        finish();
-      }, action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS);
-    });
+      process.stdin.resume();
+      const onStdinEnd = () => requestShutdown(config.shutdownSignal ?? "SIGTERM");
+      const onStdinClose = () => requestShutdown(config.shutdownSignal ?? "SIGTERM");
+      const onSigInt = () => requestShutdown("SIGINT");
+      const onSigTerm = () => requestShutdown("SIGTERM");
+      process.stdin.on("end", onStdinEnd);
+      process.stdin.on("close", onStdinClose);
+      process.on("SIGINT", onSigInt);
+      process.on("SIGTERM", onSigTerm);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          child.removeListener("exit", onChildExit);
+          process.stdin.removeListener("end", onStdinEnd);
+          process.stdin.removeListener("close", onStdinClose);
+          process.removeListener("SIGINT", onSigInt);
+          process.removeListener("SIGTERM", onSigTerm);
+          if (child.pid != null) killProcessTree(child.pid, "SIGKILL");
+        }),
+      );
 
-  const runCleanup = async (): Promise<void> => {
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-    const removePathWithRetry = async (action: RemovePathAction): Promise<void> => {
-      for (let attempt = 0; attempt < 20; attempt++) {
-        try {
-          rmSync(action.path, {
-            recursive: action.recursive ?? true,
-            force: action.force ?? true,
+      const ownerWatcher = yield* Effect.forkChild(
+        Effect.repeat(
+          Effect.gen(function* () {
+            if (!ownerAlive()) {
+              yield* Deferred.succeed(shutdownRequest, config.shutdownSignal ?? "SIGTERM");
+            }
+          }),
+          Schedule.spaced(Duration.millis(500)),
+        ),
+      );
+
+      const killChildTree = (signal: ChildProcess.Signal) =>
+        Effect.sync(() => {
+          if (child.pid != null) killProcessTree(child.pid, signal);
+        });
+
+      const runCleanupCommand = (action: RunCommandAction): Effect.Effect<void> =>
+        Effect.callback<void>((resume) => {
+          const cleanupChild = spawn(action.executable, action.args, {
+            detached: !isWindows,
+            env: childEnv,
+            stdio: "ignore",
           });
-          return;
-        } catch {}
+          const finish = () => resume(Effect.void);
+          cleanupChild.once("error", finish);
+          cleanupChild.once("exit", finish);
+          return Effect.sync(() => {
+            cleanupChild.removeListener("error", finish);
+            cleanupChild.removeListener("exit", finish);
+            if (cleanupChild.pid != null) killProcessTree(cleanupChild.pid, "SIGKILL");
+          });
+        }).pipe(
+          Effect.timeoutOption(
+            Duration.millis(action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS),
+          ),
+          Effect.asVoid,
+          Effect.catch(() => Effect.void),
+        );
 
-        await sleep(250);
-      }
-    };
+      const runCleanup = Effect.gen(function* () {
+        const removePathWithRetry = (action: RemovePathAction) =>
+          Effect.try({
+            try: () => {
+              rmSync(action.path, {
+                recursive: action.recursive ?? true,
+                force: action.force ?? true,
+              });
+            },
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.retry(Schedule.spaced(Duration.millis(250)).pipe(Schedule.upTo({ times: 19 }))),
+            Effect.catch(() => Effect.void),
+          );
+        yield* Effect.all(
+          [
+            Effect.forEach(
+              config.cleanup ?? [],
+              (action) =>
+                Predicate.isTagged(action, "RunCommand") ? runCleanupCommand(action) : Effect.void,
+              { concurrency: 1, discard: true },
+            ),
+            Effect.forEach(
+              config.cleanup ?? [],
+              (action) =>
+                Predicate.isTagged(action, "RemovePath")
+                  ? removePathWithRetry(action)
+                  : Effect.void,
+              { concurrency: "unbounded", discard: true },
+            ),
+          ],
+          { discard: true },
+        );
+      });
 
-    const runCommands = async () => {
-      for (const action of config.cleanup ?? []) {
-        if (action._tag !== "RunCommand") {
-          continue;
-        }
+      const shutdown = (signal: ChildProcess.Signal) =>
+        Effect.gen(function* () {
+          yield* killChildTree(signal);
+          const exitedGracefully = yield* waitForExit(
+            childExit,
+            config.shutdownTimeoutMs ?? 10_000,
+          );
+          if (!exitedGracefully) {
+            yield* killChildTree("SIGKILL");
+            yield* waitForExit(childExit, 2_000);
+          }
+          yield* runCleanup;
+          yield* Effect.sync(() => process.exit(0));
+        });
 
-        try {
-          await runCleanupCommand(action);
-        } catch {}
-      }
-    };
+      yield* Effect.race(
+        Deferred.await(shutdownRequest).pipe(Effect.flatMap(shutdown)),
+        Deferred.await(childExit).pipe(
+          Effect.flatMap(({ code, signal }) =>
+            Effect.gen(function* () {
+              yield* Fiber.interrupt(ownerWatcher);
+              if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
+                yield* runCleanup;
+                yield* Effect.sync(() => process.exit(0));
+              } else if (signal != null) {
+                yield* Effect.sync(() => process.exit(1));
+              } else {
+                yield* Effect.sync(() => process.exit(code ?? 0));
+              }
+            }),
+          ),
+        ),
+      );
 
-    // Commands serialize so their worst-case timeouts add together. Each runs in its own Unix
-    // process group (or uses taskkill on Windows), allowing a timeout to terminate its whole tree.
-    await Promise.all([
-      runCommands(),
-      ...(config.cleanup ?? []).map((action) =>
-        action._tag === "RemovePath" ? removePathWithRetry(action) : Promise.resolve(),
-      ),
-    ]);
-  };
+      yield* Fiber.interrupt(ownerWatcher);
+    }),
+  );
 
-  const shutdown = async (signal: ChildProcess.Signal): Promise<void> => {
-    if (shuttingDown) {
-      return;
-    }
-
-    shuttingDown = true;
-    if (ownerWatcher != null) {
-      clearInterval(ownerWatcher);
-    }
-    killChildTree(signal);
-
-    const exitedGracefully = await waitForChildExit(config.shutdownTimeoutMs ?? 10_000);
-    if (!exitedGracefully) {
-      killChildTree("SIGKILL");
-      await waitForChildExit(2_000);
-    }
-
-    await runCleanup();
-    process.exit(0);
-  };
-
-  process.stdin.resume();
-  process.stdin.on("end", () => {
-    void shutdown(config.shutdownSignal ?? "SIGTERM");
-  });
-  process.stdin.on("close", () => {
-    void shutdown(config.shutdownSignal ?? "SIGTERM");
-  });
-  process.on("SIGINT", () => {
-    void shutdown("SIGINT");
-  });
-  process.on("SIGTERM", () => {
-    void shutdown("SIGTERM");
-  });
-
-  const ownerPid = typeof config.ownerPid === "number" ? config.ownerPid : undefined;
-  const ownerAlive = () => {
-    if (ownerPid == null) {
-      return true;
-    }
-
-    try {
-      process.kill(ownerPid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  if (!ownerAlive()) {
-    void shutdown(config.shutdownSignal ?? "SIGTERM");
-  } else {
-    ownerWatcher = setInterval(() => {
-      if (!ownerAlive()) {
-        void shutdown(config.shutdownSignal ?? "SIGTERM");
-      }
-    }, 500);
-    ownerWatcher.unref?.();
-  }
-
-  void childExited.then(async ({ code, signal }) => {
-    if (shuttingDown) {
-      return;
-    }
-
-    if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
-      await runCleanup();
-      process.exit(0);
-      return;
-    }
-
-    if (signal != null) {
-      process.exit(1);
-      return;
-    }
-
-    process.exit(code ?? 0);
-  });
+export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
+  if (encodedConfig == null) throw new Error("Missing supervisor config");
+  const config = parseSupervisorRuntimeConfig(encodedConfig);
+  void Effect.runPromise(runSupervisorRuntimeEffect(config)).catch(() => process.exit(1));
 }
 
 if (isMain) {

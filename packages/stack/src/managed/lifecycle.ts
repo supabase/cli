@@ -15,7 +15,12 @@ import {
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdate,
 } from "./manager.ts";
-import { ControlTransportError, controlEndpoint, type ControlEndpoint } from "./control.ts";
+import {
+  ControlTransportError,
+  controlEndpoint,
+  isControlOwnership,
+  type ControlEndpoint,
+} from "./control.ts";
 import {
   ManagedStackNotStoppedError,
   type ManagedPortIntentDocument,
@@ -127,7 +132,7 @@ export const stopManagedStack = (
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
       const acquisition = yield* manager.acquireControl(stackId);
-      if (acquisition._tag === "Owned") {
+      if (isControlOwnership(acquisition)) {
         if (
           document.lifecycle === "running" ||
           document.lifecycle === "starting" ||
@@ -212,7 +217,7 @@ export const stopManagedStack = (
       if (ready === "dead") {
         const released = yield* manager.acquireControl(stackId).pipe(
           Effect.flatMap((candidate) =>
-            candidate._tag === "Owned"
+            isControlOwnership(candidate)
               ? Effect.succeed(candidate)
               : Effect.fail(new ManagedStopPending()),
           ),
@@ -242,7 +247,7 @@ export const stopManagedStack = (
       );
       const released = yield* manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate) =>
-          candidate._tag === "Owned"
+          isControlOwnership(candidate)
             ? Effect.succeed(candidate)
             : Effect.fail(new ManagedStopPending()),
         ),
@@ -264,7 +269,7 @@ export const deleteManagedStack = (
       Effect.gen(function* () {
         const acquisition = yield* manager.acquireControl(stackId).pipe(
           Effect.flatMap((candidate) =>
-            candidate._tag === "Owned"
+            isControlOwnership(candidate)
               ? Effect.succeed(candidate)
               : Effect.fail(new ManagedDeletePending()),
           ),
@@ -292,7 +297,7 @@ export const updateManagedLaunch = (
       const document = yield* resolveManagedDocument(input);
       const manager = yield* ManagedStackManager;
       const acquisition = yield* manager.acquireControl(document.id);
-      if (acquisition._tag !== "Owned") {
+      if (!isControlOwnership(acquisition)) {
         if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
           return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
         }

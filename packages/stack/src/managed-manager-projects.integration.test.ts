@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
@@ -93,7 +93,7 @@ describe("managed stack projects journeys", () => {
               ready: true,
             },
           });
-          if (owner._tag !== "Owned") throw new Error("status probe took control ownership");
+          if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");
           yield* Deferred.succeed(continueRead, void 0);
           const summary = yield* Fiber.join(summaryFiber);
           expect(summary.running).toBe(true);

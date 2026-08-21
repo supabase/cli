@@ -115,34 +115,29 @@ export class InvalidManagedStackDocumentError extends Data.TaggedError(
   }
 }
 
-const decodeDocument = Schema.decodeUnknownSync(ManagedStackDocumentSchema);
-const encodeDocument = Schema.encodeUnknownSync(managedStackDocumentSchema);
-
 export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      const document = decodeDocument(content);
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return document;
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
-  });
+  Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+    Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    Effect.flatMap((document) =>
+      hasCorePortAssignments(document)
+        ? Effect.succeed(document)
+        : Effect.fail(new InvalidManagedStackDocumentError({ path })),
+    ),
+  );
 
 export const encodeManagedStackDocument = (
   path: string,
   document: ManagedStackDocument,
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return JSON.stringify(encodeDocument(document), null, 2) + "\n";
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
+  Effect.gen(function* () {
+    if (!hasCorePortAssignments(document)) {
+      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path }));
+    }
+    const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
+      Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    );
+    return JSON.stringify(encoded, null, 2) + "\n";
   });

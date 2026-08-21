@@ -1,4 +1,15 @@
-import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect";
+import {
+  Cause,
+  Data,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Queue,
+  Schedule,
+  Context,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
@@ -36,6 +47,12 @@ export class ServiceDownloadFinished extends Data.TaggedClass("ServiceDownloadFi
 
 class PreparationCompleted extends Data.TaggedClass("PreparationCompleted")<{
   readonly artifacts: PreparedStackArtifacts;
+}> {}
+
+class RetryablePullFailure extends Data.TaggedError("RetryablePullFailure")<{
+  readonly image: string;
+  readonly attempt: number;
+  readonly message: string;
 }> {}
 
 type StackPreparationEvent =
@@ -132,9 +149,7 @@ export const prepareAssetsWithDependencies = (
       );
     };
 
-    const results = yield* Effect.all(services.map(resolveService), {
-      concurrency: "unbounded",
-    });
+    const results = yield* Effect.all(services.map(resolveService), { concurrency: 4 });
 
     const resolutions: Partial<Record<ServiceName, ServiceResolution>> = {};
     for (const [service, resolution] of results) {
@@ -203,50 +218,67 @@ const pullImage = (
 
     const failures: PullAttemptFailure[] = [];
     let spawnFailed = false;
+    const retrySchedule = Schedule.recurs(DOCKER_PULL_RETRY_DELAYS_MS.length).pipe(
+      Schedule.addDelay(() => Effect.succeed(Duration.millis(DOCKER_PULL_RETRY_DELAYS_MS[0] ?? 0))),
+    );
 
     for (const image of images) {
-      for (
-        let attemptIndex = 0;
-        attemptIndex <= DOCKER_PULL_RETRY_DELAYS_MS.length;
-        attemptIndex += 1
-      ) {
-        const attempt = attemptIndex + 1;
-        const result = yield* Effect.exit(runPullCommand(spawner, image));
-        if (Exit.isSuccess(result)) {
-          // A successful spawn proves the runtime is usable; an earlier
-          // transient spawn failure must not taint the final classification.
-          spawnFailed = false;
-          if (result.value.exitCode === 0) {
-            return image;
-          }
+      let attempt = 0;
+      type PullAttemptOutcome =
+        | { readonly ok: true; readonly image: string }
+        | { readonly ok: false; readonly image: string };
+      const attemptEffect: Effect.Effect<PullAttemptOutcome, RetryablePullFailure> = Effect.suspend(
+        () => {
+          attempt += 1;
+          return Effect.exit(runPullCommand(spawner, image)).pipe(
+            Effect.flatMap((result): Effect.Effect<PullAttemptOutcome, RetryablePullFailure> => {
+              if (Exit.isSuccess(result)) {
+                if (result.value.exitCode === 0) {
+                  // A successful spawn proves the runtime is usable; an earlier
+                  // transient spawn failure must not taint the final classification.
+                  spawnFailed = false;
+                  return Effect.succeed({ ok: true as const, image });
+                }
 
-          const message =
-            result.value.stderr.length > 0
-              ? result.value.stderr
-              : `docker pull exited with code ${result.value.exitCode}`;
-          failures.push({ image, attempt, message });
+                const message =
+                  result.value.stderr.length > 0
+                    ? result.value.stderr
+                    : `docker pull exited with code ${result.value.exitCode}`;
+                if (shouldRetryPull(message)) {
+                  return Effect.fail(new RetryablePullFailure({ image, attempt, message }));
+                }
+                failures.push({ image, attempt, message });
+                return Effect.succeed({ ok: false as const, image });
+              }
 
-          if (!shouldRetryPull(message) || attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
-            break;
-          }
-        } else {
-          // A failed effect (rather than a non-zero exit) means the container
-          // runtime could not be spawned at all — a local Docker setup
-          // problem, not a registry failure.
-          spawnFailed = true;
-          const cause = Cause.squash(result.cause);
-          const message = cause instanceof Error ? cause.message : String(cause);
-          failures.push({ image, attempt, message });
-          if (!shouldRetryPull(message) || attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length) {
-            break;
-          }
-        }
-
-        const retryDelay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
-        if (retryDelay === undefined) {
-          break;
-        }
-        yield* Effect.sleep(`${retryDelay} millis`);
+              // A failed effect (rather than a non-zero exit) means the container
+              // runtime could not be spawned at all — a local Docker setup
+              // problem, not a registry failure.
+              spawnFailed = true;
+              const cause = Cause.squash(result.cause);
+              const message = cause instanceof Error ? cause.message : String(cause);
+              if (shouldRetryPull(message)) {
+                return Effect.fail(new RetryablePullFailure({ image, attempt, message }));
+              }
+              failures.push({ image, attempt, message });
+              return Effect.succeed({ ok: false as const, image });
+            }),
+          );
+        },
+      );
+      const outcome = yield* attemptEffect.pipe(
+        Effect.tapError((error: RetryablePullFailure) =>
+          Effect.sync(() => {
+            failures.push({ image: error.image, attempt: error.attempt, message: error.message });
+          }),
+        ),
+        Effect.retry(retrySchedule),
+        Effect.catchTag("RetryablePullFailure", () =>
+          Effect.succeed({ ok: false as const, image }),
+        ),
+      );
+      if (outcome.ok) {
+        return image;
       }
     }
 
@@ -304,7 +336,7 @@ const runPullCommand = (
     const child = yield* spawner.spawn(ChildProcess.make("docker", ["pull", image]));
     const [stderr, exitCode] = yield* Effect.all(
       [collectStreamAsString(child.stderr), child.exitCode.pipe(Effect.map(Number))],
-      { concurrency: "unbounded" },
+      { concurrency: 2 },
     );
     return {
       exitCode,

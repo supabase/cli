@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { makeStackStore } from "./managed/store.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 
@@ -108,9 +108,9 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
 const makeTempStackStore = (stateRoot = makeRoot()) => makeStackStore(stateRoot);
 
 const writeRawStackDocument = (stateRoot: string, stackId: string, content: string): void => {
-  const stackRoot = managedStackPaths(stateRoot, stackId).root;
+  const stackRoot = Effect.runSync(managedStackPathsEffect(stateRoot, stackId)).root;
   mkdirSync(stackRoot, { recursive: true });
-  writeFileSync(managedStackDocumentPath(stateRoot, stackId), content);
+  writeFileSync(Effect.runSync(managedStackDocumentPathEffect(stateRoot, stackId)), content);
 };
 
 describe("managed stack document store", () => {
@@ -159,9 +159,53 @@ describe("managed stack document store", () => {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ id: HEALTHY_ID }));
       writeRawStackDocument(store.stateRoot, CORRUPT_ID, "not-json");
+      mkdirSync(join(store.stateRoot, "stacks", "not-a-stack"), { recursive: true });
       expect(yield* store.list()).toEqual([
         expect.objectContaining({ id: CORRUPT_ID, status: "corrupt" }),
         expect.objectContaining({ id: HEALTHY_ID, status: "healthy" }),
+      ]);
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects a decoded document without both core port assignments", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        CORRUPT_ID,
+        JSON.stringify(
+          document({
+            id: CORRUPT_ID,
+            ports: [{ key: "api.port", port: 54321, intent: "automatic" }],
+          }),
+        ),
+      );
+      const listings = yield* store.list();
+      expect(listings).toEqual([
+        expect.objectContaining({
+          id: CORRUPT_ID,
+          status: "corrupt",
+          cause: expect.objectContaining({ _tag: "InvalidManagedStackDocumentError" }),
+        }),
+      ]);
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects a document whose id does not match its directory", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        CORRUPT_ID,
+        JSON.stringify(document({ id: HEALTHY_ID })),
+      );
+
+      expect(yield* store.list()).toEqual([
+        expect.objectContaining({
+          id: CORRUPT_ID,
+          status: "corrupt",
+          cause: expect.objectContaining({ _tag: "InvalidManagedStackDocumentError" }),
+        }),
       ]);
     }).pipe(Effect.provide(filesystemLayer)),
   );
@@ -170,7 +214,9 @@ describe("managed stack document store", () => {
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ id: HEALTHY_ID }));
-      mkdirSync(managedStackDocumentPath(store.stateRoot, CORRUPT_ID), { recursive: true });
+      mkdirSync(Effect.runSync(managedStackDocumentPathEffect(store.stateRoot, CORRUPT_ID)), {
+        recursive: true,
+      });
 
       const listings = yield* store.list();
       expect(listings).toEqual([

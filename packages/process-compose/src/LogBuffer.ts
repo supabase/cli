@@ -1,4 +1,4 @@
-import { Effect, Layer, PubSub, Ref, Context, Stream } from "effect";
+import { Context, Effect, Layer, PubSub, Ref, Semaphore, Stream } from "effect";
 
 export interface LogEntry {
   readonly timestamp: number;
@@ -31,13 +31,16 @@ export class LogBuffer extends Context.Service<
     Effect.gen(function* () {
       const servicePubSubs = new Map<string, PubSub.PubSub<LogEntry>>();
       const serviceBuffers = new Map<string, Ref.Ref<Array<LogEntry>>>();
-      const globalPubSub = yield* PubSub.bounded<LogEntry>(4096);
+      // Log delivery must never block child stdout/stderr draining. The bounded history refs
+      // below remain authoritative; live subscribers receive the newest entries when slow.
+      const globalPubSub = yield* PubSub.sliding<LogEntry>(4096);
       const globalBuffer = yield* Ref.make<Array<LogEntry>>([]);
+      const serviceInitialization = Semaphore.makeUnsafe(1);
 
       const getOrCreate = (service: string) =>
         Effect.gen(function* () {
           if (!servicePubSubs.has(service)) {
-            const ps = yield* PubSub.bounded<LogEntry>(1024);
+            const ps = yield* PubSub.sliding<LogEntry>(1024);
             servicePubSubs.set(service, ps);
             serviceBuffers.set(service, Ref.makeUnsafe<Array<LogEntry>>([]));
           }
@@ -45,7 +48,7 @@ export class LogBuffer extends Context.Service<
             pubsub: servicePubSubs.get(service)!,
             buffer: serviceBuffers.get(service)!,
           };
-        });
+        }).pipe(serviceInitialization.withPermit);
 
       return {
         append: (service, stream, line) =>

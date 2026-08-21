@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Layer, Context, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Context, Stream } from "effect";
 import {
   Headers,
   HttpRouter,
@@ -45,6 +45,7 @@ export class DaemonServer extends Context.Service<
       Effect.gen(function* () {
         const stack = yield* Stack;
         const server = yield* HttpServer.HttpServer;
+        const scope = yield* Effect.scope;
         const shutdownDeferred = yield* Deferred.make<void>();
         const textEncoder = new TextEncoder();
         const errorResponse = (body: DaemonErrorResponse, status: 400 | 404 | 500) =>
@@ -101,33 +102,21 @@ export class DaemonServer extends Context.Service<
               // the socket.
               Deferred.succeed(shutdownDeferred, void 0).pipe(
                 Effect.delay("25 millis"),
-                Effect.forkDetach,
+                Effect.forkIn(scope, { startImmediately: true, uninterruptible: true }),
+                Effect.asVoid,
               ),
             ),
           ),
         );
-        const shutdownResult = yield* Effect.cached(
+        const shutdownFiber = yield* Effect.cached(
           Effect.uninterruptible(
-            Effect.gen(function* () {
-              const result = yield* Deferred.make<Exit.Exit<void, never>>();
-              yield* shutdownTransaction.pipe(
-                Effect.exit,
-                Effect.flatMap((exit) => Deferred.succeed(result, exit)),
-                Effect.forkDetach,
-              );
-              return result;
+            Effect.forkIn(shutdownTransaction, scope, {
+              startImmediately: true,
+              uninterruptible: true,
             }),
           ),
         );
-        const beginShutdown = shutdownResult.pipe(
-          Effect.flatMap((result) =>
-            Deferred.await(result).pipe(
-              Effect.flatMap((exit) =>
-                Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
-              ),
-            ),
-          ),
-        );
+        const beginShutdown = shutdownFiber.pipe(Effect.flatMap(Fiber.join));
         const terminalReadinessResponse = (target: string, timeoutMs: number, detail: string) =>
           beginShutdown.pipe(Effect.as(readinessTimeoutResponse(target, timeoutMs, detail)));
 
