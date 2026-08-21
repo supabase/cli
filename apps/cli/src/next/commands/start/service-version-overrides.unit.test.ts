@@ -11,15 +11,15 @@ import {
 } from "../../config/service-version-resolution.ts";
 
 describe("service version overrides", () => {
-  test("parses repeated flag overrides as exact image tags", async () => {
+  test("canonicalizes repeated flag overrides to published service tags", async () => {
     await expect(
       Effect.runPromise(
         parseServiceVersionOverrides(["postgrest=v14.5", "mailpit=1.30.2", "auth=2.180.0"]),
       ),
     ).resolves.toEqual({
       postgrest: "v14.5",
-      mailpit: "1.30.2",
-      auth: "2.180.0",
+      mailpit: "v1.30.2",
+      auth: "v2.180.0",
     });
   });
 
@@ -69,12 +69,12 @@ describe("service version overrides", () => {
         ...candidateBaseline,
         postgres: "17.4.1.045",
         auth: "v2.170.0",
-        storage: "1.40.0",
+        storage: "v1.40.0",
       },
       activeOverrides: [
         { service: "postgres", version: "17.4.1.045", source: "flag" },
         { service: "auth", version: "v2.170.0", source: "flag" },
-        { service: "storage", version: "1.40.0", source: "local" },
+        { service: "storage", version: "v1.40.0", source: "local" },
       ],
       availableUpdates: [],
       updateFingerprint: undefined,
