@@ -32,6 +32,38 @@ function apiBaseUrl(): string {
   return liveApiBaseUrl().replace(/\/+$/u, "");
 }
 
+/**
+ * Keep both connection establishment and response-body consumption inside the
+ * caller's wall-clock deadline. A fetch can resolve its headers while a body
+ * read remains hung, so the timer intentionally surrounds `consume` too.
+ */
+async function fetchWithinDeadline<T>(
+  operation: string,
+  url: string,
+  init: RequestInit,
+  deadline: number,
+  consume: (response: Response) => Promise<T>,
+): Promise<T> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    throw new Error(`${operation} exceeded its provisioning deadline before starting: ${url}`);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), remaining);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return await consume(response);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`${operation} exceeded its provisioning deadline: ${url}`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function cliEnv(): Record<string, string> {
   return { SUPABASE_PROFILE: liveProfile() };
 }
@@ -107,19 +139,32 @@ async function deleteProject(projectRef: string): Promise<void> {
 async function waitForProjectReady(projectRef: string, timeoutMs = 300_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const response = await fetch(`${apiBaseUrl()}/v1/projects/${projectRef}`, {
-      headers: { Authorization: `Bearer ${accessToken()}` },
-    });
-    if (response.ok) {
-      const project = (await response.json()) as { status?: string };
-      if (project.status === "ACTIVE_HEALTHY") return;
-      if (project.status !== undefined && TERMINAL_BAD_STATUSES.has(project.status)) {
+    const result = await fetchWithinDeadline(
+      `Waiting for project ${projectRef} readiness`,
+      `${apiBaseUrl()}/v1/projects/${projectRef}`,
+      { headers: { Authorization: `Bearer ${accessToken()}` } },
+      deadline,
+      async (response) => {
+        if (response.ok) {
+          return {
+            ok: true,
+            project: (await response.json()) as { status?: string },
+          };
+        }
+        await response.body?.cancel();
+        return { ok: false, project: undefined };
+      },
+    );
+    if (result.ok) {
+      if (result.project?.status === "ACTIVE_HEALTHY") return;
+      if (
+        result.project?.status !== undefined &&
+        TERMINAL_BAD_STATUSES.has(result.project.status)
+      ) {
         throw new Error(
-          `Project ${projectRef} entered terminal status ${project.status} during provisioning`,
+          `Project ${projectRef} entered terminal status ${result.project.status} during provisioning`,
         );
       }
-    } else {
-      await response.body?.cancel();
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -142,16 +187,21 @@ async function getProjectKeys(projectRef: string, timeoutMs = 180_000): Promise<
   const deadline = Date.now() + timeoutMs;
   let lastStatus = "unknown";
   while (Date.now() < deadline) {
-    const response = await fetch(`${apiBaseUrl()}/v1/projects/${projectRef}/api-keys`, {
-      headers: { Authorization: `Bearer ${accessToken()}` },
-    });
-    lastStatus = String(response.status);
-    if (response.ok) {
-      const keys = (await response.json()) as ApiKey[];
-      if (keys.length > 0) return keys;
-    } else {
-      await response.body?.cancel();
-    }
+    const result = await fetchWithinDeadline(
+      `Resolving API keys for project ${projectRef}`,
+      `${apiBaseUrl()}/v1/projects/${projectRef}/api-keys`,
+      { headers: { Authorization: `Bearer ${accessToken()}` } },
+      deadline,
+      async (response) => {
+        if (response.ok) {
+          return { status: response.status, keys: (await response.json()) as ApiKey[] };
+        }
+        await response.body?.cancel();
+        return { status: response.status, keys: undefined };
+      },
+    );
+    lastStatus = String(result.status);
+    if (result.keys !== undefined && result.keys.length > 0) return result.keys;
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise<void>((resolve) => setTimeout(resolve, Math.min(10_000, remaining)));
@@ -190,24 +240,29 @@ async function getPoolerSessionUrl(
   const deadline = Date.now() + timeoutMs;
   let lastStatus = "unknown";
   while (Date.now() < deadline) {
-    const response = await fetch(
+    const result = await fetchWithinDeadline(
+      `Resolving pooler config for project ${projectRef}`,
       `${apiBaseUrl()}/v1/projects/${projectRef}/config/database/pooler`,
       { headers: { Authorization: `Bearer ${accessToken()}` } },
+      deadline,
+      async (response) => {
+        if (!response.ok) {
+          await response.body?.cancel();
+          return { status: response.status, connectionString: undefined };
+        }
+        const raw = (await response.json()) as PoolerConfig | PoolerConfig[];
+        const configs = Array.isArray(raw) ? raw : [raw];
+        const primary = configs.find((config) => config.database_type === "PRIMARY") ?? configs[0];
+        return { status: response.status, connectionString: primary?.connection_string };
+      },
     );
-    lastStatus = String(response.status);
-    if (response.ok) {
-      const raw = (await response.json()) as PoolerConfig | PoolerConfig[];
-      const configs = Array.isArray(raw) ? raw : [raw];
-      const primary = configs.find((config) => config.database_type === "PRIMARY") ?? configs[0];
-      if (primary?.connection_string !== undefined) {
-        const url = new URL(primary.connection_string);
-        url.password = password;
-        url.port = "5432";
-        if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
-        return url.toString();
-      }
-    } else {
-      await response.body?.cancel();
+    lastStatus = String(result.status);
+    if (result.connectionString !== undefined) {
+      const url = new URL(result.connectionString);
+      url.password = password;
+      url.port = "5432";
+      if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
+      return url.toString();
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -223,16 +278,24 @@ async function createStorageBucket(
   serviceRoleKey: string,
   bucket: string,
 ): Promise<void> {
-  const response = await fetch(`https://${projectRef}.${liveProjectHost()}/storage/v1/bucket`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ id: bucket, name: bucket, public: false }),
-  });
-  if (!response.ok && response.status !== 409) {
-    throw new Error(
-      `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
-    );
-  }
+  const url = `https://${projectRef}.${liveProjectHost()}/storage/v1/bucket`;
+  await fetchWithinDeadline(
+    `Creating storage bucket ${bucket}`,
+    url,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+    },
+    Date.now() + 60_000,
+    async (response) => {
+      if (!response.ok && response.status !== 409) {
+        throw new Error(
+          `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
+        );
+      }
+    },
+  );
 }
 
 /** Provision one unique staging project and all values needed by project live tests. */
