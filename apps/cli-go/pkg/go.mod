@@ -25,7 +25,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.0
 	github.com/tidwall/jsonc v0.3.3
-	golang.org/x/mod v0.39.0
+	golang.org/x/mod v0.40.0
 	google.golang.org/grpc v1.83.0
 )
 
