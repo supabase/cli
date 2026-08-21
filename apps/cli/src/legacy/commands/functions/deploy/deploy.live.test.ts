@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { describe } from "vitest";
 
-import { expectFunctionOk, requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import {
+  expectFunctionOk,
+  requireLiveSuccess,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 describe("functions deploy (live)", () => {
   test("deploys a function that responds over HTTP", async ({
@@ -23,6 +28,8 @@ describe("functions deploy (live)", () => {
     await writeFile(join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 
     let deployed = false;
+    let targetError: unknown;
+    let cleanupError: unknown;
     try {
       const result = await cli(["functions", "deploy", "--project-ref", project.ref]);
       expect(result.exitCode, result.stderr).toBe(0);
@@ -30,11 +37,18 @@ describe("functions deploy (live)", () => {
       expect(result.stdout).toMatch(/Deployed Function/i);
 
       expectFunctionOk(await invoke(slug), slug);
+    } catch (error) {
+      targetError = error;
     } finally {
       if (deployed) {
-        const deleted = await cli(["functions", "delete", slug, "--project-ref", project.ref]);
-        requireLiveSuccess(deleted, "functions delete cleanup");
+        try {
+          const deleted = await cli(["functions", "delete", slug, "--project-ref", project.ref]);
+          requireLiveSuccess(deleted, "functions delete cleanup");
+        } catch (error) {
+          cleanupError = error;
+        }
       }
     }
+    throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
   });
 });

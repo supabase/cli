@@ -14,6 +14,8 @@ const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 90_000;
 const FUNCTION_FILES_RESTART_PATTERN = /Function files changed\. Restarting edge-runtime\./;
+const FUNCTION_RELOAD_COMPLETE_PATTERN = /Function reload complete\./;
+const EDGE_RUNTIME_RELOAD_COMPLETE_PATTERN = /Edge runtime reload complete\./;
 
 type SpawnedSupabase = ReturnType<typeof spawnSupabase>;
 
@@ -74,13 +76,24 @@ describe("supabase functions dev (e2e)", () => {
         }
         const functionUrl = `${functionUrlMatch[1]}/hello-world`;
 
+        const functionOffset = devProc.stdout().length;
+        const functionRestart = devProc.waitForOutput(
+          FUNCTION_FILES_RESTART_PATTERN,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          functionOffset,
+        );
+        const functionReload = devProc.waitForOutput(
+          FUNCTION_RELOAD_COMPLETE_PATTERN,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          functionOffset,
+        );
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
           cwd: project.dir,
           home: home.dir,
           exitTimeoutMs: FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         });
         expect(newResult.exitCode).toBe(0);
-        await devProc.waitForOutput(FUNCTION_FILES_RESTART_PATTERN, FUNCTIONS_DEV_STEP_TIMEOUT_MS);
+        await Promise.all([functionRestart, functionReload]);
 
         await assertFunctionResponse(functionUrl, {}, (response, body) => {
           expect(response.status).toBe(401);
@@ -88,6 +101,16 @@ describe("supabase functions dev (e2e)", () => {
         });
 
         const configOffset = devProc.stdout().length;
+        const configRestart = devProc.waitForOutput(
+          /Edge runtime config changed\. Restarting edge-runtime\./,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          configOffset,
+        );
+        const configReload = devProc.waitForOutput(
+          EDGE_RUNTIME_RELOAD_COMPLETE_PATTERN,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          configOffset,
+        );
         await writeFile(
           join(project.dir, "supabase", "config.toml"),
           `project_id = "functions-dev-e2e"
@@ -96,11 +119,7 @@ describe("supabase functions dev (e2e)", () => {
 verify_jwt = false
 `,
         );
-        await devProc.waitForOutput(
-          /Edge runtime config changed\. Restarting edge-runtime\./,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          configOffset,
-        );
+        await Promise.all([configRestart, configReload]);
 
         await assertFunctionResponse(
           functionUrl,
@@ -116,6 +135,16 @@ verify_jwt = false
         );
 
         const sourceOffset = devProc.stdout().length;
+        const sourceRestart = devProc.waitForOutput(
+          FUNCTION_FILES_RESTART_PATTERN,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          sourceOffset,
+        );
+        const sourceReload = devProc.waitForOutput(
+          FUNCTION_RELOAD_COMPLETE_PATTERN,
+          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
+          sourceOffset,
+        );
         await writeFile(
           functionPath,
           `Deno.serve(() => {
@@ -125,11 +154,7 @@ verify_jwt = false
 });
 `,
         );
-        await devProc.waitForOutput(
-          FUNCTION_FILES_RESTART_PATTERN,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          sourceOffset,
-        );
+        await Promise.all([sourceRestart, sourceReload]);
 
         await assertFunctionResponse(
           functionUrl,

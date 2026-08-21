@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 test("deletes a preview branch", async ({ cli, project }) => {
   const name = `cli-e2e-delete-${randomUUID().slice(0, 8)}`;
@@ -39,6 +39,5 @@ test("deletes a preview branch", async ({ cli, project }) => {
       }
     }
   }
-  if (targetError !== undefined) throw targetError;
-  if (cleanupError !== undefined) throw cleanupError;
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

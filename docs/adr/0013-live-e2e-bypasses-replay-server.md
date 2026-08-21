@@ -44,6 +44,12 @@ implement the same HTTP API contract. Retargeting a run only changes
 preflight, one serial attempt, a 20-minute bound, and a scoped leftover-project
 sweeper.
 
+`SUPABASE_LIVE_API_URL` configures the Management API only. Tenant data-plane
+URLs continue to use the CLI profile contract, `https://<ref>.<project_host>`;
+`project_host` is derived from the provisioned project's typed database host.
+This keeps tenant routing correct even when a local platform exposes its
+Management API over plain HTTP.
+
 ## Consequences
 
 The live path has no fixture proxy, host-rewrite layer, attached/managed mode,

@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
@@ -30,6 +30,8 @@ test("lists an uploaded object", async ({ cli, project, workspace }) => {
   const uploaded = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
   requireLiveSuccess(uploaded, "storage cp setup for storage ls");
 
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
     const result = await cli([
       "storage",
@@ -39,7 +41,14 @@ test("lists an uploaded object", async ({ cli, project, workspace }) => {
     ]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain(`upload-${suffix}.txt`);
+  } catch (error) {
+    targetError = error;
   } finally {
-    await removeObject(cli, remote);
+    try {
+      await removeObject(cli, remote);
+    } catch (error) {
+      cleanupError = error;
+    }
   }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

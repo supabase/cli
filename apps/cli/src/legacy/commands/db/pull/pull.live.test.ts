@@ -2,7 +2,7 @@ import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 test("pulls the remote schema after a local migration is applied", async ({
   cli,
@@ -59,10 +59,5 @@ test("pulls the remote schema after a local migration is applied", async ({
     cleanupError = error;
   }
 
-  if (targetError !== undefined) {
-    throw targetError;
-  }
-  if (cleanupError !== undefined) {
-    throw cleanupError;
-  }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

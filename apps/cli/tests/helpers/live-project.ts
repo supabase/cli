@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { makeApiClient, type OperationOutput } from "@supabase/api/effect";
 import { Cause, Data, Effect, Exit, Schedule } from "effect";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import {
   deriveLiveProjectHost,
@@ -74,6 +75,7 @@ class LiveTransientPoll extends Data.TaggedError("LiveTransientPoll")<{
 class LiveTerminalPoll extends Data.TaggedError("LiveTerminalPoll")<{
   readonly phase: string;
   readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 class LivePollTimeout extends Data.TaggedError("LivePollTimeout")<{
@@ -86,6 +88,8 @@ class LivePollTimeout extends Data.TaggedError("LivePollTimeout")<{
 
 class LiveStorageError extends Data.TaggedError("LiveStorageError")<{
   readonly message: string;
+  readonly retryable: boolean;
+  readonly cause?: unknown;
 }> {}
 
 function apiError(error: unknown): Error {
@@ -96,6 +100,31 @@ function supportedRegion(value: string): Region {
   const region = REGIONS.find((candidate) => candidate === value);
   if (region !== undefined) return region;
   throw new Error(`Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`);
+}
+
+/** HTTP statuses that can occur while a newly-created project propagates. */
+export function isTransientStorageStatus(status: number): boolean {
+  return status === 404 || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/** Retry only transport failures and statuses plausibly caused by propagation. */
+export function isTransientLiveError(error: unknown): boolean {
+  if (!HttpClientError.isHttpClientError(error)) return false;
+  if (error.reason._tag === "TransportError") return true;
+  return (
+    error.reason._tag === "StatusCodeError" &&
+    isTransientStorageStatus(error.reason.response.status)
+  );
+}
+
+function classifyPollError(phase: string, cause: unknown): LiveTransientPoll | LiveTerminalPoll {
+  return isTransientLiveError(cause)
+    ? new LiveTransientPoll({ phase, cause })
+    : new LiveTerminalPoll({
+        phase,
+        message: `${phase} failed: ${apiError(cause).message}`,
+        cause,
+      });
 }
 
 /** Retry a transient management operation using Effect's schedule and deadline semantics. */
@@ -141,11 +170,6 @@ function uniqueProjectName(): string {
 
 function databasePassword(): string {
   return `supabase-cli-live-${randomBytes(12).toString("hex")}`;
-}
-
-function liveProjectBaseUrl(ref: string, host: string): string {
-  const protocol = new URL(liveApiUrl()).protocol;
-  return `${protocol}//${ref}.${host}`;
 }
 
 function resolveOrganization(api: LiveApi): Effect.Effect<Organization, Error, never> {
@@ -209,9 +233,7 @@ function projectReadiness(
   ref: string,
 ): Effect.Effect<Project, LiveTransientPoll | LiveTerminalPoll, never> {
   return api.v1.getProject({ ref }).pipe(
-    Effect.mapError(
-      (cause): LiveTransientPoll => new LiveTransientPoll({ phase: "project readiness", cause }),
-    ),
+    Effect.mapError((cause) => classifyPollError("project readiness", cause)),
     Effect.flatMap(
       (project): Effect.Effect<Project, LiveTransientPoll | LiveTerminalPoll, never> => {
         if (project.status === "ACTIVE_HEALTHY") return Effect.succeed(project);
@@ -249,9 +271,13 @@ function waitForProject(api: LiveApi, ref: string): Effect.Effect<Project, Error
 function keysReadiness(
   api: LiveApi,
   ref: string,
-): Effect.Effect<{ anonKey: string; serviceRoleKey: string }, LiveTransientPoll, never> {
+): Effect.Effect<
+  { anonKey: string; serviceRoleKey: string },
+  LiveTransientPoll | LiveTerminalPoll,
+  never
+> {
   return api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
-    Effect.mapError((cause) => new LiveTransientPoll({ phase: "project API keys", cause })),
+    Effect.mapError((cause) => classifyPollError("project API keys", cause)),
     Effect.flatMap((keys) => {
       const keyValue = (key: ApiKey): string | undefined => key.api_key ?? undefined;
       const anonKey = keys.find((key) => key.name === "anon");
@@ -279,7 +305,9 @@ function resolveKeys(
     Effect.mapError((error) =>
       error instanceof LivePollTimeout
         ? new Error(`Project ${ref} did not return API keys within ${POLL_TIMEOUT}`)
-        : apiError(error),
+        : error instanceof LiveTerminalPoll
+          ? new Error(error.message)
+          : apiError(error),
     ),
   );
 }
@@ -288,10 +316,12 @@ function dbReadiness(
   api: LiveApi,
   ref: string,
   password: string,
-): Effect.Effect<string, LiveTransientPoll, never> {
+): Effect.Effect<string, LiveTransientPoll | LiveTerminalPoll, never> {
   return api.v1.getProjectPgbouncerConfig({ ref }).pipe(
-    Effect.mapError((cause) => new LiveTransientPoll({ phase: "pooler configuration", cause })),
-    Effect.flatMap((config) => {
+    Effect.mapError((cause): LiveTransientPoll | LiveTerminalPoll =>
+      classifyPollError("pooler configuration", cause),
+    ),
+    Effect.flatMap((config): Effect.Effect<string, LiveTransientPoll | LiveTerminalPoll, never> => {
       if (config.connection_string === undefined) {
         return Effect.fail(
           new LiveTransientPoll({
@@ -307,7 +337,13 @@ function dbReadiness(
         if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
         return Effect.succeed(url.toString());
       } catch (cause) {
-        return Effect.fail(new LiveTransientPoll({ phase: "pooler configuration", cause }));
+        return Effect.fail(
+          new LiveTerminalPoll({
+            phase: "pooler configuration",
+            message: `pooler configuration returned an invalid connection string: ${apiError(cause).message}`,
+            cause,
+          }),
+        );
       }
     }),
   );
@@ -326,7 +362,9 @@ function resolveDbUrl(
         ? new Error(
             `Project ${ref} did not return a pooler connection string within ${POLL_TIMEOUT}`,
           )
-        : apiError(error),
+        : error instanceof LiveTerminalPoll
+          ? new Error(error.message)
+          : apiError(error),
     ),
   );
 }
@@ -337,9 +375,9 @@ function createStorageBucket(
   serviceRoleKey: string,
   bucket: string,
 ): Effect.Effect<void, Error, never> {
-  return Effect.tryPromise({
+  const attempt = Effect.tryPromise({
     try: async () => {
-      const response = await fetch(`${liveProjectBaseUrl(ref, host)}/storage/v1/bucket`, {
+      const response = await fetch(`https://${ref}.${host}/storage/v1/bucket`, {
         method: "POST",
         headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ id: bucket, name: bucket, public: false }),
@@ -347,15 +385,29 @@ function createStorageBucket(
       if (!response.ok && response.status !== 409) {
         throw new LiveStorageError({
           message: `Failed to create storage bucket ${bucket}: ${response.status} ${await response.text()}`,
+          retryable: isTransientStorageStatus(response.status),
         });
       }
     },
-    catch: (cause) => (cause instanceof LiveStorageError ? cause : new Error(String(cause))),
+    catch: (cause) =>
+      cause instanceof LiveStorageError
+        ? cause
+        : new LiveStorageError({
+            message: `Failed to create storage bucket ${bucket}: ${apiError(cause).message}`,
+            retryable: true,
+            cause,
+          }),
+  });
+  return retryLiveEffect("storage bucket", attempt, {
+    shouldRetry: (error) => error instanceof LiveStorageError && error.retryable,
   }).pipe(
-    Effect.timeoutOrElse({
-      duration: POLL_TIMEOUT,
-      orElse: () => Effect.fail(new Error(`storage bucket ${bucket} creation timed out`)),
-    }),
+    Effect.mapError((error) =>
+      error instanceof LivePollTimeout
+        ? new Error(`storage bucket ${bucket} creation timed out`)
+        : error instanceof LiveStorageError
+          ? new Error(error.message)
+          : apiError(error),
+    ),
   );
 }
 
@@ -468,7 +520,7 @@ export function provisionLiveEnvironment(
           dbPassword: password,
           anonKey: keys.anonKey,
           serviceRoleKey: keys.serviceRoleKey,
-          functionsUrl: `${liveProjectBaseUrl(ref, projectHost)}/functions/v1`,
+          functionsUrl: `https://${ref}.${projectHost}/functions/v1`,
           storageBucket,
         },
         profilePath,

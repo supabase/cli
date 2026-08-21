@@ -62,10 +62,3 @@ export function deriveLiveProjectHost(databaseHost: string, projectRef: string):
   }
   return host;
 }
-
-export function isLiveConfigured(): boolean {
-  return (
-    (process.env["SUPABASE_LIVE_API_URL"]?.trim().length ?? 0) > 0 &&
-    (process.env["SUPABASE_ACCESS_TOKEN"]?.trim().length ?? 0) > 0
-  );
-}

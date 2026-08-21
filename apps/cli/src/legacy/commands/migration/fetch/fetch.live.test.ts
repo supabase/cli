@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 120_000;
 
@@ -41,7 +41,7 @@ test(
     const fetchDir = await mkdtemp(path.join(tmpdir(), "sb-migration-fetch-live-"));
     let repaired = false;
     let targetError: unknown;
-    let cleanupError: unknown;
+    const cleanupErrors: Array<unknown> = [];
     try {
       // Seed: record one migration in the remote history. `repair --status applied`
       // reads the local file for the version's name/statements, so write it first.
@@ -76,17 +76,16 @@ test(
           );
           requireLiveSuccess(reverted, "migration repair cleanup");
         } catch (error) {
-          cleanupError = error;
+          cleanupErrors.push(error);
         }
       }
-      try {
-        await rm(seedDir, { recursive: true, force: true });
-        await rm(fetchDir, { recursive: true, force: true });
-      } catch (error) {
-        cleanupError ??= error;
-      }
+      await rm(seedDir, { recursive: true, force: true }).catch((error) =>
+        cleanupErrors.push(error),
+      );
+      await rm(fetchDir, { recursive: true, force: true }).catch((error) =>
+        cleanupErrors.push(error),
+      );
     }
-    if (targetError !== undefined) throw targetError;
-    if (cleanupError !== undefined) throw cleanupError;
+    throwWithCleanup(targetError, cleanupErrors);
   },
 );

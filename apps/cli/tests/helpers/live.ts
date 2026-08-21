@@ -122,6 +122,21 @@ export function requireLiveSuccess(
   }
 }
 
+/** Rethrow a target failure without discarding failures from exact cleanup. */
+export function throwWithCleanup(
+  primary: unknown | undefined,
+  cleanup: ReadonlyArray<unknown>,
+): void {
+  if (primary !== undefined) {
+    if (cleanup.length > 0) {
+      throw new AggregateError([primary, ...cleanup], "Live e2e target and cleanup failed");
+    }
+    throw primary;
+  }
+  if (cleanup.length === 1) throw cleanup[0];
+  if (cleanup.length > 1) throw new AggregateError(cleanup, "Live e2e cleanup failed");
+}
+
 export function expectFunctionOk(
   result: InvokeResult,
   slug: string,

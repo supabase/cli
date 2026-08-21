@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { test } from "../../../../../tests/helpers/live.ts";
+import { test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 async function unsetSecret(
   cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
@@ -16,11 +16,26 @@ async function unsetSecret(
 
 test("sets a secret on the remote project", async ({ cli, project }) => {
   const name = `CLI_E2E_SET_${randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
-  const result = await cli(["secrets", "set", `${name}=live-value`, "--project-ref", project.ref]);
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
+    const result = await cli([
+      "secrets",
+      "set",
+      `${name}=live-value`,
+      "--project-ref",
+      project.ref,
+    ]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain("Finished");
+  } catch (error) {
+    targetError = error;
   } finally {
-    await unsetSecret(cli, name, project.ref);
+    try {
+      await unsetSecret(cli, name, project.ref);
+    } catch (error) {
+      cleanupError = error;
+    }
   }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

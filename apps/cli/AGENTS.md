@@ -513,6 +513,9 @@ YAML profile, and shares it across the serial suite. Teardown deletes exactly
 that project and the temporary profile. Supabox, a Docker-hosted API platform,
 and staging are interchangeable; changing the URL and token retargets the
 run. `SUPABASE_LIVE_KEEP_PROJECT=1` keeps the project for debugging.
+`SUPABASE_LIVE_API_URL` configures the Management API only; tenant data-plane
+URLs retain the profile contract `https://<ref>.<project_host>`, with
+`project_host` derived from the provisioned project's database host.
 
 Local Docker-stack lifecycle tests (`start`, `stop`, `status`, `db start`,
 `db diff`, declarative sync, and `functions dev`) are `*.e2e.test.ts`, use

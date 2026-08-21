@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
@@ -29,11 +29,22 @@ test("copies a local file to the remote bucket", async ({ cli, project, workspac
   requireLiveSuccess(linked, "link setup for storage cp");
 
   let uploaded = false;
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
     const result = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
     expect(result.exitCode, result.stderr).toBe(0);
     uploaded = true;
+  } catch (error) {
+    targetError = error;
   } finally {
-    if (uploaded) await removeObject(cli, remote);
+    if (uploaded) {
+      try {
+        await removeObject(cli, remote);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
   }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

@@ -193,6 +193,10 @@ The replay/record harness has two modes:
 
 The live suite lives in `apps/cli/src/**` as collocated `*.live.test.ts` files and runs in the CLI package's separate, serial `live` Vitest project. Global setup requires `SUPABASE_LIVE_API_URL` and `SUPABASE_ACCESS_TOKEN`, then provisions one uniquely named project through the typed Management API client, waits for it to become healthy, creates the shared storage fixture, and writes a temporary YAML profile. Every live subprocess receives that profile, so the same contract works with Supabox, a Docker-hosted API platform, or staging by changing only the URL and token. Teardown always removes the temporary profile and deletes the exact owned project unless `SUPABASE_LIVE_KEEP_PROJECT=1` is set.
 
+The configured URL is the Management API endpoint. Tenant data-plane URLs keep
+the CLI profile contract (`https://<ref>.<project_host>`) using the host derived
+from the provisioned project's database metadata.
+
 Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
 To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run:

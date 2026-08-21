@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 
@@ -31,11 +31,22 @@ test("removes an uploaded object", async ({ cli, project, workspace }) => {
   requireLiveSuccess(uploaded, "storage cp setup for storage rm");
 
   let removed = false;
+  let targetError: unknown;
+  let cleanupError: unknown;
   try {
     const result = await cli(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
     expect(result.exitCode, result.stderr).toBe(0);
     removed = true;
+  } catch (error) {
+    targetError = error;
   } finally {
-    if (!removed) await removeObject(cli, remote);
+    if (!removed) {
+      try {
+        await removeObject(cli, remote);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
   }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

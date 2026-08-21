@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
 async function unsetSecret(
   cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
@@ -38,6 +38,5 @@ test("unsets a secret from the remote project", async ({ cli, project }) => {
       }
     }
   }
-  if (targetError !== undefined) throw targetError;
-  if (cleanupError !== undefined) throw cleanupError;
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });
