@@ -8,6 +8,68 @@ import { Cause, Effect, Exit, FileSystem } from "effect";
 import { reservePortSet, type PortReservationRequest } from "./PortAllocator.ts";
 
 const PORT_LEASE_CHILD = resolve(import.meta.dirname, "../tests/helpers/port-lease-child.ts");
+const STACK_PACKAGE_ROOT = resolve(import.meta.dirname, "..");
+
+const INTERRUPTED_ALLOCATION_SCRIPT = `
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect, Fiber } from "effect";
+import { reservePortSet } from "./src/PortAllocator.ts";
+
+const fiber = Effect.runFork(
+  reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]).pipe(
+    Effect.provide(NodeFileSystem.layer),
+  ),
+);
+await Effect.runPromise(
+  Effect.callback((resume) => queueMicrotask(() => resume(Effect.void))),
+);
+await Effect.runPromise(Fiber.interrupt(fiber));
+`;
+
+const interruptedAllocationExits = (runtime: "node" | "bun"): Effect.Effect<void, Error> =>
+  Effect.callback<void, Error>((resume) => {
+    const args =
+      runtime === "node"
+        ? ["--input-type=module", "-e", INTERRUPTED_ALLOCATION_SCRIPT]
+        : ["-e", INTERRUPTED_ALLOCATION_SCRIPT];
+    const child = spawn(runtime, args, {
+      cwd: STACK_PACKAGE_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const finish = (effect: Effect.Effect<void, Error>) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resume(effect);
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(
+        Effect.fail(
+          new Error(`${runtime} retained a listener after interrupted allocation: ${stderr}`),
+        ),
+      );
+    }, 5_000);
+    child.once("error", (error) => finish(Effect.fail(error)));
+    child.once("close", (code, signal) =>
+      finish(
+        code === 0
+          ? Effect.void
+          : Effect.fail(
+              new Error(`${runtime} allocator probe exited with ${code ?? signal}: ${stderr}`),
+            ),
+      ),
+    );
+    return Effect.sync(() => {
+      clearTimeout(timeout);
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    });
+  });
 
 const automatic = (field: PortReservationRequest["field"]): PortReservationRequest => ({
   field,
@@ -69,6 +131,14 @@ const startChildLease = () => {
 };
 
 describe("reservePortSet", () => {
+  it.each(["node", "bun"] as const)(
+    "closes a pending listener when allocation is interrupted under %s",
+    async (runtime) => {
+      await Effect.runPromise(interruptedAllocationExits(runtime));
+    },
+    10_000,
+  );
+
   it("fails an occupied exact port with field and port attribution", async () => {
     let occupiedPort = 0;
     const exit = await run(

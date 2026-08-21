@@ -156,6 +156,33 @@ const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSele
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
 
+const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => ({
+  ...config,
+  edgeRuntime: false,
+  realtime: false,
+  storage: false,
+  imgproxy: false,
+  mailpit: false,
+  pgmeta: false,
+  studio: false,
+  analytics: false,
+  vector: false,
+  pooler: false,
+  servicePolicies: {
+    ...config.servicePolicies,
+    "edge-runtime": "off",
+    realtime: "off",
+    storage: "off",
+    imgproxy: "off",
+    mailpit: "off",
+    pgmeta: "off",
+    studio: "off",
+    analytics: "off",
+    vector: "off",
+    pooler: "off",
+  },
+});
+
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
   readonly reason?: "owner-stopped";
@@ -505,7 +532,11 @@ const runManaged = (
       ownedPersistedRuntime === undefined
         ? yield* selectStackRuntime(requestedMode)
         : yield* validateStackRuntime(ownedPersistedRuntime);
-    const activeFields = portFieldsForConfigInput({ ...configInput, mode: runtime.mode });
+    const runtimeConfigInput =
+      runtime.mode === "native" && requestedMode === undefined
+        ? nativeFallbackConfig(configInput)
+        : configInput;
+    const activeFields = portFieldsForConfigInput({ ...runtimeConfigInput, mode: runtime.mode });
     const activeFieldSet = new Set(activeFields);
     const portIntents: ManagedPortIntentDocument = {
       ...input.portIntents,
@@ -516,7 +547,7 @@ const runManaged = (
     };
     // Validate policies and explicit ports before manager.startStack writes
     // `starting` or acquires the managed lease.
-    yield* portRequestsForConfig(configInput, { runtime });
+    yield* portRequestsForConfig(runtimeConfigInput, { runtime });
     const launchInput = input.launch ?? { versions: {} };
     const launch: ManagedStackLaunch =
       runtime.mode === "native"
@@ -549,8 +580,8 @@ const runManaged = (
       const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);
       const resolved = yield* resolveConfig(
         {
-          ...configInput,
-          projectDir: configInput.projectDir ?? input.workspacePath,
+          ...runtimeConfigInput,
+          projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
           stackRoot: managedPaths.root,
           runtimeRoot: managedPaths.runtime,
           instanceId: started.stack.id,
@@ -560,7 +591,7 @@ const runManaged = (
       const config: ResolvedDaemonConfig = {
         ...resolved,
         name: input.stackName,
-        projectDir: configInput.projectDir ?? input.workspacePath,
+        projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
       };
       yield* manager.recordLifecycle(ownership, {
         stackId: started.stack.id,

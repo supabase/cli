@@ -54,11 +54,17 @@ export interface PortSelectionOptions {
 
 const closeServer = (server: Server): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
-    if (!server.listening) {
-      resume(Effect.void);
-      return Effect.void;
-    }
-    server.close((cause) => resume(cause === undefined ? Effect.void : Effect.die(cause)));
+    server.close((cause) =>
+      resume(
+        cause === undefined ||
+          (typeof cause === "object" &&
+            cause !== null &&
+            "code" in cause &&
+            Reflect.get(cause, "code") === "ERR_SERVER_NOT_RUNNING")
+          ? Effect.void
+          : Effect.die(cause),
+      ),
+    );
     return Effect.void;
   });
 
@@ -322,7 +328,7 @@ const releasePortClaim = (claim: PortClaim, fs: FileSystem.FileSystem): Effect.E
   });
 
 const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =>
-  Effect.callback<BoundPort, PortAllocationError>((resume) => {
+  Effect.callback<BoundPort, PortAllocationError>((resume, signal) => {
     const server = createServer((socket) => socket.destroy());
     const onError = (cause: unknown) => {
       resume(
@@ -338,7 +344,7 @@ const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =
       );
     };
     server.once("error", onError);
-    server.listen(port, "127.0.0.1", () => {
+    server.listen({ port, host: "127.0.0.1", signal }, () => {
       server.off("error", onError);
       const address = server.address();
       if (address === null || typeof address === "string") {
@@ -355,7 +361,9 @@ const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =
       }
       resume(Effect.succeed({ port: address.port, server }));
     });
-    return closeServer(server);
+    return Effect.sync(() => server.off("error", onError)).pipe(
+      Effect.andThen(closeServer(server)),
+    );
   });
 
 export interface PortLease {

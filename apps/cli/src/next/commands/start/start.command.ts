@@ -125,7 +125,7 @@ export type StartFlags = CliCommand.Command.Config.Infer<typeof flags>;
 export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
-      "Starts the full local Supabase stack. By default, a usable Docker or Podman runtime selects Docker mode; otherwise the stack uses native mode. Use --mode to require one explicitly.\n\n" +
+      "Starts the full local Supabase stack when Docker or Podman is usable; otherwise a supported host starts the native-capable service set. Use --mode to require one explicitly.\n\n" +
       "Named CLI stacks persist managed runtime state under the Supabase home directory. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),

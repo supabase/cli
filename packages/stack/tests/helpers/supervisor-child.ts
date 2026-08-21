@@ -10,6 +10,7 @@ import {
   type SupervisorPlatform,
 } from "../../src/supervisor.ts";
 import { Stack } from "../../src/Stack.ts";
+import { validateResolvedConfig } from "../../src/StackBuilder.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
 import {
@@ -155,6 +156,7 @@ const testRuntime = ({
 }): Effect.Effect<Layer.Layer<Stack>, unknown, import("effect").Scope.Scope> => {
   const mode = testMode();
   return Effect.gen(function* () {
+    yield* validateResolvedConfig(config);
     if (mode === "hold-start") yield* Effect.never;
     const servers: Array<Server> = [];
     if (mode !== "hold-reservations") {

@@ -25,17 +25,18 @@ export function toStartStackConfig(
   mode?: StartMode,
 ): StackConfig {
   const excluded = new Set(exclude);
+  const native = mode === "native";
   return {
     ...(mode === undefined ? {} : { mode }),
-    realtime: excluded.has("realtime") ? false : {},
-    storage: excluded.has("storage") ? false : {},
-    imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},
-    mailpit: excluded.has("mailpit") ? false : {},
-    pgmeta: excluded.has("pgmeta") ? false : {},
-    studio: excluded.has("studio") || excluded.has("pgmeta") ? false : {},
-    analytics: excluded.has("analytics") ? false : {},
-    vector: excluded.has("vector") || excluded.has("analytics") ? false : {},
-    pooler: excluded.has("pooler") ? false : {},
+    realtime: native || excluded.has("realtime") ? false : {},
+    storage: native || excluded.has("storage") ? false : {},
+    imgproxy: native || excluded.has("imgproxy") || excluded.has("storage") ? false : {},
+    mailpit: native || excluded.has("mailpit") ? false : {},
+    pgmeta: native || excluded.has("pgmeta") ? false : {},
+    studio: native || excluded.has("studio") || excluded.has("pgmeta") ? false : {},
+    analytics: native || excluded.has("analytics") ? false : {},
+    vector: native || excluded.has("vector") || excluded.has("analytics") ? false : {},
+    pooler: native || excluded.has("pooler") ? false : {},
     ...(excluded.has("auth") ? { auth: false } : {}),
     ...(excluded.has("postgrest") ? { postgrest: false } : {}),
   };

@@ -15,6 +15,15 @@ describe("toStartStackConfig", () => {
     });
     expect(toStartStackConfig([], "native")).toMatchObject({
       mode: "native",
+      realtime: false,
+      storage: false,
+      imgproxy: false,
+      mailpit: false,
+      pgmeta: false,
+      studio: false,
+      analytics: false,
+      vector: false,
+      pooler: false,
     });
   });
 

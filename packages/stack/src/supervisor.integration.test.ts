@@ -676,6 +676,47 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("falls back to the native service set when no container runtime is usable", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-fallback-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: {
+          ...config,
+          auth: {},
+          postgrest: {},
+          realtime: {},
+          storage: {},
+          imgproxy: {},
+          mailpit: {},
+          pgmeta: {},
+          studio: {},
+          analytics: {},
+          vector: {},
+          pooler: {},
+        },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      const started = await child.started;
+      expect(readStackDocument(roots)?.launch).toMatchObject({ mode: "native" });
+      await remoteStop(started.endpoint);
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects an explicit mode change before attaching to a running owner", async () => {
     const roots = await workspace();
     const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-attach-"));

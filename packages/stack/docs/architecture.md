@@ -237,14 +237,17 @@ persisted endpoint, or another stack's reservation under the normal exact-port
 rules. A persisted automatic assignment in the control range is invalid and
 fails loudly rather than being silently migrated.
 
-The control endpoint is derived from the stack id and served on loopback. A
-persisted endpoint is accepted only when it matches that derivation. A rare
-hash collision or unrelated listener makes control acquisition fail with a
-typed conflict; a read-only probe treats the address as non-live and never
-claims it. An exact service port can still equal the future endpoint of an
-identity that has never started, so that low-probability conflict is rejected
-when ownership is acquired rather than forbidding every explicit port in the
-reserved range.
+A deterministic sequence of eight control endpoint candidates is derived from
+the stack id and served on loopback. Acquisition scans for an existing matching
+owner, then binds the first available candidate; read-only probes scan the same
+sequence without claiming it. A hash collision or unrelated listener consumes
+that candidate, and acquisition fails with a typed conflict only when the
+sequence cannot yield an unambiguous owner or free endpoint. The manager
+reserves every known candidate against service allocation, and the document
+records the endpoint the owner actually bound. An exact service port can still
+equal a future candidate of an identity that has never started, so that
+low-probability conflict is rejected when ownership is acquired rather than
+forbidding every explicit port in the reserved range.
 
 This is deliberately a small single-user localhost mechanism. The control
 protocol has no token authentication; ownership, endpoint identity, and
@@ -259,11 +262,13 @@ a Docker image. Explicit `mode: "native"` uses the supported native services
 and rejects Docker-only services; explicit `mode: "docker"` requires a usable
 Docker or Podman runtime and resolves every service to an image. When mode is
 omitted, selection prefers a usable Docker or Podman runtime and otherwise uses
-native mode only on a host for which native artifacts are published. The
-selected runtime is then fixed for the stack. Service versions are normalized
-to their catalog form before either binary resolution or Docker image
-resolution, and `StackBuilder` turns the results into one process-compose
-graph. Docker resources are namespaced with the managed stack id.
+native mode only on a host for which native artifacts are published; that
+automatic fallback disables Docker-only services before ports or managed launch
+state are acquired. The selected runtime is then fixed for the stack. Service
+versions are normalized to their catalog form before either binary resolution
+or Docker image resolution, and `StackBuilder` turns the results into one
+process-compose graph. Docker resources are namespaced with the managed stack
+id.
 
 `ApiProxy` listens on the configured public `apiPort` and routes Supabase API
 paths (`/auth`, `/rest`, `/functions`, `/realtime`, `/storage`, `/pg`,

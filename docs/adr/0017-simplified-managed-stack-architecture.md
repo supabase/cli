@@ -34,13 +34,13 @@ unresolved or mode-less launch. Runtime configuration uses the same correlated
 union, so impossible mode/runtime combinations are not representable after
 selection.
 
-Read-only discovery never acquires control ownership. It probes `/owner` and
-treats an unreachable, incompatible, or colliding listener as non-live;
-mutations still bind the endpoint and fail on a conflict. The endpoint maps
-digest bytes from the stack id into the reserved loopback range
-`127.0.0.1:10000..32767`, so collisions are possible and deliberately fail
-closed for start/stop/delete. This is pragmatic
-single-user localhost coordination, not a hostile multi-user security
+Read-only discovery never acquires control ownership. It scans the stack id's
+deterministic endpoint candidates through `/owner` and treats an unreachable,
+incompatible, or colliding listener as non-live. Mutations scan the same
+sequence for an existing matching owner, then bind the first available
+candidate; exhaustion fails closed. Each candidate maps digest bytes from the
+stack id into the reserved loopback range `127.0.0.1:10000..32767`. This is
+pragmatic single-user localhost coordination, not a hostile multi-user security
 boundary. We are not adding control tokens until the threat model or a real
 collision rate justifies more protocol and persistence machinery.
 
