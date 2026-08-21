@@ -25,9 +25,10 @@ import type { PortLease } from "../../src/PortAllocator.ts";
 import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
 
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
+const FILE_WAIT_TIMEOUT = "30 seconds";
 
 const waitForFile = (path: string): Effect.Effect<void> =>
-  Effect.callback((resume) => {
+  Effect.callback<void>((resume) => {
     if (existsSync(path)) {
       resume(Effect.void);
       return Effect.void;
@@ -55,7 +56,12 @@ const waitForFile = (path: string): Effect.Effect<void> =>
       settle(Effect.die(cause));
     }
     return Effect.sync(cleanup);
-  });
+  }).pipe(
+    Effect.timeout(FILE_WAIT_TIMEOUT),
+    Effect.catchTag("TimeoutError", () =>
+      Effect.die(new Error(`timed out waiting for file ${path} after ${FILE_WAIT_TIMEOUT}`)),
+    ),
+  );
 
 const testMode = (): TestMode => {
   const value = process.env["SUPABASE_STACK_TEST_RUNTIME_MODE"];
