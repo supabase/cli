@@ -7,5 +7,7 @@ describe("schemaIsolatedPlanOptions", () => {
     expect(schemaIsolatedPlanOptions.seedAssumedSchemas).toBe(false);
     expect(schemaIsolatedPlanOptions.allowSameDatabaseIdentity).toBe(true);
     expect(schemaIsolatedPlanOptions.scope).toBe("database");
+    expect(schemaIsolatedPlanOptions.reorder).toBe(true);
+    expect(schemaIsolatedPlanOptions.connectionReuse).toBe("reconnect-on-stuck");
   });
 });

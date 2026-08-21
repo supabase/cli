@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import type { SchemaPlanFilesInput } from "./pg-delta-engine.service.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { generateSchema } from "./generate-schema.ts";
@@ -90,6 +94,7 @@ function setup(
     journal?: SchemaDraftJournal;
     write?: boolean;
     localMigrations?: "seeded" | "empty";
+    schemasDir?: string;
     plan?: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">>;
   } = {},
 ) {
@@ -98,12 +103,13 @@ function setup(
   let planCalls = 0;
   let wrote = false;
   let shadowProvisions = 0;
+  const planInputs: SchemaPlanFilesInput[] = [];
   const layer = Layer.mergeAll(
     out.layer,
     Layer.succeed(
       SchemaWorkspace,
       SchemaWorkspace.of({
-        schemasDir: "/tmp/schemas",
+        schemasDir: opts.schemasDir ?? "/tmp/schemas",
         schemasDirDisplay: "supabase/schemas",
         migrationsDir: "/tmp/migrations",
         migrationsDirDisplay: "supabase/migrations",
@@ -173,8 +179,9 @@ function setup(
       PgDeltaSchemaEngine,
       PgDeltaSchemaEngine.of({
         exportSchema: () => Effect.die("unused"),
-        planFiles: () =>
+        planFiles: (input) =>
           Effect.sync(() => {
+            planInputs.push(input);
             planCalls += 1;
             if (opts.write === true) {
               return planView(planCalls === 1);
@@ -210,6 +217,7 @@ function setup(
     get shadowProvisions() {
       return shadowProvisions;
     },
+    planInputs,
   };
 }
 
@@ -224,6 +232,28 @@ describe("generateSchema", () => {
       expect(result.mutatedFiles).toBe(false);
       expect(ctx.cleared).toBe(false);
     });
+  });
+
+  it.live("forwards export loadOrder into planFiles", () => {
+    const schemasDir = mkdtempSync(join(tmpdir(), "schema-generate-manifest-"));
+    const loadOrder = ["public/tables/t.sql", "_cluster/publications.sql"];
+    writeFileSync(
+      join(schemasDir, ".pgdelta-export.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        loadOrder,
+      }),
+    );
+    const ctx = setup({ changes: false, schemasDir });
+    return Effect.gen(function* () {
+      yield* generateSchema({ dryRun: true, baseline: false }).pipe(Effect.provide(ctx.layer));
+      expect(ctx.planInputs).toHaveLength(1);
+      expect(ctx.planInputs[0]?.manifest?.loadOrder).toEqual(loadOrder);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => rmSync(schemasDir, { recursive: true, force: true }))),
+    );
   });
 
   it.live("clears a leftover draft when generate finds no changes", () => {

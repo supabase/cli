@@ -91,7 +91,8 @@ function walkSqlFiles(
         });
       }
     }
-    return files;
+    // pg-delta uses this array order when loadOrder is absent.
+    return files.sort((left, right) => left.name.localeCompare(right.name));
   });
 }
 

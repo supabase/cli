@@ -190,7 +190,12 @@ describe("legacyDiffDeclarativeToMigrations", () => {
     writeFileSync(join(declDir, "ignored.txt"), "ignored");
     writeFileSync(
       join(declDir, ".pgdelta-export.json"),
-      JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
+      JSON.stringify({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        loadOrder: ["z.sql", "nested/a.sql"],
+      }),
     );
     const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
     const engine = Layer.succeed(
@@ -240,7 +245,11 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             { name: "nested/a.sql", sql: "select 'a';" },
             { name: "z.sql", sql: "select 'z';" },
           ]);
-          expect(calls[0]?.manifest).toEqual({ redactSecrets: true, scope: "database" });
+          expect(calls[0]?.manifest).toEqual({
+            redactSecrets: true,
+            scope: "database",
+            loadOrder: ["z.sql", "nested/a.sql"],
+          });
           expect(calls[0]?.debug).toBe(true);
           expect(calls[0]?.noCache).toBe(true);
           expect(calls[0]?.strictCoverage).toBe(true);

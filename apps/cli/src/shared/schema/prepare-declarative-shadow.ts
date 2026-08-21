@@ -40,9 +40,7 @@ export const declaredSqlExtensions = (
   return declared;
 };
 
-export const declaredImageExtensions = (
-  files: ReadonlyArray<SchemaSqlFile>,
-): ReadonlySet<string> => {
+const declaredImageExtensions = (files: ReadonlyArray<SchemaSqlFile>): ReadonlySet<string> => {
   const declared = new Set<string>();
   for (const name of declaredSqlExtensions(files)) {
     if (IMAGE_DEFAULT_EXTENSION_SET.has(name)) declared.add(name);

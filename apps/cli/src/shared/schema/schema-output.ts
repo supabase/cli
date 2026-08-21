@@ -9,6 +9,27 @@ export type CoverageFormatOptions = {
 
 const DEFAULT_COVERAGE_LINES = 3;
 
+const SHADOW_LOAD_ASSIST_CODES = new Set(["session_pollution", "reorder_on_failure"]);
+
+function localizeShadowLoadAssist(code: string, message: string): string {
+  const text = message.replaceAll(".pgdelta-export.json", "supabase/schemas/.pgdelta-export.json");
+  if (code !== "session_pollution") return text;
+  return text
+    .replace("session poisoning", "supautils session poisoning")
+    .replace(
+      /\nRemove session-setting statements from declarative SQL, or do not share that session with later DDL\.$/,
+      "",
+    );
+}
+
+export function formatShadowLoadAssist(plan: SchemaPlanView, opts?: CoverageFormatOptions): string {
+  if (!coverageVerbose(opts)) return "";
+  return plan.diagnostics
+    .filter((diagnostic) => SHADOW_LOAD_ASSIST_CODES.has(diagnostic.code))
+    .map((diagnostic) => localizeShadowLoadAssist(diagnostic.code, diagnostic.message))
+    .join("\n");
+}
+
 export function coverageVerbose(opts?: CoverageFormatOptions): boolean {
   return opts?.verbose ?? explicitBooleanLongFlag(process.argv, "debug") === true;
 }
@@ -64,13 +85,20 @@ export function formatCoverageDiagnostics(
   return lines.join("\n");
 }
 
+function withStatusExtras(status: string, extras: ReadonlyArray<string | undefined>): string {
+  const lines = extras.filter((line): line is string => line !== undefined && line.length > 0);
+  return lines.length > 0 ? `${status}\n${lines.join("\n")}` : status;
+}
+
 export function withCoverageMessage(
   status: string,
   plan: SchemaPlanView,
   opts?: CoverageFormatOptions,
 ): string {
-  const coverage = formatCoverageDiagnostics(plan, opts);
-  return coverage.length > 0 ? `${status}\n${coverage}` : status;
+  return withStatusExtras(status, [
+    formatCoverageDiagnostics(plan, opts),
+    formatShadowLoadAssist(plan, opts),
+  ]);
 }
 
 export function formatMigrationFilePath(fileName: string): string {
@@ -100,6 +128,10 @@ export function formatPlanSummary(input: {
   }
   if (coverage.length > 0) {
     lines.push(coverage);
+  }
+  const loadAssist = formatShadowLoadAssist(input.plan, { verbose: input.verbose });
+  if (loadAssist.length > 0) {
+    lines.push(loadAssist);
   }
   if (verbose) {
     lines.push(`Plan: ${input.plan.planId}`);

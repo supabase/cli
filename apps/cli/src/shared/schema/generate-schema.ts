@@ -1,4 +1,5 @@
 import { Clock, Effect } from "effect";
+import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { formatMigrationRepairCommand } from "../migrations/migration-repair-suggest.ts";
@@ -7,6 +8,7 @@ import {
   SchemaBaselineMigrationsExistError,
   SchemaDraftConflictError,
   SchemaEngineError,
+  SchemaWorkspaceIoError,
 } from "./schema-errors.ts";
 import {
   formatMigrationFilePath,
@@ -71,11 +73,20 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
         const sourcePool = yield* acquireDatabasePool(sourceShadow.url);
         const desiredPool = yield* acquireDatabasePool(desiredShadow.url);
 
+        const manifest = yield* Effect.try({
+          try: () => readExportManifest(workspace.schemasDir),
+          catch: (cause) =>
+            new SchemaWorkspaceIoError({
+              detail: cause instanceof Error ? cause.message : String(cause),
+              suggestion: "Fix supabase/schemas/.pgdelta-export.json or remove it and retry.",
+            }),
+        });
         const plan = yield* engine.planFiles({
           targetPool: sourcePool,
           shadowPool: desiredPool,
           files: declarations,
           allowDrops: true,
+          ...(manifest !== undefined ? { manifest } : {}),
         });
 
         if (!input.dryRun) {
@@ -136,6 +147,7 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
             shadowPool: verifyDesiredPool,
             files: declarations,
             allowDrops: true,
+            ...(manifest !== undefined ? { manifest } : {}),
           });
           if (verify.changes) {
             return yield* new SchemaEngineError({

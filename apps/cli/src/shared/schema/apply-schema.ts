@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { applyLocalPending } from "../migrations/apply-local-pending.ts";
@@ -9,8 +10,9 @@ import {
   SchemaDraftConflictError,
   SchemaDurableTargetError,
   SchemaPartialApplyError,
+  SchemaWorkspaceIoError,
 } from "./schema-errors.ts";
-import { formatNextAction, withPlanSummary } from "./schema-output.ts";
+import { formatNextAction, formatShadowLoadAssist, withPlanSummary } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult, SchemaDraftJournal } from "./schema-types.ts";
@@ -62,11 +64,20 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
 
         const shadow = yield* engine.provisionShadow;
         const shadowPool = yield* acquireDatabasePool(shadow.url);
+        const manifest = yield* Effect.try({
+          try: () => readExportManifest(workspace.schemasDir),
+          catch: (cause) =>
+            new SchemaWorkspaceIoError({
+              detail: cause instanceof Error ? cause.message : String(cause),
+              suggestion: "Fix supabase/schemas/.pgdelta-export.json or remove it and retry.",
+            }),
+        });
         const plan = yield* engine.planFiles({
           targetPool: pool,
           shadowPool,
           files: declarations,
           allowDrops: true,
+          ...(manifest !== undefined ? { manifest } : {}),
         });
 
         yield* assertPlanActionable(plan);
@@ -84,10 +95,12 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
                 ]
               : []),
           ];
+          const loadAssist = formatShadowLoadAssist(plan);
+          const base =
+            parts.length > 0 ? parts.join(". ") : "Local database already matches declarations.";
           return {
             status: "clean",
-            message:
-              parts.length > 0 ? parts.join(". ") : "Local database already matches declarations.",
+            message: loadAssist.length > 0 ? `${base}\n${loadAssist}` : base,
             data: {
               status: "clean",
               target: target.identity,

@@ -43,6 +43,7 @@ export interface LegacyPgDeltaExportManifest {
   readonly baselineDigest?: string;
   readonly defaultOwner?: string | null;
   readonly files?: ReadonlyArray<string>;
+  readonly loadOrder?: ReadonlyArray<string>;
 }
 
 export interface LegacyPgDeltaRenderedFile {

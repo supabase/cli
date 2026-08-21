@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
-import { formatCoverageDiagnostics, formatPlanSummary } from "./schema-output.ts";
+import {
+  formatCoverageDiagnostics,
+  formatPlanSummary,
+  formatShadowLoadAssist,
+  withCoverageMessage,
+} from "./schema-output.ts";
 import type { SchemaPlanView } from "./schema-types.ts";
 
 const dummyAction: Plan["actions"][number] = {
@@ -83,6 +88,75 @@ describe("formatCoverageDiagnostics", () => {
         "1 unmodeled operator (operator)",
         "1 unmodeled collation (collation)",
         "1 more. Re-run with --debug for full diagnostics.",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("formatShadowLoadAssist", () => {
+  it("keeps pg-delta copy and names the session as supautils poisoning", () => {
+    const plan = view([
+      {
+        code: "session_pollution",
+        severity: "warning",
+        message: [
+          "New connection unblocked a stuck load (session poisoning).",
+          '  stuck storage/tables/objects.sql:1 CREATE POLICY "foo" ON storage.objects (must be owner of table objects)',
+          '  earlier _cluster/publications.sql:1 ALTER PUBLICATION "supabase_realtime" ADD TABLE "public"."n8n_chat_histories"',
+          "Remove session-setting statements from declarative SQL, or do not share that session with later DDL.",
+        ].join("\n"),
+      },
+    ]);
+    expect(formatShadowLoadAssist(plan, { verbose: false })).toBe("");
+    expect(
+      withCoverageMessage("Declarations already match migration replay.", plan, { verbose: false }),
+    ).not.toContain("session poisoning");
+    expect(formatShadowLoadAssist(plan, { verbose: true })).toBe(
+      [
+        "New connection unblocked a stuck load (supautils session poisoning).",
+        '  stuck storage/tables/objects.sql:1 CREATE POLICY "foo" ON storage.objects (must be owner of table objects)',
+        '  earlier _cluster/publications.sql:1 ALTER PUBLICATION "supabase_realtime" ADD TABLE "public"."n8n_chat_histories"',
+      ].join("\n"),
+    );
+    expect(
+      withCoverageMessage("Declarations already match migration replay.", plan, { verbose: true }),
+    ).toContain("supautils session poisoning");
+  });
+
+  it("keeps same-file reorder advice and points loadOrder at the export sidecar", () => {
+    const plan = view([
+      {
+        code: "reorder_on_failure",
+        severity: "warning",
+        message: [
+          "Default load order stuck; reordered (statement-kind).",
+          '  move public/tables/reorder_probe.sql:1 ALTER PUBLICATION "supabase_realtime" ADD TABLE "public"."reorder_probe";',
+          '  after public/tables/reorder_probe.sql:2 CREATE TABLE "public"."reorder_probe" (id integer);',
+          "loadOrder cannot fix same-file order — edit or split the file.",
+        ].join("\n"),
+      },
+      {
+        code: "reorder_on_failure",
+        severity: "warning",
+        message: [
+          "Default load order stuck; reordered (file-kind).",
+          "  stuck _cluster/publications.sql:1 ALTER PUBLICATION p ADD TABLE public.t;",
+          "  after public/tables/t.sql:1 CREATE TABLE public.t (id integer);",
+          "Set loadOrder on .pgdelta-export.json to put public/tables/t.sql before _cluster/publications.sql.",
+        ].join("\n"),
+      },
+    ]);
+    expect(formatShadowLoadAssist(plan, { verbose: false })).toBe("");
+    expect(formatShadowLoadAssist(plan, { verbose: true })).toBe(
+      [
+        "Default load order stuck; reordered (statement-kind).",
+        '  move public/tables/reorder_probe.sql:1 ALTER PUBLICATION "supabase_realtime" ADD TABLE "public"."reorder_probe";',
+        '  after public/tables/reorder_probe.sql:2 CREATE TABLE "public"."reorder_probe" (id integer);',
+        "loadOrder cannot fix same-file order — edit or split the file.",
+        "Default load order stuck; reordered (file-kind).",
+        "  stuck _cluster/publications.sql:1 ALTER PUBLICATION p ADD TABLE public.t;",
+        "  after public/tables/t.sql:1 CREATE TABLE public.t (id integer);",
+        "Set loadOrder on supabase/schemas/.pgdelta-export.json to put public/tables/t.sql before _cluster/publications.sql.",
       ].join("\n"),
     );
   });

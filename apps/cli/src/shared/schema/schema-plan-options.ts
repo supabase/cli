@@ -1,6 +1,6 @@
 import { supabaseProfile } from "@supabase/pg-delta/integrations";
 
-/** Options for `planSchemaFiles` on the schema-first path. Isolated cluster only. */
+/** Isolated-cluster `planSchemaFiles` options. `reorder` escalates after default order + reconnect. */
 export const schemaIsolatedPlanOptions = {
   profile: supabaseProfile,
   scope: "database" as const,
@@ -10,4 +10,5 @@ export const schemaIsolatedPlanOptions = {
   allowSameDatabaseIdentity: true,
   strictDataStatements: true,
   reorder: true,
+  connectionReuse: "reconnect-on-stuck" as const,
 };

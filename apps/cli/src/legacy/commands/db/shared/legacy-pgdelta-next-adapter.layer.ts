@@ -21,6 +21,7 @@ import { classifyPlanHazards, plan, serializePlan } from "@supabase/pg-delta/pla
 import type { Plan as PgDeltaPlan } from "@supabase/pg-delta/plan";
 import type { Policy } from "@supabase/pg-delta/policy";
 import type { SqlFormatOptions } from "@supabase/pg-delta/sql-format";
+import { schemaIsolatedPlanOptions } from "../../../../shared/schema/schema-plan-options.ts";
 import {
   formatSchemaSql,
   SCHEMA_SQL_FORMAT_DEFAULTS,
@@ -379,17 +380,25 @@ function legacyPgDeltaNextExportOptions(input: LegacyPgDeltaNextDeclarativeExpor
 function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInput) {
   let manifest;
   if (input.manifest !== undefined) {
-    const { files, ...metadata } = input.manifest;
-    manifest = { ...metadata, ...(files !== undefined ? { files: [...files] } : {}) };
+    const { files, loadOrder, ...metadata } = input.manifest;
+    manifest = {
+      ...metadata,
+      ...(files !== undefined ? { files: [...files] } : {}),
+      ...(loadOrder !== undefined ? { loadOrder: [...loadOrder] } : {}),
+    };
   }
+  // Isolated load only — do not pin scope/redactSecrets; the sidecar owns those.
   return {
+    isolatedShadow: schemaIsolatedPlanOptions.isolatedShadow,
+    seedAssumedSchemas: schemaIsolatedPlanOptions.seedAssumedSchemas,
+    strictDataStatements: schemaIsolatedPlanOptions.strictDataStatements,
+    reorder: schemaIsolatedPlanOptions.reorder,
+    connectionReuse: schemaIsolatedPlanOptions.connectionReuse,
     profile: legacyPgDeltaNextProfile(input.schema),
     ...(manifest !== undefined ? { manifest } : {}),
-    isolatedShadow: true,
-    ...(input.allowSameDatabaseIdentity === true ? { allowSameDatabaseIdentity: true } : {}),
-    seedAssumedSchemas: false,
-    strictDataStatements: true,
-    reorder: true,
+    ...(input.allowSameDatabaseIdentity === true
+      ? { allowSameDatabaseIdentity: true }
+      : { allowSameDatabaseIdentity: false }),
   };
 }
 

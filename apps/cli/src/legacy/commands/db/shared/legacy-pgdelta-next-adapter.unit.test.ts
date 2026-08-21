@@ -503,11 +503,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
         expect(state.declarativeInputs).toHaveLength(1);
         expect(state.declarativeInputs[0]).toMatchObject({
           reorder: true,
+          connectionReuse: "reconnect-on-stuck",
           isolatedShadow: true,
           allowSameDatabaseIdentity: true,
           seedAssumedSchemas: false,
           strictDataStatements: true,
         });
+        expect(state.declarativeInputs[0]).not.toHaveProperty("scope");
+        expect(state.declarativeInputs[0]).not.toHaveProperty("redactSecrets");
         expect(planned.diagnostics.map((diagnostic) => diagnostic.origin)).toEqual([
           "declarativeLoad",
           "declarativeTarget",
