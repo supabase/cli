@@ -35,8 +35,8 @@ sequenceDiagram
 
     CLI->>Parent: daemonLayer(config, port intents, launch)
     Parent->>Child: fork + start message (resolved stack id)
-    Child->>Manager: ensure workspace + verify stack id
     Child->>Control: acquire ownership + bind deterministic endpoint
+    Child->>Manager: ensure workspace + verify stack id
     Child->>Manager: resolve document, allocate/reuse ports
     Child->>Manager: write starting
     Child->>Runtime: build Stack, ApiProxy, and DaemonServer
@@ -71,6 +71,12 @@ Node and Bun bindings:
 `@supabase/stack/daemon-bun` is an internal compiled-Bun re-entry target. The
 Node and Bun entrypoints provide filesystem, path, process, HTTP, and control
 transport services to the shared implementation.
+
+The shared runtime modules are Effect-native. Promise-based methods exist only
+in the outer direct entrypoint for non-Effect consumers. Native fetch and
+process callbacks are wrapped at the platform adapter seams with interruption
+cleanup; resource ownership, retries, concurrency, and typed failures remain
+inside Effect.
 
 ## Direct runtime
 
@@ -117,8 +123,9 @@ the document directly.
 2. The child binds the loopback control endpoint first, re-checks workspace
    discovery, and refuses to continue if the identity no longer derives the
    same id.
-3. The manager resolves the existing document, cleans stale Docker resources
-   when required, allocates or reuses ports, and records `starting`.
+3. The supervisor removes stale resources with the selected container runtime
+   when required. The manager then allocates or reuses ports and records
+   `starting`.
 4. The child builds the direct runtime and `DaemonServer`, records `running`
    with its control endpoint, and sends the endpoint to the parent.
 5. The parent returns a `RemoteStack` layer. The CLI then calls
@@ -126,8 +133,9 @@ the document directly.
 
 `connectManagedStack` reads the document, probes the deterministic endpoint
 candidates without binding them, and returns a `RemoteStack` against the
-owner's actual endpoint only when the owner reports a ready running state. Read-only status and discovery therefore do not claim an
-endpoint; mutating operations acquire control ownership.
+owner's actual endpoint only when the owner reports a ready running state.
+Read-only status and discovery therefore do not claim an endpoint; mutating
+operations acquire control ownership.
 
 ### Update, stop, and delete
 
@@ -137,12 +145,16 @@ endpoint; mutating operations acquire control ownership.
 - `stopManagedStack` asks an attached owner to perform a graceful
   `RemoteStack.stop()`, waits for the document to become `stopped`, and lets
   the owner close the runtime before releasing control. If the old owner is
-  gone, the facade acquires control, removes Docker containers named for the
-  stack id, records `stopped`, and does not inspect PIDs or scan processes.
-- `deleteManagedStack` requires owned control and removes only a stopped
-  document and its managed data root. The explicit destructive path can also
-  remove an invalid document after ownership is acquired; ordinary status and
-  start operations report corruption instead of guessing.
+  gone, the facade acquires control, removes containers through the persisted
+  container runtime, records `stopped`, and does not inspect PIDs or scan
+  processes.
+- `deleteManagedStack` requires owned control, removes resources through the
+  persisted container runtime, and deletes the document and its managed data
+  root. A live owner cannot be deleted because the caller cannot acquire
+  ownership; stale `starting`, `running`, or `failed` documents are reconciled
+  after ownership recovery. The explicit destructive path can also remove an
+  invalid document after ownership is acquired; ordinary status and start
+  operations report corruption instead of guessing.
 
 ### Failure and recovery
 
@@ -151,10 +163,10 @@ transitions. A startup error records `failed` and releases the port lease. A
 graceful stop closes the direct runtime before recording `stopped`.
 
 If a supervisor crashes, its document and possible runtime artifacts remain.
-The next managed start acquires control, reconciles Docker resources by stack
-id, and reuses sticky ports according to their persisted `exact` or `automatic`
-intent. No PID file, process scan, second metadata file, or registry surgery is
-needed for recovery.
+The next managed start acquires control, reconciles container resources through
+the persisted runtime by stack id, and reuses sticky ports according to their
+persisted `exact` or `automatic` intent. No PID file, process scan, second
+metadata file, or registry surgery is needed for recovery.
 
 ## Identity and state
 
@@ -203,6 +215,14 @@ they still conflict with the incoming stack's deterministic endpoint, a known
 persisted endpoint, or another stack's reservation under the normal exact-port
 rules. A persisted automatic assignment in the control range is invalid and
 fails loudly rather than being silently migrated.
+
+`reservePortSet` is the single allocation and ownership module for direct and
+managed stacks. It binds each TCP listener before publishing a per-user claim.
+A lease may release a listener immediately before the owning runtime binds the
+port while retaining the claim; `releaseAll` removes only the listeners and
+claims owned by that lease. Stale claims are reclaimed only while the requested
+TCP port is already bound by the new lease, so claim recovery cannot steal a
+live port.
 
 The control endpoint is derived from the stack id and served on loopback. The
 derivation yields a short deterministic candidate sequence rather than a
@@ -264,7 +284,7 @@ handles that marker before normal command dispatch and invokes the same
 `runBunDaemon()` supervisor entrypoint. This is the only stack-specific
 self-dispatch path; the daemon branch does not run normal CLI command dispatch.
 
-## Component map
+## Module map
 
 | Concern                                           | Owner                                                             |
 | ------------------------------------------------- | ----------------------------------------------------------------- |
