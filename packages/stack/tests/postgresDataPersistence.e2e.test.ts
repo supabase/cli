@@ -51,11 +51,11 @@ async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: st
     // breaks `toEqual` against a plain array literal, so coerce to one here.
     return Array.from(result);
   } finally {
-    sql.close();
+    await sql.close();
   }
 }
 
-// Native mode can fall back to Docker when its binary is unavailable.
+// This e2e requires both the native Postgres artifact and a Docker daemon.
 const canRunPersistenceE2e =
   hasDockerDaemon() &&
   (await prefetch({ mode: "native", services: ["postgres"] })).postgres?.type === "binary";
@@ -109,7 +109,7 @@ persistenceDescribe("postgres native/docker data persistence e2e", () => {
 
         INSERT INTO public.persistence_marker (note) VALUES ('native-e2e-marker');
       `);
-      sql.close();
+      await sql.close();
     }, NATIVE_SETUP_TIMEOUT_MS);
 
     afterAll(async () => {

@@ -7,11 +7,18 @@ import {
   Effect,
   Fiber,
   Layer,
+  Predicate,
   Schedule,
   Scope,
   Schema,
 } from "effect";
 import { HttpServer } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import {
+  selectStackRuntime,
+  validateStackRuntime,
+  type StackRuntimeSelection,
+} from "./ContainerRuntime.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { Stack } from "./Stack.ts";
@@ -25,17 +32,30 @@ import {
   type ControlOwnership,
   type ControlTransport,
 } from "./managed/control.ts";
-import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
-import { managedStackLaunchSchema } from "./managed/document.ts";
+import {
+  ManagedStackManager,
+  type ManagedStackManagerConstructionError,
+  type ManagedStackStartResult,
+} from "./managed/manager.ts";
+import {
+  managedStackLaunchInputSchema,
+  type ManagedStackLaunch,
+  type ManagedStackLaunchInput,
+} from "./managed/document.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
-import { managedStackPaths } from "./managed/paths.ts";
-import { PORT_FIELDS, type PortField, type PortSet } from "./PortCatalog.ts";
-import { SERVICE_NAMES } from "./ServiceCatalog.ts";
+import { managedStackPathsEffect } from "./managed/paths.ts";
+import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
+import { portFieldsForConfigInput } from "./ServicePorts.ts";
+import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
-import type { PortAllocationError, PortLease } from "./PortAllocator.ts";
-import { resolveConfig, type DaemonConfigInput } from "./StackConfigResolver.ts";
+import type { PortLease } from "./PortAllocator.ts";
+import {
+  portRequestsForConfig,
+  resolveConfig,
+  type DaemonConfigInput,
+} from "./StackConfigResolver.ts";
 import type { ResolvedDaemonConfig } from "./StackConfig.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
@@ -51,7 +71,7 @@ export interface SupervisorStartMessage {
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
+  readonly launch?: ManagedStackLaunchInput;
 }
 
 export interface SupervisorStartedMessage {
@@ -73,7 +93,7 @@ export interface ManagedDaemonStartInput {
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: import("./managed/document.ts").ManagedStackDocument["launch"];
+  readonly launch?: ManagedStackLaunchInput;
 }
 
 const supervisorPortIntentSchema = Schema.Struct({
@@ -90,7 +110,7 @@ const supervisorStartMessageSchema = Schema.Struct({
   stateRoot: Schema.String,
   config: Schema.Record(Schema.String, Schema.Unknown),
   portIntents: supervisorPortIntentSchema,
-  launch: Schema.optionalKey(managedStackLaunchSchema),
+  launch: Schema.optionalKey(managedStackLaunchInputSchema),
 });
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -102,15 +122,70 @@ const isControlEndpoint = (value: unknown): value is ControlEndpoint =>
   typeof value.port === "number" &&
   typeof value.url === "string";
 
-const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage => {
-  return Schema.decodeUnknownSync(supervisorStartMessageSchema)(value);
+const isControlOwnership = (value: ControlAcquisition): value is ControlOwnership =>
+  Predicate.isTagged(value, "Owned");
+
+const isControlAttached = (value: ControlAcquisition): value is ControlAttached =>
+  Predicate.isTagged(value, "Attached");
+
+const decodeSupervisorStartMessage = (
+  value: unknown,
+): Effect.Effect<SupervisorStartMessage, SupervisorStartError> =>
+  Schema.decodeUnknownEffect(supervisorStartMessageSchema)(value).pipe(
+    Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+  );
+
+const causeMessage = (cause: unknown): string => {
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "detail" in cause &&
+    typeof cause.detail === "string"
+  ) {
+    return cause.detail;
+  }
+  return typeof cause === "string" ? cause : String(cause);
 };
 
-const causeMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : typeof cause === "string" ? cause : String(cause);
+const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
+  launch.mode === "native"
+    ? { mode: "native", containerRuntime: null }
+    : { mode: "docker", containerRuntime: launch.containerRuntime };
 
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
+
+/**
+ * The CLI's omitted-mode defaults are empty service objects, optionally
+ * decorated with only a pinned version. A managed caller's non-default field
+ * is an explicit request and must survive fallback so native validation can
+ * reject it instead of silently changing the requested stack.
+ */
+const isCatalogDefaultServiceConfig = (value: unknown): boolean => {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return Object.keys(value).every((key) => key === "version");
+};
+
+const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => {
+  const servicePolicies: NonNullable<DaemonConfigInput["servicePolicies"]> = {
+    ...config.servicePolicies,
+  };
+
+  for (const service of SERVICE_NAMES) {
+    const metadata = SERVICE_CATALOG[service];
+    if (
+      metadata.runtimeSupport === "docker-only" &&
+      servicePolicies[service] === undefined &&
+      isCatalogDefaultServiceConfig(config[metadata.configKey])
+    ) {
+      servicePolicies[service] = "off";
+    }
+  }
+
+  return { ...config, servicePolicies };
+};
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
@@ -157,7 +232,7 @@ const awaitOwnerReady = (
       schedule: Schedule.spaced("25 millis").pipe(
         Schedule.tap(({ attempt }) => (attempt === 1 ? onWaiting : Effect.void)),
       ),
-      while: (error) => error._tag === "SupervisorOwnerUnavailableError" && error.retry,
+      while: (error) => Predicate.isTagged(error, "SupervisorOwnerUnavailableError") && error.retry,
     }),
     Effect.catchTag("SupervisorOwnerUnavailableError", (error) =>
       Effect.fail(new SupervisorStartError({ message: error.detail })),
@@ -178,7 +253,7 @@ export interface SupervisorPlatform {
     stateRoot: string,
   ) => Layer.Layer<
     ManagedStackManager,
-    never,
+    ManagedStackManagerConstructionError,
     ControlTransport | import("effect").FileSystem.FileSystem | import("effect").Path.Path
   >;
 }
@@ -187,11 +262,7 @@ const receiveStartMessage = (): Effect.Effect<SupervisorStartMessage, Supervisor
   Effect.callback((resume) => {
     const onMessage = (value: unknown) => {
       cleanup();
-      try {
-        resume(Effect.succeed(decodeSupervisorStartMessage(value)));
-      } catch (cause) {
-        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
-      }
+      resume(decodeSupervisorStartMessage(value));
     };
     const onDisconnect = () => {
       cleanup();
@@ -247,18 +318,6 @@ const waitForSignal = (): Effect.Effect<"SIGINT" | "SIGTERM"> =>
     return Effect.sync(cleanup);
   });
 
-const leaseFacade = (lease: {
-  readonly ports: PortSet;
-  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
-  readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
-  readonly releaseAll: Effect.Effect<void>;
-}): PortLease => ({
-  ports: lease.ports,
-  reserve: lease.reserve,
-  release: lease.release,
-  releaseAll: lease.releaseAll,
-});
-
 const startDaemon = (input: {
   readonly config: ResolvedDaemonConfig;
   readonly lease: PortLease;
@@ -266,7 +325,7 @@ const startDaemon = (input: {
   readonly platform: SupervisorPlatform;
   readonly scope: Scope.Scope;
   readonly launchUpdate?: (
-    launch: NonNullable<import("./managed/document.ts").ManagedStackDocument["launch"]>,
+    launch: import("./managed/document.ts").ManagedStackLaunchUpdate,
   ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
   { readonly daemon: DaemonServer["Service"] },
@@ -310,6 +369,7 @@ const runManaged = (
   | ControlTransport
   | import("effect").FileSystem.FileSystem
   | import("effect").Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
   | Scope.Scope
 > => {
   let owner: ControlOwnership | undefined;
@@ -324,7 +384,7 @@ const runManaged = (
       );
     }
     const initialAcquisition = yield* acquireControl({ stackId: input.stackId });
-    if (initialAcquisition._tag === "Owned") owner = initialAcquisition;
+    if (isControlOwnership(initialAcquisition)) owner = initialAcquisition;
     const manager = yield* ManagedStackManager.pipe(
       Effect.provide(platform.managerLayer(input.stateRoot)),
     );
@@ -332,13 +392,13 @@ const runManaged = (
     const discovered = manager
       .ensureWorkspace(input.workspacePath)
       .pipe(Effect.map((discovery) => ({ _tag: "discovered" as const, discovery })));
-    const discoveryResult = yield* initialAcquisition._tag === "Owned"
+    const discoveryResult = yield* isControlOwnership(initialAcquisition)
       ? Effect.raceFirst(
           discovered,
           initialAcquisition.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
-    if (discoveryResult._tag === "stopped") {
+    if (Predicate.isTagged(discoveryResult, "stopped")) {
       yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
       return;
     }
@@ -348,11 +408,27 @@ const runManaged = (
         new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
       );
     }
+    const requestedMode = configInput.mode ?? input.launch?.mode;
+    const existing = yield* manager.inspectStack(stackId);
+    const persistedRuntime: StackRuntimeSelection | undefined =
+      existing === undefined ? undefined : runtimeSelectionForLaunch(existing.launch);
+    if (
+      isControlAttached(initialAcquisition) &&
+      persistedRuntime !== undefined &&
+      requestedMode !== undefined &&
+      persistedRuntime.mode !== requestedMode
+    ) {
+      return yield* Effect.fail(
+        new SupervisorStartError({
+          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+        }),
+      );
+    }
     let attachedOwnerWasStopping = false;
     const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
       manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
-          if (candidate._tag === "Owned") return Effect.succeed(candidate);
+          if (isControlOwnership(candidate)) return Effect.succeed(candidate);
           return candidate.ownerStatus.pipe(
             Effect.flatMap((status): Effect.Effect<never, unknown> =>
               status.state === "starting"
@@ -364,7 +440,7 @@ const runManaged = (
                   ),
             ),
             Effect.catch((error) =>
-              error instanceof ControlTransportError && error.reason === "unreachable"
+              error instanceof ControlTransportError
                 ? Effect.fail(new SupervisorOwnerReacquirePending())
                 : Effect.fail(error),
             ),
@@ -375,37 +451,34 @@ const runManaged = (
           while: (error) => error instanceof SupervisorOwnerReacquirePending,
         }),
       );
-    const attachedResolution =
-      initialAcquisition._tag === "Attached"
-        ? initialAcquisition.ownerStatus.pipe(
-            Effect.tap((status) =>
-              Effect.sync(() => {
-                attachedOwnerWasStopping = status.state === "stopping";
-              }),
-            ),
-            Effect.flatMap((status) =>
-              status.state === "running" && status.ready
-                ? Effect.succeed(status)
-                : awaitOwnerReady(
-                    initialAcquisition,
-                    platform.onAttachedBeforeReady?.() ?? Effect.void,
-                  ),
-            ),
-            Effect.as(initialAcquisition),
-            Effect.catch((error) =>
-              error instanceof ControlTransportError && error.reason === "unreachable"
-                ? reacquireAfterDeath()
-                : Effect.fail(error),
-            ),
-          )
-        : Effect.succeed(initialAcquisition);
+    const attachedResolution = isControlAttached(initialAcquisition)
+      ? initialAcquisition.ownerStatus.pipe(
+          Effect.tap((status) =>
+            Effect.sync(() => {
+              attachedOwnerWasStopping = status.state === "stopping";
+            }),
+          ),
+          Effect.flatMap((status) =>
+            status.state === "running" && status.ready
+              ? Effect.succeed(status)
+              : awaitOwnerReady(
+                  initialAcquisition,
+                  platform.onAttachedBeforeReady?.() ?? Effect.void,
+                ),
+          ),
+          Effect.as(initialAcquisition),
+          Effect.catch((error) =>
+            error instanceof ControlTransportError ? reacquireAfterDeath() : Effect.fail(error),
+          ),
+        )
+      : Effect.succeed(initialAcquisition);
     const acquisition = yield* attachedResolution.pipe(
       Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
       Effect.catch((error) =>
         typeof error === "object" &&
         error !== null &&
         "_tag" in error &&
-        error._tag === "TimeoutError"
+        Predicate.isTagged(error, "TimeoutError")
           ? Effect.fail(
               new SupervisorStartError({
                 message: "Timed out resolving attached supervisor owner",
@@ -414,7 +487,7 @@ const runManaged = (
           : Effect.fail(error),
       ),
     );
-    if (initialAcquisition._tag === "Attached") {
+    if (isControlAttached(initialAcquisition)) {
       const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
       const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
       if (revalidatedStackId !== stackId) {
@@ -425,16 +498,35 @@ const runManaged = (
         );
       }
     }
-    if (acquisition._tag === "Attached") {
+    if (isControlAttached(acquisition)) {
+      // The first inspection can legitimately race the owner's initial
+      // document write. Once the owner reports ready, its persisted launch is
+      // the authoritative runtime contract for an explicit request.
+      const attachedExisting = yield* manager.inspectStack(stackId);
+      const attachedPersistedRuntime =
+        attachedExisting === undefined
+          ? undefined
+          : runtimeSelectionForLaunch(attachedExisting.launch);
+      if (
+        requestedMode !== undefined &&
+        (attachedPersistedRuntime === undefined || attachedPersistedRuntime.mode !== requestedMode)
+      ) {
+        const observedMode = attachedPersistedRuntime?.mode ?? "unknown";
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: `Stack runtime is already ${observedMode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+          }),
+        );
+      }
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;
     }
     const ownership = acquisition;
     owner = ownership;
-    if (initialAcquisition._tag === "Attached" && !attachedOwnerWasStopping) {
-      const existing = yield* manager.inspectStack(stackId);
-      if (existing?.lifecycle === "stopped") {
+    const ownedExisting = yield* manager.inspectStack(stackId);
+    if (isControlAttached(initialAcquisition) && !attachedOwnerWasStopping) {
+      if (ownedExisting?.lifecycle === "stopped") {
         yield* ownership.close;
         return yield* Effect.fail(
           new SupervisorStartError({
@@ -444,46 +536,83 @@ const runManaged = (
         );
       }
     }
+    const ownedPersistedRuntime =
+      ownedExisting === undefined ? undefined : runtimeSelectionForLaunch(ownedExisting.launch);
+    if (
+      ownedPersistedRuntime !== undefined &&
+      requestedMode !== undefined &&
+      ownedPersistedRuntime.mode !== requestedMode
+    ) {
+      return yield* Effect.fail(
+        new SupervisorStartError({
+          message: `Stack runtime is already ${ownedPersistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+        }),
+      );
+    }
+    const runtime =
+      ownedPersistedRuntime === undefined
+        ? yield* selectStackRuntime(requestedMode)
+        : yield* validateStackRuntime(ownedPersistedRuntime);
+    const runtimeConfigInput =
+      runtime.mode === "native" && requestedMode === undefined
+        ? nativeFallbackConfig(configInput)
+        : configInput;
+    const activeFields = portFieldsForConfigInput({ ...runtimeConfigInput, mode: runtime.mode });
+    const activeFieldSet = new Set(activeFields);
+    const portIntents: ManagedPortIntentDocument = {
+      ...input.portIntents,
+      activeFields,
+      disabledFields: PORT_FIELDS.filter(
+        (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
+      ),
+    };
+    // Validate policies and explicit ports before manager.startStack writes
+    // `starting` or acquires the managed lease.
+    yield* portRequestsForConfig(runtimeConfigInput, { runtime });
+    const launchInput = input.launch ?? { versions: {} };
+    const launch: ManagedStackLaunch =
+      runtime.mode === "native"
+        ? { ...launchInput, mode: "native" }
+        : { ...launchInput, mode: "docker", containerRuntime: runtime.containerRuntime };
     const startup = Effect.gen(function* () {
-      const existing = yield* manager.inspectStack(stackId);
       if (
-        existing !== undefined &&
-        (existing.lifecycle === "starting" ||
-          existing.lifecycle === "running" ||
-          existing.lifecycle === "failed" ||
-          existing.lifecycle === "deleting")
+        ownedExisting !== undefined &&
+        (ownedExisting.lifecycle === "starting" ||
+          ownedExisting.lifecycle === "running" ||
+          ownedExisting.lifecycle === "failed" ||
+          ownedExisting.lifecycle === "deleting")
       ) {
-        yield* dockerForceRemove(
-          SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-        );
+        if (runtime.mode === "docker") {
+          yield* dockerForceRemove(
+            runtime.containerRuntime,
+            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+          );
+        }
       }
       const started: ManagedStackStartResult = yield* manager.startStack({
         workspacePath: input.workspacePath,
         stackName: input.stackName,
-        portDocument: input.portIntents,
+        portDocument: portIntents,
         ownership,
         lifecycle: "starting",
-        launch: input.launch,
+        launch,
       });
       claimedStack = true;
-      const resolved = yield* Effect.tryPromise({
-        try: () =>
-          resolveConfig(
-            {
-              ...configInput,
-              projectDir: configInput.projectDir ?? input.workspacePath,
-              stackRoot: managedStackPaths(input.stateRoot, started.stack.id).root,
-              runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
-              instanceId: started.stack.id,
-            },
-            { portAllocator: () => Effect.succeed(started.lease.ports) },
-          ),
-        catch: (cause) => cause,
-      });
+      const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);
+      const resolved = yield* resolveConfig(
+        {
+          ...runtimeConfigInput,
+          projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
+          stackRoot: managedPaths.root,
+          runtimeRoot: managedPaths.runtime,
+          instanceId: started.stack.id,
+        },
+        { runtime, ports: started.lease.ports },
+      );
       const config: ResolvedDaemonConfig = {
         ...resolved,
         name: input.stackName,
-        projectDir: configInput.projectDir ?? input.workspacePath,
+        projectDir: runtimeConfigInput.projectDir ?? input.workspacePath,
       };
       yield* manager.recordLifecycle(ownership, {
         stackId: started.stack.id,
@@ -491,7 +620,7 @@ const runManaged = (
       });
       const built = yield* startDaemon({
         config,
-        lease: leaseFacade(started.lease),
+        lease: started.lease,
         ownership,
         platform,
         scope,
@@ -521,7 +650,7 @@ const runManaged = (
       startup.pipe(Effect.map((result) => ({ _tag: "started" as const, ...result }))),
       ownership.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
     );
-    if (startupResult._tag === "stopped") {
+    if (Predicate.isTagged(startupResult, "stopped")) {
       const current = yield* manager.inspectStack(stackId);
       if (current !== undefined) {
         yield* manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" });
@@ -568,7 +697,10 @@ export const runSupervisor = (
 ): Effect.Effect<
   void,
   SupervisorStartError | unknown,
-  ControlTransport | import("effect").FileSystem.FileSystem | import("effect").Path.Path
+  | ControlTransport
+  | import("effect").FileSystem.FileSystem
+  | import("effect").Path.Path
+  | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -576,7 +708,7 @@ export const runSupervisor = (
       const input = yield* receiveStartMessage();
       yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
         onFailure: (cause) =>
-          sendMessage({ type: "error", message: causeMessage(cause) }).pipe(
+          sendMessage({ type: "error", message: causeMessage(Cause.squash(cause)) }).pipe(
             Effect.andThen(Effect.failCause(cause)),
           ),
         onSuccess: Effect.succeed,
@@ -689,9 +821,7 @@ export const supervisorLayer = (
       );
     }).pipe(
       Effect.onExit(() =>
-        detached
-          ? Effect.void
-          : Effect.promise(() => terminateChildProcess(child)).pipe(Effect.ignore),
+        detached ? Effect.void : terminateChildProcess(child).pipe(Effect.ignore),
       ),
     );
   });

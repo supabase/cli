@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { PrefetchOptions, PrefetchResult } from "../../src/node.ts";
 import { warmStackE2eDependencies } from "./warmup.ts";
 
@@ -29,32 +29,20 @@ function makeResult(type: "binary" | "docker"): PrefetchResult {
 }
 
 describe("stack e2e warmup", () => {
-  test("runs auto prefetch and docker image warmup when Docker is available", async () => {
+  test("warms native and Docker resources when Docker is available", async () => {
     const calls: Array<PrefetchOptions | undefined> = [];
     const { logger } = makeLogger();
-    let finishAutoPrefetch: (() => void) | undefined;
 
-    const warmup = warmStackE2eDependencies({
+    await warmStackE2eDependencies({
       logger,
       hasDockerDaemon: () => true,
       prefetch: async (options?: PrefetchOptions) => {
         calls.push(options);
-        if (options === undefined) {
-          await new Promise<void>((resolve) => {
-            finishAutoPrefetch = resolve;
-          });
-        }
         return options?.mode === "docker" ? makeResult("docker") : makeResult("binary");
       },
     });
 
-    await vi.waitFor(() => {
-      expect(calls).toEqual([undefined, { mode: "docker" }]);
-    });
-    finishAutoPrefetch?.();
-    await warmup;
-
-    expect(calls).toEqual([undefined, { mode: "docker" }]);
+    expect(calls).toEqual([{ mode: "native" }, { mode: "docker" }]);
   });
 
   test("skips docker image warmup when Docker is unavailable", async () => {
@@ -70,7 +58,7 @@ describe("stack e2e warmup", () => {
       },
     });
 
-    expect(calls).toEqual([undefined]);
+    expect(calls).toEqual([{ mode: "native" }]);
   });
 
   test("can fail fast when warmup is required", async () => {
@@ -87,6 +75,24 @@ describe("stack e2e warmup", () => {
       }),
     ).rejects.toThrow("pull failed");
     expect(warn.some((message) => message.includes("Warmup failed"))).toBe(true);
+  });
+
+  test("continues to the Docker warmup after a best-effort native failure", async () => {
+    const calls: Array<PrefetchOptions | undefined> = [];
+    const { warn, logger } = makeLogger();
+
+    await warmStackE2eDependencies({
+      hasDockerDaemon: () => true,
+      logger,
+      prefetch: async (options?: PrefetchOptions) => {
+        calls.push(options);
+        if (options?.mode === "native") throw new Error("native unavailable");
+        return makeResult("docker");
+      },
+    });
+
+    expect(calls).toEqual([{ mode: "native" }, { mode: "docker" }]);
+    expect(warn.some((message) => message.includes("native unavailable"))).toBe(true);
   });
 
   test("only warns when warmup is best effort", async () => {

@@ -21,6 +21,11 @@ const errorCode = (cause: unknown): string | undefined => {
   return undefined;
 };
 
+const isDefinitivelyUnreachable = (cause: unknown): boolean => {
+  const code = errorCode(cause);
+  return code === "ECONNREFUSED" || code === "ConnectionRefused";
+};
+
 const controlTransport: ControlTransport["Service"] = {
   bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
@@ -34,6 +39,10 @@ const controlTransport: ControlTransport["Service"] = {
         const server = yield* BunHttpServer.make({
           hostname: endpoint.hostname,
           port: endpoint.port,
+          // Stack lifecycle requests can legitimately take up to the configured
+          // readiness deadline. Bun's 10-second default would otherwise close
+          // the control connection while the stack continues starting.
+          idleTimeout: 0,
           disablePreemptiveShutdown: true,
           routes: {
             [CONTROL_STATUS_PATH]: {
@@ -79,43 +88,47 @@ const controlTransport: ControlTransport["Service"] = {
     ),
   read: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
-          signal: AbortSignal.timeout(500),
+      try: (signal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
+          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
           // One-shot connection: a pooled keep-alive connection would let a
           // closed listener keep answering status probes while the probes
           // themselves keep the connection alive.
           headers: { connection: "close" },
-        });
-        if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
-        return await response.json();
-      },
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
+          return response.json();
+        }),
       catch: (cause) => {
         if (
           cause instanceof SyntaxError ||
-          (cause instanceof Error &&
-            cause.message.startsWith("Control status request returned") &&
-            !cause.message.endsWith(" 404"))
+          (cause instanceof Error && cause.message.startsWith("Control status request returned"))
         ) {
           return new ControlProtocolError({ endpoint, cause });
         }
-        if (cause instanceof Error && cause.message.endsWith(" 404")) {
-          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
-        }
-        return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+        return new ControlTransportError({
+          endpoint,
+          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+          cause,
+        });
       },
     }),
   requestStop: (endpoint: ControlEndpoint) =>
     Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
+      try: (signal) =>
+        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
-          signal: AbortSignal.timeout(500),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
           headers: { connection: "close" },
-        });
-        if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
-      },
-      catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+        }).then((response) => {
+          if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
+        }),
+      catch: (cause) =>
+        new ControlTransportError({
+          endpoint,
+          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+          cause,
+        }),
     }),
 };
 

@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Data, Effect, Predicate } from "effect";
 import type { ConfigPortKey, PortField } from "../PortCatalog.ts";
 import { causeMessage } from "./failure.ts";
 
@@ -227,7 +227,6 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
 const MANAGED_ERROR_TAGS: ReadonlySet<string> = new Set(Object.values(MANAGED_ERROR_TAG_BY_CODE));
 
 export function isManagedStackError(error: unknown): error is ManagedStackError {
-  if (!(error instanceof Error) || !("_tag" in error)) return false;
-  const tag: unknown = error._tag;
-  return typeof tag === "string" && MANAGED_ERROR_TAGS.has(tag);
+  if (!(error instanceof Error)) return false;
+  return [...MANAGED_ERROR_TAGS].some((tag) => Predicate.isTagged(error, tag));
 }

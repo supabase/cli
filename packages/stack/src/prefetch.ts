@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import type { ChecksumMismatchError } from "./errors.ts";
-import type { DockerPullError } from "./errors.ts";
+import type { ContainerRuntime } from "./ContainerRuntime.ts";
+import type { StackPreparationError } from "./StackPreparation.ts";
 import {
   type PreparedStackArtifacts,
   type ServiceResolution,
@@ -9,7 +9,18 @@ import {
 import { StackPreparation } from "./StackPreparation.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
-export interface PrefetchOptions extends StackPreparationInput {}
+export interface PrefetchOptions {
+  readonly versions?: StackPreparationInput["versions"];
+  readonly services?: StackPreparationInput["services"];
+  readonly enabledServices?: StackPreparationInput["enabledServices"];
+  readonly mode?: "native" | "docker";
+}
+
+export type PrefetchEffectOptions = Omit<PrefetchOptions, "mode"> &
+  (
+    | { readonly mode?: "native"; readonly containerRuntime?: never }
+    | { readonly mode: "docker"; readonly containerRuntime: ContainerRuntime }
+  );
 
 export type PrefetchResult = Partial<Record<ServiceName, ServiceResolution>>;
 
@@ -17,9 +28,11 @@ const toPrefetchResult = (artifacts: PreparedStackArtifacts): PrefetchResult =>
   artifacts.resolutions;
 
 export const prefetch = (
-  options?: PrefetchOptions,
-): Effect.Effect<PrefetchResult, DockerPullError | ChecksumMismatchError, StackPreparation> =>
+  options?: PrefetchEffectOptions,
+): Effect.Effect<PrefetchResult, StackPreparationError, StackPreparation> =>
   Effect.gen(function* () {
     const preparation = yield* StackPreparation;
-    return yield* preparation.prepare(options).pipe(Effect.map(toPrefetchResult));
+    const input: StackPreparationInput =
+      options?.mode === "docker" ? options : { ...options, mode: "native" };
+    return yield* preparation.prepare(input).pipe(Effect.map(toPrefetchResult));
   });

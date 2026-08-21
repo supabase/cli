@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 interface SpawnRecord {
@@ -44,8 +44,8 @@ export function mockChildProcessSpawner(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
+          const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
           yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
@@ -54,7 +54,7 @@ export function mockChildProcessSpawner(
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           let running = true;
 
-          yield* Effect.forkDetach(
+          yield* Effect.forkScoped(
             Effect.gen(function* () {
               // Supervisor processes model long-running services. Direct
               // commands model probes and one-shot helpers, which should

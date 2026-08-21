@@ -1,21 +1,26 @@
+import { join } from "node:path";
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, Context } from "effect";
+import { Context, Effect, FileSystem, Layer, Scope } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { shortTempPrefixRoot } from "./paths.ts";
 import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
-  makeEdgeRuntimeServiceNative,
+  prepareEdgeRuntimeBootstrap,
 } from "./services/edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
 import { makeMailpitServiceDocker } from "./services/mailpit.ts";
 import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
 import { makePoolerServiceDocker } from "./services/pooler.ts";
-import { makePostgresInitService } from "./services/postgres-init.ts";
+import {
+  makePostgresInitService,
+  makePostgresInitServiceDocker,
+} from "./services/postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
 import { makeRealtimeServiceDocker } from "./services/realtime.ts";
@@ -48,6 +53,9 @@ export interface BuildResult {
 const dockerOnlyServices = SERVICE_NAMES.filter(
   (service) => serviceMetadata(service).runtimeSupport === "docker-only",
 );
+const nativeServices = SERVICE_NAMES.filter(
+  (service) => serviceMetadata(service).runtimeSupport !== "docker-only",
+);
 
 // Serial health-check paths used by dependency waits; keep each path aligned
 // with the corresponding service's transitive dependencies.
@@ -57,14 +65,12 @@ const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics
 
 const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
-const dependsOnPostgres = (hasPostgresInit: boolean): ReadonlyArray<ServiceDependency> =>
-  hasPostgresInit
-    ? [{ service: "postgres-init", condition: "completed" }]
-    : [{ service: "postgres", condition: "healthy" }];
+const postgresDependencies: ReadonlyArray<ServiceDependency> = [
+  { service: "postgres-init", condition: "completed" },
+];
 
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
-  hasPostgresInit: boolean,
 ): StackServiceProjectionCatalog => {
   const serviceProjection: Map<
     string,
@@ -75,13 +81,11 @@ const publicServiceProjection = (
     }
   > = new Map(defs.map((def) => [def.name, { visibility: "public" as const }] as const));
 
-  if (hasPostgresInit) {
-    serviceProjection.set("postgres-init", {
-      visibility: "internal",
-      owner: "postgres",
-      ownerStatusWhileActive: "Initializing",
-    });
-  }
+  serviceProjection.set("postgres-init", {
+    visibility: "internal",
+    owner: "postgres",
+    ownerStatusWhileActive: "Initializing",
+  });
 
   return serviceProjection;
 };
@@ -97,6 +101,49 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
 const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
   config[serviceMetadata(service).configKey];
 
+const prepareNativePostgresAlias = (
+  preparedPath: string,
+): Effect.Effect<string, StackBuildError, FileSystem.FileSystem | Scope.Scope> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const aliasRoot = yield* Effect.acquireRelease(
+      fs.makeTempDirectory({
+        directory: shortTempPrefixRoot(),
+        prefix: "supabase-stack-postgres-",
+      }),
+      (path) => fs.remove(path, { recursive: true, force: true }).pipe(Effect.ignore),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to create a private native PostgreSQL binary directory",
+            cause,
+          }),
+      ),
+    );
+    const aliasPath = join(aliasRoot, "bundle");
+    if (/\s/.test(aliasPath) || (process.platform !== "darwin" && process.platform !== "linux")) {
+      yield* fs.remove(aliasRoot, { recursive: true, force: true }).pipe(Effect.ignore);
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: "Native PostgreSQL requires a Unix temporary path without whitespace",
+          reason: "invalid_config",
+        }),
+      );
+    }
+
+    yield* fs.symlink(preparedPath, aliasPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackBuildError({
+            detail: "Failed to publish the native PostgreSQL binary alias",
+            cause,
+          }),
+      ),
+    );
+    return aliasPath;
+  });
+
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
@@ -110,14 +157,14 @@ export const validateResolvedConfig = (
       );
     }
 
-    if (config.mode === "native") {
+    if (config.runtime.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,
       );
       if (enabledDockerOnly.length > 0) {
         return yield* Effect.fail(
           new StackBuildError({
-            detail: `mode "native" only supports postgres, auth, and postgrest. Disable ${enabledDockerOnly.join(", ")} or switch to "auto" or "docker".`,
+            detail: `Native mode supports only ${nativeServices.join(", ")}. Disable ${enabledDockerOnly.join(", ")} or select Docker mode with a usable Docker or Podman runtime.`,
             reason: "invalid_config",
           }),
         );
@@ -154,7 +201,9 @@ export const validateResolvedConfig = (
 
 export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
   SERVICE_NAMES.filter(
-    (service) => service === "postgres" || resolvedConfigForService(config, service) !== false,
+    (service) =>
+      config.servicePolicies?.[service] !== "off" &&
+      resolvedConfigForService(config, service) !== false,
   );
 
 export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => {
@@ -198,18 +247,13 @@ const requirePreparedDockerImage = (
     ),
   );
 
-export const nativePostgresNeedsDockerAccess = (
-  postgresResolution: ServiceResolution,
-  dockerServicesEnabled: boolean,
-): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
-
 export class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
       config: ResolvedStackConfig,
       prepared: PreparedStackArtifacts,
-    ) => Effect.Effect<BuildResult, StackBuildError>;
+    ) => Effect.Effect<BuildResult, StackBuildError, FileSystem.FileSystem | Scope.Scope>;
   }
 >()("local/StackBuilder") {
   static layer: Layer.Layer<StackBuilder> = Layer.succeed(this, {
@@ -217,48 +261,45 @@ export class StackBuilder extends Context.Service<
       Effect.gen(function* () {
         yield* validateResolvedConfig(config);
 
+        const requireContainerRuntime = Effect.suspend(() =>
+          config.runtime.mode === "native"
+            ? Effect.fail(
+                new StackBuildError({
+                  detail: "A Docker service requires a selected container runtime",
+                  reason: "invalid_config",
+                }),
+              )
+            : Effect.succeed(config.runtime.containerRuntime),
+        );
+
         const platform = yield* detectPlatform;
         const serviceHost = dockerHostAddress(platform.os);
         const projectDir = config.projectDir;
 
         const postgresResolution = yield* requirePreparedResolution(prepared, "postgres");
 
+        if (postgresResolution.type === "docker") {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(config.postgres.dataDir, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: "Failed to prepare the PostgreSQL data directory",
+                  cause,
+                }),
+            ),
+          );
+        }
+
         const authResolution =
           config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
-
-        const edgeRuntimeResolution =
-          config.edgeRuntime === false
-            ? false
-            : yield* requirePreparedResolution(prepared, "edge-runtime");
 
         const postgrestResolution =
           config.postgrest === false
             ? false
             : yield* requirePreparedResolution(prepared, "postgrest");
 
-        const dockerServicesEnabled =
-          config.realtime !== false ||
-          config.storage !== false ||
-          config.imgproxy !== false ||
-          config.mailpit !== false ||
-          config.pgmeta !== false ||
-          config.studio !== false ||
-          config.analytics !== false ||
-          config.vector !== false ||
-          config.pooler !== false ||
-          (edgeRuntimeResolution !== false && edgeRuntimeResolution.type === "docker") ||
-          (authResolution !== false && authResolution.type === "docker") ||
-          (postgrestResolution !== false && postgrestResolution.type === "docker");
-
-        const needsDockerAccess = nativePostgresNeedsDockerAccess(
-          postgresResolution,
-          dockerServicesEnabled,
-        );
-        const hasPostgresInit = postgresResolution.type === "binary";
-        const postgresDeps = dependsOnPostgres(hasPostgresInit);
-        const postgresInitCompletionBudgetSeconds = hasPostgresInit
-          ? POSTGRES_INIT_COMPLETION_BUDGET_SECONDS
-          : 0;
+        const postgresInitCompletionBudgetSeconds = POSTGRES_INIT_COMPLETION_BUDGET_SECONDS;
         const postgresConsumerDependencyTimeoutSeconds =
           postgresDependencyTimeoutSeconds + postgresInitCompletionBudgetSeconds;
         const storageDependencyTimeoutSeconds =
@@ -270,44 +311,55 @@ export class StackBuilder extends Context.Service<
         const jwtJwks = generateJwks(config.jwtSecret);
         const identity = stackIdentity(config);
 
+        const postgresService =
+          postgresResolution.type === "binary"
+            ? makePostgresService({
+                binPath: yield* prepareNativePostgresAlias(postgresResolution.path),
+                dataDir: config.postgres.dataDir,
+                port: config.dbPort,
+                cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                dependencies: [],
+              })
+            : makePostgresServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: postgresResolution.image,
+                dataDir: config.postgres.dataDir,
+                port: config.dbPort,
+                platformOs: platform.os,
+                identity,
+                cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                dependencies: [],
+              });
+
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {
-            ...(postgresResolution.type === "binary"
-              ? makePostgresService({
-                  binPath: postgresResolution.path,
-                  dataDir: config.postgres.dataDir,
-                  port: config.dbPort,
-                  dockerAccessible: needsDockerAccess,
-                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
-                  dependencies: [],
-                })
-              : makePostgresServiceDocker({
-                  image: postgresResolution.image,
-                  dataDir: config.postgres.dataDir,
-                  port: config.dbPort,
-                  platformOs: platform.os,
-                  jwtSecret: config.jwtSecret,
-                  jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
-                  identity,
-                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
-                  dependencies: [],
-                })),
+            ...postgresService,
             enabled: true,
           },
         ];
 
-        if (hasPostgresInit) {
-          defs.push({
-            ...makePostgresInitService({
-              postgresDir: postgresResolution.path,
-              dbPort: config.dbPort,
-              autoExposeNewTables: config.postgres.autoExposeNewTables,
-              dependencies: [{ service: "postgres", condition: "healthy" }],
-            }),
-            dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
-            enabled: true,
-          });
-        }
+        defs.push({
+          ...(postgresResolution.type === "binary"
+            ? makePostgresInitService({
+                postgresDir: postgresResolution.path,
+                dbPort: config.dbPort,
+                jwtSecret: config.jwtSecret,
+                jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
+                autoExposeNewTables: config.postgres.autoExposeNewTables,
+                dependencies: [{ service: "postgres", condition: "healthy" }],
+              })
+            : makePostgresInitServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                dbPort: config.dbPort,
+                jwtSecret: config.jwtSecret,
+                jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
+                autoExposeNewTables: config.postgres.autoExposeNewTables,
+                identity,
+                dependencies: [{ service: "postgres", condition: "healthy" }],
+              })),
+          dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
+          enabled: true,
+        });
 
         if (config.postgrest !== false && postgrestResolution !== false) {
           defs.push({
@@ -320,9 +372,10 @@ export class StackBuilder extends Context.Service<
                   extraSearchPath: config.postgrest.extraSearchPath,
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
-                  dependencies: postgresDeps,
+                  dependencies: postgresDependencies,
                 })
               : makePostgrestServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: postgrestResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
@@ -334,7 +387,7 @@ export class StackBuilder extends Context.Service<
                   jwtSecret: config.jwtSecret,
                   platformOs: platform.os,
                   identity,
-                  dependencies: postgresDeps,
+                  dependencies: postgresDependencies,
                 })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
@@ -356,9 +409,10 @@ export class StackBuilder extends Context.Service<
                   smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
-                  dependencies: postgresDeps,
+                  dependencies: postgresDependencies,
                 })
               : makeAuthServiceDocker({
+                  runtime: yield* requireContainerRuntime,
                   image: authResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
@@ -373,37 +427,31 @@ export class StackBuilder extends Context.Service<
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
                   platformOs: platform.os,
                   identity,
-                  dependencies: postgresDeps,
+                  dependencies: postgresDependencies,
                 })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        if (config.edgeRuntime !== false && edgeRuntimeResolution !== false) {
+        if (config.edgeRuntime !== false) {
+          const edgeRuntimeImage = yield* requirePreparedDockerImage(prepared, "edge-runtime");
+          const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(config.runtimeRoot);
           defs.push({
-            ...(edgeRuntimeResolution.type === "binary"
-              ? makeEdgeRuntimeServiceNative({
-                  binPath: edgeRuntimeResolution.path,
-                  runtimeRoot: config.runtimeRoot,
-                  port: config.edgeRuntime.port,
-                  inspectorPort: config.edgeRuntime.inspectorPort,
-                  policy: config.edgeRuntime.policy,
-                  env: config.edgeRuntime.env,
-                  dependencies: postgresDeps,
-                })
-              : makeEdgeRuntimeServiceDocker({
-                  image: edgeRuntimeResolution.image,
-                  identity,
-                  runtimeRoot: config.runtimeRoot,
-                  projectDir,
-                  port: config.edgeRuntime.port,
-                  inspectorPort: config.edgeRuntime.inspectorPort,
-                  policy: config.edgeRuntime.policy,
-                  env: config.edgeRuntime.env,
-                  platformOs: platform.os,
-                  dependencies: postgresDeps,
-                })),
+            ...makeEdgeRuntimeServiceDocker({
+              runtime: yield* requireContainerRuntime,
+              image: edgeRuntimeImage,
+              identity,
+              runtimeRoot: config.runtimeRoot,
+              bootstrapDir: edgeRuntimeBootstrapDir,
+              projectDir,
+              port: config.edgeRuntime.port,
+              inspectorPort: config.edgeRuntime.inspectorPort,
+              policy: config.edgeRuntime.policy,
+              env: config.edgeRuntime.env,
+              platformOs: platform.os,
+              dependencies: postgresDependencies,
+            }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
@@ -413,6 +461,7 @@ export class StackBuilder extends Context.Service<
           const mailpitImage = yield* requirePreparedDockerImage(prepared, "mailpit");
           defs.push({
             ...makeMailpitServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: mailpitImage,
               identity,
               webPort: config.mailpit.port,
@@ -429,6 +478,7 @@ export class StackBuilder extends Context.Service<
           const realtimeImage = yield* requirePreparedDockerImage(prepared, "realtime");
           defs.push({
             ...makeRealtimeServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: realtimeImage,
               port: config.realtime.port,
               identity,
@@ -441,7 +491,7 @@ export class StackBuilder extends Context.Service<
               secretKeyBase: config.realtime.secretKeyBase,
               maxHeaderLength: config.realtime.maxHeaderLength,
               platformOs: platform.os,
-              dependencies: postgresDeps,
+              dependencies: postgresDependencies,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
@@ -452,6 +502,7 @@ export class StackBuilder extends Context.Service<
           const storageImage = yield* requirePreparedDockerImage(prepared, "storage");
           defs.push({
             ...makeStorageServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: storageImage,
               port: config.storage.port,
               identity,
@@ -468,7 +519,7 @@ export class StackBuilder extends Context.Service<
                 config.imgproxy !== false ? `http://${serviceHost}:${config.imgproxy.port}` : "",
               s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
               platformOs: platform.os,
-              dependencies: postgresDeps,
+              dependencies: postgresDependencies,
               cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -481,6 +532,7 @@ export class StackBuilder extends Context.Service<
           const imgproxyImage = yield* requirePreparedDockerImage(prepared, "imgproxy");
           defs.push({
             ...makeImgproxyServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: imgproxyImage,
               port: config.imgproxy.port,
               identity,
@@ -497,13 +549,14 @@ export class StackBuilder extends Context.Service<
           const pgmetaImage = yield* requirePreparedDockerImage(prepared, "pgmeta");
           defs.push({
             ...makePgmetaServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: pgmetaImage,
               identity,
               port: config.pgmeta.port,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               platformOs: platform.os,
-              dependencies: postgresDeps,
+              dependencies: postgresDependencies,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
@@ -514,6 +567,7 @@ export class StackBuilder extends Context.Service<
           const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
           defs.push({
             ...makeAnalyticsServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: analyticsImage,
               identity,
               hostPort: config.analytics.port,
@@ -522,7 +576,7 @@ export class StackBuilder extends Context.Service<
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
-              dependencies: postgresDeps,
+              dependencies: postgresDependencies,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
@@ -534,6 +588,7 @@ export class StackBuilder extends Context.Service<
           const vectorImage = yield* requirePreparedDockerImage(prepared, "vector");
           defs.push({
             ...makeVectorServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: vectorImage,
               identity,
               serviceHost,
@@ -551,6 +606,7 @@ export class StackBuilder extends Context.Service<
           const poolerImage = yield* requirePreparedDockerImage(prepared, "pooler");
           defs.push({
             ...makePoolerServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: poolerImage,
               identity,
               hostAdminPort: config.pooler.apiPort,
@@ -565,7 +621,7 @@ export class StackBuilder extends Context.Service<
               tenantId: config.pooler.tenantId,
               encryptionKey: config.pooler.encryptionKey,
               secretKeyBase: config.pooler.secretKeyBase,
-              dependencies: postgresDeps,
+              dependencies: postgresDependencies,
             }),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
@@ -577,6 +633,7 @@ export class StackBuilder extends Context.Service<
           const studioImage = yield* requirePreparedDockerImage(prepared, "studio");
           defs.push({
             ...makeStudioServiceDocker({
+              runtime: yield* requireContainerRuntime,
               image: studioImage,
               identity,
               port: config.studio.port,
@@ -608,7 +665,12 @@ export class StackBuilder extends Context.Service<
         }
 
         const dockerContainerNames = SERVICE_NAMES.filter((service) =>
-          defs.some((def) => def.name === service && def.command === "docker"),
+          defs.some(
+            (def) =>
+              def.name === service &&
+              config.runtime.mode === "docker" &&
+              def.command === config.runtime.containerRuntime,
+          ),
         ).map((service) => dockerContainerName(service, identity.key));
 
         const graph = yield* buildGraph(defs).pipe(
@@ -626,7 +688,7 @@ export class StackBuilder extends Context.Service<
           cleanupTargets: {
             dockerContainerNames,
           },
-          serviceProjection: publicServiceProjection(defs, hasPostgresInit),
+          serviceProjection: publicServiceProjection(defs),
         };
       }),
   });

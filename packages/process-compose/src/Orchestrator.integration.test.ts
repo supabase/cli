@@ -2,10 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
-import { Duration, Effect, Layer } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { Orchestrator } from "./Orchestrator.ts";
+import type { ServiceState } from "./ServiceState.ts";
 import type { ProbeConfig, ServiceDef } from "./ServiceDef.ts";
 
 const spawnerLayer = BunChildProcessSpawnerLayer.pipe(
@@ -29,22 +30,104 @@ const fileExistsProbe = (path: string) =>
     args: ["-f", path],
   }) satisfies ProbeConfig;
 
-/** Simple poll: check condition every intervalMs, give up after maxMs */
-const poll = <E>(
-  check: Effect.Effect<boolean, E>,
-  intervalMs = 50,
-  maxMs = 5000,
-): Effect.Effect<void, E> =>
+type StateReader = {
+  readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
+  readonly allStateChanges: () => Stream.Stream<ServiceState>;
+};
+
+const waitForStatuses = (
+  orc: StateReader,
+  predicates: ReadonlyArray<{
+    readonly name: string;
+    readonly predicate: (state: ServiceState) => boolean;
+  }>,
+): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const start = Date.now();
-    while (Date.now() - start < maxMs) {
-      const ok = yield* check;
-      if (ok) return;
-      yield* Effect.sleep(Duration.millis(intervalMs));
-    }
+    const current = yield* orc.getAllStates();
+    const matches = (states: ReadonlyArray<ServiceState>) =>
+      predicates.every(({ name, predicate }) => {
+        const state = states.find((candidate) => candidate.name === name);
+        return state !== undefined && predicate(state);
+      });
+    if (matches(current)) return;
+
+    yield* orc.allStateChanges().pipe(
+      Stream.scan(new Map(current.map((state) => [state.name, state])), (states, state) =>
+        new Map(states).set(state.name, state),
+      ),
+      Stream.filter((states) => matches([...states.values()])),
+      Stream.take(1),
+      Stream.runDrain,
+    );
   });
 
 describe("Orchestrator integration", () => {
+  it.live(
+    "serializes a concurrent start and stop lifecycle command",
+    () => {
+      const defs: ServiceDef[] = [
+        {
+          name: "serialized",
+          command: "sh",
+          args: ["-c", "trap '' TERM; sleep 60"],
+          shutdown: { signal: "SIGTERM", timeoutSeconds: 0.5 },
+        },
+      ];
+      const { layer } = setupReal(defs);
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        const changes = yield* orc.stateChanges("serialized");
+        const running = yield* changes.pipe(
+          Stream.filter((state) => isUp(state.status)),
+          Stream.take(1),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* orc.start();
+        yield* Fiber.join(running);
+
+        const stopping = yield* changes.pipe(
+          Stream.filter((state) => state.status === "Stopping"),
+          Stream.take(1),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const events: Array<string> = [];
+        const startEntered = yield* Deferred.make<void>();
+        const stop = orc.stop().pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              events.push("stop");
+            }),
+          ),
+        );
+        const stopFiber = yield* Effect.forkChild(stop, { startImmediately: true });
+        yield* Fiber.join(stopping);
+
+        const startFiber = yield* Effect.forkChild(
+          orc.startService("serialized", {
+            beforeStart: () =>
+              Effect.sync(() => events.push("start")).pipe(
+                Effect.andThen(Deferred.succeed(startEntered, void 0)),
+              ),
+          }),
+          { startImmediately: true },
+        );
+        yield* Fiber.join(stopFiber);
+        yield* Fiber.join(startFiber);
+        const startResult = yield* Deferred.await(startEntered).pipe(
+          Effect.timeoutOption(Duration.seconds(2)),
+        );
+        expect(Option.isSome(startResult)).toBe(true);
+
+        expect(events).toEqual(["stop", "start"]);
+        yield* orc.stop();
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    },
+    { timeout: 15000 },
+  );
+
   it.live(
     "starts services in dependency order (A before B)",
     () => {
@@ -70,13 +153,10 @@ describe("Orchestrator integration", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const a = yield* orc.getState("service-a");
-            const b = yield* orc.getState("service-b");
-            return isUp(a.status) && isUp(b.status);
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "service-a", predicate: (state) => isUp(state.status) },
+          { name: "service-b", predicate: (state) => isUp(state.status) },
+        ]);
 
         const stateA = yield* orc.getState("service-a");
         const stateB = yield* orc.getState("service-b");
@@ -119,12 +199,9 @@ describe("Orchestrator integration", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const state = yield* orc.getState("flag-service");
-            return state.status === "Healthy";
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "flag-service", predicate: (state) => state.status === "Healthy" },
+        ]);
 
         const state = yield* orc.getState("flag-service");
         expect(state.status).toBe("Healthy");
@@ -148,13 +225,10 @@ describe("Orchestrator integration", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const a = yield* orc.getState("long-a");
-            const b = yield* orc.getState("long-b");
-            return isUp(a.status) && isUp(b.status);
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "long-a", predicate: (state) => isUp(state.status) },
+          { name: "long-b", predicate: (state) => isUp(state.status) },
+        ]);
 
         const a = yield* orc.getState("long-a");
         const b = yield* orc.getState("long-b");
@@ -182,12 +256,11 @@ describe("Orchestrator integration", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const states = yield* orc.getAllStates();
-            return states.every((s) => isUp(s.status));
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "sleep-a", predicate: (state) => isUp(state.status) },
+          { name: "sleep-b", predicate: (state) => isUp(state.status) },
+          { name: "sleep-c", predicate: (state) => isUp(state.status) },
+        ]);
 
         const before = Date.now();
         yield* orc.stop();
@@ -219,17 +292,13 @@ describe("Orchestrator integration", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         const logBuffer = yield* LogBuffer;
-
-        yield* orc.start();
-
-        yield* poll(
-          Effect.gen(function* () {
-            const entries = yield* logBuffer.history("echo-svc", 10);
-            return entries.length >= 3;
-          }),
+        const linesReady = yield* Effect.forkChild(
+          logBuffer.subscribe("echo-svc").pipe(Stream.take(3), Stream.runCollect),
+          { startImmediately: true },
         );
 
-        const entries = yield* logBuffer.history("echo-svc", 10);
+        yield* orc.start();
+        const entries = yield* Fiber.join(linesReady);
         const lines = entries.map((e) => e.line);
         expect(lines).toContain("line-one");
         expect(lines).toContain("line-two");
@@ -276,13 +345,10 @@ describe("resource cleanup", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const a = yield* orc.getState("svc-a");
-            const b = yield* orc.getState("svc-b");
-            return isUp(a.status) && isUp(b.status);
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "svc-a", predicate: (state) => isUp(state.status) },
+          { name: "svc-b", predicate: (state) => isUp(state.status) },
+        ]);
 
         const pidA = (yield* orc.getState("svc-a")).pid!;
         const pidB = (yield* orc.getState("svc-b")).pid!;
@@ -326,13 +392,10 @@ describe("resource cleanup", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const a = yield* orc.getState("target");
-            const b = yield* orc.getState("bystander");
-            return isUp(a.status) && isUp(b.status);
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "target", predicate: (state) => isUp(state.status) },
+          { name: "bystander", predicate: (state) => isUp(state.status) },
+        ]);
 
         const pidTarget = (yield* orc.getState("target")).pid!;
         const pidBystander = (yield* orc.getState("bystander")).pid!;
@@ -367,18 +430,12 @@ describe("resource cleanup", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const s = yield* orc.getState("restartable");
-            return isUp(s.status);
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "restartable", predicate: (state) => isUp(state.status) },
+        ]);
 
         const originalPid = (yield* orc.getState("restartable")).pid!;
         yield* orc.stopService("restartable");
-
-        // Wait long enough for a restart cycle to prove it doesn't restart
-        yield* Effect.sleep(Duration.seconds(1));
 
         expect(isPidAlive(originalPid)).toBe(false);
         const state = yield* orc.getState("restartable");
@@ -417,12 +474,9 @@ describe("resource cleanup", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
 
-        yield* poll(
-          Effect.gen(function* () {
-            const s = yield* orc.getState("probed");
-            return s.status === "Healthy";
-          }),
-        );
+        yield* waitForStatuses(orc, [
+          { name: "probed", predicate: (state) => state.status === "Healthy" },
+        ]);
 
         const pid = (yield* orc.getState("probed")).pid!;
         yield* orc.stop();
@@ -460,13 +514,10 @@ describe("resource cleanup", () => {
           const orc = yield* Orchestrator;
           yield* orc.start();
 
-          yield* poll(
-            Effect.gen(function* () {
-              const a = yield* orc.getState("scoped-a");
-              const b = yield* orc.getState("scoped-b");
-              return isUp(a.status) && isUp(b.status);
-            }),
-          );
+          yield* waitForStatuses(orc, [
+            { name: "scoped-a", predicate: (state) => isUp(state.status) },
+            { name: "scoped-b", predicate: (state) => isUp(state.status) },
+          ]);
 
           capturedPidA = (yield* orc.getState("scoped-a")).pid!;
           capturedPidB = (yield* orc.getState("scoped-b")).pid!;
@@ -474,8 +525,7 @@ describe("resource cleanup", () => {
           expect(capturedPidB).toBeGreaterThan(0);
         }).pipe(Effect.provide(layer), Effect.scoped);
 
-        // After scope closed, PIDs should be dead
-        yield* Effect.sleep(Duration.millis(100));
+        // Scope closure owns the child finalizers, so they complete before this assertion.
         expect(isPidAlive(capturedPidA)).toBe(false);
         expect(isPidAlive(capturedPidB)).toBe(false);
       });

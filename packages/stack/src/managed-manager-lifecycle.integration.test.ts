@@ -4,6 +4,7 @@ import {
   Cause,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   FileSystem,
   Layer,
@@ -16,11 +17,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager, managedStackManagerLayer } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { deleteManagedStack, stopManagedStack, updateManagedLaunch } from "./managed/lifecycle.ts";
@@ -32,6 +33,7 @@ import {
   freePorts,
   releaseLease,
   setupManagedManager,
+  startManagedStack,
 } from "../tests/helpers/managed-manager.ts";
 
 const roots: Array<string> = [];
@@ -46,19 +48,20 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const [apiPort, dbPort] = yield* freePorts(2);
         if (apiPort === undefined || dbPort === undefined) {
-          throw new Error("expected interrupted-delete ports");
+          throw new Error("expected free managed stack ports");
         }
         const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
-        if (owner._tag !== "Owned") throw new Error("expected stack control ownership");
-        const started = yield* manager.startStack({
+        if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           stackName: "default",
           portDocument,
           ownership: owner,
           lifecycle: "running",
+          launch: { mode: "native", versions: {} },
         });
         yield* releaseLease(started);
         yield* owner.close;
@@ -67,17 +70,66 @@ describe("managed stack lifecycle journeys", () => {
           workspacePath: workspace,
           stackName: "default",
           launch: {
-            mode: "auto" as const,
             versions: { postgres: "17.6.1" },
             excludedServices: [],
           },
         };
         const updated = yield* updateManagedLaunch(input);
-        expect(updated.launch).toEqual(input.launch);
+        expect(updated.launch).toEqual({ mode: "native", ...input.launch });
 
         yield* stopManagedStack(input);
         const stopped = yield* manager.inspectStack(stackId);
         expect(stopped?.lifecycle).toBe("stopped");
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
+  it.live("preserves launch mode while updating metadata without a runtime owner", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const [apiPort, dbPort] = yield* freePorts(2);
+        if (apiPort === undefined || dbPort === undefined) {
+          throw new Error("expected free managed stack ports");
+        }
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId });
+        if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
+        const started = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: exactCoreDocument(apiPort, dbPort),
+          ownership: owner,
+          lifecycle: "running",
+        });
+        yield* releaseLease(started);
+        yield* owner.close;
+
+        const updated = yield* updateManagedLaunch({
+          workspacePath: workspace,
+          stackName: "default",
+          launch: {
+            versions: { postgres: "17.6.1" },
+            excludedServices: ["studio"],
+            lastNotifiedUpdateFingerprint: "fingerprint",
+          },
+        });
+
+        expect(updated.launch).toEqual({
+          mode: "native",
+          versions: { postgres: "17.6.1" },
+          excludedServices: ["studio"],
+          lastNotifiedUpdateFingerprint: "fingerprint",
+        });
       }),
     ).pipe(
       Effect.provide(layer),
@@ -97,8 +149,8 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
-        if (owner._tag !== "Owned") throw new Error("expected ownership");
-        const started = yield* manager.startStack({
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -197,15 +249,18 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
-        if (owner._tag !== "Owned") throw new Error("expected ownership");
-        const initial = yield* manager.startStack({
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
           lifecycle: "running",
+          launch: { mode: "native", versions: {} },
         });
         yield* releaseLease(initial);
-        const launch = { mode: "auto" as const, versions: { postgres: "17.6.1" } };
+        const launch = {
+          versions: { postgres: "17.6.1" },
+        };
         gate.enabled = true;
         const launchFiber = yield* Effect.forkScoped(
           manager.updateLaunch(owner, { stackId, launch }),
@@ -231,7 +286,7 @@ describe("managed stack lifecycle journeys", () => {
         yield* Fiber.join(stopFiber);
         const final = yield* manager.inspectStack(stackId);
         expect(final?.lifecycle).toBe("stopped");
-        expect(final?.launch).toEqual(launch);
+        expect(final?.launch).toEqual({ mode: "native", ...launch });
       }),
     ).pipe(
       Effect.provide(managerLayer),
@@ -250,8 +305,8 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const previousOwner = yield* acquireControl({ stackId });
-        if (previousOwner._tag !== "Owned") throw new Error("expected ownership");
-        const starting = yield* manager.startStack({
+        if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
+        const starting = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: previousOwner,
@@ -260,8 +315,8 @@ describe("managed stack lifecycle journeys", () => {
         yield* releaseLease(starting);
         yield* previousOwner.close;
         const nextOwner = yield* acquireControl({ stackId });
-        if (nextOwner._tag !== "Owned") throw new Error("expected reattached ownership");
-        const recovered = yield* manager.startStack({
+        if (!isControlOwnership(nextOwner)) throw new Error("expected reattached ownership");
+        const recovered = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: {
             activeFields: [],
@@ -292,8 +347,8 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
-        if (owner._tag !== "Owned") throw new Error("expected ownership");
-        const running = yield* manager.startStack({
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const running = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -351,8 +406,8 @@ describe("managed stack lifecycle journeys", () => {
           const originalEnvironment = yield* ensureEnvironment(workspace);
           const originalStackId = deriveStackId(originalEnvironment.identity, "default");
           const originalOwner = yield* acquireControl({ stackId: originalStackId });
-          if (originalOwner._tag !== "Owned") throw new Error("expected original ownership");
-          const original = yield* manager.startStack({
+          if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
+          const original = yield* startManagedStack(manager, {
             workspacePath: workspace,
             portDocument: automaticDocument(),
             ownership: originalOwner,
@@ -365,8 +420,8 @@ describe("managed stack lifecycle journeys", () => {
           const copiedEnvironment = yield* ensureEnvironment(copied);
           const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
           const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
-          if (copiedOwner._tag !== "Owned") throw new Error("expected copied ownership");
-          const copiedStack = yield* manager.startStack({
+          if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
+          const copiedStack = yield* startManagedStack(manager, {
             workspacePath: copied,
             portDocument: automaticDocument(),
             ownership: copiedOwner,
@@ -379,8 +434,8 @@ describe("managed stack lifecycle journeys", () => {
           yield* Deferred.await(markerSwapped);
           yield* copiedOwner.close;
           const result = yield* Fiber.join(deleting).pipe(Effect.exit);
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") {
+          expect(Exit.isFailure(result)).toBe(true);
+          if (Exit.isFailure(result)) {
             expect(Cause.squash(result.cause)).toMatchObject({
               _tag: "InvalidManagedIdentityError",
             });
@@ -431,8 +486,8 @@ describe("managed stack lifecycle journeys", () => {
         const originalEnvironment = yield* ensureEnvironment(workspace);
         const originalStackId = deriveStackId(originalEnvironment.identity, "default");
         const originalOwner = yield* acquireControl({ stackId: originalStackId });
-        if (originalOwner._tag !== "Owned") throw new Error("expected original ownership");
-        const original = yield* manager.startStack({
+        if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
+        const original = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: originalOwner,
@@ -445,8 +500,8 @@ describe("managed stack lifecycle journeys", () => {
         const copiedEnvironment = yield* ensureEnvironment(copied);
         const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
         const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
-        if (copiedOwner._tag !== "Owned") throw new Error("expected copied ownership");
-        const copiedStack = yield* manager.startStack({
+        if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
+        const copiedStack = yield* startManagedStack(manager, {
           workspacePath: copied,
           portDocument: automaticDocument(),
           ownership: copiedOwner,
@@ -459,8 +514,8 @@ describe("managed stack lifecycle journeys", () => {
         yield* Deferred.await(markerSwapped);
         yield* copiedOwner.close;
         const result = yield* Fiber.join(stopping).pipe(Effect.exit);
-        expect(result._tag).toBe("Failure");
-        if (result._tag === "Failure") {
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
           expect(Cause.squash(result.cause)).toMatchObject({
             _tag: "InvalidManagedIdentityError",
           });
@@ -485,8 +540,8 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const owner = yield* acquireControl({ stackId });
-        if (owner._tag !== "Owned") throw new Error("expected ownership");
-        const started = yield* manager.startStack({
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
           ownership: owner,
@@ -494,7 +549,7 @@ describe("managed stack lifecycle journeys", () => {
         });
         yield* started.lease.releaseAll;
 
-        const documentPath = managedStackDocumentPath(stateRoot, stackId);
+        const documentPath = yield* managedStackDocumentPathEffect(stateRoot, stackId);
         rmSync(documentPath);
         mkdirSync(documentPath);
         mkdirSync(join(documentPath, "nested"));
@@ -504,7 +559,8 @@ describe("managed stack lifecycle journeys", () => {
           outcome: "removed",
           stackId,
         });
-        expect(existsSync(managedStackPaths(stateRoot, stackId).root)).toBe(false);
+        const stackRoot = (yield* managedStackPathsEffect(stateRoot, stackId)).root;
+        expect(existsSync(stackRoot)).toBe(false);
       }),
     ).pipe(
       Effect.provide(layer),
@@ -528,22 +584,23 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const previousOwner = yield* acquireControl({ stackId });
-        if (previousOwner._tag !== "Owned") throw new Error("expected ownership");
-        const previous = yield* manager.startStack({
+        if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
+        const previous = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument,
           ownership: previousOwner,
         });
         yield* releaseLease(previous);
-        const dataPath = join(managedStackPaths(stateRoot, stackId).data, "orphaned");
-        mkdirSync(managedStackPaths(stateRoot, stackId).data, { recursive: true });
+        const stackPaths = yield* managedStackPathsEffect(stateRoot, stackId);
+        const dataPath = join(stackPaths.data, "orphaned");
+        mkdirSync(stackPaths.data, { recursive: true });
         writeFileSync(dataPath, "stale");
         yield* manager.recordLifecycle(previousOwner, { stackId, lifecycle: "deleting" });
         yield* previousOwner.close;
 
         const nextOwner = yield* acquireControl({ stackId });
-        if (nextOwner._tag !== "Owned") throw new Error("expected recovered ownership");
-        const restarted = yield* manager.startStack({
+        if (!isControlOwnership(nextOwner)) throw new Error("expected recovered ownership");
+        const restarted = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument,
           ownership: nextOwner,
