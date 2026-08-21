@@ -155,7 +155,7 @@ export const SERVICE_CATALOG = {
   auth: {
     name: "auth",
     configKey: "auth",
-    defaultVersion: "2.195.0",
+    defaultVersion: "2.196.0",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "gotrue", tagPrefix: "v" },
@@ -201,7 +201,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.129.0",
+    defaultVersion: "2.129.3",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
     activation: { startup: "eager", activates: [], owns: [] },
@@ -210,7 +210,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.69.11",
+    defaultVersion: "1.70.3",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
     activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
@@ -257,7 +257,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "1.50.2",
+    defaultVersion: "1.50.4",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "logflare" } },
     activation: { startup: "lazy", activates: ["vector"], owns: ["vector"] },
