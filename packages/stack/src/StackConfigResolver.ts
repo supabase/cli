@@ -681,18 +681,6 @@ export function resolveConfig(
       };
       const config: StackConfig = { ...inputConfig, mode: runtime.mode };
       // Deliberately first: unsupported policies must not create roots or reserve ports.
-      const requests = yield* portRequestsForConfig(inputConfig, { runtime: opts.runtime });
-      for (const request of requests) {
-        if (request.selection.kind !== "exact") continue;
-        const resolvedPort = opts.ports[request.field];
-        if (resolvedPort === request.selection.port) continue;
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: `Resolved port for ${request.field} does not match explicit configuration`,
-            reason: "invalid_config",
-          }),
-        );
-      }
       const servicePolicies = yield* resolveServicePolicies(config);
       for (const field of portFieldsForConfigInput(config)) {
         if (opts.ports[field] === undefined) {

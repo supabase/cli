@@ -48,7 +48,7 @@ import { validateManagedStackName, type ManagedPortIntentDocument } from "./mana
 import { managedStackPathsEffect } from "./managed/paths.ts";
 import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
-import { SERVICE_NAMES } from "./ServiceCatalog.ts";
+import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
@@ -156,32 +156,36 @@ const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSele
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
 
-const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => ({
-  ...config,
-  edgeRuntime: false,
-  realtime: false,
-  storage: false,
-  imgproxy: false,
-  mailpit: false,
-  pgmeta: false,
-  studio: false,
-  analytics: false,
-  vector: false,
-  pooler: false,
-  servicePolicies: {
+/**
+ * The CLI's omitted-mode defaults are empty service objects, optionally
+ * decorated with only a pinned version. A managed caller's non-default field
+ * is an explicit request and must survive fallback so native validation can
+ * reject it instead of silently changing the requested stack.
+ */
+const isCatalogDefaultServiceConfig = (value: unknown): boolean => {
+  if (value === undefined) return true;
+  if (!isRecord(value)) return false;
+  return Object.keys(value).every((key) => key === "version");
+};
+
+const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => {
+  const servicePolicies: NonNullable<DaemonConfigInput["servicePolicies"]> = {
     ...config.servicePolicies,
-    "edge-runtime": "off",
-    realtime: "off",
-    storage: "off",
-    imgproxy: "off",
-    mailpit: "off",
-    pgmeta: "off",
-    studio: "off",
-    analytics: "off",
-    vector: "off",
-    pooler: "off",
-  },
-});
+  };
+
+  for (const service of SERVICE_NAMES) {
+    const metadata = SERVICE_CATALOG[service];
+    if (
+      metadata.runtimeSupport === "docker-only" &&
+      servicePolicies[service] === undefined &&
+      isCatalogDefaultServiceConfig(config[metadata.configKey])
+    ) {
+      servicePolicies[service] = "off";
+    }
+  }
+
+  return { ...config, servicePolicies };
+};
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
@@ -497,6 +501,25 @@ const runManaged = (
       }
     }
     if (isControlAttached(acquisition)) {
+      // The first inspection can legitimately race the owner's initial
+      // document write. Once the owner reports ready, its persisted launch is
+      // the authoritative runtime contract for an explicit request.
+      const attachedExisting = yield* manager.inspectStack(stackId);
+      const attachedPersistedRuntime =
+        attachedExisting === undefined
+          ? undefined
+          : runtimeSelectionForLaunch(attachedExisting.launch);
+      if (
+        requestedMode !== undefined &&
+        (attachedPersistedRuntime === undefined || attachedPersistedRuntime.mode !== requestedMode)
+      ) {
+        const observedMode = attachedPersistedRuntime?.mode ?? "unknown";
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: `Stack runtime is already ${observedMode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+          }),
+        );
+      }
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;

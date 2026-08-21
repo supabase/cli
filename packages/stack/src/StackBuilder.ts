@@ -278,6 +278,19 @@ export class StackBuilder extends Context.Service<
 
         const postgresResolution = yield* requirePreparedResolution(prepared, "postgres");
 
+        if (postgresResolution.type === "docker") {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(config.postgres.dataDir, { recursive: true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: "Failed to prepare the PostgreSQL data directory",
+                  cause,
+                }),
+            ),
+          );
+        }
+
         const authResolution =
           config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
 
@@ -330,6 +343,8 @@ export class StackBuilder extends Context.Service<
             ? makePostgresInitService({
                 postgresDir: postgresResolution.path,
                 dbPort: config.dbPort,
+                jwtSecret: config.jwtSecret,
+                jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
                 autoExposeNewTables: config.postgres.autoExposeNewTables,
                 dependencies: [{ service: "postgres", condition: "healthy" }],
               })

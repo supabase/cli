@@ -2,6 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Deferred, Effect, FileSystem, Layer, Predicate, Scope, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { candidateCleanupTargets } from "./cleanup.ts";
@@ -335,6 +338,26 @@ describe("StackBuilder", () => {
         `supabase-auth-${config.apiPort}`,
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("prepares nested PostgreSQL bind-mount parents before Docker launch", () => {
+    const resolver = mockBinaryResolver();
+    const root = mkdtempSync(join(tmpdir(), "sup-stack-postgres-data-"));
+    const dataDir = join(root, "data", "postgres");
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      yield* prepareAndBuild(builder, preparation, {
+        ...dockerConfig,
+        postgres: { ...dockerConfig.postgres, dataDir },
+      });
+      expect(existsSync(dataDir)).toBe(true);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
   });
 
   it.effect("prepares every public service in each startable graph closure", () => {

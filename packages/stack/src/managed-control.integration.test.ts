@@ -395,6 +395,40 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.live("fails closed when an owner probe encounters ambiguous transport", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let reads = 0;
+        const transport = Layer.succeed(ControlTransport, {
+          bind: (endpoint) =>
+            Effect.fail(
+              new ControlBindError({ endpoint, reason: "in-use" as const, cause: "occupied" }),
+            ),
+          read: (endpoint) =>
+            Effect.fail(
+              new ControlTransportError({
+                endpoint,
+                reason: reads++ === 0 ? ("transport" as const) : ("unreachable" as const),
+                cause: "probe failed",
+              }),
+            ),
+          requestStop: () => Effect.void,
+        });
+        const exit = yield* acquireControl({ stackId: STACK_ID }).pipe(
+          Effect.result,
+          Effect.provide(transport),
+        );
+        expect(Result.isFailure(exit)).toBe(true);
+        if (Result.isFailure(exit)) {
+          expect(exit.failure).toBeInstanceOf(ControlTransportError);
+          if (exit.failure instanceof ControlTransportError) {
+            expect(exit.failure.reason).toBe("transport");
+          }
+        }
+      }),
+    ),
+  );
+
   it.live("preserves an explicit owner protocol mismatch", () =>
     live(
       Effect.scoped(

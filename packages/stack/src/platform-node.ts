@@ -25,6 +25,11 @@ const errorCode = (cause: unknown): string | undefined => {
   return undefined;
 };
 
+const isDefinitivelyUnreachable = (cause: unknown): boolean => {
+  const code = errorCode(cause);
+  return code === "ECONNREFUSED";
+};
+
 const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
     if (!server.listening) {
@@ -39,26 +44,15 @@ const readError = (
   endpoint: ControlEndpoint,
   cause: unknown,
 ): ControlTransportError | ControlProtocolError => {
-  const code = errorCode(cause);
-  if (
-    code === "ECONNREFUSED" ||
-    code === "ECONNRESET" ||
-    code === "EHOSTUNREACH" ||
-    (cause instanceof Error && cause.message === "Control status request timed out")
-  ) {
-    return new ControlTransportError({ endpoint, reason: "unreachable", cause });
-  }
   if (
     cause instanceof SyntaxError ||
     (cause instanceof Error &&
       cause.message === `Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`) ||
-    (cause instanceof Error &&
-      cause.message.startsWith("Control status request returned") &&
-      !cause.message.endsWith(" 404"))
+    (cause instanceof Error && cause.message.startsWith("Control status request returned"))
   ) {
     return new ControlProtocolError({ endpoint, cause });
   }
-  if (cause instanceof Error && cause.message.endsWith(" 404")) {
+  if (isDefinitivelyUnreachable(cause)) {
     return new ControlTransportError({ endpoint, reason: "unreachable", cause });
   }
   return new ControlTransportError({ endpoint, reason: "transport", cause });
@@ -188,7 +182,6 @@ const controlTransport: ControlTransport["Service"] = {
       };
       cleanup = () => {
         request.removeListener("error", onRequestError);
-        request.setTimeout(0);
         if (response !== undefined) {
           if (onData !== undefined) response.removeListener("data", onData);
           if (onEnd !== undefined) response.removeListener("end", onEnd);
@@ -199,15 +192,28 @@ const controlTransport: ControlTransport["Service"] = {
           if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
         }
       };
-      request.setTimeout(500, () => request.destroy(new Error("Control status request timed out")));
       request.once("error", onRequestError);
       request.end();
-      return Effect.sync(() => {
+      return Effect.callback<void>((resumeCancellation) => {
+        const onClose = () => {
+          cleanup();
+          resumeCancellation(Effect.void);
+        };
         settled = true;
-        cleanup();
+        request.once("close", onClose);
         dispose();
+        return Effect.sync(() => {
+          request.removeListener("close", onClose);
+          cleanup();
+        });
       });
-    }).pipe(Effect.mapError((cause) => readError(endpoint, cause))),
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: 500,
+        orElse: () => Effect.fail(new Error("Control status request timed out")),
+      }),
+      Effect.mapError((cause) => readError(endpoint, cause)),
+    ),
   requestStop: (endpoint: ControlEndpoint) =>
     Effect.callback<void, unknown>((resume) => {
       let response: Http.IncomingMessage | undefined;
@@ -273,7 +279,6 @@ const controlTransport: ControlTransport["Service"] = {
       };
       cleanup = () => {
         request.removeListener("error", onRequestError);
-        request.setTimeout(0);
         if (response !== undefined) {
           if (onEnd !== undefined) response.removeListener("end", onEnd);
           if (onResponseError !== undefined) response.removeListener("error", onResponseError);
@@ -283,17 +288,33 @@ const controlTransport: ControlTransport["Service"] = {
           if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
         }
       };
-      request.setTimeout(500, () => request.destroy(new Error("Control stop request timed out")));
       request.once("error", onRequestError);
       request.end();
-      return Effect.sync(() => {
+      return Effect.callback<void>((resumeCancellation) => {
+        const onClose = () => {
+          cleanup();
+          resumeCancellation(Effect.void);
+        };
         settled = true;
-        cleanup();
+        request.once("close", onClose);
         dispose();
+        return Effect.sync(() => {
+          request.removeListener("close", onClose);
+          cleanup();
+        });
       });
     }).pipe(
+      Effect.timeoutOrElse({
+        duration: 500,
+        orElse: () => Effect.fail(new Error("Control stop request timed out")),
+      }),
       Effect.mapError(
-        (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+        (cause) =>
+          new ControlTransportError({
+            endpoint,
+            reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+            cause,
+          }),
       ),
     ),
 };

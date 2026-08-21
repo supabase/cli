@@ -117,6 +117,34 @@ describe("Node control transport", () => {
     }
   });
 
+  test("classifies control timeouts as transport instead of absence", async () => {
+    const sockets = new Set<Socket>();
+    const server = createServer((_request, response) => {
+      sockets.add(response.socket!);
+      response.socket!.once("close", () => sockets.delete(response.socket!));
+      // Keep the status request open until the client-side deadline expires.
+    });
+    server.on("connection", (socket) => sockets.add(socket));
+    try {
+      const endpoint = await listen(server);
+      // This is only a deadlock guard; the assertion is about the typed
+      // failure, not wall-clock scheduling on a loaded runner.
+      const readExit = await withTimeout(runRead(endpoint), 10_000);
+      expectTypedFailure(readExit, ControlTransportError);
+      if (Exit.isFailure(readExit)) {
+        expect(Cause.squash(readExit.cause)).toMatchObject({ reason: "transport" });
+      }
+
+      const stopExit = await withTimeout(runStop(endpoint), 10_000);
+      expectTypedFailure(stopExit, ControlTransportError);
+      if (Exit.isFailure(stopExit)) {
+        expect(Cause.squash(stopExit.cause)).toMatchObject({ reason: "transport" });
+      }
+    } finally {
+      await close(server, sockets);
+    }
+  });
+
   test("bounds an oversized owner status and closes the exact connection", async () => {
     let resolveRequest!: () => void;
     const requestReady = new Promise<void>((resolve) => {

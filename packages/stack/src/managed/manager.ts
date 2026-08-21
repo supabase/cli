@@ -361,6 +361,30 @@ const managedAssignments = (
     );
   });
 
+/**
+ * Acquires a managed port lease, owns it before using it, and releases it on
+ * every non-successful exit. The scope finalizer is registered immediately
+ * after acquisition so a successful lease remains owned until its caller's
+ * scope closes.
+ */
+export const withManagedPortLease = <A, E, R>(
+  acquire: Effect.Effect<PortLease, E, R>,
+  use: (lease: PortLease) => Effect.Effect<A, E, R>,
+): Effect.Effect<{ readonly value: A; readonly lease: PortLease }, E, R | Scope.Scope> =>
+  Effect.gen(function* () {
+    const parentScope = yield* Effect.scope;
+    const leaseScope = yield* Scope.fork(parentScope);
+    const attempt = Effect.acquireRelease(acquire, (lease) => lease.releaseAll).pipe(
+      Scope.provide(leaseScope),
+      Effect.flatMap((lease) => use(lease).pipe(Effect.map((value) => ({ value, lease })))),
+    );
+    return yield* attempt.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) ? Effect.void : Effect.uninterruptible(Scope.close(leaseScope, exit)),
+      ),
+    );
+  });
+
 const requireOwnedForStack = (
   ownership: ControlOwnership,
   stackId: string,
@@ -478,7 +502,6 @@ const makeManager = (
       Effect.gen(function* () {
         yield* requireOwnedForStack(ownership, request.stackId);
         const persisted = request.persisted ?? [];
-        const partialLeases: Array<PortLease> = [];
         const attempt = Effect.gen(function* () {
           const listings = yield* store.list();
           const plan = planManagedPorts({
@@ -616,48 +639,38 @@ const makeManager = (
               );
             }
           }
-          const lease = yield* reservePortSet(requests, { reserved: exactReserved }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fileSystem),
-            Effect.mapError((cause) => {
-              const entry =
-                cause.field === undefined
-                  ? undefined
-                  : plan.durable.find((candidate) => candidate.field === cause.field);
-              const key =
-                entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
-              return key !== undefined && cause.port !== undefined
-                ? new ManagedExactPortOccupiedError({
-                    key,
-                    port: cause.port,
-                    stackId: request.stackId,
-                  })
-                : new ManagedPortAllocationError({
-                    fields: requests.map((item) => item.field),
-                    cause,
-                  });
-            }),
+          const allocation = yield* withManagedPortLease(
+            reservePortSet(requests, { reserved: exactReserved }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.mapError((cause) => {
+                const entry =
+                  cause.field === undefined
+                    ? undefined
+                    : plan.durable.find((candidate) => candidate.field === cause.field);
+                const key =
+                  entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
+                return key !== undefined && cause.port !== undefined
+                  ? new ManagedExactPortOccupiedError({
+                      key,
+                      port: cause.port,
+                      stackId: request.stackId,
+                    })
+                  : new ManagedPortAllocationError({
+                      fields: requests.map((item) => item.field),
+                      cause,
+                    });
+              }),
+            ),
+            (lease) => managedAssignments(plan, lease.ports),
           );
-          partialLeases.push(lease);
-          const assignments = yield* managedAssignments(plan, lease.ports);
-          return { assignments, lease };
+          return { assignments: allocation.value, lease: allocation.lease };
         });
-        const guardedAttempt = Effect.exit(attempt).pipe(
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit)
-              ? Effect.succeed(exit.value)
-              : Effect.all(
-                  partialLeases.map((lease) => lease.releaseAll),
-                  { discard: true },
-                ).pipe(Effect.andThen(Effect.failCause(exit.cause))),
-          ),
-        );
-        const allocation = yield* guardedAttempt.pipe(
+        const allocation = yield* attempt.pipe(
           Effect.retry({
             schedule: Schedule.spaced("5 millis").pipe(Schedule.upTo({ times: 2 })),
             while: (error) => Predicate.isTagged(error, "ManagedPortAllocationError"),
           }),
         );
-        yield* Effect.addFinalizer(() => allocation.lease.releaseAll);
         return allocation;
       });
 

@@ -655,7 +655,7 @@ describe("detached supervisor child journeys", () => {
     const { mode: _mode, ...config } = base.config;
     const child = spawnChild(
       messageFor(roots, {
-        config: { ...config, edgeRuntime: {} },
+        config: { ...config, edgeRuntime: { inspectorPort: 8_123 } },
       }),
       { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
     );
@@ -666,9 +666,35 @@ describe("detached supervisor child journeys", () => {
         mode: "docker",
         containerRuntime: "docker",
       });
-      expect(document?.ports.map(({ key }) => key)).toContain("edge_runtime.inspector_port");
+      expect(document?.ports).toContainEqual(
+        expect.objectContaining({ key: "edge_runtime.inspector_port", intent: "automatic" }),
+      );
       await remoteStop(started.endpoint);
       await waitForExit(child.child);
+
+      const explicit = spawnChild(
+        messageFor(roots, {
+          config: { ...config, edgeRuntime: { inspectorPort: 8_123 } },
+          portIntents: {
+            ...base.portIntents,
+            document: { edge_runtime: { inspector_port: 8_123 } },
+          },
+        }),
+        { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+      );
+      try {
+        const explicitStarted = await explicit.started;
+        const explicitDocument = readStackDocument(roots);
+        expect(explicitDocument?.ports).toContainEqual({
+          key: "edge_runtime.inspector_port",
+          port: 8_123,
+          intent: "exact",
+        });
+        await remoteStop(explicitStarted.endpoint);
+        await waitForExit(explicit.child);
+      } finally {
+        if (explicit.child.exitCode === null) await kill(explicit.child);
+      }
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);
@@ -717,6 +743,56 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("does not discard an explicit Edge Runtime request during native fallback", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-edge-runtime-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, { config: { ...config, edgeRuntime: { inspectorPort: 8_123 } } }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      await expect(child.started).rejects.toThrow("Native mode supports only");
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not discard an explicit Docker-only service request during native fallback", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-storage-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: { ...config, storage: { dataDir: join(roots.root, "storage") } },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      await expect(child.started).rejects.toThrow("Native mode supports only");
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("rejects an explicit mode change before attaching to a running owner", async () => {
     const roots = await workspace();
     const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-attach-"));
@@ -748,6 +824,48 @@ describe("detached supervisor child journeys", () => {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       if (sameMode?.child.exitCode === null) await kill(sameMode.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rechecks the winner's mode when attach starts before its first document", async () => {
+    const roots = await workspace();
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-first-launch-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const dockerInput = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${binDir}:${process.env.PATH ?? ""}` };
+    const owner = spawnChild(dockerInput, {
+      environment: {
+        ...environment,
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      contender = spawnChild(nativeInput, { environment });
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      await owner.started;
+      await expect(contender.started).rejects.toThrow(
+        "Stack runtime is already docker; requested native",
+      );
+      await waitForExit(contender.child);
+      await remoteStop((await owner.started).endpoint);
+      await waitForExit(owner.child);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
       rmSync(binDir, { recursive: true, force: true });
     }

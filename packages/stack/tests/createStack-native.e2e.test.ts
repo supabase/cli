@@ -8,6 +8,7 @@ import { defaultCacheRoot } from "../src/paths.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 describe("native PostgREST tracer bullet", () => {
+  const jwtSecret = "native-e2e-jwt-secret-with-at-least-32-characters";
   let stack: StackHandle;
   let dataDir: string;
   let cacheParent: string;
@@ -23,6 +24,7 @@ describe("native PostgREST tracer bullet", () => {
       functions: false,
       edgeRuntime: false,
       auth: false,
+      jwtSecret,
       postgres: { dataDir },
     });
     await stack.start();
@@ -48,6 +50,20 @@ describe("native PostgREST tracer bullet", () => {
 
     const deleted = await client.from("todos").delete().eq("title", "native tracer bullet");
     expect(deleted.error).toBeNull();
+  }, 30_000);
+
+  test("persists JWT settings in the native Postgres database", async () => {
+    const sql = new Bun.SQL(stack.dbUrl);
+    try {
+      const rows = await sql.unsafe<{ jwt_secret: string; jwt_exp: string }[]>(`
+        SELECT
+          current_setting('app.settings.jwt_secret') AS jwt_secret,
+          current_setting('app.settings.jwt_exp') AS jwt_exp;
+      `);
+      expect(rows[0]).toEqual({ jwt_secret: jwtSecret, jwt_exp: "3600" });
+    } finally {
+      await sql.close();
+    }
   }, 30_000);
 
   test("repairs incomplete bundled initialization on restart", async () => {

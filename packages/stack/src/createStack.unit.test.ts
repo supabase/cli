@@ -190,7 +190,9 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 
   it("requires Effect consumers to provide the selected Docker runtime", async () => {
-    await expect(resolveConfig({ mode: "docker" })).rejects.toMatchObject({
+    await expect(
+      Effect.runPromise(portRequestsForConfig({ mode: "docker" })),
+    ).rejects.toMatchObject({
       _tag: "StackBuildError",
       reason: "invalid_config",
     });
@@ -223,16 +225,20 @@ describe("resolveConfig edge runtime defaults", () => {
   });
 });
 
-describe("resolveConfig explicit keyless ports", () => {
+describe("portRequestsForConfig explicit ports", () => {
   it("rejects an explicit zero port before invoking allocation", async () => {
-    await expect(resolveConfig({ mode: "native", port: 0 })).rejects.toMatchObject({
+    await expect(
+      Effect.runPromise(portRequestsForConfig({ mode: "native", port: 0 })),
+    ).rejects.toMatchObject({
       _tag: "StackBuildError",
       reason: "invalid_config",
     });
   });
 
   it.each([1.5, -1, 65_536])("rejects an explicit invalid port %s", async (port) => {
-    await expect(resolveConfig({ mode: "native", port })).rejects.toMatchObject({
+    await expect(
+      Effect.runPromise(portRequestsForConfig({ mode: "native", port })),
+    ).rejects.toMatchObject({
       _tag: "StackBuildError",
       reason: "invalid_config",
     });

@@ -5,6 +5,8 @@ import type { ContainerRuntimeOptions, ServiceDependency } from "./service-utils
 interface PostgresInitOptions {
   readonly postgresDir: string;
   readonly dbPort: number;
+  readonly jwtSecret: string;
+  readonly jwtExpiry: number;
   /**
    * When false, append the SQL that Studio runs at cloud project creation to revoke the default
    * Data API privileges on the `public` schema so newly-created entities require explicit GRANTs.
@@ -39,8 +41,8 @@ alter default privileges for role postgres in schema public
 
 const dockerPostgresSchemaSql = (opts: DockerPostgresInitOptions) =>
   `
-\\set jwt_secret \`echo "$JWT_SECRET"\`
-\\set jwt_exp \`echo "$JWT_EXP"\`
+\\getenv jwt_secret JWT_SECRET
+\\getenv jwt_exp JWT_EXP
 ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
 ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
 ALTER USER postgres WITH PASSWORD 'postgres';
@@ -106,7 +108,6 @@ export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef =
   const script = `
 set -e
 export PATH="${pgBinDir}:$PATH"
-export PGPASSWORD=postgres
 db="${migrationsDir}"
 ${psqlArray}
 psql_opts=(-v ON_ERROR_STOP=1 --no-password --no-psqlrc)
@@ -191,6 +192,14 @@ CREATE SCHEMA IF NOT EXISTS _supavisor;
 ALTER SCHEMA _supavisor OWNER TO postgres;
 EOSQL
 
+# Always update JWT settings after the bundled roles and schemas exist.
+"\${psql[@]}" "\${psql_opts[@]}" -U supabase_admin -d postgres <<'EOSQL'
+\\getenv jwt_secret JWT_SECRET
+\\getenv jwt_exp JWT_EXP
+ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
+ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
+EOSQL
+
 # Always update role passwords (idempotent)
 "\${psql[@]}" -U supabase_admin -d postgres -c "
 DO \\$\\$
@@ -216,6 +225,8 @@ END
       DYLD_LIBRARY_PATH: pgLibDir,
       LD_LIBRARY_PATH: pgLibDir,
       PGPASSWORD: "postgres",
+      JWT_SECRET: opts.jwtSecret,
+      JWT_EXP: String(opts.jwtExpiry),
     },
     dependencies: opts.dependencies,
     supervision: {},

@@ -70,46 +70,6 @@ describe("resolved service preparation policies", () => {
     }
   });
 
-  it("rejects a caller lease that disagrees with an explicit port before creating roots", async () => {
-    let tempRootAttempts = 0;
-    const exit = await Effect.runPromise(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const failingFs = {
-          ...fs,
-          makeTempDirectory: () =>
-            Effect.sync(() => {
-              tempRootAttempts += 1;
-            }).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  systemError({
-                    _tag: "Unknown",
-                    module: "test",
-                    method: "makeTempDirectory",
-                    description: "root creation must not run",
-                  }),
-                ),
-              ),
-            ),
-        };
-        return yield* resolveConfigEffect(
-          { port: 45_123 },
-          { ports: { ...testPorts, apiPort: 45_122 } },
-        ).pipe(Effect.provideService(FileSystem.FileSystem, failingFs), Effect.exit);
-      }).pipe(Effect.provide(NodeFileSystem.layer)),
-    );
-
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(Cause.findErrorOption(exit.cause)).toMatchObject({
-        _tag: "Some",
-        value: { _tag: "StackBuildError", reason: "invalid_config" },
-      });
-    }
-    expect(tempRootAttempts).toBe(0);
-  });
-
   it("applies explicit policies and catalog defaults while keeping Postgres eager", async () => {
     const config = await resolveConfig({
       servicePolicies: { postgrest: "eager", mailpit: "eager" },

@@ -189,22 +189,32 @@ describe("managed stack recovery journeys", () => {
       const baseTransport = yield* ControlTransport;
       const repairRead = yield* Deferred.make<void>();
       let repairEndpointUrl: string | undefined;
+      let repairId: string | undefined;
       const observedTransport = Layer.succeed(ControlTransport, {
         ...baseTransport,
-        read: (endpoint) =>
-          Effect.gen(function* () {
-            if (endpoint.url === repairEndpointUrl) {
-              yield* Deferred.succeed(repairRead, void 0);
-            }
-            return yield* baseTransport.read(endpoint);
-          }),
+        read: (endpoint) => {
+          const ownerId = repairId;
+          if (endpoint.url !== repairEndpointUrl || ownerId === undefined) {
+            return baseTransport.read(endpoint);
+          }
+          return Deferred.succeed(repairRead, void 0).pipe(
+            Effect.andThen(
+              Effect.succeed({
+                protocolVersion: 1,
+                ownershipId: ownerId,
+                state: "running" as const,
+                ready: true,
+              }),
+            ),
+          );
+        },
       });
 
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const manager = yield* ManagedStackManager;
           const environment = yield* ensureEnvironment(workspace);
-          const repairId = deriveRepairOwnershipId(environment.identity);
+          repairId = deriveRepairOwnershipId(environment.identity);
           const repairOwner = yield* acquireControl({ stackId: repairId });
           if (!isControlOwnership(repairOwner)) throw new Error("expected repair ownership");
           repairEndpointUrl = repairOwner.endpoint.url;
@@ -226,6 +236,7 @@ describe("managed stack recovery journeys", () => {
           yield* Deferred.await(repairRead).pipe(Effect.timeout("30 seconds"));
           expect(yield* manager.inspectStack(stackId)).toBeUndefined();
           yield* repairOwner.close;
+          repairEndpointUrl = undefined;
           yield* Effect.promise(() => repairDaemon.dispose());
           const started = yield* Fiber.join(startFiber).pipe(Effect.timeout("60 seconds"));
           expect(started.stack.id).toBe(stackId);

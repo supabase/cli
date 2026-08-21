@@ -347,12 +347,17 @@ const scanForOwner = (
   candidates: ReadonlyArray<ControlEndpoint>,
   ownershipId: string,
   transport: ControlTransportShape,
-): Effect.Effect<ControlEndpoint | undefined, ControlProtocolMismatchError> =>
+): Effect.Effect<
+  ControlEndpoint | undefined,
+  ControlProtocolMismatchError | ControlTransportError
+> =>
   Effect.gen(function* () {
     for (const endpoint of candidates) {
       const found = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
         Effect.map(() => true),
-        Effect.catchTag("ControlTransportError", () => Effect.succeed(false)),
+        Effect.catchTag("ControlTransportError", (cause) =>
+          cause.reason === "unreachable" ? Effect.succeed(false) : Effect.fail(cause),
+        ),
         Effect.catchTag("ControlProtocolError", () => Effect.succeed(false)),
         Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(false)),
       );

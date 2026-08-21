@@ -21,6 +21,11 @@ const errorCode = (cause: unknown): string | undefined => {
   return undefined;
 };
 
+const isDefinitivelyUnreachable = (cause: unknown): boolean => {
+  const code = errorCode(cause);
+  return code === "ECONNREFUSED" || code === "ConnectionRefused";
+};
+
 const controlTransport: ControlTransport["Service"] = {
   bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
@@ -97,16 +102,15 @@ const controlTransport: ControlTransport["Service"] = {
       catch: (cause) => {
         if (
           cause instanceof SyntaxError ||
-          (cause instanceof Error &&
-            cause.message.startsWith("Control status request returned") &&
-            !cause.message.endsWith(" 404"))
+          (cause instanceof Error && cause.message.startsWith("Control status request returned"))
         ) {
           return new ControlProtocolError({ endpoint, cause });
         }
-        if (cause instanceof Error && cause.message.endsWith(" 404")) {
-          return new ControlTransportError({ endpoint, reason: "unreachable", cause });
-        }
-        return new ControlTransportError({ endpoint, reason: "unreachable", cause });
+        return new ControlTransportError({
+          endpoint,
+          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+          cause,
+        });
       },
     }),
   requestStop: (endpoint: ControlEndpoint) =>
@@ -119,7 +123,12 @@ const controlTransport: ControlTransport["Service"] = {
         }).then((response) => {
           if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
         }),
-      catch: (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+      catch: (cause) =>
+        new ControlTransportError({
+          endpoint,
+          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+          cause,
+        }),
     }),
 };
 

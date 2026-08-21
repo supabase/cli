@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { realpathSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Deferred, Duration, Effect, Fiber, Option, Predicate, Schedule } from "effect";
+import { Deferred, Duration, Effect, Fiber, Match, Option, Predicate, Schedule } from "effect";
 import type { ChildProcess } from "effect/unstable/process";
 import type { ExternalCleanupAction } from "./ServiceDef.ts";
 import {
@@ -25,6 +25,10 @@ interface ChildExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
 }
+
+type SupervisorOutcome =
+  | { readonly _tag: "ShutdownRequested"; readonly signal: ChildProcess.Signal }
+  | { readonly _tag: "ChildExited"; readonly exit: ChildExit };
 
 const DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS = 5_000;
 
@@ -360,30 +364,37 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
             yield* killChildTree("SIGKILL");
             yield* waitForExit(childExit, 2_000);
           }
-          yield* runCleanup;
-          yield* Effect.sync(() => process.exit(0));
         });
 
-      yield* Effect.race(
-        Deferred.await(shutdownRequest).pipe(Effect.flatMap(shutdown)),
+      const outcome = yield* Effect.race(
+        Deferred.await(shutdownRequest).pipe(
+          Effect.map((signal): SupervisorOutcome => ({ _tag: "ShutdownRequested", signal })),
+        ),
         Deferred.await(childExit).pipe(
-          Effect.flatMap(({ code, signal }) =>
-            Effect.gen(function* () {
-              yield* Fiber.interrupt(ownerWatcher);
-              if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
-                yield* runCleanup;
-                yield* Effect.sync(() => process.exit(0));
-              } else if (signal != null) {
-                yield* Effect.sync(() => process.exit(1));
-              } else {
-                yield* Effect.sync(() => process.exit(code ?? 0));
-              }
-            }),
-          ),
+          Effect.map((exit): SupervisorOutcome => ({ _tag: "ChildExited", exit })),
         ),
       );
 
       yield* Fiber.interrupt(ownerWatcher);
+      yield* Match.valueTags(outcome, {
+        ShutdownRequested: ({ signal }) =>
+          Effect.gen(function* () {
+            yield* shutdown(signal);
+            yield* runCleanup;
+            yield* Effect.sync(() => process.exit(0));
+          }),
+        ChildExited: ({ exit: { code, signal } }) =>
+          Effect.gen(function* () {
+            if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
+              yield* runCleanup;
+              yield* Effect.sync(() => process.exit(0));
+            } else if (signal != null) {
+              yield* Effect.sync(() => process.exit(1));
+            } else {
+              yield* Effect.sync(() => process.exit(code ?? 0));
+            }
+          }),
+      });
     }),
   );
 

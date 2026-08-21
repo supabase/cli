@@ -59,6 +59,7 @@ describe("makeVectorServiceDocker log source", () => {
     expect(args.join("\n")).toContain("type: internal_logs");
     expect(args).not.toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
     expect(args).not.toContain("DOCKER_HOST=unix:///var/run/docker.sock");
+    expect(def.env?.DOCKER_HOST).toBeUndefined();
     expect(args).not.toContain("--security-opt");
   });
 
@@ -71,7 +72,8 @@ describe("makeVectorServiceDocker log source", () => {
 
     expect(args.join("\n")).toContain("type: docker_logs");
     expect(args).toContain("/run/podman/podman.sock:/var/run/docker.sock:ro");
-    expect(args).toContain("DOCKER_HOST=unix:///var/run/docker.sock");
+    expect(def.env?.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+    expect(args).not.toContain("DOCKER_HOST=unix:///var/run/docker.sock");
     expect(args).toContain("--security-opt");
     expect(args).toContain("label=disable");
   });
@@ -83,6 +85,7 @@ describe("makeVectorServiceDocker log source", () => {
     expect(args.join("\n")).toContain("type: internal_logs");
     expect(args).not.toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
     expect(args).not.toContain("DOCKER_HOST=unix:///var/run/docker.sock");
+    expect(def.env?.DOCKER_HOST).toBeUndefined();
     expect(args).not.toContain("--security-opt");
   });
 
@@ -95,6 +98,7 @@ describe("makeVectorServiceDocker log source", () => {
     expect(args.join("\n")).toContain("type: internal_logs");
     expect(args).not.toContain("/run/podman/podman.sock:/var/run/docker.sock:ro");
     expect(args).not.toContain("DOCKER_HOST=unix:///var/run/docker.sock");
+    expect(def.env?.DOCKER_HOST).toBeUndefined();
     expect(args).not.toContain("--security-opt");
   });
 
@@ -108,7 +112,8 @@ describe("makeVectorServiceDocker log source", () => {
 
     expect(args.join("\n")).toContain("type: docker_logs");
     expect(args).toContain("/var/run/docker.sock:/var/run/docker.sock:ro");
-    expect(args).toContain("DOCKER_HOST=unix:///var/run/docker.sock");
+    expect(def.env?.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+    expect(args).not.toContain("DOCKER_HOST=unix:///var/run/docker.sock");
     expect(args).toContain("--security-opt");
     expect(args).toContain("label=disable");
   });

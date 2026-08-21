@@ -15,6 +15,7 @@ import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
 import { makeRealtimeServiceDocker } from "./realtime.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import { dockerRunService } from "./service-utils.ts";
 import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
   LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
@@ -34,6 +35,36 @@ const EPHEMERAL_IDENTITY: StackIdentity = stackIdentity({ apiPort: API_PORT });
 const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`;
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
+
+describe("dockerRunService environment transport", () => {
+  it("keeps secret values in the child environment instead of argv", () => {
+    const env = {
+      PASSWORD: "postgres-password",
+      JWT_SECRET,
+    };
+    const def = dockerRunService({
+      runtime: "docker",
+      name: "auth",
+      identity: EPHEMERAL_IDENTITY,
+      image: "supabase/auth:test",
+      env,
+      dependencies: [],
+    });
+
+    expect(def.env).toEqual(env);
+    const args = def.args ?? [];
+    for (const [key, value] of Object.entries(env)) {
+      const index = args.indexOf(key);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(args[index - 1]).toBe("-e");
+      expect(args[index + 1]).not.toBe(value);
+    }
+    expect(args.every((arg) => !Object.values(env).some((value) => arg.includes(value)))).toBe(
+      true,
+    );
+  });
+});
+
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
     const def = makePostgresService({
@@ -105,14 +136,15 @@ describe("makeStudioServiceDocker", () => {
       dependencies: [{ service: "pgmeta", condition: "healthy" }],
     });
 
-    expect(def.args).toContain("SUPABASE_ANON_KEY=sb_publishable_test");
-    expect(def.args).toContain("SUPABASE_SERVICE_KEY=sb_secret_test");
-    expect(def.args).toContain("SUPABASE_PUBLISHABLE_KEY=sb_publishable_test");
-    expect(def.args).toContain("SUPABASE_SECRET_KEY=sb_secret_test");
-    expect(def.args).toContain(`S3_PROTOCOL_ACCESS_KEY_ID=${LOCAL_S3_PROTOCOL_ACCESS_KEY_ID}`);
-    expect(def.args).toContain(
-      `S3_PROTOCOL_ACCESS_KEY_SECRET=${LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET}`,
-    );
+    expect(def.env).toMatchObject({
+      SUPABASE_ANON_KEY: "sb_publishable_test",
+      SUPABASE_SERVICE_KEY: "sb_secret_test",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+      SUPABASE_SECRET_KEY: "sb_secret_test",
+      S3_PROTOCOL_ACCESS_KEY_ID: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+      S3_PROTOCOL_ACCESS_KEY_SECRET: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+    });
+    expect(def.args).not.toContain("sb_secret_test");
   });
 });
 
@@ -208,7 +240,7 @@ describe("makePostgrestService", () => {
     expect(def.args).toContain("host.docker.internal:host-gateway");
     expect(def.args).toContain("54323:54323");
     expect(def.args).toContain("54324:54324");
-    expect(def.args).toContain("PGRST_ADMIN_SERVER_PORT=54324");
+    expect(def.env?.PGRST_ADMIN_SERVER_PORT).toBe("54324");
     expect(def.dependencies).toEqual(dependencies);
     expect(def.supervision?.orphanCleanup).toContainEqual({
       _tag: "RunCommand",
@@ -336,6 +368,8 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtExpiry: 3600,
       autoExposeNewTables: true,
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
@@ -348,6 +382,8 @@ describe("makePostgresInitService", () => {
     expect(def.healthCheck).toBeUndefined();
     expect(def.env?.DYLD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
     expect(def.env?.LD_LIBRARY_PATH).toBe(`${POSTGRES_BIN_PATH}/lib`);
+    expect(def.env?.JWT_SECRET).toBe(JWT_SECRET);
+    expect(def.env?.JWT_EXP).toBe("3600");
     expect(def.supervision).toBeDefined();
   });
 
@@ -357,6 +393,8 @@ describe("makePostgresInitService", () => {
       const commandFor = (autoExposeNewTables: boolean): string => {
         const common = {
           dbPort: DB_PORT,
+          jwtSecret: JWT_SECRET,
+          jwtExpiry: 3600,
           autoExposeNewTables,
           dependencies: [{ service: "postgres", condition: "healthy" }] as const,
         };
@@ -405,7 +443,7 @@ describe("docker-backed auxiliary services", () => {
 
     expect(def.args).toContain(`supabase-realtime-${API_PORT}`);
     expect(def.args).toContain("54330:54330");
-    expect(def.args).toContain("DB_HOST=host.docker.internal");
+    expect(def.env?.DB_HOST).toBe("host.docker.internal");
     expect(def.dependencies).toEqual(dependencies);
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Exec", command: "curl" }),
@@ -464,7 +502,7 @@ describe("docker-backed auxiliary services", () => {
 
     expect(def.args).toContain(`supabase-pgmeta-${API_PORT}`);
     expect(def.args).toContain("54336:54336");
-    expect(def.args).toContain("PG_META_DB_HOST=host.docker.internal");
+    expect(def.env?.PG_META_DB_HOST).toBe("host.docker.internal");
     expect(def.dependencies).toEqual(dependencies);
     expect(def.healthCheck?.probe).toEqual(
       expect.objectContaining({ _tag: "Http", port: 54336, path: "/health" }),
@@ -561,10 +599,10 @@ describe("docker-backed auxiliary services", () => {
       scheme: "http",
     });
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
-    expect(args).toContain("PORT=4000");
-    expect(args).toContain("PHX_HTTP_PORT=4000");
+    expect(def.env?.PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_PORT).toBe("4000");
+    expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
     expect(args).toContain("54328:4000");
-    expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
   });
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {
@@ -581,9 +619,9 @@ describe("docker-backed auxiliary services", () => {
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
-    expect(def.args).toContain("PORT=4000");
-    expect(def.args).toContain("PHX_HTTP_PORT=4000");
-    expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(def.env?.PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_PORT).toBe("4000");
+    expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
     expect(def.args).toContain("host.docker.internal:host-gateway");
     expect(def.args).toContain("54328:4000");
   });
@@ -615,9 +653,9 @@ describe("docker-backed auxiliary services", () => {
       path: "/api/health",
       scheme: "http",
     });
-    expect(def.args).toContain(`PORT=${poolerContainerPorts.admin}`);
-    expect(def.args).toContain(`PROXY_PORT_SESSION=${poolerContainerPorts.session}`);
-    expect(def.args).toContain(`PROXY_PORT_TRANSACTION=${poolerContainerPorts.transaction}`);
+    expect(def.env?.PORT).toBe(String(poolerContainerPorts.admin));
+    expect(def.env?.PROXY_PORT_SESSION).toBe(String(poolerContainerPorts.session));
+    expect(def.env?.PROXY_PORT_TRANSACTION).toBe(String(poolerContainerPorts.transaction));
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
     expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
   });

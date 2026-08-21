@@ -45,7 +45,7 @@ export const hostUserForLinuxDocker = (
 };
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
-  Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+  Object.keys(env).flatMap((key) => ["-e", key]);
 
 export const hostHttpHealthCheck = (
   port: number,
@@ -104,6 +104,7 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     name: opts.name,
     command: opts.runtime,
     args: dockerArgs,
+    env: opts.env,
     dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,

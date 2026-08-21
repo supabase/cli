@@ -54,10 +54,16 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
   const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
-  const stackConfig = withServiceVersions(
-    toStartStackConfig([], undefined),
-    serviceVersionContext.runtimeVersions,
-  );
+  const stackConfig = {
+    ...withServiceVersions(
+      toStartStackConfig([], undefined),
+      serviceVersionContext.runtimeVersions,
+    ),
+    // Functions dev explicitly requires Edge Runtime even when the project
+    // config supplies only schema defaults; retain that intent if native
+    // fallback is selected so it fails with a typed unsupported-runtime error.
+    servicePolicies: { "edge-runtime": "eager" as const },
+  };
   const stackLayer = yield* daemonLayer({
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
