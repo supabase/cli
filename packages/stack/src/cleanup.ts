@@ -56,7 +56,7 @@ const cleanupAutoManagedPathsWithRetry = (
       const remaining = yield* Effect.forEach(
         paths,
         (path) =>
-          fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false))),
+          fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(true))),
         { concurrency: 4 },
       );
       if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());

@@ -35,8 +35,9 @@ describe("automatic managed-path cleanup", () => {
     }),
   );
 
-  it.effect("does not retry when path existence cannot be determined", () =>
+  it.effect("retries when path existence cannot be determined", () =>
     Effect.gen(function* () {
+      const checked = yield* Deferred.make<void>();
       let removalAttempts = 0;
       const fs = FileSystem.makeNoop({
         remove: () =>
@@ -44,12 +45,16 @@ describe("automatic managed-path cleanup", () => {
             removalAttempts += 1;
           }),
         exists: () =>
-          Effect.fail(
-            systemError({
-              _tag: "PermissionDenied",
-              module: "test",
-              method: "exists",
-            }),
+          Deferred.succeed(checked, undefined).pipe(
+            Effect.andThen(
+              Effect.fail(
+                systemError({
+                  _tag: "PermissionDenied",
+                  module: "test",
+                  method: "exists",
+                }),
+              ),
+            ),
           ),
       });
       const fiber = yield* cleanupAutoManagedPaths(["/owned"]).pipe(
@@ -57,9 +62,11 @@ describe("automatic managed-path cleanup", () => {
         Effect.forkChild({ startImmediately: true }),
       );
 
-      yield* TestClock.adjust("20 seconds");
-      yield* Fiber.join(fiber);
-      expect(removalAttempts).toBe(1);
+      yield* Deferred.await(checked);
+      yield* TestClock.adjust("250 millis");
+      yield* Effect.yieldNow;
+      expect(removalAttempts).toBe(2);
+      yield* Fiber.interrupt(fiber);
     }),
   );
 });
