@@ -10,6 +10,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Match,
   Path,
   Ref,
   Schema,
@@ -43,13 +44,7 @@ import {
   StackServiceActivator,
 } from "./ServiceActivation.ts";
 import { portFieldsForService } from "./ServicePorts.ts";
-import {
-  PreparationCompleted,
-  preparationClosure,
-  ServiceDownloadStarted,
-  ServiceDownloadFinished,
-  StackPreparation,
-} from "./StackPreparation.ts";
+import { preparationClosure, StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts, StackPreparationInput } from "./StackPreparation.ts";
 import {
   enabledServicesForConfig,
@@ -390,17 +385,15 @@ export const localStackLayer = (
                   preparation.prepareEvents(input),
                   () => ({ resolutions: {} }) satisfies PreparedStackArtifacts,
                   (current, event) =>
-                    Effect.gen(function* () {
-                      if (event instanceof ServiceDownloadStarted) {
-                        yield* markDownloading(event.service);
-                      }
-                      if (event instanceof ServiceDownloadFinished) {
-                        yield* restoreStateIfDownloading(
-                          event.service,
-                          previousStates.get(event.service),
-                        );
-                      }
-                      return event instanceof PreparationCompleted ? event.artifacts : current;
+                    Match.valueTags(event, {
+                      ServiceDownloadStarted: (download) =>
+                        markDownloading(download.service).pipe(Effect.as(current)),
+                      ServiceDownloadFinished: (download) =>
+                        restoreStateIfDownloading(
+                          download.service,
+                          previousStates.get(download.service),
+                        ).pipe(Effect.as(current)),
+                      PreparationCompleted: (completed) => Effect.succeed(completed.artifacts),
                     }),
                 ),
               ),
@@ -710,7 +703,7 @@ export const localStackLayer = (
           const preparationError = new StackBuildError({
             detail: "Stack disposed during asset preparation",
           });
-          const failInFlight = Effect.gen(function* () {
+          const failInFlight: Effect.Effect<void> = Effect.gen(function* () {
             if (planDeferred !== undefined) {
               yield* Deferred.fail(planDeferred, preparationError);
             }
@@ -721,7 +714,7 @@ export const localStackLayer = (
               yield* Deferred.fail(runtimeDeferred, preparationError);
             }
           });
-          const cleanup = Effect.gen(function* () {
+          const cleanup: Effect.Effect<void> = Effect.gen(function* () {
             if (disposed) {
               return;
             }
@@ -734,6 +727,7 @@ export const localStackLayer = (
               cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
               Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
               Effect.ensuring(portLease.releaseAll),
               Effect.ensuring(Ref.set(phaseRef, "disposed")),

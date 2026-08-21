@@ -2,7 +2,17 @@ import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Cause, Data, Effect, FileSystem, Option, Schema, Semaphore } from "effect";
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Predicate,
+  Schema,
+  Semaphore,
+} from "effect";
 import { PlatformError } from "effect/PlatformError";
 import { PortSetSchema, type PortField, type PortSet } from "./PortCatalog.ts";
 
@@ -98,8 +108,9 @@ const isProcessAlive = (pid: number): boolean => {
   }
 };
 
-const isNotFound = (error: PlatformError): boolean => error.reason._tag === "NotFound";
-const isAlreadyExists = (error: PlatformError): boolean => error.reason._tag === "AlreadyExists";
+const isNotFound = (error: PlatformError): boolean => Predicate.isTagged(error.reason, "NotFound");
+const isAlreadyExists = (error: PlatformError): boolean =>
+  Predicate.isTagged(error.reason, "AlreadyExists");
 
 const parseClaimRecord = (contents: string): ClaimRecord | undefined => {
   try {
@@ -259,7 +270,7 @@ const acquirePortClaimInternal = (
           ),
         ),
       );
-      if (openedExit._tag === "Success") return { path, port, token };
+      if (Exit.isSuccess(openedExit)) return { path, port, token };
       yield* Effect.uninterruptible(removeCreatedClaim(path, contents, openedInfo, created, fs));
       const failure = Cause.findErrorOption(openedExit.cause);
       if (Option.isNone(failure)) return yield* Effect.failCause(openedExit.cause);
@@ -380,16 +391,20 @@ const releaseReservations = (
   reservations: Map<PortField, Server>,
   fields: ReadonlyArray<PortField>,
 ): Effect.Effect<void> =>
-  Effect.forEach(
-    uniquePortFields(fields),
-    (field) => {
-      const server = reservations.get(field);
-      if (server === undefined) return Effect.void;
-      return Effect.uninterruptible(
-        closeServer(server).pipe(Effect.tap(() => Effect.sync(() => reservations.delete(field)))),
-      );
-    },
-    { discard: true },
+  // Cleanup must finish the ownership handoff even if the caller is
+  // interrupted between releasing individual fields.
+  Effect.uninterruptible(
+    Effect.forEach(
+      uniquePortFields(fields),
+      (field) => {
+        const server = reservations.get(field);
+        if (server === undefined) return Effect.void;
+        return closeServer(server).pipe(
+          Effect.tap(() => Effect.sync(() => reservations.delete(field))),
+        );
+      },
+      { discard: true },
+    ),
   );
 
 const releaseClaims = (
@@ -397,16 +412,18 @@ const releaseClaims = (
   fields: ReadonlyArray<PortField>,
   fs: FileSystem.FileSystem,
 ): Effect.Effect<void> =>
-  Effect.forEach(
-    uniquePortFields(fields),
-    (field) => {
-      const claim = claims.get(field);
-      if (claim === undefined) return Effect.void;
-      return Effect.uninterruptible(
-        releasePortClaim(claim, fs).pipe(Effect.tap(() => Effect.sync(() => claims.delete(field)))),
-      );
-    },
-    { discard: true },
+  Effect.uninterruptible(
+    Effect.forEach(
+      uniquePortFields(fields),
+      (field) => {
+        const claim = claims.get(field);
+        if (claim === undefined) return Effect.void;
+        return releasePortClaim(claim, fs).pipe(
+          Effect.tap(() => Effect.sync(() => claims.delete(field))),
+        );
+      },
+      { discard: true },
+    ),
   );
 
 const claimAndBind = (
@@ -429,7 +446,7 @@ const claimAndBind = (
         acquirePortClaim(port, root).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
       ),
     );
-    if (claimExit._tag === "Failure") {
+    if (Exit.isFailure(claimExit)) {
       yield* closeServer(bound.server);
       return yield* Effect.failCause(claimExit.cause);
     }
@@ -555,7 +572,7 @@ const reserveRandomPort = (
         acquirePortClaim(bound.port, root).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
       ),
     );
-    if (claimExit._tag === "Success") {
+    if (Exit.isSuccess(claimExit)) {
       yield* Effect.uninterruptible(Effect.sync(() => claims.set(field, claimExit.value)));
       return bound;
     }
@@ -589,6 +606,19 @@ const withPortField = (field: PortField, error: PortAllocationError): PortAlloca
     reason: error.reason,
     ...(error.port === undefined ? {} : { port: error.port }),
   });
+
+const decodePortSet = (
+  partial: Partial<Record<PortField, number>>,
+): Effect.Effect<PortSet, PortAllocationError> =>
+  Schema.decodeUnknownEffect(PortSetSchema)(partial).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PortAllocationError({
+          detail: "Allocated ports did not match the port catalog",
+          cause,
+        }),
+    ),
+  );
 
 export const reservePortSet = (
   requests: ReadonlyArray<PortReservationRequest>,
@@ -695,13 +725,8 @@ export const reservePortSet = (
           partial[request.field] = bound.port;
         }
 
-        return makePortLease(
-          Schema.decodeUnknownSync(PortSetSchema)(partial),
-          reservations,
-          claims,
-          fs,
-          root,
-        );
+        const ports = yield* decodePortSet(partial);
+        return makePortLease(ports, reservations, claims, fs, root);
       });
 
     return Effect.gen(function* () {

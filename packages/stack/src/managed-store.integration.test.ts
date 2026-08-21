@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { makeStackStore } from "./managed/store.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 
@@ -108,9 +108,9 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
 const makeTempStackStore = (stateRoot = makeRoot()) => makeStackStore(stateRoot);
 
 const writeRawStackDocument = (stateRoot: string, stackId: string, content: string): void => {
-  const stackRoot = managedStackPaths(stateRoot, stackId).root;
+  const stackRoot = Effect.runSync(managedStackPathsEffect(stateRoot, stackId)).root;
   mkdirSync(stackRoot, { recursive: true });
-  writeFileSync(managedStackDocumentPath(stateRoot, stackId), content);
+  writeFileSync(Effect.runSync(managedStackDocumentPathEffect(stateRoot, stackId)), content);
 };
 
 describe("managed stack document store", () => {
@@ -191,7 +191,8 @@ describe("managed stack document store", () => {
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ id: HEALTHY_ID }));
-      mkdirSync(managedStackDocumentPath(store.stateRoot, CORRUPT_ID), { recursive: true });
+      const corruptPath = yield* managedStackDocumentPathEffect(store.stateRoot, CORRUPT_ID);
+      yield* Effect.sync(() => mkdirSync(corruptPath, { recursive: true }));
 
       const listings = yield* store.list();
       expect(listings).toEqual([

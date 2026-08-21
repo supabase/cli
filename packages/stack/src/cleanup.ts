@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
-import { Duration, Effect } from "effect";
+import { Data, Duration, Effect, FileSystem, Schedule } from "effect";
 import type { ContainerRuntime } from "./ContainerRuntime.ts";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
@@ -37,53 +36,53 @@ export const dockerForceRemove = (
     { concurrency: 4, discard: true },
   );
 
-export function cleanupAutoManagedPaths(config: ResolvedStackConfig): void {
-  if (config.autoManagedPaths.length === 0) {
-    return;
-  }
+class CleanupPending extends Data.TaggedError("CleanupPending")<{}> {}
 
-  for (const dir of config.autoManagedPaths) {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Best-effort — temp dir will be cleaned by OS eventually.
-    }
-  }
-}
-
-const cleanupAutoManagedPathsWithRetry = (config: ResolvedStackConfig): Effect.Effect<void> =>
+const cleanupAutoManagedPathsWithRetry = (
+  config: ResolvedStackConfig,
+): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     if (config.autoManagedPaths.length === 0) {
       return;
     }
 
-    const cleanupTargets = config.autoManagedPaths.map((path) => ({
-      path,
-      recursive: true as const,
-    }));
-
-    for (let attempt = 0; attempt < 80; attempt++) {
-      yield* Effect.sync(() => {
-        for (const target of cleanupTargets) {
-          try {
-            rmSync(target.path, { recursive: target.recursive, force: true });
-          } catch {}
-        }
-      });
-
-      if (cleanupTargets.every((target) => !existsSync(target.path))) {
-        return;
-      }
-
-      yield* Effect.sleep(Duration.millis(250));
-    }
+    const fs = yield* FileSystem.FileSystem;
+    const cleanupTargets = [
+      ...config.autoManagedPaths.map((path) => ({ path, recursive: true as const })),
+      { path: `${config.postgres.dataDir}_pg_hba_docker.conf`, recursive: false as const },
+    ];
+    const attempt = Effect.gen(function* () {
+      yield* Effect.forEach(
+        cleanupTargets,
+        (target) =>
+          fs.remove(target.path, { recursive: target.recursive, force: true }).pipe(Effect.ignore),
+        { concurrency: 4, discard: true },
+      );
+      const remaining = yield* Effect.forEach(
+        cleanupTargets,
+        (target) => fs.exists(target.path).pipe(Effect.catch(() => Effect.succeed(true))),
+        { concurrency: 4 },
+      );
+      if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
+    });
+    yield* attempt.pipe(
+      Effect.retry(
+        Schedule.recurs(79).pipe(Schedule.addDelay(() => Effect.succeed(Duration.millis(250)))),
+      ),
+      Effect.catch(() => Effect.void),
+    );
   });
+
+export const cleanupAutoManagedPaths = (
+  config: ResolvedStackConfig,
+): Effect.Effect<void, never, FileSystem.FileSystem> =>
+  Effect.uninterruptible(cleanupAutoManagedPathsWithRetry(config));
 
 export const cleanupLocalStackResources = (opts: {
   readonly stop: () => Effect.Effect<void>;
   readonly cleanupTargets: CleanupTargets;
   readonly config: ResolvedStackConfig;
-}): Effect.Effect<void> =>
+}): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     // Best-effort graceful shutdown — stop() may fail if services already
     // exited or the scope is partially closed. Make the stop path
@@ -100,5 +99,5 @@ export const cleanupLocalStackResources = (opts: {
         opts.cleanupTargets.dockerContainerNames,
       );
     }
-    yield* cleanupAutoManagedPathsWithRetry(opts.config);
+    yield* Effect.uninterruptible(cleanupAutoManagedPathsWithRetry(opts.config));
   });

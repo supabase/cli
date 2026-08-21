@@ -232,7 +232,7 @@ describe("direct createStack port ownership", () => {
     const [firstExit, secondExit] = await Effect.runPromise(
       Effect.all([Fiber.await(firstDisposal), Fiber.await(secondDisposal)]),
     );
-    expect(firstExit._tag).toBe("Success");
-    expect(secondExit._tag).toBe("Success");
+    expect(Exit.isSuccess(firstExit)).toBe(true);
+    expect(Exit.isSuccess(secondExit)).toBe(true);
   });
 });

@@ -24,10 +24,10 @@ import {
   managedStackManagerLayer,
 } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
 import { DaemonServer } from "./DaemonServer.ts";
 import { makeRepository } from "../tests/helpers/git-workspace.ts";
@@ -55,7 +55,7 @@ const acquireIsolatedCollisionOwner = () =>
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
-      if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
+      if (Exit.isSuccess(acquisition) && isControlOwnership(acquisition.value)) {
         return { collidingStackId, ownership: acquisition.value };
       }
     }
@@ -72,7 +72,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
-      if (Exit.isSuccess(acquisition) && acquisition.value._tag === "Owned") {
+      if (Exit.isSuccess(acquisition) && isControlOwnership(acquisition.value)) {
         return { stackName, ownership: acquisition.value };
       }
     }
@@ -145,7 +145,7 @@ describe("managed stack recovery journeys", () => {
         cpSync(workspace, copied, { recursive: true });
         const stackId = deriveStackId(environment.identity, "default");
         const ownership = yield* acquireControl({ stackId });
-        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
 
         const readFiber = yield* Effect.forkScoped(
           manager.readStack({ workspacePath: copied, portDocument: automaticDocument() }),
@@ -205,7 +205,7 @@ describe("managed stack recovery journeys", () => {
           const environment = yield* ensureEnvironment(workspace);
           const repairId = deriveRepairOwnershipId(environment.identity);
           const repairOwner = yield* acquireControl({ stackId: repairId });
-          if (repairOwner._tag !== "Owned") throw new Error("expected repair ownership");
+          if (!isControlOwnership(repairOwner)) throw new Error("expected repair ownership");
           repairEndpointUrl = repairOwner.endpoint.url;
           const repairDaemon = ManagedRuntime.make(
             DaemonServer.layerWithShutdown(Effect.void, repairOwner.ownerStatus).pipe(
@@ -350,7 +350,7 @@ describe("managed stack recovery journeys", () => {
         expect(Exit.isFailure(deleteBeforeRepair)).toBe(true);
         const blockedId = [originalId, secondaryId].sort().at(-1);
         if (blockedId === undefined) throw new Error("expected affected stack");
-        const blockedRoot = managedStackPaths(stateRoot, blockedId).root;
+        const blockedRoot = (yield* managedStackPathsEffect(stateRoot, blockedId)).root;
         blockedWrites.root = blockedRoot;
         const failed = yield* manager.repairWorkspace(discovery.repair).pipe(Effect.exit);
         blockedWrites.root = undefined;
@@ -393,8 +393,12 @@ describe("managed stack recovery journeys", () => {
         const stack = yield* startWithOwner(manager, workspace, automaticDocument());
         yield* releaseLease(stack);
         const corruptId = "f".repeat(64);
-        mkdirSync(managedStackPaths(stateRoot, corruptId).root, { recursive: true });
-        writeFileSync(managedStackDocumentPath(stateRoot, corruptId), "not-json");
+        const corruptPaths = yield* managedStackPathsEffect(stateRoot, corruptId);
+        const corruptDocumentPath = yield* managedStackDocumentPathEffect(stateRoot, corruptId);
+        yield* Effect.sync(() => {
+          mkdirSync(corruptPaths.root, { recursive: true });
+          writeFileSync(corruptDocumentPath, "not-json");
+        });
         const listings = yield* manager.listStacks();
         expect(listings).toEqual(
           expect.arrayContaining([

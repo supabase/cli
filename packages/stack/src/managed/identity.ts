@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { Effect, FileSystem, PlatformError } from "effect";
+import { Effect, FileSystem, PlatformError, Predicate, Schema } from "effect";
 import { claimFileAtomically, type FileClaimOutcome } from "./atomic-claim.ts";
 import {
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
-import { assertManagedUuid, createManagedUuid } from "./ids.ts";
-import { failsOnlyWith, failsWith } from "./failure.ts";
+import { createManagedUuidEffect, validateManagedUuid } from "./ids.ts";
+import { failsOnlyWith } from "./failure.ts";
 import {
   gitCheckoutLocationPath,
   gitDetachedContextIdentityPath,
@@ -18,46 +18,33 @@ import type { ControlOwnership } from "./control.ts";
 
 const failsWithIdentity = failsOnlyWith(InvalidManagedIdentityError);
 
-const identityField = (value: unknown, field: string): string => {
-  if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError({
-      message: "The ordinary workspace identity must be an object",
-    });
-  }
-  const fieldValue = Reflect.get(value, field);
-  if (typeof fieldValue !== "string") {
-    throw new InvalidManagedIdentityError({ message: `${field} must be an opaque UUID` });
-  }
-  return assertManagedUuid(fieldValue, field);
-};
+const ordinaryWorkspaceIdentitySchema = Schema.fromJsonString(
+  Schema.Struct({
+    version: Schema.Literal(ORDINARY_WORKSPACE_IDENTITY_VERSION),
+    workspaceId: Schema.String,
+    checkoutId: Schema.String,
+    contextId: Schema.String,
+  }),
+);
 
-const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch (cause: unknown) {
-    throw new InvalidManagedIdentityError({
-      message: `The ordinary workspace identity is not JSON: ${cause}`,
-    });
-  }
-  if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError({
-      message: "The ordinary workspace identity must be an object",
-    });
-  }
-  const version = Reflect.get(value, "version");
-  if (version !== ORDINARY_WORKSPACE_IDENTITY_VERSION) {
-    throw new InvalidManagedIdentityError({
-      message: `Unsupported ordinary workspace identity version ${String(version)}`,
-    });
-  }
-  return {
-    version,
-    workspaceId: identityField(value, "workspaceId"),
-    checkoutId: identityField(value, "checkoutId"),
-    contextId: identityField(value, "contextId"),
-  };
-};
+const decodeIdentity = (
+  content: string,
+): Effect.Effect<OrdinaryWorkspaceIdentity, InvalidManagedIdentityError> =>
+  Schema.decodeUnknownEffect(ordinaryWorkspaceIdentitySchema)(content).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The ordinary workspace identity is invalid: ${String(error)}`,
+        }),
+    ),
+    Effect.flatMap(({ version, workspaceId, checkoutId, contextId }) =>
+      Effect.all({
+        workspaceId: validateManagedUuid(workspaceId, "workspaceId"),
+        checkoutId: validateManagedUuid(checkoutId, "checkoutId"),
+        contextId: validateManagedUuid(contextId, "contextId"),
+      }).pipe(Effect.map((identity) => ({ version, ...identity }))),
+    ),
+  );
 
 const inaccessibleIdentity = (
   label: string,
@@ -72,10 +59,17 @@ const claimIdentityFile = (
   mode?: number,
 ): Effect.Effect<FileClaimOutcome, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   claimFileAtomically(path, content, { mode }).pipe(
-    Effect.catchTag("PlatformError", (error) =>
+    Effect.catchTag("AtomicClaimUnsupportedError", (error) =>
       Effect.fail(
         new InvalidManagedIdentityError({
           message: `${label} could not be published at ${path}: ${error.message}. The filesystem must support hard links for managed identity publication.`,
+        }),
+      ),
+    ),
+    Effect.catchTag("PlatformError", (error) =>
+      Effect.fail(
+        new InvalidManagedIdentityError({
+          message: `${label} could not be published at ${path}: ${error.message}`,
         }),
       ),
     ),
@@ -117,14 +111,9 @@ const readIdentity = (
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       return yield* fs.readFileString(ordinaryWorkspaceIdentityPath(workspacePath)).pipe(
-        Effect.flatMap((content) =>
-          Effect.try({
-            try: () => decodeIdentity(content),
-            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-          }),
-        ),
+        Effect.flatMap((content) => decodeIdentity(content)),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
+          Predicate.isTagged(error.reason, "NotFound")
             ? Effect.succeed<OrdinaryWorkspaceIdentity | undefined>(undefined)
             : Effect.fail(inaccessibleIdentity("Ordinary workspace identity", error)),
         ),
@@ -157,9 +146,9 @@ export const ensureOrdinaryWorkspaceIdentity = (
 
       const identity: OrdinaryWorkspaceIdentity = {
         version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-        workspaceId: createManagedUuid(idFactory, "workspaceId"),
-        checkoutId: createManagedUuid(idFactory, "checkoutId"),
-        contextId: createManagedUuid(idFactory, "contextId"),
+        workspaceId: yield* createManagedUuidEffect(idFactory, "workspaceId"),
+        checkoutId: yield* createManagedUuidEffect(idFactory, "checkoutId"),
+        contextId: yield* createManagedUuidEffect(idFactory, "contextId"),
       };
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(dirname(markerPath), { recursive: true });
@@ -185,31 +174,25 @@ export const ensureOrdinaryWorkspaceIdentity = (
 
 const DETACHED_CONTEXT_VERSION = 1;
 
-const decodeDetachedContextId = (content: string): string => {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch (cause: unknown) {
-    throw new InvalidManagedIdentityError({
-      message: `The detached context identity is not JSON: ${cause}`,
-    });
-  }
-  if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError({
-      message: "The detached context identity must be an object",
-    });
-  }
-  if (Reflect.get(value, "version") !== DETACHED_CONTEXT_VERSION) {
-    throw new InvalidManagedIdentityError({
-      message: "Unsupported detached context identity version",
-    });
-  }
-  const contextId = Reflect.get(value, "contextId");
-  if (typeof contextId !== "string") {
-    throw new InvalidManagedIdentityError({ message: "contextId must be an opaque UUID" });
-  }
-  return assertManagedUuid(contextId, "contextId");
-};
+const detachedContextIdentitySchema = Schema.fromJsonString(
+  Schema.Struct({
+    version: Schema.Literal(DETACHED_CONTEXT_VERSION),
+    contextId: Schema.String,
+  }),
+);
+
+const decodeDetachedContextId = (
+  content: string,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.decodeUnknownEffect(detachedContextIdentitySchema)(content).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The detached context identity is invalid: ${String(error)}`,
+        }),
+    ),
+    Effect.flatMap(({ contextId }) => validateManagedUuid(contextId, "contextId")),
+  );
 
 const readDetachedContextId = (
   gitDirectory: string,
@@ -218,14 +201,9 @@ const readDetachedContextId = (
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       return yield* fs.readFileString(gitDetachedContextIdentityPath(gitDirectory)).pipe(
-        Effect.flatMap((content) =>
-          Effect.try({
-            try: () => decodeDetachedContextId(content),
-            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-          }),
-        ),
+        Effect.flatMap((content) => decodeDetachedContextId(content)),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
+          Predicate.isTagged(error.reason, "NotFound")
             ? Effect.succeed<string | undefined>(undefined)
             : Effect.fail(inaccessibleIdentity("Detached context identity", error)),
         ),
@@ -247,7 +225,7 @@ export const ensureDetachedContextIdentity = (
     Effect.gen(function* () {
       const existing = yield* readDetachedContextId(gitDirectory);
       if (existing !== undefined) return { contextId: existing, created: false };
-      const contextId = createManagedUuid(idFactory, "contextId");
+      const contextId = yield* createManagedUuidEffect(idFactory, "contextId");
       const markerPath = gitDetachedContextIdentityPath(gitDirectory);
       const outcome = yield* claimIdentityFile(
         markerPath,
@@ -268,24 +246,23 @@ export const ensureDetachedContextIdentity = (
     }),
   );
 
-const decodeLocation = (content: string): string => {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch (cause: unknown) {
-    throw new InvalidManagedIdentityError({
-      message: `The git checkout location is not JSON: ${cause}`,
-    });
-  }
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    typeof Reflect.get(value, "workspacePath") !== "string"
-  ) {
-    throw new InvalidManagedIdentityError({ message: "workspacePath must be a string" });
-  }
-  return Reflect.get(value, "workspacePath");
-};
+const checkoutLocationSchema = Schema.fromJsonString(
+  Schema.Struct({
+    version: Schema.Literal(1),
+    workspacePath: Schema.String,
+  }),
+);
+
+const decodeLocation = (content: string): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.decodeUnknownEffect(checkoutLocationSchema)(content).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The git checkout location is invalid: ${String(error)}`,
+        }),
+    ),
+    Effect.map(({ workspacePath }) => workspacePath),
+  );
 
 export const readGitCheckoutLocation = (
   gitDirectory: string,
@@ -294,14 +271,9 @@ export const readGitCheckoutLocation = (
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       return yield* fs.readFileString(gitCheckoutLocationPath(gitDirectory)).pipe(
-        Effect.flatMap((content) =>
-          Effect.try({
-            try: () => decodeLocation(content),
-            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-          }),
-        ),
+        Effect.flatMap((content) => decodeLocation(content)),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
+          Predicate.isTagged(error.reason, "NotFound")
             ? Effect.succeed<string | undefined>(undefined)
             : Effect.fail(inaccessibleIdentity("Git checkout location", error)),
         ),

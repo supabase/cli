@@ -1,4 +1,4 @@
-import { Data, Deferred, Effect, Context, Ref, Result, Schedule, Schema } from "effect";
+import { Data, Deferred, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import {
   ControlOwnerStatusSchema,
@@ -136,6 +136,14 @@ export interface ControlAttached {
 }
 
 export type ControlAcquisition = ControlOwnership | ControlAttached;
+
+export const isControlOwnership = (
+  acquisition: ControlAcquisition,
+): acquisition is ControlOwnership => Predicate.isTagged(acquisition, "Owned");
+
+export const isControlAttached = (
+  acquisition: ControlAcquisition,
+): acquisition is ControlAttached => Predicate.isTagged(acquisition, "Attached");
 
 const invalidId = (ownershipId: string): Effect.Effect<never, InvalidControlOwnershipIdError> =>
   Effect.fail(new InvalidControlOwnershipIdError({ ownershipId }));
@@ -395,7 +403,7 @@ const acquireAtCandidates = (
           endpoint,
           () => Ref.getUnsafe(statusRef),
           () => {
-            Effect.runSync(Deferred.succeed(stopRequested, void 0));
+            Deferred.doneUnsafe(stopRequested, Effect.succeed(undefined));
           },
         )
         .pipe(Effect.result);
@@ -460,7 +468,7 @@ const acquireAtCandidates = (
       // consume the 500 ms transport timeout, and a count-based budget would
       // stretch a single acquire far past the parent's startup handshake.
       schedule: Schedule.spaced("50 millis").pipe(Schedule.upTo({ duration: "1500 millis" })),
-      while: (error) => error._tag === "ControlUnavailableError",
+      while: (error) => Predicate.isTagged(error, "ControlUnavailableError"),
     }),
     Effect.catchTag("ControlUnavailableError", (error) =>
       Effect.fail(

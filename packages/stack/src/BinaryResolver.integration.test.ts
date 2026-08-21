@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, FileSystem, Layer } from "effect";
+import { Deferred, Effect, Fiber, FileSystem, Layer, Predicate } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
@@ -145,7 +145,7 @@ const makeResolverLayer = (
           Effect.gen(function* () {
             const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
             return ChildProcessSpawner.make((command) => {
-              if (command._tag === "StandardCommand") {
+              if (Predicate.isTagged(command, "StandardCommand")) {
                 options.spawnedCommands?.push({
                   command: command.command,
                   args: command.args,

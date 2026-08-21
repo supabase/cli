@@ -12,39 +12,42 @@ interface ChildLike {
 const hasAlreadyExited = (child: ChildLike): boolean =>
   child.exitCode != null || child.signalCode != null;
 
-const terminateWithSignal = (
+/**
+ * Waits for a child exit event while making listener ownership explicit. The
+ * callback adapter removes the listener on both completion and interruption;
+ * the timeout is an Effect race, so no timer survives a losing branch.
+ */
+const signalAndWait = (
   child: ChildLike,
   signal: NodeJS.Signals,
   timeoutMs: number,
 ): Effect.Effect<boolean> =>
   Effect.raceFirst(
     Effect.callback<boolean>((resume) => {
-      let cleaned = false;
+      let settled = false;
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        child.off("exit", onExit);
+      };
       const onExit = () => {
         cleanup();
         resume(Effect.succeed(true));
       };
-      const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
-        child.off("exit", onExit);
-      };
 
-      child.once("exit", onExit);
       if (hasAlreadyExited(child)) {
-        onExit();
-      } else {
-        try {
-          child.kill(signal);
-        } catch {
-          // A child may disappear between the exit check and kill. The timeout
-          // stage still bounds this wait, and the next stage rechecks state.
-        }
+        resume(Effect.succeed(true));
+        return Effect.void;
       }
-
+      child.once("exit", onExit);
+      try {
+        child.kill(signal);
+      } catch {
+        // A child can disappear between the state check and kill call.
+      }
       return Effect.sync(cleanup);
     }),
-    Effect.sleep(Duration.millis(timeoutMs)).pipe(Effect.as(false)),
+    Effect.as(Effect.sleep(Duration.millis(timeoutMs)), false),
   );
 
 export const terminateChildProcess = (
@@ -52,19 +55,13 @@ export const terminateChildProcess = (
   opts: {
     readonly timeoutMs?: number;
   } = {},
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    if (child.pid == null || hasAlreadyExited(child)) {
-      return;
-    }
+): Effect.Effect<void> => {
+  if (child.pid == null || hasAlreadyExited(child)) return Effect.void;
 
-    const timeoutMs = opts.timeoutMs ?? 1_000;
-    if (yield* terminateWithSignal(child, "SIGTERM", timeoutMs)) {
-      return;
-    }
-    if (hasAlreadyExited(child)) {
-      return;
-    }
-
-    yield* terminateWithSignal(child, "SIGKILL", timeoutMs);
+  const timeoutMs = opts.timeoutMs ?? 1_000;
+  return Effect.gen(function* () {
+    if (yield* signalAndWait(child, "SIGTERM", timeoutMs)) return;
+    if (hasAlreadyExited(child)) return;
+    yield* signalAndWait(child, "SIGKILL", timeoutMs);
   });
+};

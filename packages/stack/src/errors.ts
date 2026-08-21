@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Predicate } from "effect";
 
 export class BinaryNotFoundError extends Data.TaggedError("BinaryNotFoundError")<{
   readonly service: string;
@@ -104,87 +104,40 @@ export class StackError extends Error {
   }
 }
 
+const taggedStackErrorCodes = [
+  ["ServiceNotFoundError", "SERVICE_NOT_FOUND"],
+  ["StackBuildError", "BUILD_ERROR"],
+  ["StackNotRunningError", "STACK_NOT_RUNNING"],
+  ["StackReadinessError", "STACK_READINESS_TIMEOUT"],
+  ["BinaryNotFoundError", "BINARY_NOT_FOUND"],
+  ["BinaryManifestError", "BINARY_MANIFEST"],
+  ["BinaryRuntimeError", "BINARY_RUNTIME"],
+  ["BinaryHostCompatibilityError", "BINARY_HOST"],
+  ["DownloadError", "DOWNLOAD_ERROR"],
+  ["DockerPullError", "DOCKER_PULL_ERROR"],
+  ["PortConflictError", "PORT_CONFLICT"],
+  ["PortAllocationError", "PORT_ALLOCATION"],
+  ["ServiceReadyError", "SERVICE_NOT_READY"],
+] as const;
+
+const messageForUnknownError = (error: unknown): string => {
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  if (error !== null && typeof error === "object" && "detail" in error) {
+    const detail = error.detail;
+    if (typeof detail === "string" && detail.length > 0) return detail;
+  }
+  return String(error);
+};
+
 export function toStackError(err: unknown): StackError {
   if (err instanceof StackError) return err;
-  if (err != null && typeof err === "object" && "_tag" in err) {
-    const tagged = err as { _tag: string; message?: string; detail?: string };
-    const taggedMessage =
-      (tagged.message !== undefined && tagged.message.length > 0 ? tagged.message : undefined) ??
-      tagged.detail ??
-      String(err);
-    switch (tagged._tag) {
-      case "ServiceNotFoundError":
-        return new StackError({
-          code: "SERVICE_NOT_FOUND",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackBuildError":
-        return new StackError({
-          code: "BUILD_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackNotRunningError":
-        return new StackError({
-          code: "STACK_NOT_RUNNING",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackReadinessError":
-        return new StackError({
-          code: "STACK_READINESS_TIMEOUT",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "BinaryNotFoundError":
-        return new StackError({
-          code: "BINARY_NOT_FOUND",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "BinaryManifestError":
-        return new StackError({ code: "BINARY_MANIFEST", message: taggedMessage, cause: err });
-      case "BinaryRuntimeError":
-        return new StackError({ code: "BINARY_RUNTIME", message: taggedMessage, cause: err });
-      case "BinaryHostCompatibilityError":
-        return new StackError({ code: "BINARY_HOST", message: taggedMessage, cause: err });
-      case "DownloadError":
-        return new StackError({
-          code: "DOWNLOAD_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "DockerPullError":
-        return new StackError({
-          code: "DOCKER_PULL_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "PortConflictError":
-        return new StackError({
-          code: "PORT_CONFLICT",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "PortAllocationError":
-        return new StackError({
-          code: "PORT_ALLOCATION",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "ServiceReadyError":
-        return new StackError({
-          code: "SERVICE_NOT_READY",
-          message: taggedMessage,
-          cause: err,
-        });
-      default:
-        return new StackError({
-          code: tagged._tag,
-          message: taggedMessage,
-          cause: err,
-        });
+  for (const [tag, code] of taggedStackErrorCodes) {
+    if (Predicate.isTagged(err, tag)) {
+      return new StackError({
+        code,
+        message: messageForUnknownError(err),
+        cause: err,
+      });
     }
   }
   if (err instanceof Error) {

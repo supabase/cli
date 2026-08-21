@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Fiber, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
@@ -29,8 +29,9 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const cmd = standardCommand ? command.command : "";
+          const args = standardCommand ? command.args : [];
           spawned.push({ command: cmd, args });
 
           const result = results[index] ?? { exitCode: 0 };
@@ -305,7 +306,11 @@ describe("prefetch", () => {
           .pipe(Stream.runCollect);
         const downloadEvents = streamEvents.flatMap((event) =>
           event instanceof ServiceDownloadStarted || event instanceof ServiceDownloadFinished
-            ? [event._tag]
+            ? [
+                Predicate.isTagged(event, "ServiceDownloadStarted")
+                  ? "ServiceDownloadStarted"
+                  : "ServiceDownloadFinished",
+              ]
             : [],
         );
         const completed = streamEvents.find((event) => event instanceof PreparationCompleted);

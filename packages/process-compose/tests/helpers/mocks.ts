@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 interface SpawnRecord {
@@ -13,22 +13,14 @@ const isOneShotSupervisor = (args: ReadonlyArray<string>): boolean => {
   if (encoded === undefined) return false;
   try {
     const config: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    if (
-      typeof config !== "object" ||
-      config === null ||
-      !("command" in config) ||
-      !("args" in config) ||
-      !Array.isArray(config.args)
-    ) {
-      return false;
-    }
-    const bashScript =
-      config.command === "bash" && config.args[0] === "-c" && typeof config.args[1] === "string"
-        ? config.args[1]
-        : undefined;
     return (
-      (bashScript !== undefined && !/(?:^|\n)\s*exec\s/.test(bashScript)) ||
-      ((config.command === "docker" || config.command === "podman") && config.args[0] === "exec")
+      typeof config === "object" &&
+      config !== null &&
+      "command" in config &&
+      config.command === "bash" &&
+      "args" in config &&
+      Array.isArray(config.args) &&
+      config.args[0] === "-c"
     );
   } catch {
     return false;
@@ -52,8 +44,8 @@ export function mockChildProcessSpawner(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const cmd = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
+          const args = Predicate.isTagged(command, "StandardCommand") ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
           yield* opts.beforeSpawn?.(record) ?? Effect.void;
           spawned.push(record);
@@ -62,7 +54,7 @@ export function mockChildProcessSpawner(
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           let running = true;
 
-          yield* Effect.forkDetach(
+          yield* Effect.forkScoped(
             Effect.gen(function* () {
               // Supervisor processes model long-running services. Direct
               // commands model probes and one-shot helpers, which should

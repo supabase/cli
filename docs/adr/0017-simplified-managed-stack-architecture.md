@@ -16,30 +16,26 @@ metadata file or PID-based liveness path.
 The managed document is private unreleased state under the user-level managed
 root. It is intentionally not a SQLite schema, repository contract, service
 registry, or compatibility facade. Storage and lifecycle decisions stay in the
-manager; the supervisor reconciles runtime resources before asking the manager
-to start or delete a stack. Platform entrypoints only provide filesystem, path,
-process, HTTP, and control-transport services.
+manager; platform entrypoints only provide filesystem, path, process, HTTP,
+and control-transport services.
 
 Launch updates use the existing owner control route (`POST /managed/launch`).
 An attached caller asks the owner to update launch metadata; a caller with
 owned control updates the document directly. Stop acquires control first,
 waits for the persisted `stopped` lifecycle, and handles a stale owner with
-deterministic cleanup keyed by stack id. Delete requires owned control and a
-live owner therefore cannot be deleted. After stale ownership is recovered,
-delete reconciles persisted container resources before removing a document in
-any lifecycle state.
+deterministic cleanup keyed by stack id. Delete also requires owned control;
+stale running or failed documents are reconciled and cleaned before removal,
+while a live owner is never deleted underneath.
 
 Read-only discovery never acquires control ownership. It probes `/owner` and
-treats an unreachable or foreign listener as non-live. Control ownership maps
-the stack id to eight deterministic loopback candidates in the
-`127.0.0.1:10000..32767` range. A mutation attaches to a matching owner on any
-candidate or binds the first available candidate; unrelated listeners and
-other stack identities are skipped. Acquisition fails closed when every
-candidate is occupied or when a protocol-incompatible response prevents
-ownership verification. Readers scan the same sequence and verify the
-published ownership id. This is pragmatic single-user localhost coordination,
-not a hostile multi-user security boundary. We are not adding control tokens
-until the threat model justifies more protocol and persistence machinery.
+treats an unreachable, incompatible, or colliding listener as non-live;
+mutations still bind the endpoint and fail on a conflict. The endpoint maps
+digest bytes from the stack id into the reserved loopback range
+`127.0.0.1:10000..32767`, so collisions are possible and deliberately fail
+closed for start/stop/delete. This is pragmatic
+single-user localhost coordination, not a hostile multi-user security
+boundary. We are not adding control tokens until the threat model or a real
+collision rate justifies more protocol and persistence machinery.
 
 ## Why this replaces ADR-0015
 

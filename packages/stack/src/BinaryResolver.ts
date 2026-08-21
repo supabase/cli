@@ -8,6 +8,7 @@ import {
   Layer,
   Option,
   Path,
+  Predicate,
   PlatformError,
   Result,
   Schedule,
@@ -813,7 +814,7 @@ export class BinaryResolver extends Context.Service<
                   const acquirePublicationLock: Effect.Effect<void, PlatformError.PlatformError> =
                     fs.makeDirectory(publicationLock).pipe(
                       Effect.retry({
-                        while: (error) => error.reason._tag === "AlreadyExists",
+                        while: (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
                         schedule: Schedule.recurs(1_200).pipe(
                           Schedule.addDelay(() => Effect.succeed(Duration.millis(25))),
                         ),

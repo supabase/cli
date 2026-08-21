@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
@@ -41,7 +41,7 @@ describe("managed stack projects journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const ownership = yield* acquireControl({ stackId });
-        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
         const initial = yield* manager.startStack({
           workspacePath: workspace,
           stackName: "default",
@@ -197,7 +197,7 @@ describe("managed stack projects journeys", () => {
               ready: true,
             },
           });
-          if (owner._tag !== "Owned") throw new Error("status probe took control ownership");
+          if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");
           yield* Deferred.succeed(continueRead, void 0);
           const summary = yield* Fiber.join(summaryFiber);
           expect(summary.running).toBe(true);

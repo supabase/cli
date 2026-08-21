@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { Cause, Effect, FileSystem, Option, PlatformError } from "effect";
+import { Cause, Data, Effect, Exit, FileSystem, Option, PlatformError, Predicate } from "effect";
 
 export type FileClaimOutcome = "claimed" | "already-exists";
+
+/** The hard-link publication protocol is unavailable on this filesystem. */
+export class AtomicClaimUnsupportedError extends Data.TaggedError("AtomicClaimUnsupportedError")<{
+  readonly targetPath: string;
+  readonly message: string;
+}> {}
 
 export interface FileClaimOptions {
   /** Mode for the published file; defaults to the process umask. */
@@ -9,7 +15,32 @@ export interface FileClaimOptions {
 }
 
 const isAlreadyExists = (error: PlatformError.PlatformError): boolean =>
-  error.reason._tag === "AlreadyExists";
+  Predicate.isTagged(error.reason, "AlreadyExists");
+
+const errorCode = (error: PlatformError.PlatformError): string | undefined => {
+  const cause = error.reason.cause;
+  if (cause !== null && typeof cause === "object" && "code" in cause) {
+    const code = cause.code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+};
+
+const isHardLinkUnsupported = (error: PlatformError.PlatformError): boolean => {
+  const code = errorCode(error);
+  return code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP";
+};
+
+const unsupportedHardLink = (
+  targetPath: string,
+  error: PlatformError.PlatformError,
+): Effect.Effect<never, AtomicClaimUnsupportedError> =>
+  Effect.fail(
+    new AtomicClaimUnsupportedError({
+      targetPath,
+      message: `Filesystem cannot atomically publish a managed claim (${error.message})`,
+    }),
+  );
 
 const removeOwnedFile = (fs: FileSystem.FileSystem, path: string): Effect.Effect<void, never> =>
   fs.remove(path, { force: true }).pipe(Effect.ignore);
@@ -40,7 +71,7 @@ const writeOwnedFile = (
           }),
         ),
       );
-      if (result._tag === "Success") return;
+      if (Exit.isSuccess(result)) return;
       const error = Cause.findErrorOption(result.cause);
       const interruptedBeforeOwnership =
         attempted &&
@@ -57,19 +88,22 @@ const publish = (
   fs: FileSystem.FileSystem,
   temporaryPath: string,
   targetPath: string,
-): Effect.Effect<FileClaimOutcome, PlatformError.PlatformError> =>
+): Effect.Effect<FileClaimOutcome, PlatformError.PlatformError | AtomicClaimUnsupportedError> =>
   Effect.gen(function* () {
     // A hard link publishes the complete, closed temp atomically and refuses an
     // existing target. Unsupported links fail as typed PlatformError rather than
     // falling back to a direct target write or an unprovable sidecar protocol.
     const linked = yield* Effect.exit(fs.link(temporaryPath, targetPath));
-    if (linked._tag === "Success") return "claimed" as const;
+    if (Exit.isSuccess(linked)) return "claimed" as const;
     const linkError = Cause.findErrorOption(linked.cause);
     if (Option.isNone(linkError)) return yield* Effect.failCause(linked.cause);
     if (isAlreadyExists(linkError.value)) {
       const readable = yield* Effect.exit(fs.readFile(targetPath));
-      if (readable._tag === "Success") return "already-exists" as const;
+      if (Exit.isSuccess(readable)) return "already-exists" as const;
       return yield* Effect.failCause(readable.cause);
+    }
+    if (isHardLinkUnsupported(linkError.value)) {
+      return yield* unsupportedHardLink(targetPath, linkError.value);
     }
     return yield* Effect.fail(linkError.value);
   });
@@ -86,7 +120,11 @@ export const claimFileAtomically = (
   targetPath: string,
   content: string,
   options: FileClaimOptions = {},
-): Effect.Effect<FileClaimOutcome, PlatformError.PlatformError, FileSystem.FileSystem> =>
+): Effect.Effect<
+  FileClaimOutcome,
+  PlatformError.PlatformError | AtomicClaimUnsupportedError,
+  FileSystem.FileSystem
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const temporaryPath = `${targetPath}.tmp.${randomUUID()}`;

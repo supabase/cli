@@ -64,10 +64,129 @@ Key references:
 Write new runtime code Effect-native from the start; do not build a sync or Promise-based core and wrap it in Effect afterwards. Retrofitting Effect onto a Promise core is expensive and error-prone: it resurfaces as blocking waits where a `Schedule` belongs, interruption gaps around resource acquisition, and untyped failures leaking through `Effect.tryPromise`.
 
 - Model failures as `Data.TaggedError` classes with typed error channels, dependencies as services provided through `Layer`, retries/polling as `Schedule`s, and resource lifecycles with scopes and interruption-safe masks — never `Atomics.wait`, ad-hoc `setTimeout` loops, or manual try/finally resource juggling in core code.
-- Expose Promise-based facades only at the outermost package edge for non-Effect consumers. Do not use `async` functions, `new Promise`, Promise chains, Promise-based recursion, or `Effect.runPromise` inside the runtime core.
-- A Promise in any other production location requires a documented, concrete reason why the operation cannot be expressed with Effect. Convenience, familiarity, or avoiding an Effect service is not a valid reason.
-- Use `Effect.tryPromise` only at an unavoidable foreign Promise API boundary. Use its Effect-provided `AbortSignal` when the API supports cancellation, map failures into typed errors, and keep the Promise contained to that leaf boundary.
-- Prefer Effect services for filesystem, process, network, timing, retry, concurrency, and resource-lifecycle work. A small synchronous leaf operation may remain a plain function when it has no Effect semantics; it must not become an asynchronous Promise core.
+- Expose Promise-based facades only at the outermost package edge (public entrypoints for non-Effect consumers), acquired asynchronously — never inside the core.
+- Internal helpers must not return Promises. Use the Effect platform services or
+  `Effect.callback` for filesystem, process, network, and other host APIs. A
+  foreign library operation that exposes only a Promise may be wrapped once
+  with `Effect.tryPromise` at the leaf boundary, with its cancellation signal
+  and failure mapped into Effect. Any other exception needs a concrete reason
+  why the operation is impossible to express with Effect.
+
+### Effect evaluation and state
+
+An `Effect` is a reusable description and may be evaluated more than once.
+
+- Create per-execution mutable state inside `Effect.suspend`, `Effect.gen`, or a
+  scoped acquisition.
+- Never allocate mutable ownership state while constructing an Effect and then
+  close over it. Re-evaluating that Effect would share state across executions.
+- Keep `Effect.sync` total. If its thunk can throw, use `Effect.try` and map the
+  failure into the typed error channel.
+
+### Foreign callback boundaries
+
+An `Effect.callback` adapter owns the complete lifecycle of the foreign
+operation.
+
+- Register success, error, abort, close, and cancellation listeners before
+  starting the operation.
+- Guarantee at-most-once resumption.
+- Return a cancellation effect that removes every owned listener and closes or
+  destroys the exact owned resource.
+- Pass the Effect cancellation signal to foreign Promise APIs whenever they
+  support `AbortSignal`.
+
+### Service requirements
+
+Let Effect service requirements remain visible until the composition boundary.
+
+- Propagate `FileSystem`, `Scope`, process, network, and other requirements
+  through the Effect type.
+- Provide services through layers or explicit `Effect.provide` at the owning
+  boundary.
+- Do not hide missing services with casts, nested `runSync`/`runPromise`,
+  globals, or ad-hoc synchronous adapters.
+
+### Structured concurrency and coordination
+
+Use Effect's concurrency primitives according to the ownership relationship they
+represent:
+
+- Prefer `Effect.forkChild`; use `forkScoped`/`forkIn` when a fiber belongs to a
+  longer-lived scope. `forkDetach` is exceptional and must document why the
+  work intentionally outlives its caller and how completion is observed.
+- Use `Deferred` for one-shot handoff, `Latch` for a reusable open/closed gate,
+  `Semaphore` for bounded access or lifecycle serialization, `Queue` for
+  producer/consumer work, and `PubSub` for broadcast. Do not replace these with
+  mutable waiter arrays, Promise gates, booleans plus polling, or propagation
+  sleeps.
+- Use the `concurrency` option on `Effect.all`/`Effect.forEach` for simple caps;
+  use a `Semaphore` when permits span a larger critical section.
+- Let `Effect.race`, `raceFirst`, and concurrent combinators interrupt their
+  losing or sibling fibers. Do not hand-roll cancellation through shared flags.
+- Own resources with `Scope`, `acquireRelease`, or scoped layers. Restrict
+  `uninterruptibleMask` to the acquisition-to-registration handoff and keep the
+  actual blocking acquisition interruptible with `restore`.
+- Use `Schedule` for retry and unavoidable polling policy. Prefer observable
+  signals (`Deferred`, streams, filesystem/process events) whenever the foreign
+  API exposes them.
+
+### Shared initialization and teardown
+
+Concurrent callers must join one owned operation rather than merely observe a
+boolean.
+
+- Represent single-flight initialization and teardown with a cached Effect, a
+  shared Fiber, or a `Deferred<Exit<...>>`.
+- The owning fiber performs the work; every caller awaits the same result.
+- Interrupting one waiter must not cancel shared teardown or leave later
+  callers believing cleanup has completed.
+
+### Typed failures and tagged values
+
+Expected failures in Effect code must be represented in the typed error channel.
+
+- Use `Data.TaggedError` for domain failures and return them with `Effect.fail`.
+- Do not `throw` expected validation, parsing, protocol, filesystem, or lifecycle errors inside Effect programs.
+- Use `Effect.try`, `Effect.tryPromise`, or callback adapters only at foreign boundaries, and map failures into a declared domain error.
+- Reserve defects (`Effect.die` or an uncaught throw) for genuinely impossible internal invariants and programmer bugs.
+- Standalone process entrypoints and public non-Effect adapters may throw or reject after translating the typed Effect failure at the outer boundary.
+
+### Causes and recovery
+
+Use the narrowest error operator that matches the intended recovery policy.
+
+- `Effect.catch`, `catchTag`, and `catchTags` handle expected typed failures.
+- Use `Effect.catchCause` only when recovery intentionally needs to observe
+  defects or interruption.
+- When inspecting a full `Cause`, recover only the explicitly recognized
+  condition and return every other cause unchanged with `Effect.failCause`.
+- Never squash an arbitrary cause and convert it into a domain error; that can
+  erase interruption and defects.
+- Avoid `Effect.orDie` and `Layer.orDie` for operational failures that callers
+  may need to classify, retry, or report.
+
+Do not inspect Effect runtime representations through fields such as `._tag`.
+
+- Use the library helper for Effect data types: `Exit.isSuccess`, `Exit.isFailure`, `Option.isSome`, `Option.isNone`, `Result.isSuccess`, `Result.isFailure`, `Cause.isTimeoutError`, and similar APIs.
+- Use `Effect.catchTag`, `Effect.catchTags`, `Effect.tapErrorTag`, and related operators for typed Effect errors.
+- Use `Predicate.isTagged` or a named domain predicate when narrowing one variant of a tagged domain union.
+- Use `Match.tag`, `Match.valueTags`, or another exhaustive `Match` helper when behavior depends on multiple variants of a domain union.
+- Direct `_tag` access is appropriate only when defining schemas/types, constructing or serializing tagged values, or implementing a genuinely dynamic boundary that cannot know the variants statically.
+- Tests follow the same rules; assertions should use public helpers rather than inspecting Effect internals.
+
+Prefer exhaustive matching for domain state machines and event handling. A new union member should produce a type error at every behaviorally relevant match rather than silently falling through a `default` branch.
+
+### Schema decoding and encoding
+
+Inside Effect code, compose schemas through their Effect APIs:
+
+- Prefer `Schema.decodeUnknownEffect`, `Schema.decodeEffect`, `Schema.encodeEffect`, and their typed error channels.
+- Map `SchemaError` into the domain error expected by the consuming operation.
+- Express additional validation with `Effect.filterOrFail`, `Effect.flatMap`, or `Effect.fail` instead of throwing inside a decoding callback.
+- Avoid `decodeUnknownSync` and `encodeUnknownSync` in Effect-native code. They execute through the synchronous runtime and report invalid input by throwing, which can turn a recoverable parse failure into a defect.
+- Sync schema operations are not asynchronous I/O and are not inherently “blocking” in that sense. The reason to prefer the Effect variants is typed failure handling, dependency propagation, interruption semantics, and support for effectful schema transformations—not to move ordinary CPU validation onto another thread.
+- Sync codecs are acceptable at an explicitly synchronous outer boundary when the schema is guaranteed to be service-free and the caller intentionally accepts a thrown exception. Otherwise, keep decoding and encoding in Effect.
 
 ## Code Quality
 
@@ -169,9 +288,9 @@ See `apps/cli/src/commands/login/` as the canonical example.
 
 ### Flake-resistant tests
 
-Tests must remain correct under file-level parallelism and slow or loaded CI. Synchronize on observable conditions—never use `Effect.sleep`, `setTimeout`, or polling delays for propagation, startup, cancellation, cleanup, or port release. Subscribe before triggering the transition, then await a `Deferred`, stream, fiber, readiness result, file, or state change. Timeouts are guards, not sub-second correctness assertions; bound waits by wall-clock deadline, never attempt counts; use TestClock or fake timers for timing semantics. Assume files run concurrently: use unique IDs, roots, process markers, and derived resources, while intentional collisions stay within one test. Never bind an ephemeral port, close it, and reuse it as a reservation; never use a released endpoint as a guaranteed dead backend—own a reset/refusal listener or inject the failure. Subprocesses need explicit readiness plus stderr/stdout diagnostics. Cleanup must target only exact owned PIDs, tokens, paths, names, and labels; never machine-wide prefix or command snapshots, and never globally disable parallelism. For flake fixes, reproduce/stress the red case and repeat the green case.
+Tests must remain correct under file-level parallelism and slow or loaded CI. Synchronize on observable conditions—never use `Effect.sleep`, `setTimeout`, or polling delays for propagation, startup, cancellation, cleanup, or port release. Subscribe before triggering the transition, then await a `Deferred`, stream, fiber, readiness result, file, or state change. Timeouts are guards, not sub-second correctness assertions; use TestClock or fake timers for timing semantics. Assume files run concurrently: use unique IDs, roots, process markers, and derived resources, while intentional collisions stay within one test. Never bind an ephemeral port, close it, and reuse it as a reservation; never use a released endpoint as a guaranteed dead backend—own a reset/refusal listener or inject the failure. Subprocesses need explicit readiness plus stderr/stdout diagnostics. Cleanup must target only exact owned PIDs, tokens, paths, names, and labels; never machine-wide prefix or command snapshots, and never globally disable parallelism. For flake fixes, reproduce/stress the red case and repeat the green case.
 
-During review, arbitrary sleeps, wall-clock completion assertions, attempt-count retry budgets, released-port reuse, static cross-file identities, and broad cleanup are blocking unless intrinsic to the behavior and documented.
+During review, arbitrary sleeps, wall-clock completion assertions, released-port reuse, static cross-file identities, and broad cleanup are blocking unless intrinsic to the behavior and documented.
 
 ### Integration test pattern
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { selectStackRuntime } from "./ContainerRuntime.ts";
 
@@ -11,7 +11,7 @@ const runtimeSpawner = (availability: Readonly<Record<string, boolean>>) => {
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const executable = command._tag === "StandardCommand" ? command.command : "";
+          const executable = Predicate.isTagged(command, "StandardCommand") ? command.command : "";
           commands.push(executable);
           const exitCode = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           yield* Deferred.succeed(

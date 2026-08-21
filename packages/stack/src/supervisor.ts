@@ -7,6 +7,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Predicate,
   Schedule,
   Scope,
   Schema,
@@ -31,7 +32,11 @@ import {
   type ControlOwnership,
   type ControlTransport,
 } from "./managed/control.ts";
-import { ManagedStackManager, type ManagedStackStartResult } from "./managed/manager.ts";
+import {
+  ManagedStackManager,
+  type ManagedStackManagerConstructionError,
+  type ManagedStackStartResult,
+} from "./managed/manager.ts";
 import {
   managedStackLaunchInputSchema,
   type ManagedStackLaunch,
@@ -40,7 +45,7 @@ import {
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
-import { managedStackPaths } from "./managed/paths.ts";
+import { managedStackPathsEffect } from "./managed/paths.ts";
 import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_NAMES } from "./ServiceCatalog.ts";
@@ -117,9 +122,18 @@ const isControlEndpoint = (value: unknown): value is ControlEndpoint =>
   typeof value.port === "number" &&
   typeof value.url === "string";
 
-const decodeSupervisorStartMessage = (value: unknown): SupervisorStartMessage => {
-  return Schema.decodeUnknownSync(supervisorStartMessageSchema)(value);
-};
+const isControlOwnership = (value: ControlAcquisition): value is ControlOwnership =>
+  Predicate.isTagged(value, "Owned");
+
+const isControlAttached = (value: ControlAcquisition): value is ControlAttached =>
+  Predicate.isTagged(value, "Attached");
+
+const decodeSupervisorStartMessage = (
+  value: unknown,
+): Effect.Effect<SupervisorStartMessage, SupervisorStartError> =>
+  Schema.decodeUnknownEffect(supervisorStartMessageSchema)(value).pipe(
+    Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+  );
 
 const causeMessage = (cause: unknown): string => {
   if (cause instanceof Error && cause.message.length > 0) return cause.message;
@@ -182,7 +196,7 @@ const awaitOwnerReady = (
       schedule: Schedule.spaced("25 millis").pipe(
         Schedule.tap(({ attempt }) => (attempt === 1 ? onWaiting : Effect.void)),
       ),
-      while: (error) => error._tag === "SupervisorOwnerUnavailableError" && error.retry,
+      while: (error) => Predicate.isTagged(error, "SupervisorOwnerUnavailableError") && error.retry,
     }),
     Effect.catchTag("SupervisorOwnerUnavailableError", (error) =>
       Effect.fail(new SupervisorStartError({ message: error.detail })),
@@ -203,7 +217,7 @@ export interface SupervisorPlatform {
     stateRoot: string,
   ) => Layer.Layer<
     ManagedStackManager,
-    never,
+    ManagedStackManagerConstructionError,
     ControlTransport | import("effect").FileSystem.FileSystem | import("effect").Path.Path
   >;
 }
@@ -212,11 +226,7 @@ const receiveStartMessage = (): Effect.Effect<SupervisorStartMessage, Supervisor
   Effect.callback((resume) => {
     const onMessage = (value: unknown) => {
       cleanup();
-      try {
-        resume(Effect.succeed(decodeSupervisorStartMessage(value)));
-      } catch (cause) {
-        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
-      }
+      resume(decodeSupervisorStartMessage(value));
     };
     const onDisconnect = () => {
       cleanup();
@@ -338,7 +348,7 @@ const runManaged = (
       );
     }
     const initialAcquisition = yield* acquireControl({ stackId: input.stackId });
-    if (initialAcquisition._tag === "Owned") owner = initialAcquisition;
+    if (isControlOwnership(initialAcquisition)) owner = initialAcquisition;
     const manager = yield* ManagedStackManager.pipe(
       Effect.provide(platform.managerLayer(input.stateRoot)),
     );
@@ -346,13 +356,13 @@ const runManaged = (
     const discovered = manager
       .ensureWorkspace(input.workspacePath)
       .pipe(Effect.map((discovery) => ({ _tag: "discovered" as const, discovery })));
-    const discoveryResult = yield* initialAcquisition._tag === "Owned"
+    const discoveryResult = yield* isControlOwnership(initialAcquisition)
       ? Effect.raceFirst(
           discovered,
           initialAcquisition.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
-    if (discoveryResult._tag === "stopped") {
+    if (Predicate.isTagged(discoveryResult, "stopped")) {
       yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
       return;
     }
@@ -376,7 +386,7 @@ const runManaged = (
           ? { mode: "docker", containerRuntime: existingLaunch.containerRuntime }
           : undefined;
     if (
-      initialAcquisition._tag === "Attached" &&
+      isControlAttached(initialAcquisition) &&
       persistedRuntime !== undefined &&
       requestedMode !== undefined &&
       persistedRuntime.mode !== requestedMode
@@ -391,7 +401,7 @@ const runManaged = (
     const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
       manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
-          if (candidate._tag === "Owned") return Effect.succeed(candidate);
+          if (isControlOwnership(candidate)) return Effect.succeed(candidate);
           return candidate.ownerStatus.pipe(
             Effect.flatMap((status): Effect.Effect<never, unknown> =>
               status.state === "starting"
@@ -414,37 +424,36 @@ const runManaged = (
           while: (error) => error instanceof SupervisorOwnerReacquirePending,
         }),
       );
-    const attachedResolution =
-      initialAcquisition._tag === "Attached"
-        ? initialAcquisition.ownerStatus.pipe(
-            Effect.tap((status) =>
-              Effect.sync(() => {
-                attachedOwnerWasStopping = status.state === "stopping";
-              }),
-            ),
-            Effect.flatMap((status) =>
-              status.state === "running" && status.ready
-                ? Effect.succeed(status)
-                : awaitOwnerReady(
-                    initialAcquisition,
-                    platform.onAttachedBeforeReady?.() ?? Effect.void,
-                  ),
-            ),
-            Effect.as(initialAcquisition),
-            Effect.catch((error) =>
-              error instanceof ControlTransportError && error.reason === "unreachable"
-                ? reacquireAfterDeath()
-                : Effect.fail(error),
-            ),
-          )
-        : Effect.succeed(initialAcquisition);
+    const attachedResolution = isControlAttached(initialAcquisition)
+      ? initialAcquisition.ownerStatus.pipe(
+          Effect.tap((status) =>
+            Effect.sync(() => {
+              attachedOwnerWasStopping = status.state === "stopping";
+            }),
+          ),
+          Effect.flatMap((status) =>
+            status.state === "running" && status.ready
+              ? Effect.succeed(status)
+              : awaitOwnerReady(
+                  initialAcquisition,
+                  platform.onAttachedBeforeReady?.() ?? Effect.void,
+                ),
+          ),
+          Effect.as(initialAcquisition),
+          Effect.catch((error) =>
+            error instanceof ControlTransportError && error.reason === "unreachable"
+              ? reacquireAfterDeath()
+              : Effect.fail(error),
+          ),
+        )
+      : Effect.succeed(initialAcquisition);
     const acquisition = yield* attachedResolution.pipe(
       Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
       Effect.catch((error) =>
         typeof error === "object" &&
         error !== null &&
         "_tag" in error &&
-        error._tag === "TimeoutError"
+        Predicate.isTagged(error, "TimeoutError")
           ? Effect.fail(
               new SupervisorStartError({
                 message: "Timed out resolving attached supervisor owner",
@@ -453,7 +462,7 @@ const runManaged = (
           : Effect.fail(error),
       ),
     );
-    if (initialAcquisition._tag === "Attached") {
+    if (isControlAttached(initialAcquisition)) {
       const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
       const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
       if (revalidatedStackId !== stackId) {
@@ -464,14 +473,14 @@ const runManaged = (
         );
       }
     }
-    if (acquisition._tag === "Attached") {
+    if (isControlAttached(acquisition)) {
       yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
       process.disconnect?.();
       return;
     }
     const ownership = acquisition;
     owner = ownership;
-    if (initialAcquisition._tag === "Attached" && !attachedOwnerWasStopping) {
+    if (isControlAttached(initialAcquisition) && !attachedOwnerWasStopping) {
       const existing = yield* manager.inspectStack(stackId);
       if (existing?.lifecycle === "stopped") {
         yield* ownership.close;
@@ -539,12 +548,13 @@ const runManaged = (
         launch,
       });
       claimedStack = true;
+      const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);
       const resolved = yield* resolveConfig(
         {
           ...configInput,
           projectDir: configInput.projectDir ?? input.workspacePath,
-          stackRoot: managedStackPaths(input.stateRoot, started.stack.id).root,
-          runtimeRoot: managedStackPaths(input.stateRoot, started.stack.id).runtime,
+          stackRoot: managedPaths.root,
+          runtimeRoot: managedPaths.runtime,
           instanceId: started.stack.id,
         },
         { runtime, ports: started.lease.ports },
@@ -590,7 +600,7 @@ const runManaged = (
       startup.pipe(Effect.map((result) => ({ _tag: "started" as const, ...result }))),
       ownership.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
     );
-    if (startupResult._tag === "stopped") {
+    if (Predicate.isTagged(startupResult, "stopped")) {
       const current = yield* manager.inspectStack(stackId);
       if (current !== undefined) {
         yield* manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" });

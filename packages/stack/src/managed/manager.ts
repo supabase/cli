@@ -8,6 +8,7 @@ import {
   Layer,
   Path,
   PlatformError,
+  Predicate,
   Schedule,
   Semaphore,
   Scope,
@@ -20,6 +21,7 @@ import {
   CONTROL_PORT_RANGE,
   controlEndpointCandidates,
   ControlTransport,
+  isControlOwnership,
   probeControl,
   type ControlAcquisition,
   type ControlOwnership,
@@ -48,6 +50,7 @@ import {
   ManagedPortAllocationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
+  UnsafeManagedStackPathError,
   type ManagedPortAssignment,
   type ManagedPortDrift,
   type ManagedPortIntentDocument,
@@ -177,6 +180,7 @@ export type ManagedStackManagerError =
   | PlatformError.PlatformError
   | import("./document.ts").InvalidManagedStackDocumentError
   | import("./model.ts").InvalidManagedIdentityError
+  | UnsafeManagedStackPathError
   | InvalidManagedStackNameError
   | import("./model.ts").UnsupportedGitWorkspaceError
   | import("./control.ts").InvalidControlOwnershipIdError
@@ -242,6 +246,9 @@ export interface ManagedStackManagerShape {
 }
 
 type ManagerRequirements = FileSystem.FileSystem | Path.Path | GitConfigStore | ControlTransport;
+export type ManagedStackManagerConstructionError =
+  | InvalidManagedIdentityError
+  | UnsafeManagedStackPathError;
 
 export class ManagedStackManager extends Context.Service<
   ManagedStackManager,
@@ -269,7 +276,7 @@ export const deriveRepairOwnershipId = (identity: EnvironmentIdentity): string =
 };
 
 const isOwned = (acquisition: ControlAcquisition): acquisition is ControlOwnership =>
-  acquisition._tag === "Owned";
+  isControlOwnership(acquisition);
 
 const isHealthyDocument = (
   listing: ManagedStackListing,
@@ -384,7 +391,11 @@ interface ManagedStackManagerOptions {
 
 const makeManager = (
   options: ManagedStackManagerOptions,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
+): Effect.Effect<
+  ManagedStackManagerShape,
+  ManagedStackManagerConstructionError,
+  ManagerRequirements
+> =>
   Effect.gen(function* () {
     const { stateRoot, preferCatalogDefaults = true } = options;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -423,7 +434,9 @@ const makeManager = (
             .stat(persistedPath)
             .pipe(
               Effect.catchTag("PlatformError", (error) =>
-                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+                Predicate.isTagged(error.reason, "NotFound")
+                  ? Effect.succeed(undefined)
+                  : Effect.fail(error),
               ),
             );
           if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
@@ -641,7 +654,7 @@ const makeManager = (
         const allocation = yield* guardedAttempt.pipe(
           Effect.retry({
             schedule: Schedule.spaced("5 millis").pipe(Schedule.upTo({ times: 2 })),
-            while: (error) => error._tag === "ManagedPortAllocationError",
+            while: (error) => Predicate.isTagged(error, "ManagedPortAllocationError"),
           }),
         );
         yield* Effect.addFinalizer(() => allocation.lease.releaseAll);
@@ -960,7 +973,7 @@ const makeManager = (
               store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
             Effect.catchTag("PlatformError", (error) =>
-              error.reason._tag === "NotFound"
+              Predicate.isTagged(error.reason, "NotFound")
                 ? Effect.succeed(undefined)
                 : store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
@@ -1017,10 +1030,13 @@ const makeManager = (
 /** Internal manager layer. Platform layers provide filesystem, Git, and control transport. */
 export const managedStackManagerLayer = (
   options: ManagedStackManagerOptions,
-): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
+): Layer.Layer<ManagedStackManager, ManagedStackManagerConstructionError, ManagerRequirements> =>
   Layer.effect(ManagedStackManager, makeManager(options));
 
 export const makeManagedStackManager = (
   stateRoot: string,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
-  makeManager({ stateRoot });
+): Effect.Effect<
+  ManagedStackManagerShape,
+  ManagedStackManagerConstructionError,
+  ManagerRequirements
+> => makeManager({ stateRoot });

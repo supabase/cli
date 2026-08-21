@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { Predicate } from "effect";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker } from "./edge-runtime.ts";
@@ -144,7 +145,7 @@ describe("makePostgresServiceDocker", () => {
       expect.objectContaining({ _tag: "Exec", command: "docker" }),
     );
     expect(
-      def.healthCheck?.probe._tag === "Exec" && def.healthCheck.probe.args.join(" "),
+      Predicate.isTagged(def.healthCheck?.probe, "Exec") && def.healthCheck.probe.args.join(" "),
     ).toContain("/proc/1/comm");
     expect(def.dependencies).toEqual([]);
     expect(def.restart).toBe("unless-stopped");

@@ -141,32 +141,39 @@ const resolveDataDir = (
   suffix: string,
 ): string => explicitDir ?? join(stackRoot, "data", suffix);
 
-const requiredPort = (ports: PortSet, field: PortField): number => {
+const requiredPort = (ports: PortSet, field: PortField): Effect.Effect<number, StackBuildError> => {
   const port = ports[field];
   if (port === undefined) {
-    throw new StackBuildError({
-      detail: `Missing resolved port for active field ${field}`,
-      reason: "invalid_config",
-    });
+    return Effect.fail(
+      new StackBuildError({
+        detail: `Missing resolved port for active field ${field}`,
+        reason: "invalid_config",
+      }),
+    );
   }
-  return port;
+  return Effect.succeed(port);
 };
 
 function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
   raw: PostgrestConfig | false | undefined,
   ports: PortSet,
-): ResolvedPostgrestConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPostgrestConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "postgrestPort"),
     adminPort: requiredPort(ports, "postgrestAdminPort"),
-    schemas: cfg.schemas ?? ["public", "graphql_public"],
-    extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
-    maxRows: cfg.maxRows ?? 1000,
-    version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
-  };
+  }).pipe(
+    Effect.map(({ port, adminPort }) => ({
+      port,
+      adminPort,
+      schemas: cfg.schemas ?? ["public", "graphql_public"],
+      extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
+      maxRows: cfg.maxRows ?? 1000,
+      version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
+    })),
+  );
 }
 
 function resolveAuthConfig(
@@ -174,51 +181,60 @@ function resolveAuthConfig(
   raw: AuthConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
-): ResolvedAuthConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedAuthConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "authPort"),
-    siteUrl: cfg.siteUrl ?? "http://localhost:3000",
-    jwtExpiry: cfg.jwtExpiry ?? 3600,
-    externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
-    version: cfg.version ?? DEFAULT_VERSIONS.auth,
-  };
+  return requiredPort(ports, "authPort").pipe(
+    Effect.map((port) => ({
+      port,
+      siteUrl: cfg.siteUrl ?? "http://localhost:3000",
+      jwtExpiry: cfg.jwtExpiry ?? 3600,
+      externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
+      version: cfg.version ?? DEFAULT_VERSIONS.auth,
+    })),
+  );
 }
 
 function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
   raw: RealtimeConfig | false | undefined,
   ports: PortSet,
-): ResolvedRealtimeConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedRealtimeConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "realtimePort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.realtime,
-    tenantId: cfg.tenantId ?? "realtime-dev",
-    encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
-    secretKeyBase:
-      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-    maxHeaderLength: cfg.maxHeaderLength ?? 4096,
-  };
+  return requiredPort(ports, "realtimePort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.realtime,
+      tenantId: cfg.tenantId ?? "realtime-dev",
+      encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
+      secretKeyBase:
+        cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+      maxHeaderLength: cfg.maxHeaderLength ?? 4096,
+    })),
+  );
 }
 
 function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
   raw: EdgeRuntimeConfig | false | undefined,
   ports: PortSet,
-): ResolvedEdgeRuntimeConfig | false {
-  if (raw === false || raw?.enabled === false) return false;
+): Effect.Effect<ResolvedEdgeRuntimeConfig | false, StackBuildError> {
+  if (raw === false || raw?.enabled === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    enabled: cfg.enabled ?? true,
+  return Effect.all({
     port: requiredPort(ports, "edgeRuntimePort"),
     inspectorPort: requiredPort(ports, "edgeRuntimeInspectorPort"),
-    policy: cfg.policy ?? "per_worker",
-    version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
-    env: cfg.env ?? {},
-  };
+  }).pipe(
+    Effect.map(({ port, inspectorPort }) => ({
+      enabled: cfg.enabled ?? true,
+      port,
+      inspectorPort,
+      policy: cfg.policy ?? "per_worker",
+      version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
+      env: cfg.env ?? {},
+    })),
+  );
 }
 
 function resolveFunctionsConfig(
@@ -247,74 +263,87 @@ const resolveInstanceId = (
 ): Effect.Effect<string | undefined, StackBuildError> =>
   instanceId === undefined
     ? Effect.succeed(undefined)
-    : Effect.try({
-        try: () => Schema.decodeUnknownSync(InstanceIdSchema)(instanceId),
-        catch: (cause) =>
-          new StackBuildError({
-            detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
-            cause,
-            reason: "invalid_config",
-          }),
-      });
+    : Schema.decodeUnknownEffect(InstanceIdSchema)(instanceId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackBuildError({
+              detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+              cause,
+              reason: "invalid_config",
+            }),
+        ),
+      );
 
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
   ports: PortSet,
   opts: ResolveConfigOptions,
-): ResolvedStorageConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedStorageConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "storagePort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.storage,
-    dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
-    fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
-    s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
-  };
+  return requiredPort(ports, "storagePort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.storage,
+      dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
+      fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
+      s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
+    })),
+  );
 }
 
 function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
   raw: ImgproxyConfig | false | undefined,
   ports: PortSet,
-): ResolvedImgproxyConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedImgproxyConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "imgproxyPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
-  };
+  return requiredPort(ports, "imgproxyPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
+    })),
+  );
 }
 
 function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
   ports: PortSet,
-): ResolvedMailpitConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedMailpitConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "mailpitPort"),
     smtpPort: requiredPort(ports, "mailpitSmtpPort"),
     pop3Port: requiredPort(ports, "mailpitPop3Port"),
-    version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
-    adminEmail: cfg.adminEmail ?? "admin@email.com",
-    senderName: cfg.senderName ?? "Admin",
-  };
+  }).pipe(
+    Effect.map(({ port, smtpPort, pop3Port }) => ({
+      port,
+      smtpPort,
+      pop3Port,
+      version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
+      adminEmail: cfg.adminEmail ?? "admin@email.com",
+      senderName: cfg.senderName ?? "Admin",
+    })),
+  );
 }
 
 function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
   raw: PgmetaConfig | false | undefined,
   ports: PortSet,
-): ResolvedPgmetaConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPgmetaConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "pgmetaPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
-  };
+  return requiredPort(ports, "pgmetaPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
+    })),
+  );
 }
 
 function resolveStudioConfig(
@@ -322,61 +351,70 @@ function resolveStudioConfig(
   raw: StudioConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
-): ResolvedStudioConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedStudioConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "studioPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.studio,
-    apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
-  };
+  return requiredPort(ports, "studioPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.studio,
+      apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
+    })),
+  );
 }
 
 function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
   raw: AnalyticsConfig | false | undefined,
   ports: PortSet,
-): ResolvedAnalyticsConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedAnalyticsConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
-    port: requiredPort(ports, "analyticsPort"),
-    version: cfg.version ?? DEFAULT_VERSIONS.analytics,
-    backend: cfg.backend ?? "postgres",
-    apiKey: cfg.apiKey ?? "api-key",
-  };
+  return requiredPort(ports, "analyticsPort").pipe(
+    Effect.map((port) => ({
+      port,
+      version: cfg.version ?? DEFAULT_VERSIONS.analytics,
+      backend: cfg.backend ?? "postgres",
+      apiKey: cfg.apiKey ?? "api-key",
+    })),
+  );
 }
 
 function resolveVectorConfig(
   input: VectorConfig | undefined,
   raw: VectorConfig | false | undefined,
-): ResolvedVectorConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedVectorConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.succeed({
     version: cfg.version ?? DEFAULT_VERSIONS.vector,
-  };
+  });
 }
 
 function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
   ports: PortSet,
-): ResolvedPoolerConfig | false {
-  if (raw === false) return false;
+): Effect.Effect<ResolvedPoolerConfig | false, StackBuildError> {
+  if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return {
+  return Effect.all({
     port: requiredPort(ports, "poolerPort"),
     apiPort: requiredPort(ports, "poolerApiPort"),
-    mode: cfg.mode ?? "transaction",
-    version: cfg.version ?? DEFAULT_VERSIONS.pooler,
-    tenantId: cfg.tenantId ?? "pooler-dev",
-    encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
-    secretKeyBase:
-      cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-    defaultPoolSize: cfg.defaultPoolSize ?? 20,
-    maxClientConn: cfg.maxClientConn ?? 100,
-  };
+  }).pipe(
+    Effect.map(({ port, apiPort }) => ({
+      port,
+      apiPort,
+      mode: cfg.mode ?? "transaction",
+      version: cfg.version ?? DEFAULT_VERSIONS.pooler,
+      tenantId: cfg.tenantId ?? "pooler-dev",
+      encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
+      secretKeyBase:
+        cfg.secretKeyBase ?? "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+      defaultPoolSize: cfg.defaultPoolSize ?? 20,
+      maxClientConn: cfg.maxClientConn ?? 100,
+    })),
+  );
 }
 
 const enabledServiceConfig = <Config extends object>(
@@ -706,8 +744,8 @@ export function resolveConfig(
       const jwtSecret = config.jwtSecret ?? defaultJwtSecret;
       const anonJwt = generateJwt(jwtSecret, "anon");
       const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
-      const apiPort = requiredPort(ports, "apiPort");
-      const dbPort = requiredPort(ports, "dbPort");
+      const apiPort = yield* requiredPort(ports, "apiPort");
+      const dbPort = yield* requiredPort(ports, "dbPort");
       const resolvedPorts: ResolvedPorts = { ...ports, apiPort, dbPort };
 
       return {
@@ -738,42 +776,48 @@ export function resolveConfig(
           version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
           autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
         },
-        postgrest: resolvePostgrestConfig(
+        postgrest: yield* resolvePostgrestConfig(
           postgrestInput,
           servicePolicies.postgrest === "off" ? false : config.postgrest,
           ports,
         ),
-        auth: resolveAuthConfig(
+        auth: yield* resolveAuthConfig(
           authInput,
           servicePolicies.auth === "off" ? false : config.auth,
           ports,
           apiPort,
         ),
         edgeRuntime: edgeRuntimeEnabled
-          ? resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
+          ? yield* resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
           : false,
         realtime: realtimeEnabled
-          ? resolveRealtimeConfig(realtimeInput, config.realtime, ports)
+          ? yield* resolveRealtimeConfig(realtimeInput, config.realtime, ports)
           : false,
         storage: storageEnabled
-          ? resolveStorageConfig(storageInput, config.storage, ports, {
+          ? yield* resolveStorageConfig(storageInput, config.storage, ports, {
               ...opts,
               stackRoot: roots.stackRoot,
             })
           : false,
         imgproxy: imgproxyEnabled
-          ? resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
+          ? yield* resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
           : false,
-        mailpit: mailpitEnabled ? resolveMailpitConfig(mailpitInput, config.mailpit, ports) : false,
-        pgmeta: pgmetaEnabled ? resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports) : false,
+        mailpit: mailpitEnabled
+          ? yield* resolveMailpitConfig(mailpitInput, config.mailpit, ports)
+          : false,
+        pgmeta: pgmetaEnabled
+          ? yield* resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports)
+          : false,
         studio: studioEnabled
-          ? resolveStudioConfig(studioInput, config.studio, ports, apiPort)
+          ? yield* resolveStudioConfig(studioInput, config.studio, ports, apiPort)
           : false,
         analytics: analyticsEnabled
-          ? resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
+          ? yield* resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
           : false,
-        vector: vectorEnabled ? resolveVectorConfig(vectorInput, config.vector) : false,
-        pooler: poolerEnabled ? resolvePoolerConfig(poolerInput, config.pooler, ports) : false,
+        vector: vectorEnabled ? yield* resolveVectorConfig(vectorInput, config.vector) : false,
+        pooler: poolerEnabled
+          ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports)
+          : false,
       };
     }).pipe(
       Effect.catchDefect((cause) =>

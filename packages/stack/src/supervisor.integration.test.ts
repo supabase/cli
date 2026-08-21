@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer } from "effect";
 import { NodeFileSystem } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
@@ -25,7 +25,7 @@ import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedDaemonLayer } from "./supervisor.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
@@ -512,7 +512,7 @@ const readStackDocument = (roots: {
   const stacksRoot = join(roots.stateRoot, "stacks");
   if (!existsSync(stacksRoot)) return undefined;
   for (const id of readdirSync(stacksRoot)) {
-    const path = managedStackDocumentPath(roots.stateRoot, id);
+    const path = Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, id));
     if (!existsSync(path)) continue;
     return JSON.parse(readFileSync(path, "utf8")) as {
       readonly id: string;
@@ -534,7 +534,9 @@ const waitForStackDocument = async (
   roots: { readonly stateRoot: string; readonly stackId: string },
   lifecycle: string,
 ): Promise<StackDocument> => {
-  const documentPath = managedStackDocumentPath(roots.stateRoot, roots.stackId);
+  const documentPath = Effect.runSync(
+    managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+  );
   const stackDirectory = dirname(documentPath);
   await waitForFile(dirname(stackDirectory));
   await waitForFile(stackDirectory);
@@ -587,8 +589,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "InvalidManagedStackNameError",
         });
@@ -607,8 +609,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "SupervisorStartError",
           message: "Supervisor test runtime failed after binding",
@@ -622,7 +624,7 @@ describe("detached supervisor child journeys", () => {
   test("keeps managed documents, runtime metadata, and persistent data roots separate", async () => {
     const roots = await workspace();
     const stackId = "e".repeat(64);
-    const paths = managedStackPaths(roots.stateRoot, stackId);
+    const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, stackId));
     try {
       const resolved = await resolveConfig(
         {
@@ -645,7 +647,7 @@ describe("detached supervisor child journeys", () => {
           ports: { apiPort: 55001, dbPort: 55002 },
         },
       );
-      expect(managedStackDocumentPath(roots.stateRoot, stackId)).toBe(
+      expect(Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, stackId))).toBe(
         join(paths.root, "stack.json"),
       );
       expect(resolved.postgres.dataDir.startsWith(join(paths.root, "data"))).toBe(true);
@@ -970,7 +972,9 @@ describe("detached supervisor child journeys", () => {
       await contender.attachedBeforeReady;
 
       rmSync(originalGit, { recursive: true, force: true });
-      const documentPath = managedStackDocumentPath(roots.stateRoot, starting.id);
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, starting.id),
+      );
       const document = JSON.parse(readFileSync(documentPath, "utf8")) as Record<string, unknown>;
       writeFileSync(documentPath, JSON.stringify({ ...document, lifecycle: "running" }));
       releaseFakeOwner?.();

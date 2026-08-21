@@ -135,51 +135,50 @@ export class InvalidManagedStackDocumentError extends Data.TaggedError(
   }
 }
 
-const decodeDocument = Schema.decodeUnknownSync(ManagedStackDocumentSchema);
-const encodeDocument = Schema.encodeUnknownSync(managedStackDocumentSchema);
-
-const hasUnknownLaunchMode = (content: string): boolean => {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch {
-    return false;
-  }
-  if (typeof value !== "object" || value === null) return false;
-  const launch = Reflect.get(value, "launch");
-  if (typeof launch !== "object" || launch === null) return false;
-  const mode = Reflect.get(launch, "mode");
-  return mode !== undefined && mode !== "native" && mode !== "docker";
-};
+const rejectUnknownLaunchMode = (
+  path: string,
+  content: string,
+): Effect.Effect<void, InvalidManagedStackDocumentError> =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(content).pipe(
+    Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    Effect.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return Effect.void;
+      const launch = Reflect.get(value, "launch");
+      if (typeof launch !== "object" || launch === null) return Effect.void;
+      const mode = Reflect.get(launch, "mode");
+      return mode !== undefined && mode !== "native" && mode !== "docker"
+        ? Effect.fail(new InvalidManagedStackDocumentError({ path }))
+        : Effect.void;
+    }),
+  );
 
 export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      if (hasUnknownLaunchMode(content)) {
-        throw new Error("Managed document has an unknown launch mode");
-      }
-      const document = decodeDocument(content);
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return document;
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
-  });
+  rejectUnknownLaunchMode(path, content).pipe(
+    Effect.andThen(
+      Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+        Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+        Effect.flatMap((document) =>
+          hasCorePortAssignments(document)
+            ? Effect.succeed(document)
+            : Effect.fail(new InvalidManagedStackDocumentError({ path })),
+        ),
+      ),
+    ),
+  );
 
 export const encodeManagedStackDocument = (
   path: string,
   document: ManagedStackDocument,
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return JSON.stringify(encodeDocument(document), null, 2) + "\n";
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
+  Effect.gen(function* () {
+    if (!hasCorePortAssignments(document)) {
+      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path }));
+    }
+    const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
+      Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    );
+    return JSON.stringify(encoded, null, 2) + "\n";
   });
