@@ -53,22 +53,27 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
 
       // Minimal, deterministic repro: execute a fresh function's implicit PUBLIC
       // EXECUTE grant, explicitly revoked, directly against the local database.
-      // `db query` is setup only; the command under test remains `db diff`.
-      const query = await runSupabase(
+      // `db query` is setup only; keep each statement in its own invocation
+      // because the legacy query command sends one prepared statement at a time.
+      const createFunction = await runSupabase(
         [
           "db",
           "query",
           `create function public.probe_fn()
 returns void
 language sql
-as $$ select 1; $$;
-
-revoke execute on function public.probe_fn() from public;`,
+as $$ select 1; $$;`,
           "--local",
         ],
         { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      requireCliSuccess(query, "db query setup");
+      requireCliSuccess(createFunction, "db query create-function setup");
+
+      const revoke = await runSupabase(
+        ["db", "query", "revoke execute on function public.probe_fn() from public;", "--local"],
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+      );
+      requireCliSuccess(revoke, "db query revoke setup");
 
       const diff = await runSupabase(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
@@ -88,9 +93,11 @@ revoke execute on function public.probe_fn() from public;`,
       // survives). Anchor the match to the function's own REVOKE statement — up to
       // its terminating `;` — so this cannot pass on an unrelated PUBLIC mention
       // elsewhere in the file.
-      expect(sql).toContain("CREATE FUNCTION public.probe_fn()");
       expect(sql).toMatch(
-        /REVOKE\s+(?:ALL|EXECUTE)\s+ON\s+FUNCTION\s+public\.probe_fn\(\)\s+FROM\s+[^;]*PUBLIC[^;]*;/i,
+        /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
+      );
+      expect(sql).toMatch(
+        /REVOKE\s+(?:ALL|EXECUTE)\s+ON\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)\s+FROM\s+[^;]*PUBLIC[^;]*;/i,
       );
     },
   );

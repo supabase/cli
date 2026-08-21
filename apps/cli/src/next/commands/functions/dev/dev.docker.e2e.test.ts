@@ -120,7 +120,7 @@ describe("supabase functions dev (e2e)", () => {
 
         const configOffset = devProc.stdout().length;
         const configRestart = devProc.waitForOutput(
-          /Edge runtime config changed\. Restarting edge-runtime\./,
+          FUNCTION_FILES_RESTART_PATTERN,
           FUNCTIONS_DEV_STEP_TIMEOUT_MS,
           configOffset,
         );

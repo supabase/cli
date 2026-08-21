@@ -65,6 +65,14 @@ describe("db schema declarative sync (e2e)", () => {
     const schemasDir = path.join(projectDir, "supabase", "schemas");
     mkdirSync(schemasDir, { recursive: true });
     writeFileSync(path.join(schemasDir, "public.sql"), initialDesiredSchema);
+    const extensionsDir = path.join(schemasDir, "cluster", "extensions");
+    mkdirSync(extensionsDir, { recursive: true });
+    for (const extension of ["pg_net", "pgcrypto", "uuid-ossp"]) {
+      writeFileSync(
+        path.join(extensionsDir, `${extension}.sql`),
+        `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";\n`,
+      );
+    }
 
     const start = await runSupabase(
       [
