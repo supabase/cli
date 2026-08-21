@@ -22,7 +22,11 @@ export interface LegacySsoProviderView {
     readonly name_id_format?: string;
     readonly attribute_mapping?: unknown;
   };
-  readonly domains?: ReadonlyArray<{ readonly domain?: string }>;
+  readonly domains?: ReadonlyArray<{
+    readonly domain?: string;
+    readonly created_at?: string;
+    readonly updated_at?: string;
+  }>;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -48,7 +52,11 @@ export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
   const domains = Array.isArray(domainsRaw)
     ? domainsRaw
         .filter((d): d is Record<string, unknown> => typeof d === "object" && d !== null)
-        .map((d) => ({ domain: typeof d["domain"] === "string" ? d["domain"] : undefined }))
+        .map((d) => ({
+          domain: typeof d["domain"] === "string" ? d["domain"] : undefined,
+          created_at: typeof d["created_at"] === "string" ? d["created_at"] : undefined,
+          updated_at: typeof d["updated_at"] === "string" ? d["updated_at"] : undefined,
+        }))
     : undefined;
 
   return {
@@ -99,9 +107,11 @@ export function normalizeLegacySsoProviderPayload(value: unknown): Record<string
   }
 
   if (view.domains !== undefined) {
-    result["domains"] = view.domains.map((domain) =>
-      domain.domain === undefined ? {} : { domain: domain.domain },
-    );
+    result["domains"] = view.domains.map((domain) => ({
+      ...(domain.domain === undefined ? {} : { domain: domain.domain }),
+      ...(domain.created_at === undefined ? {} : { created_at: domain.created_at }),
+      ...(domain.updated_at === undefined ? {} : { updated_at: domain.updated_at }),
+    }));
   }
   if (view.created_at !== undefined) result["created_at"] = view.created_at;
   if (view.updated_at !== undefined) result["updated_at"] = view.updated_at;

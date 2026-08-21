@@ -235,12 +235,14 @@ const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
 // a TypeScript schema that omits the property. This bit the SAML SSO
 // attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
 // `default?: any` per OpenAPI spec; the `default?: any` field was silently
-// stripped because of this).
+// stripped because of this). The union may be encoded as either `oneOf` or
+// `anyOf` by different OpenAPI producers.
 function isArbitraryJsonDefault(schema: OpenApiSchema): boolean {
-  if (schema.oneOf?.length !== 4) {
+  const members = schema.oneOf ?? schema.anyOf;
+  if (members?.length !== 4) {
     return false;
   }
-  const types = new Set(schema.oneOf.map((member) => member.type));
+  const types = new Set(members.map((member) => member.type));
   return (
     types.size === 4 &&
     types.has("object") &&
@@ -787,7 +789,12 @@ function renderSchemaSource(
       patterns: "apply",
       onEnter(schema) {
         const next = { ...schema };
-        if (next.type === "object" && next.additionalProperties === undefined) {
+        // Bare object schemas stay open; declared-property shapes are closed.
+        if (
+          next.type === "object" &&
+          next.properties !== undefined &&
+          next.additionalProperties === undefined
+        ) {
           next.additionalProperties = false;
         }
         return next;

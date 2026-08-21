@@ -1340,14 +1340,7 @@ export const V1CreateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union([
-              Schema.Record(Schema.String, Schema.Never),
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.String,
-              Schema.Boolean,
-            ]),
-          ),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -1377,16 +1370,7 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Record(Schema.String, Schema.Never),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -1924,16 +1908,7 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Record(Schema.String, Schema.Never),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -2684,16 +2659,7 @@ export const V1GetASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Record(Schema.String, Schema.Never),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),
@@ -3736,7 +3702,10 @@ export const V1GetDatabaseOpenapiInput = Schema.Struct({
     ),
   schema: Schema.optionalKey(Schema.String),
 });
-export const V1GetDatabaseOpenapiOutput = Schema.Record(Schema.String, Schema.Never);
+export const V1GetDatabaseOpenapiOutput = Schema.Record(
+  Schema.String,
+  Schema.Json.annotate({ expected: "JSON value" }),
+);
 export const V1GetDiskUtilizationInput = Schema.Struct({
   ref: Schema.String.check(
     Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -6114,16 +6083,7 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
                   Schema.Struct({
                     name: Schema.optionalKey(Schema.String),
                     names: Schema.optionalKey(Schema.Array(Schema.String)),
-                    default: Schema.optionalKey(
-                      Schema.Union([
-                        Schema.Record(Schema.String, Schema.Never),
-                        Schema.Number.check(
-                          Schema.isFinite().annotate({ expected: "a finite number" }),
-                        ),
-                        Schema.String,
-                        Schema.Boolean,
-                      ]),
-                    ),
+                    default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                     array: Schema.optionalKey(Schema.Boolean),
                   }),
                 ),
@@ -7283,14 +7243,7 @@ export const V1UpdateASsoProviderInput = Schema.Struct({
         Schema.Struct({
           name: Schema.optionalKey(Schema.String),
           names: Schema.optionalKey(Schema.Array(Schema.String)),
-          default: Schema.optionalKey(
-            Schema.Union([
-              Schema.Record(Schema.String, Schema.Never),
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-              Schema.String,
-              Schema.Boolean,
-            ]),
-          ),
+          default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
           array: Schema.optionalKey(Schema.Boolean),
         }),
       ),
@@ -7320,16 +7273,7 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
               Schema.Struct({
                 name: Schema.optionalKey(Schema.String),
                 names: Schema.optionalKey(Schema.Array(Schema.String)),
-                default: Schema.optionalKey(
-                  Schema.Union([
-                    Schema.Record(Schema.String, Schema.Never),
-                    Schema.Number.check(
-                      Schema.isFinite().annotate({ expected: "a finite number" }),
-                    ),
-                    Schema.String,
-                    Schema.Boolean,
-                  ]),
-                ),
+                default: Schema.optionalKey(Schema.Json.annotate({ expected: "JSON value" })),
                 array: Schema.optionalKey(Schema.Boolean),
               }),
             ),

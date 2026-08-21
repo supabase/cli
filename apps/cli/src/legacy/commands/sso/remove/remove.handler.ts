@@ -96,6 +96,7 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
           (cause) =>
             new LegacySsoRemoveNetworkError({
               message: `failed to remove sso provider: ${String(cause)}`,
+              decode: true,
             }),
         ),
       );

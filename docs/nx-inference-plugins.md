@@ -164,6 +164,6 @@ export const createNodesV2: CreateNodesV2 = [
 
 ## How TypeScript plugins are loaded
 
-Nx loads `.ts` plugin files by registering `@swc-node/register` as a CommonJS transpiler before calling `require()` on the plugin path. This workspace has `@swc-node/register` and `@swc/core` installed at the root, along with a minimal `tsconfig.json` at the workspace root — both are required for Nx to find and activate the transpiler. Without either, Nx falls back to Node.js's native TypeScript type-stripping, which returns a non-extensible ES module namespace that Nx cannot annotate.
+With Node 24 and Nx 23.1, Nx loads ESM `.ts` plugins using Node's native TypeScript type-stripping. Keep plugins strip-safe (no syntax that requires a transform) and use explicit `.ts` extensions on relative imports. `@swc-node/register` remains Nx's peer/fallback loader, but it is not used by the current plugin graph.
 
-TypeScript 7 is the workspace's sole TypeScript dependency. Nx plugins are loaded through the workspace's SWC-backed TypeScript loader, while inferred type checks invoke the TypeScript 7 `tsc` executable directly.
+TypeScript 7 is the workspace's sole TypeScript dependency. Inferred type checks invoke its `tsc` executable directly.
