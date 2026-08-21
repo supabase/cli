@@ -19,6 +19,7 @@ const config = {
   ),
   append: Flag.boolean("append").pipe(
     Flag.withDescription("Append new key to existing keys file instead of overwriting."),
+    Flag.withDefault(false),
   ),
 } as const;
 

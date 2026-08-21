@@ -1,16 +1,16 @@
 import type { CreateNodesV2 } from "@nx/devkit";
 import { dirname } from "node:path";
-import { readPkgJson } from "./parse-pkg-json";
+import { readPkgJson } from "./parse-pkg-json.ts";
 
-export interface TsgoPluginOptions {}
+export interface TypeScriptPluginOptions {}
 
-export const createNodesV2: CreateNodesV2<TsgoPluginOptions> = [
+export const createNodesV2: CreateNodesV2<TypeScriptPluginOptions> = [
   "{apps,packages}/*/package.json",
   (packageJsonFiles, _options, context) => {
     return packageJsonFiles.flatMap((packageJsonPath) => {
       const pkgJson = readPkgJson(context.workspaceRoot, packageJsonPath);
 
-      if (!pkgJson.devDependencies?.["@typescript/native-preview"]) return [];
+      if (!pkgJson.devDependencies?.typescript) return [];
 
       const projectRoot = dirname(packageJsonPath);
 
@@ -22,10 +22,10 @@ export const createNodesV2: CreateNodesV2<TsgoPluginOptions> = [
               [projectRoot]: {
                 targets: {
                   "types:check": {
-                    command: "tsgo --noEmit",
+                    command: "tsc --noEmit",
                     options: { cwd: "{projectRoot}" },
                     cache: true,
-                    inputs: ["default", { externalDependencies: ["@typescript/native-preview"] }],
+                    inputs: ["default", { externalDependencies: ["typescript"] }],
                   },
                 },
                 metadata: {

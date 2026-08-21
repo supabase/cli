@@ -21,6 +21,7 @@ const flags = {
   ),
   noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for locally served Functions."),
+    Flag.withDefault(false),
   ),
 } as const;
 

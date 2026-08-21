@@ -50,7 +50,10 @@ export const LegacyProfileFlag = GlobalFlag.setting("profile")({
 });
 
 export const LegacyDebugFlag = GlobalFlag.setting("debug")({
-  flag: Flag.boolean("debug").pipe(Flag.withDescription("output debug logs to stderr")),
+  flag: Flag.boolean("debug").pipe(
+    Flag.withDescription("output debug logs to stderr"),
+    Flag.withDefault(false),
+  ),
 });
 
 export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
@@ -61,7 +64,10 @@ export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
 });
 
 export const LegacyExperimentalFlag = GlobalFlag.setting("experimental")({
-  flag: Flag.boolean("experimental").pipe(Flag.withDescription("enable experimental features")),
+  flag: Flag.boolean("experimental").pipe(
+    Flag.withDescription("enable experimental features"),
+    Flag.withDefault(false),
+  ),
 });
 
 export const LegacyNetworkIdFlag = GlobalFlag.setting("network-id")({
@@ -72,7 +78,10 @@ export const LegacyNetworkIdFlag = GlobalFlag.setting("network-id")({
 });
 
 export const LegacyYesFlag = GlobalFlag.setting("yes")({
-  flag: Flag.boolean("yes").pipe(Flag.withDescription("answer yes to all prompts")),
+  flag: Flag.boolean("yes").pipe(
+    Flag.withDescription("answer yes to all prompts"),
+    Flag.withDefault(false),
+  ),
 });
 
 export const LegacyDnsResolverFlag = GlobalFlag.setting("dns-resolver")({
@@ -85,6 +94,7 @@ export const LegacyDnsResolverFlag = GlobalFlag.setting("dns-resolver")({
 export const LegacyCreateTicketFlag = GlobalFlag.setting("create-ticket")({
   flag: Flag.boolean("create-ticket").pipe(
     Flag.withDescription("create a support ticket for any CLI error"),
+    Flag.withDefault(false),
   ),
 });
 

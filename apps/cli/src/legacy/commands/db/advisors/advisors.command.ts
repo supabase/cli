@@ -14,8 +14,12 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Checks the linked project for issues."),
+    Flag.withDefault(false),
   ),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Checks the local database for issues.")),
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Checks the local database for issues."),
+    Flag.withDefault(false),
+  ),
   // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),

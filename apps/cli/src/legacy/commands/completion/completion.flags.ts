@@ -14,4 +14,5 @@ import { Flag } from "effect/unstable/cli";
  */
 export const LegacyCompletionNoDescriptionsFlagDef = Flag.boolean("no-descriptions").pipe(
   Flag.withDescription("disable completion descriptions"),
+  Flag.withDefault(false),
 );

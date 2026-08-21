@@ -32,9 +32,11 @@ const config = {
   exclude: legacyStartExcludeFlag,
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
+    Flag.withDefault(false),
   ),
   preview: Flag.boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
+    Flag.withDefault(false),
     Flag.withHidden,
   ),
 } as const;

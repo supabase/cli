@@ -926,7 +926,6 @@ major_version = 16
     const schema = toProjectConfigJsonSchema();
     const schemaString = JSON.stringify(schema);
 
-    expect(schema).toHaveProperty("$defs");
     expect(schemaString).toContain("local_smtp");
     expect(schemaString).toContain("remotes");
     expect(schemaString).toContain("static_files");

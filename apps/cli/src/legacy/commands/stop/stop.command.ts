@@ -24,6 +24,7 @@ const config = {
   ),
   noBackup: Flag.boolean("no-backup").pipe(
     Flag.withDescription("Deletes all data volumes after stopping."),
+    Flag.withDefault(false),
   ),
   // Modelled as `Option<boolean>` (presence = "explicitly set"), not a plain
   // boolean: `--project-id`/`--all` are mutually exclusive whenever BOTH flags

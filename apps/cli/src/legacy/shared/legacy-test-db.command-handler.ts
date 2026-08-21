@@ -68,9 +68,11 @@ export const legacyTestDbConfig = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Runs pgTAP tests on the linked project."),
+    Flag.withDefault(false),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Runs pgTAP tests on the local database."),
+    Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
   projectRef: Flag.string("project-ref").pipe(

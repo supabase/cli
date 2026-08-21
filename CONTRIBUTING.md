@@ -152,7 +152,7 @@ All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config
 | `test:e2e` | Run end-to-end tests _(inferred by Nx plugin)_ |
 | `check:all` | Run all check targets for this project |
 | `fix:all` | Run all fix targets for this project |
-| `types:check` | Type-check with `tsgo --noEmit` _(inferred by Nx plugin)_ |
+| `types:check` | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_ |
 | `lint:check` | Check for lint errors with `oxlint` _(inferred by Nx plugin)_ |
 | `lint:fix` | Auto-fix lint errors _(inferred by Nx plugin)_ |
 | `fmt:check` | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_ |

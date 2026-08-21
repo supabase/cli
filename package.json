@@ -20,15 +20,12 @@
   },
   "packageManager": "pnpm@11.4.0",
   "devDependencies": {
-    "@swc-node/register": "catalog:",
-    "@swc/core": "catalog:",
-    "@typescript/native": "npm:typescript@^7.0.2",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
     "pkg-pr-new": "0.0.87",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript": "catalog:",
     "verdaccio": "^6.9.2"
   }
 }

@@ -12,9 +12,11 @@ const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
 const config = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Generate types from the local dev database."),
+    Flag.withDefault(false),
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Generate types from the linked project."),
+    Flag.withDefault(false),
   ),
   dbUrl: Flag.string("db-url").pipe(
     Flag.withDescription("Generate types from a database url."),
@@ -43,6 +45,7 @@ const config = {
   ),
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
+    Flag.withDefault(false),
   ),
   queryTimeout: Flag.string("query-timeout").pipe(
     Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
