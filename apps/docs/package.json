@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "bun run generate && next dev",
     "generate": "bun ../../apps/cli/scripts/generate-docs.ts",
-    "build": "bun run generate && next build"
+    "build": "bun run generate && next build",
+    "types:check": "pnpm exec fumadocs-mdx source.config.ts .source && tsc --noEmit --incremental false"
   },
   "dependencies": {
     "fumadocs-core": "^16.14.3",
@@ -55,6 +56,26 @@
         ],
         "outputs": [
           "{projectRoot}/.next"
+        ]
+      },
+      "types:check": {
+        "executor": "nx:run-commands",
+        "cache": true,
+        "inputs": [
+          "default",
+          {
+            "externalDependencies": [
+              "typescript",
+              "fumadocs-mdx"
+            ]
+          }
+        ],
+        "options": {
+          "command": "pnpm run types:check",
+          "cwd": "{projectRoot}"
+        },
+        "outputs": [
+          "{projectRoot}/.source"
         ]
       },
       "dev": {

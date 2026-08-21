@@ -23,7 +23,7 @@ const config = {
   ),
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Bundle functions server-side without using Docker."),
-    Flag.withDefault(true),
+    Flag.withDefault(false),
   ),
   importMap: Flag.string("import-map").pipe(
     Flag.withDescription("Path to import map file."),
