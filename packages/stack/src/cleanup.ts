@@ -61,11 +61,21 @@ const cleanupAutoManagedPathsWithRetry = (
       );
       if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
     }).pipe(Effect.uninterruptible);
-    yield* attempt.pipe(
-      Effect.retry(
-        Schedule.recurs(79).pipe(Schedule.addDelay(() => Effect.succeed(Duration.millis(250)))),
+    const retries = Effect.sleep(Duration.millis(250)).pipe(
+      Effect.andThen(
+        attempt.pipe(
+          Effect.retry(
+            Schedule.recurs(78).pipe(Schedule.addDelay(() => Effect.succeed(Duration.millis(250)))),
+          ),
+        ),
       ),
-      Effect.catch(() => Effect.void),
+      // Cleanup callers mask their surrounding teardown transaction. Re-enable
+      // interruption only for the bounded waits after the guaranteed first pass.
+      Effect.interruptible,
+    );
+    yield* attempt.pipe(
+      Effect.catchTag("CleanupPending", () => retries),
+      Effect.catchTag("CleanupPending", () => Effect.void),
     );
   });
 

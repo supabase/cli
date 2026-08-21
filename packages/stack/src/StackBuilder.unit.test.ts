@@ -342,12 +342,25 @@ describe("StackBuilder", () => {
     const layer = builderLayer(resolver);
 
     return Effect.gen(function* () {
-      const config = yield* resolveConfig(undefined, {
-        ports: basePorts,
-        stackRoot: "/tmp/supabase-stack",
-        runtimeRoot: "/tmp/supabase-runtime",
-        runtime: { mode: "docker", containerRuntime: "docker" },
-      });
+      const config = yield* resolveConfig(
+        {
+          realtime: {},
+          storage: {},
+          imgproxy: {},
+          mailpit: {},
+          pgmeta: {},
+          studio: {},
+          analytics: {},
+          vector: {},
+          pooler: {},
+        },
+        {
+          ports: basePorts,
+          stackRoot: "/tmp/supabase-stack",
+          runtimeRoot: "/tmp/supabase-runtime",
+          runtime: { mode: "docker", containerRuntime: "docker" },
+        },
+      );
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
       const { graph } = yield* prepareAndBuild(builder, preparation, config);
@@ -362,6 +375,10 @@ describe("StackBuilder", () => {
           .filter((name): name is ServiceName =>
             SERVICE_NAMES.some((candidate) => candidate === name),
           );
+        expect(
+          publicGraphServices.length,
+          `${service} must exercise a non-empty public graph closure`,
+        ).toBeGreaterThan(0);
         const missing = publicGraphServices.filter((name) => !prepared.has(name));
         expect(
           missing,

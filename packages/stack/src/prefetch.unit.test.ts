@@ -259,7 +259,12 @@ describe("prefetch", () => {
       );
 
       expect(Object.keys(result).sort()).toEqual(expected);
+      expect(spawner.spawned).toHaveLength(expected.length);
       expect(spawner.spawned.every(({ command }) => command === containerRuntime)).toBe(true);
+      expect(spawner.spawned).toContainEqual({
+        command: containerRuntime,
+        args: ["image", "inspect", `ghcr.io/supabase/cli/${service}:${DEFAULT_VERSIONS[service]}`],
+      });
     },
   );
 

@@ -5,7 +5,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { cleanupAutoManagedPaths } from "./cleanup.ts";
 
 describe("automatic managed-path cleanup", () => {
-  it.effect("can be interrupted while waiting to retry a busy path", () =>
+  it.effect("can be interrupted while masked teardown waits to retry a busy path", () =>
     Effect.gen(function* () {
       const attempted = yield* Deferred.make<void>();
       const finished = yield* Deferred.make<void>();
@@ -15,6 +15,9 @@ describe("automatic managed-path cleanup", () => {
       });
       const cleanup = cleanupAutoManagedPaths(["/owned"]).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
+        // Production teardown masks the surrounding cleanup transaction. The
+        // bounded retry wait must still remain interruptible within that mask.
+        Effect.uninterruptible,
         Effect.ensuring(Deferred.succeed(finished, undefined)),
       );
       const fiber = yield* cleanup.pipe(Effect.forkChild({ startImmediately: true }));
