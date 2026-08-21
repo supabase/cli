@@ -106,11 +106,9 @@ export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
 }
 
 /**
- * Removes extensions that the legacy PG14 platform baseline installs implicitly
- * so the declarative shadow reflects only extension declarations in schema files.
- * `pgjwt` has a hard extension dependency on `pgcrypto`, and `storage.objects.id`
- * depends on `uuid-ossp`, so both dependencies must be detached before the
- * user-manageable extensions can be dropped with the default RESTRICT behavior.
+ * Strip implicit platform extensions so the declarative shadow only keeps what
+ * schema files declare. `pgjwt` still ships in the PG15+ image and DEPENDS ON
+ * `pgcrypto`; PG14 also needs `storage.objects.id` detached from `uuid-ossp`.
  */
 export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(function* (
   session: Pick<LegacyDbSession, "exec">,
@@ -118,8 +116,8 @@ export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(fun
 ) {
   if (majorVersion === 14) {
     yield* session.exec("ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT");
-    yield* session.exec("DROP EXTENSION IF EXISTS pgjwt");
   }
+  yield* session.exec("DROP EXTENSION IF EXISTS pgjwt");
   yield* session.exec("DROP EXTENSION IF EXISTS pgcrypto");
   yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
 });

@@ -34,11 +34,12 @@ describe("legacyPreparePgDeltaNextDeclarativeBaseline", () => {
     });
   });
 
-  it.effect("does not modify PG15+ platform objects before dropping extensions", () => {
+  it.effect("drops pgjwt before pgcrypto on PG15+", () => {
     const { session, statements } = recordingSession();
     return Effect.gen(function* () {
       yield* legacyPreparePgDeltaNextDeclarativeBaseline(session, 17);
       expect(statements).toEqual([
+        "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
         'DROP EXTENSION IF EXISTS "uuid-ossp"',
       ]);
