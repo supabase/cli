@@ -257,8 +257,27 @@ describe("legacy sso remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("classifies malformed 200 response as an API response error", () => {
+  it.live("classifies malformed 200 response as an API status error", () => {
     const { layer } = setup({ rawBody: "{not json" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "external_service",
+          error_category: "api_status",
+          error_fingerprint: "tag:LegacySsoRemoveUnexpectedStatusError:api_status",
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a structurally invalid 200 response", () => {
+    const { layer } = setup({ body: {} });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),

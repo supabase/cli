@@ -1,4 +1,4 @@
-import { operationDefinitions } from "@supabase/api/effect";
+import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -11,26 +11,58 @@ import {
   encodeLegacyGoYaml,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { LEGACY_GO_SSO_PROVIDERS_WRAPPER } from "../sso.go-payload.ts";
-import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoListNetworkError,
   LegacySsoListSamlDisabledError,
   LegacySsoListUnexpectedStatusError,
   LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
-import {
-  normalizeLegacySsoProviderPayload,
-  readLegacySsoProviderItems,
-  renderListProviders,
-  toLegacySsoProviderView,
-} from "../sso.format.ts";
+import { renderListProviders } from "../sso.format.ts";
 import type { LegacySsoListFlags } from "./list.command.ts";
 
 const SAML_DISABLED_MESSAGE =
   "Looks like SAML 2.0 support is not enabled for this project. Please use the dashboard to enable it.";
+
+const mapStatusOrNetwork = mapLegacyHttpError({
+  networkError: LegacySsoListNetworkError,
+  statusError: LegacySsoListUnexpectedStatusError,
+  networkMessage: (cause) => `failed to list sso providers: ${cause}`,
+  statusMessage: (_status, body) => `unexpected error listing identity providers: ${body}`,
+});
+
+const handleListError = (ref: string, cause: SupabaseApiError) =>
+  Effect.gen(function* () {
+    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
+    if (mapped._tag === "LegacySsoListUnexpectedStatusError") {
+      const upgradeSuggested = yield* legacySuggestUpgrade({
+        projectRef: ref,
+        featureKey: "auth.saml_2",
+        statusCode: mapped.status,
+        response: legacyGateResponse(cause),
+      });
+      if (mapped.status === 404) {
+        return yield* Effect.fail(
+          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
+        );
+      }
+      return yield* Effect.fail(
+        new LegacySsoListUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
+    }
+    return yield* Effect.fail(mapped);
+  });
 
 export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: LegacySsoListFlags) {
   const output = yield* Output;
@@ -46,72 +78,14 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
     yield* Effect.gen(function* () {
       const fetching =
         output.format === "text" ? yield* output.task("Fetching SSO providers...") : undefined;
-      const response = yield* api
-        .executeRaw(operationDefinitions.v1ListAllSsoProvider, { ref })
-        .pipe(
-          Effect.tapError(() => fetching?.fail() ?? Effect.void),
-          Effect.mapError(
-            (cause) =>
-              new LegacySsoListNetworkError({
-                message: `failed to list sso providers: ${String(cause)}`,
-              }),
-          ),
-        );
-
-      if (response.status !== 200) {
-        const body = sanitizeLegacyErrorBody(
-          yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-        );
-        yield* fetching?.fail() ?? Effect.void;
-        const upgradeSuggested = yield* legacySuggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-        });
-        if (response.status === 404) {
-          return yield* Effect.fail(
-            new LegacySsoListSamlDisabledError({
-              message: SAML_DISABLED_MESSAGE,
-              upgradeSuggested,
-            }),
-          );
-        }
-        return yield* Effect.fail(
-          new LegacySsoListUnexpectedStatusError({
-            status: response.status,
-            body,
-            message: `unexpected error listing identity providers: ${body}`,
-            upgradeSuggested,
-          }),
-        );
-      }
-
-      const parsed = yield* response.json.pipe(
+      const response = yield* api.v1.listAllSsoProvider({ ref }).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new LegacySsoListNetworkError({
-              message: `failed to list sso providers: ${String(cause)}`,
-              decode: true,
-            }),
-        ),
+        Effect.catch((cause) => handleListError(ref, cause)),
       );
-      const rawItems = readLegacySsoProviderItems(parsed);
-      if (rawItems === undefined) {
-        yield* fetching?.fail() ?? Effect.void;
-        return yield* Effect.fail(
-          new LegacySsoListNetworkError({
-            message: "failed to list sso providers: response did not contain an items array",
-            decode: true,
-          }),
-        );
-      }
       yield* fetching?.clear() ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
-      const items = rawItems.map(normalizeLegacySsoProviderPayload);
-      const payload = { providers: items };
+      const payload = { providers: response.items };
 
       if (goFmt === "json") {
         yield* output.raw(encodeGoJson(payload));
@@ -144,7 +118,7 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
         return;
       }
 
-      yield* output.raw(renderListProviders(rawItems.map(toLegacySsoProviderView)));
+      yield* output.raw(renderListProviders(response.items));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

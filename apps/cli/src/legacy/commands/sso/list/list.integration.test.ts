@@ -14,6 +14,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoList } from "./list.handler.ts";
 
 // Mirrors what the Management API returns: neither `saml.id` nor
@@ -262,6 +263,23 @@ describe("legacy sso list integration", () => {
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a 200 response containing a null provider item", () => {
+    const { layer } = setup({ body: { items: [null] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoListNetworkError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "external_service",
+          error_category: "api_status",
+          error_fingerprint: "tag:LegacySsoListNetworkError:api_response",
+        });
+      }
     }).pipe(Effect.provide(layer));
   });
 

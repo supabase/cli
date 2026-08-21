@@ -1,4 +1,4 @@
-import { operationDefinitions } from "@supabase/api/effect";
+import type { SupabaseApiError } from "@supabase/api/effect";
 import { Effect, Option, Result } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -11,23 +11,58 @@ import {
   encodeLegacyGoYaml,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { LEGACY_GO_SSO_PROVIDER_RESPONSE } from "../sso.go-payload.ts";
-import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyGateResponse,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoRemoveNetworkError,
   LegacySsoRemoveNotFoundError,
   LegacySsoRemoveUnexpectedStatusError,
   LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
-import {
-  normalizeLegacySsoProviderPayload,
-  renderSingleProvider,
-  toLegacySsoProviderView,
-  validateUuid,
-} from "../sso.format.ts";
+import { renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { LegacySsoRemoveFlags } from "./remove.command.ts";
+
+const mapStatusOrNetwork = mapLegacyHttpError({
+  networkError: LegacySsoRemoveNetworkError,
+  statusError: LegacySsoRemoveUnexpectedStatusError,
+  networkMessage: (cause) => `failed to remove sso provider: ${cause}`,
+  statusMessage: (_status, body) => `Unexpected error removing identity provider: ${body}`,
+});
+
+const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiError) =>
+  Effect.gen(function* () {
+    const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
+    if (mapped._tag === "LegacySsoRemoveUnexpectedStatusError") {
+      const upgradeSuggested = yield* legacySuggestUpgrade({
+        projectRef: ref,
+        featureKey: "auth.saml_2",
+        statusCode: mapped.status,
+        response: legacyGateResponse(cause),
+      });
+      if (mapped.status === 404) {
+        return yield* Effect.fail(
+          new LegacySsoRemoveNotFoundError({
+            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            upgradeSuggested,
+          }),
+        );
+      }
+      return yield* Effect.fail(
+        new LegacySsoRemoveUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
+    }
+    return yield* Effect.fail(mapped);
+  });
 
 export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
   flags: LegacySsoRemoveFlags,
@@ -49,74 +84,26 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
     yield* Effect.gen(function* () {
       const removing =
         output.format === "text" ? yield* output.task("Removing SSO provider...") : undefined;
-      const response = yield* api
-        .executeRaw(operationDefinitions.v1DeleteASsoProvider, { ref, provider_id: providerId })
-        .pipe(
-          Effect.tapError(() => removing?.fail() ?? Effect.void),
-          Effect.mapError(
-            (cause) =>
-              new LegacySsoRemoveNetworkError({
-                message: `failed to remove sso provider: ${String(cause)}`,
-              }),
-          ),
-        );
-
-      if (response.status !== 200) {
-        const body = sanitizeLegacyErrorBody(
-          yield* response.text.pipe(Effect.orElseSucceed(() => "")),
-        );
-        yield* removing?.fail() ?? Effect.void;
-        const upgradeSuggested = yield* legacySuggestUpgrade({
-          projectRef: ref,
-          featureKey: "auth.saml_2",
-          statusCode: response.status,
-          response,
-        });
-        if (response.status === 404) {
-          return yield* Effect.fail(
-            new LegacySsoRemoveNotFoundError({
-              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-              upgradeSuggested,
-            }),
-          );
-        }
-        return yield* Effect.fail(
-          new LegacySsoRemoveUnexpectedStatusError({
-            status: response.status,
-            body,
-            message: `Unexpected error removing identity provider: ${body}`,
-            upgradeSuggested,
-          }),
-        );
-      }
-
-      const parsed = yield* response.json.pipe(
+      const response = yield* api.v1.deleteASsoProvider({ ref, provider_id: providerId }).pipe(
         Effect.tapError(() => removing?.fail() ?? Effect.void),
-        Effect.mapError(
-          (cause) =>
-            new LegacySsoRemoveNetworkError({
-              message: `failed to remove sso provider: ${String(cause)}`,
-              decode: true,
-            }),
-        ),
+        Effect.catch((cause) => handleRemoveError(ref, providerId, cause)),
       );
-      const normalizedResponse = normalizeLegacySsoProviderPayload(parsed);
       yield* removing?.clear() ?? Effect.void;
 
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "json") {
-        yield* output.raw(encodeGoJson(normalizedResponse));
+        yield* output.raw(encodeGoJson(response));
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeLegacyGoYaml(normalizedResponse, LEGACY_GO_SSO_PROVIDER_RESPONSE));
+        yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE));
         return;
       }
       if (goFmt === "toml") {
         // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
-          try: () => encodeLegacyGoToml(normalizedResponse, LEGACY_GO_SSO_PROVIDER_RESPONSE),
+          try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
             new LegacySsoTomlEncodeError({
               message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -130,11 +117,11 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
       }
 
       if (output.format === "json" || output.format === "stream-json") {
-        yield* output.success("", normalizedResponse);
+        yield* output.success("", { ...response });
         return;
       }
 
-      yield* output.raw(renderSingleProvider(toLegacySsoProviderView(normalizedResponse)));
+      yield* output.raw(renderSingleProvider(response));
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

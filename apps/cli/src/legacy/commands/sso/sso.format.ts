@@ -81,51 +81,6 @@ export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
 }
 
 /**
- * Projects an arbitrary provider response onto the fields represented by the
- * legacy Go provider struct. The Management API's generated response schema
- * is intentionally strict, but older projects can return null values inside
- * `attribute_mapping.keys.*.default`; this projection keeps those values for
- * the Go output encoders while dropping fields (such as nested IDs) that Go
- * would ignore.
- */
-export function normalizeLegacySsoProviderPayload(value: unknown): Record<string, unknown> {
-  const view = toLegacySsoProviderView(value);
-  const result: Record<string, unknown> = { id: view.id };
-
-  if (view.saml !== undefined) {
-    const saml: Record<string, unknown> = {};
-    if (view.saml.entity_id !== undefined) saml["entity_id"] = view.saml.entity_id;
-    if (view.saml.metadata_url !== undefined) saml["metadata_url"] = view.saml.metadata_url;
-    if (view.saml.metadata_xml !== undefined) saml["metadata_xml"] = view.saml.metadata_xml;
-    if (view.saml.attribute_mapping !== undefined) {
-      saml["attribute_mapping"] = view.saml.attribute_mapping;
-    }
-    if (view.saml.name_id_format !== undefined) {
-      saml["name_id_format"] = view.saml.name_id_format;
-    }
-    result["saml"] = saml;
-  }
-
-  if (view.domains !== undefined) {
-    result["domains"] = view.domains.map((domain) => ({
-      ...(domain.domain === undefined ? {} : { domain: domain.domain }),
-      ...(domain.created_at === undefined ? {} : { created_at: domain.created_at }),
-      ...(domain.updated_at === undefined ? {} : { updated_at: domain.updated_at }),
-    }));
-  }
-  if (view.created_at !== undefined) result["created_at"] = view.created_at;
-  if (view.updated_at !== undefined) result["updated_at"] = view.updated_at;
-  return result;
-}
-
-/** Extracts the list payload while retaining unknown nested mapping values. */
-export function readLegacySsoProviderItems(value: unknown): ReadonlyArray<unknown> | undefined {
-  if (typeof value !== "object" || value === null || !("items" in value)) return undefined;
-  const items = value.items;
-  return Array.isArray(items) ? items : undefined;
-}
-
-/**
  * Validates a positional provider-id argument as a canonical UUID.
  * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
  */
