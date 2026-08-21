@@ -1,6 +1,6 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError, Predicate } from "effect";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,9 +168,28 @@ describe("managed stack document store", () => {
       const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toMatchObject({
-          _tag: "InvalidManagedStackDocumentError",
-        });
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
+      }
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects an incomplete Docker launch as an invalid managed document", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        STACK_ID,
+        JSON.stringify({ ...document(), launch: { mode: "docker", versions: {} } }),
+      );
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
       }
     }).pipe(Effect.provide(filesystemLayer)),
   );

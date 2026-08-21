@@ -103,12 +103,13 @@ concurrent requests share one transaction and interrupting one caller cannot
 cancel the owner. The short response-flush signal is also a scoped fiber.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
-Each Docker candidate uses an Effect `Schedule` for its single 500 ms retry;
-registry fallback and failure details remain deterministic. Auto-managed roots
-and the Postgres Docker config are removed through the Effect `FileSystem` with
-a bounded retry schedule, while cleanup remains uninterruptible and scoped to
-the exact paths owned by that stack. Stale binary staging directories use the
-same small concurrency cap during reconciliation.
+Each service resolves one canonical GHCR image. Pulls retry only transient
+registry and network failures on a one-second exponential `Schedule`, capped at
+five retries; non-retryable failures surface immediately with deterministic
+details. Auto-managed roots and the Postgres Docker config are removed through
+the Effect `FileSystem` with a bounded retry schedule, while cleanup remains
+uninterruptible and scoped to the exact paths owned by that stack. Stale binary
+staging directories use the same small concurrency cap during reconciliation.
 
 ## Managed lifecycle
 
