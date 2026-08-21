@@ -9,10 +9,10 @@
     "types:check": "pnpm exec fumadocs-mdx source.config.ts .source && tsc --noEmit --incremental false"
   },
   "dependencies": {
-    "fumadocs-core": "^16.14.3",
+    "fumadocs-core": "^16.14.4",
     "fumadocs-mdx": "^15.2.3",
-    "fumadocs-ui": "^16.14.3",
-    "next": "16.3.0",
+    "fumadocs-ui": "^16.14.4",
+    "next": "16.3.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
