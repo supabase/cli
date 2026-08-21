@@ -8,7 +8,7 @@ import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult } from "./schema-types.ts";
 import { SchemaWorkspace } from "./schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
-import { formatFileSummary } from "./schema-output.ts";
+import { formatFileSummary, formatNextAction } from "./schema-output.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 
 export type PullSchemaInput = {
@@ -63,16 +63,18 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
         const nextActions =
           mode === "output"
             ? [
-                "Inspect the snapshot, then edit supabase/schemas or rerun with --force to replace the managed files.",
+                formatNextAction(
+                  "to replace the managed schema",
+                  `supabase schema pull --from ${selector.kind === "url" ? "<connection-string>" : selector.kind} --force`,
+                ),
               ]
             : localMigrations.length > 0
-              ? [
-                  "Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`. No diff means they already agree.",
-                  "Edit supabase/schemas and run `supabase schema apply` to try changes locally. When the shape looks right, create a migration with `supabase schema generate --name <feature>`.",
-                ]
+              ? [formatNextAction("to check they match", "supabase schema generate --dry-run")]
               : [
-                  "This database has no local migrations yet. Create a baseline with `supabase schema generate --baseline --name initial_schema`.",
-                  "After that, edit supabase/schemas and use `supabase schema apply` to iterate locally.",
+                  formatNextAction(
+                    "to create a baseline",
+                    "supabase schema generate --baseline --name initial_schema",
+                  ),
                 ];
 
         return {

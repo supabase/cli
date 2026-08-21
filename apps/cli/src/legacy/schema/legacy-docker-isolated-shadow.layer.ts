@@ -1,6 +1,9 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { explicitBooleanLongFlag } from "../../shared/cli/cobra-flag-groups.ts";
+import { Output } from "../../shared/output/output.service.ts";
 import { IsolatedShadowProvisioner } from "../../shared/schema/isolated-shadow.service.ts";
 import { SchemaEngineError } from "../../shared/schema/schema-errors.ts";
+import { wrapShadowReplayOutput } from "../../shared/schema/shadow-replay-output.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyReadDbToml } from "../shared/legacy-db-config.toml-read.ts";
 import {
@@ -31,6 +34,7 @@ export const legacyDockerIsolatedShadowLayer = Layer.effect(
   IsolatedShadowProvisioner,
   Effect.gen(function* () {
     const shadows = yield* LegacyPgDeltaNextShadow;
+    const output = yield* Output;
     const config = yield* LegacyCliConfig;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -66,8 +70,12 @@ export const legacyDockerIsolatedShadowLayer = Layer.effect(
       }),
       provisionMigrations: Effect.gen(function* () {
         const opts = yield* shadowInput();
+        const wrapped = wrapShadowReplayOutput(output, {
+          debug: explicitBooleanLongFlag(process.argv, "debug") === true,
+        });
+        // Isolated replay only; live db start / migrations apply stay unprefixed.
         const shadow = yield* shadows
-          .provisionMigrations(opts)
+          .provisionMigrations(opts, wrapped)
           .pipe(Effect.mapError(toEngineError));
         return { url: shadow.migrationsUrl };
       }),

@@ -8,7 +8,12 @@ import {
   SchemaDraftConflictError,
   SchemaEngineError,
 } from "./schema-errors.ts";
-import { formatPlanSummary, withCoverageMessage } from "./schema-output.ts";
+import {
+  formatMigrationFilePath,
+  formatNextAction,
+  withCoverageMessage,
+  withPlanSummary,
+} from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult } from "./schema-types.ts";
@@ -77,25 +82,22 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
           yield* assertPlanActionable(plan);
         }
 
-        const summary = formatPlanSummary({
-          title: "Schema plan",
-          source: `migrations@${plan.sourceFingerprint.slice(0, 8)}`,
-          desired: `declarations@${plan.desiredFingerprint.slice(0, 8)}`,
-          target: "clean migration replay (no live database writes)",
-          plan,
-        });
-
         if (input.dryRun || !plan.changes) {
           if (!input.dryRun && !plan.changes) {
             yield* state.clearJournal;
           }
           const nextActions = plan.changes
-            ? [`Write this plan as a migration with \`supabase schema generate --name ${name}\`.`]
+            ? [
+                formatNextAction(
+                  "to write the migration",
+                  `supabase schema generate --name ${name}`,
+                ),
+              ]
             : [];
           return {
             status: plan.changes ? "needs_approval" : "clean",
             message: plan.changes
-              ? `${summary}\nResult: dry-run; nothing was changed`
+              ? withPlanSummary("Dry-run; nothing was written.", plan)
               : withCoverageMessage("Declarations already match migration replay.", plan),
             data: {
               status: plan.changes ? "needs_approval" : "clean",
@@ -146,23 +148,27 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
 
           const nextActions = input.baseline
             ? [
-                `Review the new files in supabase/migrations. If the remote already has this schema, record it without re-applying: ${formatMigrationRepairCommand(
-                  {
+                formatNextAction(
+                  "to record it as applied",
+                  formatMigrationRepairCommand({
                     status: "applied",
                     versions: written.map((file) => file.version),
-                  },
-                )}. Only use \`supabase migrations push\` if the remote is empty.`,
+                  }),
+                ),
               ]
-            : [
-                "Review the new files in supabase/migrations, then deploy with `supabase migrations push`.",
-              ];
+            : [formatNextAction("to deploy", "supabase migrations push")];
 
           return {
             status: "generated",
-            message: `${summary}\nWrote ${written.map((file) => file.fileName).join(", ")}`,
+            message: withPlanSummary(
+              `Wrote ${written.map((file) => formatMigrationFilePath(file.fileName)).join(", ")}`,
+              plan,
+            ),
             data: {
               status: "generated",
               plan_id: plan.planId,
+              source_fingerprint: plan.sourceFingerprint,
+              desired_fingerprint: plan.desiredFingerprint,
               hazards: plan.hazards,
               files_written: written.map((file) => file.fileName),
               mutated_database: false,

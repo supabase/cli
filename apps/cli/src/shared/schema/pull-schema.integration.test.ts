@@ -114,7 +114,25 @@ describe("pullSchema", () => {
         Effect.provide(layer),
       );
       expect(target.resolved).toEqual([{ kind: "local" }]);
-      expect(result.nextActions.join("\n")).toContain("schema generate --baseline");
+      expect(result.nextActions).toEqual([
+        "to create a baseline: supabase schema generate --baseline --name initial_schema",
+      ]);
+    });
+  });
+
+  it.live("does not paste a connection string into the --output next command", () => {
+    const { project, layer } = setup();
+    return Effect.gen(function* () {
+      const result = yield* pullSchema({
+        from: "postgresql://postgres:secret@db.example/postgres",
+        output: join(project.root, "snapshot"),
+        force: false,
+        pruneUnmanaged: false,
+      }).pipe(Effect.provide(layer));
+      expect(result.nextActions.join("\n")).not.toContain("secret");
+      expect(result.nextActions).toEqual([
+        "to replace the managed schema: supabase schema pull --from <connection-string> --force",
+      ]);
     });
   });
 

@@ -7,7 +7,6 @@ import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
 import type { SchemaPlanView } from "../schema/schema-types.ts";
-import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
 import { diffMigrations } from "./diff-migrations.ts";
 import { listMigrations } from "./list-migrations.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
@@ -81,23 +80,6 @@ function planView(changes: boolean): SchemaPlanView {
   };
 }
 
-const workspace = Layer.succeed(
-  SchemaWorkspace,
-  SchemaWorkspace.of({
-    schemasDir: "/tmp/schemas",
-    schemasDirDisplay: "supabase/schemas",
-    migrationsDir: "/tmp/migrations",
-    migrationsDirDisplay: "supabase/migrations",
-    customDir: "/tmp/schemas/_custom",
-    journalPath: "/tmp/j",
-    lockPath: "/tmp/l",
-    readDeclarationFiles: Effect.succeed([]),
-    readExistingSql: () => Effect.succeed(new Map()),
-    classifyProposed: () => Effect.die("unused"),
-    installExport: () => Effect.die("unused"),
-  }),
-);
-
 const state = Layer.succeed(
   SchemaStateStore,
   SchemaStateStore.of({
@@ -128,7 +110,6 @@ describe("newMigration", () => {
     const created = { ...file, name: "add_billing", fileName: "20260101000000_add_billing.sql" };
     const layer = Layer.mergeAll(
       mockOutput({ interactive: false }).layer,
-      workspace,
       state,
       Layer.succeed(
         MigrationRepository,
@@ -223,9 +204,9 @@ describe("diffMigrations", () => {
         Effect.provide(diffLayer()),
         Effect.provide(BunServices.layer),
       );
-      expect(result.nextActions.join("\n")).toContain("schema generate");
-      expect(result.nextActions.join("\n")).toContain("migrations pull --from local");
-      expect(result.nextActions.join("\n")).not.toContain("`supabase migrations pull`");
+      expect(result.nextActions).toEqual([
+        "to capture remote shape: supabase migrations pull --from local",
+      ]);
     });
   });
 });

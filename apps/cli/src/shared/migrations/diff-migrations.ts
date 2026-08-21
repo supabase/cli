@@ -3,7 +3,7 @@ import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector } from "../database/database-target.ts";
 import { SchemaWorkspaceIoError } from "../schema/schema-errors.ts";
-import { formatPlanSummary, withCoverageMessage } from "../schema/schema-output.ts";
+import { formatNextAction, withCoverageMessage, withPlanSummary } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 
@@ -42,23 +42,18 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
         );
       }
 
-      const summary = formatPlanSummary({
-        title: "Migrations diff",
-        source: `migrations@${plan.sourceFingerprint.slice(0, 8)}`,
-        desired: `live@${plan.desiredFingerprint.slice(0, 8)}`,
-        target: live.identity,
-        plan,
-      });
       const nextActions = plan.changes ? nextActionsForDiff(input.against ?? "local") : [];
 
       return {
         status: plan.changes ? "drift" : "clean",
         message: plan.changes
-          ? `${summary}\nResult: preview only; nothing was changed`
+          ? withPlanSummary("Preview only; nothing was changed.", plan)
           : withCoverageMessage("Live database matches migration replay.", plan),
         data: {
           status: plan.changes ? "drift" : "clean",
           plan_id: plan.planId,
+          source_fingerprint: plan.sourceFingerprint,
+          desired_fingerprint: plan.desiredFingerprint,
           hazards: plan.hazards,
           sql: plan.files.map((file) => file.sql).join("\n\n"),
           file: input.file,
@@ -75,18 +70,11 @@ export const diffMigrations = Effect.fn("migrations.diff")(function* (input: Dif
 });
 
 function nextActionsForDiff(against: string): ReadonlyArray<string> {
-  if (against === "local") {
-    return [
-      "If this extra shape came from supabase/schemas, create a migration with `supabase schema generate --name <feature>`.",
-      "To record the live database as migration files instead, run `supabase migrations pull --from local`.",
-    ];
-  }
-  if (against === "linked") {
-    return [
-      "If the linked project has extra shape you want as files, record it with `supabase migrations pull`.",
-    ];
-  }
-  return [
-    "If that database has extra shape you want as files, record it with `supabase migrations pull --from <connection-string>`.",
-  ];
+  const command =
+    against === "linked"
+      ? "supabase migrations pull"
+      : against === "local"
+        ? "supabase migrations pull --from local"
+        : "supabase migrations pull --from <connection-string>";
+  return [formatNextAction("to capture remote shape", command)];
 }

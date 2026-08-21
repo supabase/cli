@@ -1,5 +1,6 @@
 import { Context, type Effect, type Scope } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
@@ -38,9 +39,11 @@ interface LegacyPgDeltaNextShadowShape {
   /**
    * Provisions only the migrated next-engine shadow needed by database diffs.
    * The container is removed when the current Effect scope closes.
+   * Optional Output so schema-first can filter shadow replay without changing live apply.
    */
   readonly provisionMigrations: (
     opts: LegacyPgDeltaNextShadowInput,
+    outputService?: typeof Output.Service,
   ) => Effect.Effect<
     LegacyPgDeltaNextMigrationsShadow,
     LegacyDeclarativeShadowDbError,

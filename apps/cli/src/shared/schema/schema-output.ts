@@ -1,5 +1,6 @@
 import { STRICT_COVERAGE_CODES } from "@supabase/pg-delta/frontends";
 import { explicitBooleanLongFlag } from "../cli/cobra-flag-groups.ts";
+import { MIGRATIONS_DIRECTORY_NAME } from "./schema-paths.ts";
 import type { SchemaFileSummary, SchemaPlanView } from "./schema-types.ts";
 
 export type CoverageFormatOptions = {
@@ -72,23 +73,50 @@ export function withCoverageMessage(
   return coverage.length > 0 ? `${status}\n${coverage}` : status;
 }
 
+export function formatMigrationFilePath(fileName: string): string {
+  return `supabase/${MIGRATIONS_DIRECTORY_NAME}/${fileName}`;
+}
+
+export function formatNextAction(why: string, command: string): string {
+  return `${why}: ${command}`;
+}
+
 export function formatPlanSummary(input: {
-  readonly title: string;
-  readonly source: string;
-  readonly desired: string;
-  readonly target: string;
   readonly plan: SchemaPlanView;
   readonly verbose?: boolean;
 }): string {
+  const verbose = coverageVerbose({ verbose: input.verbose });
+  const statements = input.plan.plan.actions.length;
+  const { rewrite, destructive, coverageGaps } = input.plan.hazards;
   const coverage = formatCoverageDiagnostics(input.plan, { verbose: input.verbose });
-  return [
-    `${input.title}: ${input.source} -> ${input.desired}`,
-    `Target: ${input.target}`,
-    `Actions: ${input.plan.plan.actions.length}`,
-    `Hazards: ${input.plan.hazards.rewrite} rewrite, ${input.plan.hazards.destructive} destructive, ${input.plan.hazards.coverageGaps} coverage gaps`,
-    ...(coverage.length > 0 ? [coverage] : []),
-    `Plan: ${input.plan.planId}`,
-  ].join("\n");
+  const lines: string[] = [];
+  if (statements > 0) {
+    lines.push(`${statements} ${statements === 1 ? "statement" : "statements"}`);
+  }
+  if (rewrite > 0 || destructive > 0 || coverageGaps > 0) {
+    lines.push(
+      `Hazards: ${rewrite} rewrite, ${destructive} destructive, ${coverageGaps} coverage gaps`,
+    );
+  }
+  if (coverage.length > 0) {
+    lines.push(coverage);
+  }
+  if (verbose) {
+    lines.push(`Plan: ${input.plan.planId}`);
+    lines.push(
+      `${input.plan.sourceFingerprint.slice(0, 8)} -> ${input.plan.desiredFingerprint.slice(0, 8)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+export function withPlanSummary(
+  status: string,
+  plan: SchemaPlanView,
+  opts?: CoverageFormatOptions,
+): string {
+  const summary = formatPlanSummary({ plan, verbose: opts?.verbose });
+  return summary.length > 0 ? `${status}\n${summary}` : status;
 }
 
 export function formatFileSummary(summary: SchemaFileSummary): string {

@@ -1,8 +1,8 @@
 import { Effect } from "effect";
 import { SchemaDraftConflictError, SchemaMigrationNameError } from "../schema/schema-errors.ts";
+import { formatMigrationFilePath, formatNextAction } from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
-import { SchemaWorkspace } from "../schema/schema-workspace.service.ts";
 import { MigrationRepository } from "./migration-repository.service.ts";
 
 export const newMigration = Effect.fn("migrations.new")(function* (name: string | undefined) {
@@ -12,7 +12,6 @@ export const newMigration = Effect.fn("migrations.new")(function* (name: string 
       suggestion: "Pass a name, for example `supabase migrations new add_billing`.",
     });
   }
-  const workspace = yield* SchemaWorkspace;
   const repository = yield* MigrationRepository;
   const state = yield* SchemaStateStore;
   const journal = yield* state.readJournal;
@@ -29,7 +28,7 @@ export const newMigration = Effect.fn("migrations.new")(function* (name: string 
   const created = yield* repository.createEmpty(name.trim());
   return {
     status: "generated",
-    message: `Created ${workspace.migrationsDirDisplay}/${created.fileName}`,
+    message: `Created ${formatMigrationFilePath(created.fileName)}`,
     data: {
       status: "generated",
       file: created.fileName,
@@ -37,9 +36,7 @@ export const newMigration = Effect.fn("migrations.new")(function* (name: string 
       mutated_files: true,
       mutated_database: false,
     },
-    nextActions: [
-      "Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
-    ],
+    nextActions: [formatNextAction("to apply it locally", "supabase migrations apply")],
     mutatedDatabase: false,
     mutatedFiles: true,
   } satisfies SchemaCommandResult;

@@ -293,6 +293,12 @@ describe("applySchema", () => {
       expect(result.status).toBe("draft");
       expect(result.mutatedDatabase).toBe(true);
       expect(ctx.journaled).toBe(true);
+      expect(result.message).toContain(
+        "Applied locally and journaled. No migration files were written.",
+      );
+      expect(result.nextActions).toEqual([
+        "to generate a migration: supabase schema generate --name <feature>",
+      ]);
     });
   });
 });

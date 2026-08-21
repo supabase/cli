@@ -10,7 +10,7 @@ import {
   SchemaDurableTargetError,
   SchemaPartialApplyError,
 } from "./schema-errors.ts";
-import { formatPlanSummary } from "./schema-output.ts";
+import { formatNextAction, withPlanSummary } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult, SchemaDraftJournal } from "./schema-types.ts";
@@ -92,6 +92,8 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
               status: "clean",
               target: target.identity,
               plan_id: plan.planId,
+              source_fingerprint: plan.sourceFingerprint,
+              desired_fingerprint: plan.desiredFingerprint,
               applied: pendingResult.applied,
               recorded,
               mutated_database: mutatedDatabase,
@@ -139,24 +141,21 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
           });
         }
 
-        const summary = formatPlanSummary({
-          title: "Schema apply",
-          source: `local@${plan.sourceFingerprint.slice(0, 8)}`,
-          desired: `declarations@${plan.desiredFingerprint.slice(0, 8)}`,
-          target: target.identity,
-          plan,
-        });
         const nextActions = [
-          "Keep editing supabase/schemas and re-run `supabase schema apply` until the local database looks right.",
-          "When you're happy, create a migration with `supabase schema generate --name <feature>`.",
+          formatNextAction("to generate a migration", "supabase schema generate --name <feature>"),
         ];
 
         return {
           status: "draft",
-          message: `${summary}\nResult: applied locally and journaled. No migration files were written.`,
+          message: withPlanSummary(
+            "Applied locally and journaled. No migration files were written.",
+            plan,
+          ),
           data: {
             status: "draft",
             plan_id: plan.planId,
+            source_fingerprint: plan.sourceFingerprint,
+            desired_fingerprint: plan.desiredFingerprint,
             hazards: plan.hazards,
             target: target.identity,
             journaled: true,

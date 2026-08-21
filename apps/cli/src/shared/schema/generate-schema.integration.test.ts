@@ -255,6 +255,20 @@ describe("generateSchema", () => {
     });
   });
 
+  it.live("points a dry-run with changes at the write command", () => {
+    const ctx = setup({ changes: true });
+    return Effect.gen(function* () {
+      const result = yield* generateSchema({ dryRun: true, baseline: false }).pipe(
+        Effect.provide(ctx.layer),
+      );
+      expect(result.status).toBe("needs_approval");
+      expect(result.message).toContain("Dry-run; nothing was written.");
+      expect(result.nextActions).toEqual([
+        "to write the migration: supabase schema generate --name schema",
+      ]);
+    });
+  });
+
   it.live("clears the draft journal after writing files", () => {
     const ctx = setup({ write: true, journal: draftJournal });
     return Effect.gen(function* () {
@@ -264,6 +278,10 @@ describe("generateSchema", () => {
       expect(result.mutatedFiles).toBe(true);
       expect(result.mutatedDatabase).toBe(false);
       expect(ctx.cleared).toBe(true);
+      expect(result.message).toContain("Wrote supabase/migrations/20260101000001_schema.sql");
+      expect(result.message).not.toContain("plan-1");
+      expect(result.message).not.toContain("source-fingerprint");
+      expect(result.nextActions).toEqual(["to deploy: supabase migrations push"]);
       expect(result.nextActions.join("\n")).not.toContain("migration repair");
     });
   });

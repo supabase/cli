@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { SchemaDraftConflictError } from "../schema/schema-errors.ts";
+import { formatNextAction } from "../schema/schema-output.ts";
 import { SchemaStateStore } from "../schema/schema-state.service.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { applyLocalPending } from "./apply-local-pending.ts";
@@ -41,9 +42,7 @@ export const applyMigrations = Effect.fn("migrations.apply")(function* () {
           : []),
       ];
       const nextActions =
-        mutatedDatabase === true
-          ? ["If the local database looks right, deploy with `supabase migrations push`."]
-          : [];
+        mutatedDatabase === true ? [formatNextAction("to deploy", "supabase migrations push")] : [];
       return {
         status: "clean",
         message: parts.length > 0 ? parts.join(". ") : "No pending migrations.",

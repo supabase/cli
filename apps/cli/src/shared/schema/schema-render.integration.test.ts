@@ -23,17 +23,14 @@ describe("renderSchemaResult", () => {
       yield* renderSchemaResult(
         "Create migration",
         result({
-          nextActions: [
-            "Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
-          ],
+          nextActions: ["to apply it locally: supabase migrations apply"],
         }),
       ).pipe(Effect.provide(out.layer));
       expect(out.messages).toEqual([
         { type: "intro", message: "Create migration" },
         {
           type: "info",
-          message:
-            "Next: Write the SQL in that file, then apply it locally with `supabase migrations apply`.",
+          message: "Next: to apply it locally: supabase migrations apply",
         },
         { type: "outro", message: "Compared 4 migration(s) against local:default." },
       ]);
@@ -60,8 +57,8 @@ describe("renderSchemaResult", () => {
           message:
             "Declarations already match migration replay.\n1 unmodeled cast (log_min_messages)",
           nextActions: [
-            "Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`.",
-            "Edit supabase/schemas and run `supabase schema apply` to try changes locally.",
+            "to check they match: supabase schema generate --dry-run",
+            "to generate a migration: supabase schema generate --name <feature>",
           ],
         }),
       ).pipe(Effect.provide(out.layer));
@@ -71,13 +68,11 @@ describe("renderSchemaResult", () => {
         { type: "info", message: "Next:" },
         {
           type: "info",
-          message:
-            "  1. Check that supabase/schemas matches your migrations with `supabase schema generate --dry-run`.",
+          message: "  1. to check they match: supabase schema generate --dry-run",
         },
         {
           type: "info",
-          message:
-            "  2. Edit supabase/schemas and run `supabase schema apply` to try changes locally.",
+          message: "  2. to generate a migration: supabase schema generate --name <feature>",
         },
         { type: "outro", message: "Declarations already match migration replay." },
       ]);

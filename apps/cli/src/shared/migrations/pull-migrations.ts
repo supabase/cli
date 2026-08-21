@@ -2,7 +2,11 @@ import { Clock, Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { parseTargetSelector } from "../database/database-target.ts";
-import { formatPlanSummary } from "../schema/schema-output.ts";
+import {
+  formatMigrationFilePath,
+  formatNextAction,
+  withPlanSummary,
+} from "../schema/schema-output.ts";
 import type { SchemaCommandResult } from "../schema/schema-types.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import { formatMigrationRepairCommand, repairFlagsForTarget } from "./migration-repair-suggest.ts";
@@ -38,6 +42,8 @@ export const pullMigrations = Effect.fn("migrations.pull")(function* (input: Pul
           data: {
             status: "clean",
             plan_id: plan.planId,
+            source_fingerprint: plan.sourceFingerprint,
+            desired_fingerprint: plan.desiredFingerprint,
             mutated_files: false,
             mutated_database: false,
           },
@@ -57,29 +63,28 @@ export const pullMigrations = Effect.fn("migrations.pull")(function* (input: Pul
         })),
       });
 
-      const summary = formatPlanSummary({
-        title: "Migrations pull",
-        source: `migrations@${plan.sourceFingerprint.slice(0, 8)}`,
-        desired: `remote@${plan.desiredFingerprint.slice(0, 8)}`,
-        target: remote.identity,
-        plan,
-      });
-
-      const repair = formatMigrationRepairCommand({
-        status: "applied",
-        versions: written.map((file) => file.version),
-        flags: repairFlagsForTarget(remote),
-      });
       const nextActions = [
-        `Record the pulled version on the remote without re-applying: ${repair}`,
+        formatNextAction(
+          "to record it as applied",
+          formatMigrationRepairCommand({
+            status: "applied",
+            versions: written.map((file) => file.version),
+            flags: repairFlagsForTarget(remote),
+          }),
+        ),
       ];
 
       return {
         status: "generated",
-        message: `${summary}\nWrote ${written.map((file) => file.fileName).join(", ")}`,
+        message: withPlanSummary(
+          `Wrote ${written.map((file) => formatMigrationFilePath(file.fileName)).join(", ")}`,
+          plan,
+        ),
         data: {
           status: "generated",
           plan_id: plan.planId,
+          source_fingerprint: plan.sourceFingerprint,
+          desired_fingerprint: plan.desiredFingerprint,
           files_written: written.map((file) => file.fileName),
           hazards: plan.hazards,
           mutated_files: true,
