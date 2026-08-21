@@ -28,7 +28,13 @@ const errorCode = (error: PlatformError.PlatformError): string | undefined => {
 
 const isHardLinkUnsupported = (error: PlatformError.PlatformError): boolean => {
   const code = errorCode(error);
-  return code === "EPERM" || code === "ENOTSUP" || code === "EOPNOTSUPP";
+  return (
+    code === "EPERM" ||
+    code === "ENOTSUP" ||
+    code === "EOPNOTSUPP" ||
+    code === "ENOSYS" ||
+    code === "EXDEV"
+  );
 };
 
 const unsupportedHardLink = (

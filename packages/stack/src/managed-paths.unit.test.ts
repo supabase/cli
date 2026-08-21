@@ -166,6 +166,7 @@ describe("managed paths", () => {
   it("names the blank root it refused instead of an empty message tail", () => {
     expect(failureOf(resolveManagedStateRootEffect({ stateRoot: "\t" }))).toMatchObject({
       path: "\t",
+      message: 'Refusing a blank managed state root: "\\t"',
     });
   });
 

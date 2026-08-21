@@ -145,7 +145,7 @@ const createStackAttempt = (
             candidateCleanupTargets(resolved).dockerContainerNames,
           ).pipe(Effect.ignore);
         }
-        yield* cleanupAutoManagedPaths(resolved!);
+        yield* cleanupAutoManagedPaths(resolved!.autoManagedPaths);
       }),
     );
 

@@ -775,7 +775,17 @@ describe("Stack", () => {
     const resolver = mockBinaryResolver();
     const spawner = mockChildProcessSpawner();
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
-    const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
+    const config = {
+      ...defaultConfig,
+      postgrest: false,
+      auth: false,
+      servicePolicies: {
+        ...defaultConfig.servicePolicies,
+        postgrest: "off",
+        auth: "off",
+      },
+    } satisfies ResolvedStackConfig;
+    const layer = localStackLayer(config, noopPortLease(config.ports)).pipe(
       Layer.provide(builderLayer),
       Layer.provide(stackPreparationLayer),
       Layer.provide(spawner.layer),
@@ -787,6 +797,43 @@ describe("Stack", () => {
       expect(Exit.isFailure(yield* stack.start().pipe(Effect.exit))).toBe(true);
       yield* stack.start();
       expect(buildAttempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
+  });
+
+  it.live("rejects an all-eager graph that omits an enabled public service", () => {
+    const graph = Effect.runSync(
+      buildGraph([{ name: "postgres", command: "true", restart: "no" }]),
+    );
+    const builderLayer = Layer.succeed(StackBuilder, {
+      build: () =>
+        Effect.succeed({
+          graph,
+          cleanupTargets: { dockerContainerNames: [] },
+          serviceProjection: new Map([["postgres", { visibility: "public" as const }]]),
+        }),
+    });
+    const resolver = mockBinaryResolver();
+    const layer = localStackLayer(defaultConfig, noopPortLease(defaultConfig.ports)).pipe(
+      Layer.provide(builderLayer),
+      Layer.provide(StackPreparation.layer.pipe(Layer.provide(resolver.layer))),
+      Layer.provide(mockChildProcessSpawner().layer),
+      Layer.provide(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.start().pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+          _tag: "Some",
+          value: {
+            _tag: "StackBuildError",
+            detail: "Prepared graph does not contain enabled service postgrest",
+          },
+        });
+      }
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
@@ -888,12 +935,14 @@ describe("Stack", () => {
       vector: { version: DEFAULT_VERSIONS.vector },
       servicePolicies: {
         ...defaultConfig.servicePolicies,
-        auth: "lazy",
+        auth: "off",
+        postgrest: "lazy",
         pgmeta: "eager",
         studio: "eager",
         analytics: "eager",
         vector: "eager",
       },
+      auth: false,
     } satisfies ResolvedStackConfig;
     const { resolver, spawner } = setupLayer(config, noopPortLease(config.ports));
     const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
@@ -1027,6 +1076,8 @@ describe("Stack", () => {
     const layer = localStackLayer(
       {
         ...defaultConfig,
+        auth: false,
+        servicePolicies: { ...defaultConfig.servicePolicies, auth: "off" },
         readiness: { mode: "finite", timeoutMs: 100 },
         readinessSource: "configured",
       },
@@ -1367,10 +1418,12 @@ describe("Stack", () => {
         runtime: { mode: "docker", containerRuntime: "docker" },
         servicePolicies: {
           ...defaultConfig.servicePolicies,
-          postgrest: "lazy",
-          auth: "lazy",
+          postgrest: "off",
+          auth: "off",
           mailpit: "eager",
         },
+        postgrest: false,
+        auth: false,
         mailpit: {
           port: defaultPorts.mailpitPort,
           smtpPort: defaultPorts.mailpitSmtpPort,

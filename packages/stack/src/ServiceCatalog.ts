@@ -233,7 +233,7 @@ export const SERVICE_CATALOG = {
       docker: { repository: "imgproxy" },
     },
     activation: { activates: [], owns: [] },
-    preparation: preparation(["lazy", "eager"], "lazy"),
+    preparation: preparation(["lazy", "eager"], "lazy", ["storage"]),
     portFields: ["imgproxyPort"],
   },
   mailpit: {
@@ -293,7 +293,7 @@ export const SERVICE_CATALOG = {
       docker: { repository: "vector" },
     },
     activation: { activates: [], owns: [] },
-    preparation: preparation(["lazy", "eager"], "lazy"),
+    preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
     portFields: [],
   },
   pooler: {

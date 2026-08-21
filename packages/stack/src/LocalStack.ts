@@ -494,6 +494,17 @@ export const localStackLayer = (
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Scope.Scope, scope),
               );
+            const graphServices = new Set(graph.startOrder.map((definition) => definition.name));
+            const missingEnabledService = enabledServices.find(
+              (service) => !graphServices.has(service),
+            );
+            if (missingEnabledService !== undefined) {
+              return yield* Effect.fail(
+                new StackBuildError({
+                  detail: `Prepared graph does not contain enabled service ${missingEnabledService}`,
+                }),
+              );
+            }
             exactCleanupTargets = cleanupTargets;
 
             const orchLayer = Orchestrator.layer(graph).pipe(
@@ -880,6 +891,8 @@ export const localStackLayer = (
 
             const eager = eagerServices(enabledServices, config.servicePolicies);
             const allServicesEager = eager.length === enabledServices.length;
+            // The all-eager case can use one topological whole-graph start;
+            // mixed policies need the more general per-service preparation path.
             if (!allServicesEager) {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
               yield* prepareServices(["postgres", ...eager]);

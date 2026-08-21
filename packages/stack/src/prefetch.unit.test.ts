@@ -102,7 +102,7 @@ describe("prefetch", () => {
   test("limits concurrent image preparation to four services", async () => {
     const started = await Effect.runPromise(Queue.unbounded<string>());
     const release = await Effect.runPromise(Deferred.make<void>());
-    const services = ["postgres", "imgproxy", "mailpit", "vector", "edge-runtime"] as const;
+    const services = ["postgres", "mailpit", "edge-runtime", "realtime", "pooler"] as const;
     let pullStarts = 0;
     const spawner = Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
@@ -238,45 +238,30 @@ describe("prefetch", () => {
     expect(Object.keys(result).sort()).toEqual(["postgres", "postgrest"]);
   });
 
-  test("prefetching storage includes the companion it starts", async () => {
-    const resolver = mockBinaryResolver();
-    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
-    const layer = StackPreparation.layer.pipe(
-      Layer.provide(resolver.layer),
-      Layer.provide(spawner.layer),
-    );
+  test.each([
+    ["storage", "docker", ["imgproxy", "postgres", "storage"]],
+    ["imgproxy", "podman", ["imgproxy", "postgres", "storage"]],
+    ["vector", "docker", ["analytics", "postgres", "vector"]],
+  ] as const)(
+    "prefetching %s includes every service it can start through the graph",
+    async (service, containerRuntime, expected) => {
+      const resolver = mockBinaryResolver();
+      const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
+      const layer = StackPreparation.layer.pipe(
+        Layer.provide(resolver.layer),
+        Layer.provide(spawner.layer),
+      );
 
-    const result = await Effect.runPromise(
-      prefetch({ mode: "docker", containerRuntime: "docker", services: ["storage"] }).pipe(
-        Effect.provide(layer),
-      ),
-    );
+      const result = await Effect.runPromise(
+        prefetch({ mode: "docker", containerRuntime, services: [service] }).pipe(
+          Effect.provide(layer),
+        ),
+      );
 
-    expect(Object.keys(result).sort()).toEqual(["imgproxy", "postgres", "storage"]);
-  });
-
-  test("prefetching uses the selected container runtime without pulling an owner", async () => {
-    const resolver = mockBinaryResolver();
-    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
-    const layer = StackPreparation.layer.pipe(
-      Layer.provide(resolver.layer),
-      Layer.provide(spawner.layer),
-    );
-
-    const result = await Effect.runPromise(
-      prefetch({ mode: "docker", containerRuntime: "podman", services: ["imgproxy"] }).pipe(
-        Effect.provide(layer),
-      ),
-    );
-
-    expect(Object.keys(result)).toEqual(["imgproxy"]);
-    expect(spawner.spawned).toEqual([
-      {
-        command: "podman",
-        args: ["image", "inspect", `ghcr.io/supabase/cli/imgproxy:${DEFAULT_VERSIONS.imgproxy}`],
-      },
-    ]);
-  });
+      expect(Object.keys(result).sort()).toEqual(expected);
+      expect(spawner.spawned.every(({ command }) => command === containerRuntime)).toBe(true);
+    },
+  );
 
   test("does not prepare dependencies that are disabled in the stack", async () => {
     const resolver = mockBinaryResolver();

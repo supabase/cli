@@ -39,32 +39,28 @@ export const dockerForceRemove = (
 class CleanupPending extends Data.TaggedError("CleanupPending")<{}> {}
 
 const cleanupAutoManagedPathsWithRetry = (
-  config: ResolvedStackConfig,
+  paths: ReadonlyArray<string>,
 ): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    if (config.autoManagedPaths.length === 0) {
+    if (paths.length === 0) {
       return;
     }
 
     const fs = yield* FileSystem.FileSystem;
-    const cleanupTargets = [
-      ...config.autoManagedPaths.map((path) => ({ path, recursive: true as const })),
-      { path: `${config.postgres.dataDir}_pg_hba_docker.conf`, recursive: false as const },
-    ];
     const attempt = Effect.gen(function* () {
       yield* Effect.forEach(
-        cleanupTargets,
-        (target) =>
-          fs.remove(target.path, { recursive: target.recursive, force: true }).pipe(Effect.ignore),
+        paths,
+        (path) => fs.remove(path, { recursive: true, force: true }).pipe(Effect.ignore),
         { concurrency: 4, discard: true },
       );
       const remaining = yield* Effect.forEach(
-        cleanupTargets,
-        (target) => fs.exists(target.path).pipe(Effect.catch(() => Effect.succeed(true))),
+        paths,
+        (path) =>
+          fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false))),
         { concurrency: 4 },
       );
       if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
-    });
+    }).pipe(Effect.uninterruptible);
     yield* attempt.pipe(
       Effect.retry(
         Schedule.recurs(79).pipe(Schedule.addDelay(() => Effect.succeed(Duration.millis(250)))),
@@ -74,9 +70,8 @@ const cleanupAutoManagedPathsWithRetry = (
   });
 
 export const cleanupAutoManagedPaths = (
-  config: ResolvedStackConfig,
-): Effect.Effect<void, never, FileSystem.FileSystem> =>
-  Effect.uninterruptible(cleanupAutoManagedPathsWithRetry(config));
+  paths: ReadonlyArray<string>,
+): Effect.Effect<void, never, FileSystem.FileSystem> => cleanupAutoManagedPathsWithRetry(paths);
 
 export const cleanupLocalStackResources = (opts: {
   readonly stop: () => Effect.Effect<void>;
@@ -99,5 +94,5 @@ export const cleanupLocalStackResources = (opts: {
         opts.cleanupTargets.dockerContainerNames,
       );
     }
-    yield* Effect.uninterruptible(cleanupAutoManagedPathsWithRetry(opts.config));
+    yield* cleanupAutoManagedPathsWithRetry(opts.config.autoManagedPaths);
   });

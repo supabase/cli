@@ -61,7 +61,7 @@ describe("stack runtime selection", () => {
   it.effect("uses native mode when no container runtime is usable", () => {
     const spawner = runtimeSpawner({});
     return Effect.gen(function* () {
-      expect(yield* selectStackRuntime()).toEqual({
+      expect(yield* selectStackRuntimeForPlatform({ os: "linux", arch: "x64" })).toEqual({
         mode: "native",
         containerRuntime: null,
       });
@@ -71,7 +71,7 @@ describe("stack runtime selection", () => {
   it.effect("does not probe container runtimes when native mode is explicit", () => {
     const spawner = runtimeSpawner({ docker: true });
     return Effect.gen(function* () {
-      expect(yield* selectStackRuntime("native")).toEqual({
+      expect(yield* selectStackRuntimeForPlatform({ os: "linux", arch: "x64" }, "native")).toEqual({
         mode: "native",
         containerRuntime: null,
       });

@@ -5,14 +5,18 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { candidateCleanupTargets } from "./cleanup.ts";
+import { activationTargetsForService } from "./ServiceActivation.ts";
+import { SERVICE_NAMES } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 import { StackBuilder, validateResolvedConfig } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { STACK_ID_LABEL } from "./StackIdentity.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortCatalog.ts";
-import { StackPreparation } from "./StackPreparation.ts";
+import { preparationClosure, StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
+import { resolveConfig } from "./StackConfigResolver.ts";
 import {
   dependencyTimeoutSecondsForServices,
   POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
@@ -330,6 +334,40 @@ describe("StackBuilder", () => {
         `supabase-postgrest-${config.apiPort}`,
         `supabase-auth-${config.apiPort}`,
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("prepares every public service in each startable graph closure", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const config = yield* resolveConfig(undefined, {
+        ports: basePorts,
+        stackRoot: "/tmp/supabase-stack",
+        runtimeRoot: "/tmp/supabase-runtime",
+        runtime: { mode: "docker", containerRuntime: "docker" },
+      });
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, config);
+
+      for (const service of SERVICE_NAMES) {
+        const prepared = new Set(
+          preparationClosure(activationTargetsForService(SERVICE_NAMES, service), SERVICE_NAMES),
+        );
+        const publicGraphServices = graph
+          .startOrderFor(service)
+          .map((definition) => definition.name)
+          .filter((name): name is ServiceName =>
+            SERVICE_NAMES.some((candidate) => candidate === name),
+          );
+        const missing = publicGraphServices.filter((name) => !prepared.has(name));
+        expect(
+          missing,
+          `${service} starts public services outside its preparation closure`,
+        ).toEqual([]);
+      }
     }).pipe(Effect.provide(layer));
   });
 

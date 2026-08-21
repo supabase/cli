@@ -366,7 +366,7 @@ describe("resolveConfig state roots", () => {
       expect(existsSync(config.runtimeRoot)).toBe(true);
     } finally {
       await Effect.runPromise(
-        cleanupAutoManagedPaths(config).pipe(Effect.provide(NodeFileSystem.layer)),
+        cleanupAutoManagedPaths(config.autoManagedPaths).pipe(Effect.provide(NodeFileSystem.layer)),
       );
     }
 

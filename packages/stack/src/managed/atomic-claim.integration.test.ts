@@ -41,6 +41,24 @@ const interruptibleLinkLayer = (
     }),
   ).pipe(Layer.provide(NodeFileSystem.layer));
 
+const unsupportedLinkLayer = (code: string) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (fs) => ({
+      ...fs,
+      link: (_fromPath: string, _toPath: string) =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "Unknown",
+            module: "test",
+            method: "link",
+            description: "hard links are unavailable",
+            cause: { code },
+          }),
+        ),
+    })),
+  ).pipe(Layer.provide(NodeFileSystem.layer));
+
 describe("managed atomic claims", () => {
   it.live("concurrent claimants publish exactly one complete marker", () => {
     const target = join(makeRoot(), "identity.json");
@@ -58,33 +76,25 @@ describe("managed atomic claims", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer));
   });
 
-  it.live("reports unsupported hard-link publication as a typed failure", () => {
-    const root = makeRoot();
-    const unsupportedLayer = Layer.effect(
-      FileSystem.FileSystem,
-      Effect.map(FileSystem.FileSystem, (fs) => ({
-        ...fs,
-        link: (_fromPath: string, _toPath: string) =>
-          Effect.fail(
-            PlatformError.systemError({
-              _tag: "Unknown",
-              module: "test",
-              method: "link",
-              description: "hard links are unavailable",
-              cause: { code: "ENOTSUP" },
-            }),
-          ),
-      })),
-    ).pipe(Layer.provide(NodeFileSystem.layer));
-
+  it.live("reports unsupported hard-link publication errors as typed failures", () => {
     return Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        claimFileAtomically(join(root, "identity.json"), "content\n"),
-      );
-      expect(failure).toBeInstanceOf(AtomicClaimUnsupportedError);
-      const fs = yield* FileSystem.FileSystem;
-      expect(yield* fs.readDirectory(root)).toEqual([]);
-    }).pipe(Effect.provide(unsupportedLayer));
+      for (const code of ["ENOTSUP", "ENOSYS", "EXDEV"] as const) {
+        const root = makeRoot();
+        const unsupportedLayer = unsupportedLinkLayer(code);
+
+        const failure = yield* Effect.flip(
+          claimFileAtomically(join(root, "identity.json"), "content\n").pipe(
+            Effect.provide(unsupportedLayer),
+          ),
+        );
+        expect(failure).toBeInstanceOf(AtomicClaimUnsupportedError);
+        const entries = yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          return yield* fs.readDirectory(root);
+        }).pipe(Effect.provide(unsupportedLayer));
+        expect(entries).toEqual([]);
+      }
+    });
   });
 
   it.live("cleans interrupted publication state so a later claim can retry", () => {
