@@ -39,7 +39,6 @@ test(
     const migrationFile = `${version}_${NAME}.sql`;
     const seedDir = await mkdtemp(path.join(tmpdir(), "sb-migration-seed-live-"));
     const fetchDir = await mkdtemp(path.join(tmpdir(), "sb-migration-fetch-live-"));
-    let repaired = false;
     let targetError: unknown;
     const cleanupErrors: Array<unknown> = [];
     try {
@@ -55,7 +54,6 @@ test(
         { cwd: seedDir },
       );
       requireLiveSuccess(repairResult, "migration repair setup");
-      repaired = true;
 
       // Fetch into a fresh (empty) dir so no overwrite prompt fires; it reads the
       // remote history and writes <version>_<name>.sql.
@@ -68,16 +66,21 @@ test(
     } catch (error) {
       targetError = error;
     } finally {
-      if (repaired) {
-        try {
-          const reverted = await cli(
-            ["migration", "repair", version, "--status", "reverted", ...targetArgs],
-            { cwd: seedDir },
+      try {
+        const reverted = await cli(
+          ["migration", "repair", version, "--status", "reverted", ...targetArgs],
+          { cwd: seedDir },
+        );
+        if (
+          reverted.exitCode !== 0 &&
+          !/not found|does not exist/i.test(`${reverted.stdout}\n${reverted.stderr}`)
+        ) {
+          cleanupErrors.push(
+            new Error(`migration repair cleanup failed:\n${reverted.stdout}\n${reverted.stderr}`),
           );
-          requireLiveSuccess(reverted, "migration repair cleanup");
-        } catch (error) {
-          cleanupErrors.push(error);
         }
+      } catch (error) {
+        cleanupErrors.push(error);
       }
       await rm(seedDir, { recursive: true, force: true }).catch((error) =>
         cleanupErrors.push(error),

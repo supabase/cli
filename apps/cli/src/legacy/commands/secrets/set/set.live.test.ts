@@ -9,7 +9,10 @@ async function unsetSecret(
   ref: string,
 ): Promise<void> {
   const cleanup = await cli(["secrets", "unset", name, "--project-ref", ref, "--yes"]);
-  if (cleanup.exitCode !== 0) {
+  if (
+    cleanup.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${cleanup.stdout}\n${cleanup.stderr}`)
+  ) {
     throw new Error(`secrets unset cleanup failed:\n${cleanup.stdout}\n${cleanup.stderr}`);
   }
 }

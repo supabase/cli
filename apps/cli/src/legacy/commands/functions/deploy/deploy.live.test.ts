@@ -4,12 +4,21 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { describe } from "vitest";
 
-import {
-  expectFunctionOk,
-  requireLiveSuccess,
-  test,
-  throwWithCleanup,
-} from "../../../../../tests/helpers/live.ts";
+import { expectFunctionOk, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
+
+async function cleanupFunction(
+  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
+  slug: string,
+  ref: string,
+): Promise<void> {
+  const deleted = await cli(["functions", "delete", slug, "--project-ref", ref]);
+  if (
+    deleted.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
+  ) {
+    throw new Error(`functions delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`);
+  }
+}
 
 describe("functions deploy (live)", () => {
   test("deploys a function that responds over HTTP", async ({
@@ -27,26 +36,21 @@ describe("functions deploy (live)", () => {
     );
     await writeFile(join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 
-    let deployed = false;
     let targetError: unknown;
     let cleanupError: unknown;
     try {
       const result = await cli(["functions", "deploy", "--project-ref", project.ref]);
       expect(result.exitCode, result.stderr).toBe(0);
-      deployed = true;
       expect(result.stdout).toMatch(/Deployed Function/i);
 
       expectFunctionOk(await invoke(slug), slug);
     } catch (error) {
       targetError = error;
     } finally {
-      if (deployed) {
-        try {
-          const deleted = await cli(["functions", "delete", slug, "--project-ref", project.ref]);
-          requireLiveSuccess(deleted, "functions delete cleanup");
-        } catch (error) {
-          cleanupError = error;
-        }
+      try {
+        await cleanupFunction(cli, slug, project.ref);
+      } catch (error) {
+        cleanupError = error;
       }
     }
     throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);

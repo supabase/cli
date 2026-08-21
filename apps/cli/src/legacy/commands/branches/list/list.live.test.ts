@@ -5,12 +5,12 @@ import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests
 
 test("lists a preview branch for the project", async ({ cli, project }) => {
   const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
-  const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
-  requireLiveSuccess(created, "branches create setup");
-
   let targetError: unknown;
   let cleanupError: unknown;
   try {
+    const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
+    requireLiveSuccess(created, "branches create setup");
+
     const result = await cli([
       "branches",
       "list",
@@ -34,7 +34,14 @@ test("lists a preview branch for the project", async ({ cli, project }) => {
         project.ref,
         "--yes",
       ]);
-      requireLiveSuccess(deleted, "branches delete cleanup");
+      if (
+        deleted.exitCode !== 0 &&
+        !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
+      ) {
+        cleanupError = new Error(
+          `branches delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`,
+        );
+      }
     } catch (error) {
       cleanupError = error;
     }

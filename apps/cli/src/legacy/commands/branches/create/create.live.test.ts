@@ -24,7 +24,10 @@ async function cleanupBranch(
   if (!exists) return;
 
   const deleted = await cli(["branches", "delete", name, "--project-ref", ref, "--yes"]);
-  if (deleted.exitCode !== 0 && !/not found/i.test(`${deleted.stdout}\n${deleted.stderr}`)) {
+  if (
+    deleted.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
+  ) {
     throw new Error(
       `branches delete cleanup failed (exit ${deleted.exitCode})\n${deleted.stdout}\n${deleted.stderr}`,
     );

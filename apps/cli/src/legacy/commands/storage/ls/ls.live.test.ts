@@ -12,7 +12,10 @@ async function removeObject(
   remote: string,
 ): Promise<void> {
   const removed = await cli(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
-  if (removed.exitCode !== 0) {
+  if (
+    removed.exitCode !== 0 &&
+    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
+  ) {
     throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
   }
 }
@@ -23,16 +26,16 @@ test("lists an uploaded object", async ({ cli, project, workspace }) => {
   const remote = `ss:///${project.storageBucket}/upload-${suffix}.txt`;
   await writeFile(local, "live-e2e storage payload\n");
 
-  const linked = await cli(["link", "--project-ref", project.ref], {
-    env: { SUPABASE_DB_PASSWORD: project.dbPassword },
-  });
-  requireLiveSuccess(linked, "link setup for storage ls");
-  const uploaded = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
-  requireLiveSuccess(uploaded, "storage cp setup for storage ls");
-
   let targetError: unknown;
   let cleanupError: unknown;
   try {
+    const linked = await cli(["link", "--project-ref", project.ref], {
+      env: { SUPABASE_DB_PASSWORD: project.dbPassword },
+    });
+    requireLiveSuccess(linked, "link setup for storage ls");
+    const uploaded = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+    requireLiveSuccess(uploaded, "storage cp setup for storage ls");
+
     const result = await cli([
       "storage",
       "ls",
