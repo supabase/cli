@@ -140,23 +140,16 @@ export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
 }
 
 /**
- * The structured result shared by `--output-format json|stream-json` and the
- * Go-compat `-o` encodings. `includeNullValues: false` drops `null`-valued
- * keys instead of emitting them — TOML cannot represent null, and the env
- * flattening renders it uselessly; `class` still disambiguates which side is
- * absent.
+ * The structured result for `--output-format json|stream-json`. Unset sides
+ * are explicit `null`s, distinguishable from empty values.
  */
 export function legacyConfigDiffPayload(
   changeSet: ConfigChangeSet,
   context: LegacyConfigDiffContext,
-  options: { readonly includeNullValues: boolean },
 ): Record<string, unknown> {
-  const valueEntry = (key: string, value: unknown): Record<string, unknown> => {
-    if (value !== undefined) {
-      return { [key]: value };
-    }
-    return options.includeNullValues ? { [key]: null } : {};
-  };
+  const valueEntry = (key: string, value: unknown): Record<string, unknown> => ({
+    [key]: value === undefined ? null : value,
+  });
 
   const { update, remote_only, local_only } = changeSet.counts;
   return {

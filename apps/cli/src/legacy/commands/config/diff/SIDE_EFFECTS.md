@@ -54,6 +54,7 @@ All Bearer-authenticated, all read-only.
 | ---- | ------------------------------------------------------------------------------ |
 | `0`  | success — including when differences are found, unless `--exit-code` is passed |
 | `1`  | `--exit-code` passed and at least one difference found                         |
+| `1`  | the Go-compat `-o/--output` global flag passed (any value — unsupported here)  |
 | `1`  | missing or malformed `supabase/config.toml`                                    |
 | `1`  | `--target` and `--project-ref` passed together                                 |
 | `1`  | unknown branch (`--target` 404)                                                |
@@ -84,12 +85,13 @@ the file sets masked secrets.
 `env_variable`; unset sides are `null`), `masked[]`, and `counts`
 (per class + `total`).
 
-### `-o json|yaml|toml|env` (Go-compat)
+### `-o/--output` (Go-compat global flag)
 
-The same payload through the shared Go-compatible map encoders. TOML and env
-drop `null`-valued keys (TOML cannot represent null); `class` still
-disambiguates which side is absent. `-o pretty` (or unset) falls through to
-the `--output-format` behavior above.
+**Not supported.** Any `-o` value — the machine formats and `pretty` alike —
+fails fast (before target resolution or any network call) with
+`the -o/--output flag is not supported by config diff; use --output-format
+json|stream-json instead.` This is a net-new TS command with no Go parity
+contract (CLI-2156 ticket discussion).
 
 ## Notes
 

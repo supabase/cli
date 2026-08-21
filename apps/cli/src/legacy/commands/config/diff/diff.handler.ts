@@ -18,12 +18,6 @@ import {
   mapLegacyHttpError,
 } from "../../../shared/legacy-http-errors.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
-import {
   legacyConfigDiffComparisonLine,
   legacyConfigDiffEnvReferences,
   legacyConfigDiffPayload,
@@ -38,6 +32,7 @@ import {
   LegacyConfigDiffBranchResolveStatusError,
   LegacyConfigDiffFlagConflictError,
   LegacyConfigDiffLoadConfigError,
+  LegacyConfigDiffOutputFlagUnsupportedError,
   LegacyConfigDiffReadNetworkError,
   LegacyConfigDiffReadStatusError,
 } from "./diff.errors.ts";
@@ -63,6 +58,17 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const processControl = yield* ProcessControl;
   const goOutputFlag = yield* LegacyOutputFlag;
+
+  // Net-new TS command with no Go parity contract: the Go-compat `-o/--output`
+  // flag is rejected outright (every value, `pretty` included) rather than
+  // honored — machine output goes through `--output-format` only (CLI-2156,
+  // per Colum). Checked first so no target resolution or network call runs.
+  if (Option.isSome(goOutputFlag)) {
+    return yield* new LegacyConfigDiffOutputFlagUnsupportedError({
+      message:
+        "the -o/--output flag is not supported by config diff; use --output-format json|stream-json instead.",
+    });
+  }
 
   if (Option.isSome(flags.target) && Option.isSome(flags.projectRef)) {
     return yield* new LegacyConfigDiffFlagConflictError({
@@ -170,23 +176,12 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
 
     yield* output.raw(legacyConfigDiffScopeLine(changeSet.scope), "stderr");
 
-    // 4. Emit. Go-compat `-o` first, then `--output-format`, then text.
-    const goFormat = Option.getOrUndefined(goOutputFlag);
-    const machinePayload = (includeNullValues: boolean) =>
-      legacyConfigDiffPayload(changeSet, context, { includeNullValues });
-    if (goFormat === "json") {
-      yield* output.raw(encodeGoJson(machinePayload(true)));
-    } else if (goFormat === "yaml") {
-      yield* output.raw(encodeYaml(machinePayload(true)));
-    } else if (goFormat === "toml") {
-      yield* output.raw(encodeToml(machinePayload(false)));
-    } else if (goFormat === "env") {
-      yield* output.raw(`${encodeEnv(machinePayload(false))}\n`);
-    } else if (output.format !== "text") {
+    // 4. Emit: `--output-format json|stream-json` structured payload, or text.
+    if (output.format !== "text") {
       const total = changeSet.changes.length;
       const message =
         total === 0 ? "No config differences found." : `${total} config difference(s) found.`;
-      yield* output.success(message, machinePayload(true));
+      yield* output.success(message, legacyConfigDiffPayload(changeSet, context));
     } else {
       yield* output.raw(legacyRenderConfigDiffText(changeSet));
     }

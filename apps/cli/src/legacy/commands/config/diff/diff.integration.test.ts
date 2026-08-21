@@ -526,56 +526,27 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("-o json wins over --output-format and emits the payload on stdout", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      format: "json",
-      goOutput: "json",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
-      const parsed: unknown = JSON.parse(out.stdoutText);
-      expect(parsed).toMatchObject({
-        counts: { total: 1 },
-        changes: [{ path: "api.max_rows", class: "update", local: 500, remote: 1000 }],
-      });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("-o yaml, -o toml, and -o env each encode the payload", () => {
-    const run = (goOutput: "yaml" | "toml" | "env") => {
-      const { layer, out } = setup({
+  it.live("the Go-compat -o flag is rejected outright before any work happens", () => {
+    // Net-new TS command, no Go parity: every `-o` value is rejected — the
+    // machine formats and `pretty` alike (CLI-2156, per Colum).
+    const run = (goOutput: "json" | "pretty") => {
+      const { layer, api } = setup({
         toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
         goOutput,
       });
       return Effect.gen(function* () {
-        yield* legacyConfigDiff(noFlags);
-        return out.stdoutText;
+        const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const rendered = JSON.stringify(exit);
+        expect(rendered).toContain("LegacyConfigDiffOutputFlagUnsupportedError");
+        expect(rendered).toContain("use --output-format json|stream-json instead");
+        expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     };
     return Effect.gen(function* () {
-      const yaml = yield* run("yaml");
-      expect(yaml).toContain("api.max_rows");
-      expect(yaml).toContain("class: update");
-      const toml = yield* run("toml");
-      expect(toml).toContain("api.max_rows");
-      // TOML cannot represent null — unset sides are dropped, not nulled.
-      expect(toml).not.toContain("null");
-      const env = yield* run("env");
-      expect(env).toContain("COUNTS_TOTAL=1");
+      yield* run("json");
+      yield* run("pretty");
     });
-  });
-
-  it.live("-o pretty falls through to the text rendering", () => {
-    const { layer, out } = setup({
-      toml: 'project_id = "test"\n[api]\nmax_rows = 500\n',
-      goOutput: "pretty",
-    });
-    return Effect.gen(function* () {
-      yield* legacyConfigDiff(noFlags);
-      expect(out.stdoutText).toContain("api.max_rows [update]");
-    }).pipe(Effect.provide(layer));
   });
 
   it.live("a fetch failure in json mode still maps cleanly without a spinner", () => {
