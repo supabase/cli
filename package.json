@@ -20,8 +20,6 @@
   },
   "packageManager": "pnpm@11.4.0",
   "devDependencies": {
-    "@swc-node/register": "catalog:",
-    "@swc/core": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

@@ -164,6 +164,6 @@ export const createNodesV2: CreateNodesV2 = [
 
 ## How TypeScript plugins are loaded
 
-With Node 24 and Nx 23.1, Nx loads ESM `.ts` plugins using Node's native TypeScript type-stripping. Keep plugins strip-safe (no syntax that requires a transform) and use explicit `.ts` extensions on relative imports. `@swc-node/register` remains Nx's peer/fallback loader, but it is not used by the current plugin graph.
+With Node 24 and Nx 23.1, Nx loads ESM `.ts` plugins using Node's native TypeScript type-stripping. This is the sole supported plugin loader path. Keep plugins strip-safe (no syntax that requires a transform) and use explicit `.ts` extensions on relative imports.
 
 TypeScript 7 is the workspace's sole TypeScript dependency. Inferred type checks invoke its `tsc` executable directly.
