@@ -8,7 +8,10 @@ import {
   cleanupErrors,
   isTransientLiveError,
   isTransientStorageStatus,
+  resolvePoolerDatabaseUrl,
   retryLiveEffect,
+  selectPrimaryPoolerConfig,
+  type PoolerConfig,
 } from "./live-project.ts";
 
 function statusError(status: number): HttpClientError.HttpClientError {
@@ -17,6 +20,24 @@ function statusError(status: number): HttpClientError.HttpClientError {
   return new HttpClientError.HttpClientError({
     reason: new HttpClientError.StatusCodeError({ request, response }),
   });
+}
+
+function poolerConfig(overrides: Partial<PoolerConfig> = {}): PoolerConfig {
+  return {
+    identifier: "primary",
+    database_type: "PRIMARY",
+    is_using_scram_auth: false,
+    db_user: "postgres",
+    db_host: "pooler.example.com",
+    db_port: 6543,
+    db_name: "postgres",
+    connection_string: "postgresql://postgres.ref:[YOUR-PASSWORD]@pooler.example.com:6543/postgres",
+    connectionString: "",
+    default_pool_size: null,
+    max_client_conn: null,
+    pool_mode: "transaction",
+    ...overrides,
+  };
 }
 
 describe("live project lifecycle", () => {
@@ -115,5 +136,40 @@ describe("live project lifecycle", () => {
     expect(isTransientStorageStatus(401)).toBe(false);
     expect(isTransientStorageStatus(403)).toBe(false);
     expect(isTransientStorageStatus(422)).toBe(false);
+  });
+
+  it("selects the primary pooler config", () => {
+    const replica = poolerConfig({ identifier: "replica", database_type: "READ_REPLICA" });
+    const primary = poolerConfig();
+
+    expect(selectPrimaryPoolerConfig([replica, primary])).toBe(primary);
+  });
+
+  it("translates transaction pooler port and encodes the password", () => {
+    const resolved = new URL(
+      resolvePoolerDatabaseUrl(
+        "postgresql://postgres.ref:[YOUR-PASSWORD]@pooler.example.com:6543/postgres",
+        "transaction",
+        "p@ss word",
+      ),
+    );
+
+    expect(resolved.hostname).toBe("pooler.example.com");
+    expect(resolved.port).toBe("5432");
+    expect(decodeURIComponent(resolved.password)).toBe("p@ss word");
+    expect(resolved.searchParams.get("connect_timeout")).toBe("30");
+  });
+
+  it("preserves the API port and timeout for session pooler mode", () => {
+    const resolved = new URL(
+      resolvePoolerDatabaseUrl(
+        "postgresql://postgres.ref:[YOUR-PASSWORD]@pooler.example.com:6543/postgres?connect_timeout=7",
+        "session",
+        "secret",
+      ),
+    );
+
+    expect(resolved.port).toBe("6543");
+    expect(resolved.searchParams.get("connect_timeout")).toBe("7");
   });
 });

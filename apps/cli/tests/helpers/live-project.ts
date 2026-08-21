@@ -25,6 +25,7 @@ const POLL_TIMEOUT = "5 minutes";
 type Project = OperationOutput<"v1GetProject">;
 type Organization = OperationOutput<"v1ListAllOrganizations">[number];
 type ApiKey = OperationOutput<"v1GetProjectApiKeys">[number];
+export type PoolerConfig = OperationOutput<"v1GetPoolerConfig">[number];
 type LiveApi = Effect.Success<ReturnType<typeof makeApiClient>>;
 type Region =
   | "us-east-1"
@@ -115,6 +116,24 @@ export function isTransientLiveError(error: unknown): boolean {
     error.reason._tag === "StatusCodeError" &&
     isTransientStorageStatus(error.reason.response.status)
   );
+}
+
+export function selectPrimaryPoolerConfig(
+  configs: ReadonlyArray<PoolerConfig>,
+): PoolerConfig | undefined {
+  return configs.find((config) => config.database_type === "PRIMARY");
+}
+
+export function resolvePoolerDatabaseUrl(
+  connectionString: string,
+  poolMode: PoolerConfig["pool_mode"],
+  password: string,
+): string {
+  const url = new URL(connectionString);
+  url.password = password;
+  if (poolMode !== "session" && url.port === "6543") url.port = "5432";
+  if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
+  return url.toString();
 }
 
 function classifyPollError(phase: string, cause: unknown): LiveTransientPoll | LiveTerminalPoll {
@@ -317,35 +336,39 @@ function dbReadiness(
   ref: string,
   password: string,
 ): Effect.Effect<string, LiveTransientPoll | LiveTerminalPoll, never> {
-  return api.v1.getProjectPgbouncerConfig({ ref }).pipe(
+  return api.v1.getPoolerConfig({ ref }).pipe(
     Effect.mapError((cause): LiveTransientPoll | LiveTerminalPoll =>
       classifyPollError("pooler configuration", cause),
     ),
-    Effect.flatMap((config): Effect.Effect<string, LiveTransientPoll | LiveTerminalPoll, never> => {
-      if (config.connection_string === undefined) {
-        return Effect.fail(
-          new LiveTransientPoll({
-            phase: "pooler configuration",
-            cause: "connection string missing",
-          }),
-        );
-      }
-      try {
-        const url = new URL(config.connection_string);
-        url.password = password;
-        url.port = "5432";
-        if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
-        return Effect.succeed(url.toString());
-      } catch (cause) {
-        return Effect.fail(
-          new LiveTerminalPoll({
-            phase: "pooler configuration",
-            message: `pooler configuration returned an invalid connection string: ${apiError(cause).message}`,
-            cause,
-          }),
-        );
-      }
-    }),
+    Effect.flatMap(
+      (configs): Effect.Effect<string, LiveTransientPoll | LiveTerminalPoll, never> => {
+        const primary = selectPrimaryPoolerConfig(configs);
+        if (primary === undefined || primary.connection_string.trim().length === 0) {
+          return Effect.fail(
+            new LiveTransientPoll({
+              phase: "pooler configuration",
+              cause:
+                primary === undefined
+                  ? "primary pooler config missing"
+                  : "connection string missing",
+            }),
+          );
+        }
+        try {
+          return Effect.succeed(
+            resolvePoolerDatabaseUrl(primary.connection_string, primary.pool_mode, password),
+          );
+        } catch (cause) {
+          return Effect.fail(
+            new LiveTerminalPoll({
+              phase: "pooler configuration",
+              message: `pooler configuration returned an invalid connection string: ${apiError(cause).message}`,
+              cause,
+            }),
+          );
+        }
+      },
+    ),
   );
 }
 
