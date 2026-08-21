@@ -245,7 +245,7 @@ const spawnChild = (
       };
       const onExit = (code: number | null) => {
         cleanup();
-        reject(new Error(`supervisor exited before ${stage} stage (${String(code)})`));
+        reject(new Error(`supervisor exited before ${stage} stage (${String(code)})\n${stderr}`));
       };
       child.on("message", onMessage);
       child.once("error", onError);

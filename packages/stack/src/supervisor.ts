@@ -440,7 +440,7 @@ const runManaged = (
                   ),
             ),
             Effect.catch((error) =>
-              error instanceof ControlTransportError && error.reason === "unreachable"
+              error instanceof ControlTransportError
                 ? Effect.fail(new SupervisorOwnerReacquirePending())
                 : Effect.fail(error),
             ),
@@ -468,9 +468,7 @@ const runManaged = (
           ),
           Effect.as(initialAcquisition),
           Effect.catch((error) =>
-            error instanceof ControlTransportError && error.reason === "unreachable"
-              ? reacquireAfterDeath()
-              : Effect.fail(error),
+            error instanceof ControlTransportError ? reacquireAfterDeath() : Effect.fail(error),
           ),
         )
       : Effect.succeed(initialAcquisition);
