@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Option, Queue, Stdio, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Layer, Option, Queue, Stdio, Stream } from "effect";
+import { TestClock } from "effect/testing";
 
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { Stdin } from "./stdin.service.ts";
@@ -101,11 +102,13 @@ describe("stdinLayer readLine", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("times out to None on a TTY when the user does not answer in time", () => {
+  it.effect("times out to None on a TTY when the user does not answer in time", () => {
     const layer = withStdin(Stream.never, true);
     return Effect.gen(function* () {
       const stdin = yield* Stdin;
-      expect(yield* stdin.readLine(100)).toStrictEqual(Option.none());
+      const reading = yield* Effect.forkChild(stdin.readLine(100));
+      yield* TestClock.adjust(Duration.millis(100));
+      expect(yield* Fiber.join(reading)).toStrictEqual(Option.none());
     }).pipe(Effect.provide(layer));
   });
 });
