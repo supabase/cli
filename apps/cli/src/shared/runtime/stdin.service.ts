@@ -27,6 +27,10 @@ interface StdinShape {
    * keyboard. Returns `None` on timeout, EOF, or a read error (Go treats all of these
    * as no input). Unlike {@link readPipedText} (a whole-stream collect), this reads
    * line by line, so it works for an interactive terminal as well as a pipe.
+   *
+   * On a PIPE lines are read ahead into a bounded buffer rather than on demand, so only
+   * the first N piped lines are answerable and anything past them is dropped. See
+   * `stdin.layer.ts` for N and for why reading ahead is required at all.
    */
   readonly readLine: (timeoutMillis: number) => Effect.Effect<Option.Option<string>>;
 }
