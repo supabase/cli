@@ -12,8 +12,9 @@
  * - `SUPABASE_PROFILE` — selects the API base URL; defaults to `supabase-local`
  *   (→ `http://localhost:8080`, `project_host: supabase.red`). Note the cli does
  *   NOT honor `SUPABASE_API_URL` (Go parity) — the profile is the override.
- * - `SUPABASE_LIVE_API_URL` — base URL the readiness check probes; defaults to
- *   `http://localhost:8080`.
+ * - `SUPABASE_LIVE_API_URL` — base URL the readiness check probes; attached
+ *   mode defaults to `http://localhost:8080`, managed staging defaults to
+ *   `https://api.supabase.green`.
  * - `SUPABASE_LIVE_PROJECT_REF` — a provisioned project; gates project-scoped
  *   suites (functions, branches, db, storage).
  * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
@@ -22,6 +23,33 @@
 
 /** Default profile for the host runner: api_url → localhost:8080, project_host → supabase.red. */
 export const LIVE_DEFAULT_PROFILE = "supabase-local";
+
+export type LiveMode = "attached" | "managed";
+
+/**
+ * Selects how the run-scoped live environment is obtained.
+ *
+ * The default is deliberately attached: a token in a developer's environment
+ * must never cause the test suite to create or delete a project. Managed mode
+ * is an explicit opt-in for staging runs and is selected with
+ * `SUPABASE_LIVE_MODE=managed`.
+ */
+export function liveMode(): LiveMode {
+  const value = process.env["SUPABASE_LIVE_MODE"];
+  if (value === undefined || value === "" || value === "attached") {
+    return "attached";
+  }
+  if (value === "managed") {
+    return "managed";
+  }
+  throw new Error(
+    `Unsupported SUPABASE_LIVE_MODE ${JSON.stringify(value)}; expected "attached" or "managed"`,
+  );
+}
+
+export function isManagedLive(): boolean {
+  return liveMode() === "managed";
+}
 
 /**
  * Default subprocess exit timeout for live runs. `runSupabase` otherwise caps at
@@ -33,7 +61,41 @@ export const LIVE_EXIT_TIMEOUT_MS = 240_000;
 
 /** Management API base URL probed by the live readiness check. */
 export function liveApiBaseUrl(): string {
-  return process.env["SUPABASE_LIVE_API_URL"] ?? "http://localhost:8080";
+  return (
+    process.env["SUPABASE_LIVE_API_URL"] ??
+    (isManagedLive() ? "https://api.supabase.green" : "http://localhost:8080")
+  );
+}
+
+/** Profile used by the CLI subprocess. Attached runs preserve the historical
+ * local Supabox default; managed staging runs use the built-in staging profile
+ * unless the caller explicitly selected another profile. */
+export function liveProfile(): string {
+  return (
+    process.env["SUPABASE_PROFILE"] ?? (isManagedLive() ? "supabase-staging" : LIVE_DEFAULT_PROFILE)
+  );
+}
+
+/** Host used for project-scoped endpoints such as Edge Functions and Storage. */
+export function liveProjectHost(): string {
+  if (process.env["SUPABASE_LIVE_PROJECT_HOST"] !== undefined) {
+    return process.env["SUPABASE_LIVE_PROJECT_HOST"]!;
+  }
+
+  switch (liveProfile()) {
+    case "supabase":
+      return "supabase.co";
+    case "supabase-staging":
+    case "supabase-local":
+      return "supabase.red";
+    default:
+      return "supabase.red";
+  }
+}
+
+/** Keep an explicitly managed project alive for debugging instead of deleting it. */
+export function keepLiveProject(): boolean {
+  return process.env["SUPABASE_LIVE_KEEP_PROJECT"] === "1";
 }
 
 /**

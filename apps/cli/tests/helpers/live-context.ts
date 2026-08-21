@@ -1,0 +1,178 @@
+import { mkdtempSync, readFileSync, rmSync, cpSync, appendFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { inject, test } from "vitest";
+
+import { makeTempHome } from "./cli.ts";
+import { runSupabaseLive } from "./live.ts";
+import { isLiveConfigured, liveProjectRef } from "./live-env.ts";
+
+type RunOptions = NonNullable<Parameters<typeof runSupabaseLive>[1]>;
+type RunResult = Awaited<ReturnType<typeof runSupabaseLive>>;
+type TempHome = ReturnType<typeof makeTempHome>;
+
+export interface LiveWorkspace {
+  readonly path: string;
+}
+
+export interface InvokeResult {
+  readonly status: number;
+  readonly body: unknown;
+  readonly text: string;
+}
+
+export interface LiveFixtures {
+  readonly projectRef: string;
+  readonly anonKey: string;
+  readonly functionsUrl: string;
+  readonly dbUrl: string;
+  readonly dbPassword: string;
+  readonly storageBucket: string;
+  readonly home: TempHome;
+  readonly workspace: LiveWorkspace;
+  readonly run: (args: string[], options?: RunOptions) => Promise<RunResult>;
+  readonly invoke: (
+    slug: string,
+    options?: { anonKey?: string; payload?: unknown },
+  ) => Promise<InvokeResult>;
+}
+
+const base = test.extend<LiveFixtures>({
+  // eslint-disable-next-line no-empty-pattern
+  projectRef: async ({}, use) => {
+    await use(inject("projectRef"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  anonKey: async ({}, use) => {
+    await use(inject("anonKey"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  functionsUrl: async ({}, use) => {
+    await use(inject("functionsUrl"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  dbUrl: async ({}, use) => {
+    await use(inject("dbUrl"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  dbPassword: async ({}, use) => {
+    await use(inject("dbPassword"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  storageBucket: async ({}, use) => {
+    await use(inject("storageBucket"));
+  },
+
+  home: async (_fixtures, use) => {
+    const home = makeTempHome();
+    try {
+      await use(home);
+    } finally {
+      home[Symbol.dispose]();
+    }
+  },
+
+  workspace: async ({ task, home }, use) => {
+    const suffix = task.name.replace(/[^a-z0-9-]+/giu, "-").slice(0, 40);
+    const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
+    try {
+      const initialized = await runSupabaseLive(["init"], {
+        cwd: directory,
+        home: home.dir,
+      });
+      if (initialized.exitCode !== 0) {
+        throw new Error(
+          `supabase init failed (exit ${initialized.exitCode})\n${initialized.stderr || initialized.stdout}`,
+        );
+      }
+      await use({ path: directory });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+
+  run: async ({ workspace, home }, use) => {
+    await use((args, options) =>
+      runSupabaseLive(args, {
+        ...options,
+        cwd: options?.cwd ?? workspace.path,
+        // A test may use a subdirectory as cwd, but must share this HOME so
+        // setup/command/teardown observe the same link and config state.
+        home: home.dir,
+      }),
+    );
+  },
+
+  invoke: async ({ functionsUrl, anonKey }, use) => {
+    await use(async (slug, options) => {
+      const key = options?.anonKey ?? anonKey;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (key.length > 0) {
+        headers["Authorization"] = `Bearer ${key}`;
+        headers["apikey"] = key;
+      }
+      const response = await fetch(`${functionsUrl}/${slug}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(options?.payload ?? {}),
+      });
+      const text = await response.text();
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = text;
+      }
+      return { status: response.status, body, text };
+    });
+  },
+});
+
+/** Live subprocess fixture. The global setup owns the shared platform project;
+ * this fixture owns only one isolated workspace and HOME per test. */
+export const testLive = base.skipIf(!isLiveConfigured());
+
+/** Fixture for scenarios that require a project ref from managed or attached setup. */
+export const testLiveProject = base.skipIf(!isLiveConfigured() || !liveProjectRef());
+
+/** Layer deploy-e2e function fixtures onto the generated workspace config. */
+export function seedFunctions(
+  workspacePath: string,
+  sourceDirectory: string,
+  configSnippet: string,
+): void {
+  const supabaseDirectory = path.join(workspacePath, "supabase");
+  cpSync(sourceDirectory, supabaseDirectory, { recursive: true });
+  appendFileSync(
+    path.join(supabaseDirectory, "config.toml"),
+    `\n${readFileSync(configSnippet, "utf8")}`,
+  );
+}
+
+export function expectFunctionOk(
+  result: InvokeResult,
+  slug: string,
+  extra?: Record<string, unknown>,
+): void {
+  if (result.status !== 200) {
+    throw new Error(
+      `Expected function ${slug} to return 200, got ${result.status}: ${result.text}`,
+    );
+  }
+  if (typeof result.body !== "object" || result.body === null) {
+    throw new Error(`Expected function ${slug} to return JSON: ${result.text}`);
+  }
+  const body = result.body as Record<string, unknown>;
+  if (body.case !== slug || body.ok !== true) {
+    throw new Error(`Unexpected response from ${slug}: ${result.text}`);
+  }
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (body[key] !== value) throw new Error(`Unexpected ${key} from ${slug}: ${result.text}`);
+  }
+}

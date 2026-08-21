@@ -4,9 +4,9 @@ import { describe } from "vitest";
 import { runSupabase } from "./cli.ts";
 import {
   isLiveConfigured,
-  LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
   liveProjectDataPlaneReady,
+  liveProfile,
   liveProjectRef,
 } from "./live-env.ts";
 
@@ -28,8 +28,14 @@ export {
   LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
   liveApiBaseUrl,
+  isManagedLive,
+  keepLiveProject,
   liveProjectDataPlaneReady,
+  liveMode,
+  liveProfile,
+  liveProjectHost,
   liveProjectRef,
+  type LiveMode,
   requireLiveProjectRef,
 } from "./live-env.ts";
 
@@ -93,7 +99,7 @@ export function runSupabaseLive(
     ...options,
     exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
     env: {
-      SUPABASE_PROFILE: process.env["SUPABASE_PROFILE"] ?? LIVE_DEFAULT_PROFILE,
+      SUPABASE_PROFILE: liveProfile(),
       ...options?.env,
     },
   });
