@@ -50,6 +50,7 @@ interface ChildHandle {
   readonly child: ChildProcess;
   readonly started: Promise<SupervisorStartedMessage>;
   readonly attachedBeforeReady: Promise<void>;
+  readonly managedStarted: Promise<void>;
 }
 
 const workspace = async (): Promise<{
@@ -256,41 +257,45 @@ const spawnChild = (
     child.once("error", onError);
     child.once("exit", onExit);
   });
-  const attachedBeforeReady = new Promise<void>((resolve, reject) => {
-    const onMessage = (value: unknown) => {
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        "type" in value &&
-        value.type === "test-stage" &&
-        "stage" in value &&
-        value.stage === "attached-before-ready"
-      ) {
+  const waitForStage = (stage: "attached-before-ready" | "managed-started") =>
+    new Promise<void>((resolve, reject) => {
+      const onMessage = (value: unknown) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "type" in value &&
+          value.type === "test-stage" &&
+          "stage" in value &&
+          value.stage === stage
+        ) {
+          cleanup();
+          resolve();
+        }
+      };
+      const cleanup = () => {
+        child.off("message", onMessage);
+        child.off("error", onError);
+        child.off("exit", onExit);
+      };
+      const onError = (cause: Error) => {
         cleanup();
-        resolve();
-      }
-    };
-    const cleanup = () => {
-      child.off("message", onMessage);
-      child.off("error", onError);
-      child.off("exit", onExit);
-    };
-    const onError = (cause: Error) => {
-      cleanup();
-      reject(cause);
-    };
-    const onExit = (code: number | null) => {
-      cleanup();
-      reject(new Error(`supervisor exited before attach wait stage (${String(code)})`));
-    };
-    child.on("message", onMessage);
-    child.once("error", onError);
-    child.once("exit", onExit);
-  });
+        reject(cause);
+      };
+      const onExit = (code: number | null) => {
+        cleanup();
+        reject(new Error(`supervisor exited before ${stage} stage (${String(code)})`));
+      };
+      child.on("message", onMessage);
+      child.once("error", onError);
+      child.once("exit", onExit);
+    });
+  const attachedBeforeReady = waitForStage("attached-before-ready");
+  const managedStarted = waitForStage("managed-started");
   void started.catch(() => undefined);
   void attachedBeforeReady.catch(() => undefined);
+  void managedStarted.catch(() => undefined);
   child.send(input);
-  return { child, started, attachedBeforeReady };
+  return { child, started, attachedBeforeReady, managedStarted };
 };
 
 const kill = (child: ChildProcess): Promise<void> =>
@@ -386,24 +391,21 @@ const bindFakeOwner = async (
   endpoint: ControlEndpoint,
   makeServer: () => ReturnType<typeof createHttpServer>,
 ): Promise<ReturnType<typeof createHttpServer>> => {
-  const deadline = Date.now() + 10_000;
-  do {
-    const server = makeServer();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  } while (Date.now() < deadline);
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+  const server = makeServer();
+  await new Promise<void>((resolve, reject) => {
+    const onError = (cause: Error) => {
+      server.off("listening", onListening);
+      reject(new Error(`unable to bind fake owner at ${endpoint.url}: ${cause.message}`));
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(endpoint.port, endpoint.hostname);
+  });
+  return server;
 };
 
 const listenStartingOwner = (
@@ -787,21 +789,17 @@ describe("detached supervisor child journeys", () => {
 
   test("publishes stopping before a slow owner shutdown can finish", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
       void fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      let stopping = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          stopping = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(stopping).toBe(true);
+      await waitForFile(stopBegan);
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);
@@ -810,7 +808,12 @@ describe("detached supervisor child journeys", () => {
 
   test("Bun routes a ready-owner stop through the daemon shutdown transaction", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop", platform: "bun" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      platform: "bun",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       let responseSettled = false;
@@ -823,13 +826,7 @@ describe("detached supervisor child journeys", () => {
           responseSettled = true;
           return undefined;
         });
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
       expect(responseSettled).toBe(false);
       await kill(child.child);
@@ -843,22 +840,20 @@ describe("detached supervisor child journeys", () => {
   test("starts after an owner finishes stopping", async () => {
     const roots = await workspace();
     const releaseFile = join(roots.root, "release-stop");
+    const stopBegan = join(roots.root, "stop-began");
     const input = messageFor(roots);
     const owner = spawnChild(input, {
       testMode: "hold-stop",
-      environment: { SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile },
+      environment: {
+        SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile,
+        SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan,
+      },
     });
     let contender: ChildHandle | undefined;
     try {
       const started = await owner.started;
       const stop = fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
 
       contender = spawnChild(input);
@@ -1127,16 +1122,8 @@ describe("detached supervisor child journeys", () => {
 
       await kill(owner.child);
       await expect(owner.started).rejects.toThrow();
-      const deadline = Date.now() + 3_000;
-      let restarted = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(restartedEndpoint).catch(() => undefined))?.state === "starting") {
-          restarted = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      expect(restarted).toBe(true);
+      await contender.managedStarted;
+      expect(await fetchOwner(restartedEndpoint)).toMatchObject({ state: "starting" });
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);

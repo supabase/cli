@@ -27,11 +27,35 @@ import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
 const waitForFile = (path: string): Effect.Effect<void> =>
-  Effect.suspend(() =>
-    existsSync(path)
-      ? Effect.void
-      : Effect.sleep("10 millis").pipe(Effect.andThen(waitForFile(path))),
-  );
+  Effect.callback((resume) => {
+    if (existsSync(path)) {
+      resume(Effect.void);
+      return Effect.void;
+    }
+    let settled = false;
+    let watcher: FSWatcher | undefined;
+    const cleanup = () => {
+      watcher?.close();
+      watcher = undefined;
+    };
+    const settle = (result: Effect.Effect<void>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(result);
+    };
+    const check = () => {
+      if (existsSync(path)) settle(Effect.void);
+    };
+    try {
+      watcher = watch(dirname(path), check);
+      watcher.once("error", (cause) => settle(Effect.die(cause)));
+      check();
+    } catch (cause) {
+      settle(Effect.die(cause));
+    }
+    return Effect.sync(cleanup);
+  });
 
 const testMode = (): TestMode => {
   const value = process.env["SUPABASE_STACK_TEST_RUNTIME_MODE"];
@@ -87,7 +111,18 @@ const testStackLayer = (config: ResolvedDaemonConfig, mode: TestMode): Layer.Lay
   return Layer.succeed(Stack, {
     getInfo: () => Effect.succeed(info),
     start: () => Effect.void,
-    stop: () => (mode === "hold-stop" ? waitForStopRelease() : Effect.void),
+    stop: () =>
+      mode === "hold-stop"
+        ? Effect.gen(function* () {
+            const stageFile = process.env["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
+            if (stageFile === undefined) {
+              yield* sendTestStage("stop-began").pipe(Effect.orDie);
+            } else {
+              yield* Effect.sync(() => writeFileSync(stageFile, "began"));
+            }
+            yield* waitForStopRelease();
+          })
+        : Effect.void,
     dispose: () => Effect.void,
     startService: () => Effect.void,
     stopService: () => Effect.void,
@@ -182,14 +217,16 @@ const waitForAttachedBeforeReadyRelease = (): Effect.Effect<void> => {
   });
 };
 
-const sendTestStage = (): Effect.Effect<void, SupervisorStartError> =>
+const sendTestStage = (
+  stage: "attached-before-ready" | "managed-started" | "stop-began",
+): Effect.Effect<void, SupervisorStartError> =>
   Effect.callback<void, SupervisorStartError>((resume) => {
     if (process.send === undefined || !process.connected) {
       resume(Effect.void);
       return Effect.void;
     }
     try {
-      process.send({ type: "test-stage", stage: "attached-before-ready" }, (error) =>
+      process.send({ type: "test-stage", stage }, (error) =>
         resume(
           error === null
             ? Effect.void
@@ -206,7 +243,10 @@ const sendTestStage = (): Effect.Effect<void, SupervisorStartError> =>
       );
     }
     return Effect.void;
-  }).pipe(Effect.andThen(waitForAttachedBeforeReadyRelease()));
+  });
+
+const sendAttachedBeforeReadyStage = (): Effect.Effect<void, SupervisorStartError> =>
+  sendTestStage("attached-before-ready").pipe(Effect.andThen(waitForAttachedBeforeReadyRelease()));
 
 const resolutionTimeout = (): Duration.Input => {
   const milliseconds = Number(process.env["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
@@ -233,17 +273,24 @@ const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
     (base) => {
       const readyFile = process.env["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
       const releaseFile = process.env["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
-      if (readyFile === undefined || releaseFile === undefined) return base;
       return Layer.effect(
         ManagedStackManager,
         ManagedStackManager.pipe(
           Effect.map((manager) => ({
             ...manager,
-            ensureWorkspace: (workspacePath: string) =>
-              Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
-                Effect.andThen(waitForFile(releaseFile)),
-                Effect.andThen(manager.ensureWorkspace(workspacePath)),
-              ),
+            startStack: (input: Parameters<typeof manager.startStack>[0]) =>
+              manager
+                .startStack(input)
+                .pipe(Effect.tap(() => sendTestStage("managed-started").pipe(Effect.orDie))),
+            ...(readyFile === undefined || releaseFile === undefined
+              ? {}
+              : {
+                  ensureWorkspace: (workspacePath: string) =>
+                    Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
+                      Effect.andThen(waitForFile(releaseFile)),
+                      Effect.andThen(manager.ensureWorkspace(workspacePath)),
+                    ),
+                }),
           })),
         ),
       ).pipe(Layer.provide(base));
@@ -258,7 +305,7 @@ export const runTestSupervisor = (): void => {
     platformFactory: platformKind === "bun" ? bunPlatformFactory : nodePlatformFactory,
     managerLayer: (stateRoot) => managerLayer(stateRoot, platformKind),
     runtimeLayer: testRuntime,
-    onAttachedBeforeReady: sendTestStage,
+    onAttachedBeforeReady: sendAttachedBeforeReadyStage,
     resolutionTimeout: resolutionTimeout(),
   };
   const program = runSupervisor(supervisorPlatform).pipe(
