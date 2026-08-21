@@ -58,14 +58,13 @@ const makeStdin = Effect.gen(function* () {
   );
 
   // Persistent, lazily-opened line reader shared by every `readLine` call, so a
-  // command issuing several prompts (config push, seed buckets) reads the *next*
-  // piped line each time — one `bufio.Scanner` over os.Stdin, as in Go
-  // (`internal/utils/console.go:20,50`). Opening it is deferred behind
-  // `Effect.cached` and tied to this layer's scope: stdin is not touched until the
-  // first `readLine`, so a TTY command that only prompts via clack never grabs the
-  // keyboard (no contention with clack's own stdin capture), and the reader outlives
-  // individual prompts. `splitLines` preserves interior blank lines so answers stay
-  // aligned across prompts.
+  // command issuing several prompts (config push, seed buckets) reads the *next* piped
+  // line each time instead of restarting from the top of the pipe. Opening it is
+  // deferred behind `Effect.cached` and tied to this layer's scope: stdin is not
+  // touched until the first `readLine`, so a TTY command that only prompts via clack
+  // never grabs the keyboard (no contention with clack's own stdin capture), and the
+  // reader outlives individual prompts. `splitLines` preserves interior blank lines so
+  // answers stay aligned across prompts.
   const nextLine = yield* Effect.cached(tty.stdinIsTty ? ttyLineReader : pipedLineReader);
 
   const readPipedBytes = Effect.gen(function* () {
