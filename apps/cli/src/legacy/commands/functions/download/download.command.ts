@@ -17,6 +17,7 @@ const config = {
   ),
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
+    Flag.withDefault(false),
   ),
   useDocker: Flag.boolean("use-docker").pipe(
     Flag.withDescription("Use Docker to unbundle functions locally."),
@@ -25,6 +26,7 @@ const config = {
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
     Flag.withDescription("Use legacy bundling."),
+    Flag.withDefault(false),
     Flag.withHidden,
   ),
 } as const;

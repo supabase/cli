@@ -32,6 +32,7 @@ const onRunFailure = (error: LegacyDbDumpRunError) =>
 const config = {
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Prints the pg_dump script that would be executed."),
+    Flag.withDefault(false),
   ),
   // The boolean flags in mutually-exclusive groups (`data-only`/`role-only`/
   // `keep-comments` and the `db-url`/`linked`/`local` target group) are
@@ -46,6 +47,7 @@ const config = {
   ),
   useCopy: Flag.boolean("use-copy").pipe(
     Flag.withDescription("Use copy statements in place of inserts."),
+    Flag.withDefault(false),
   ),
   exclude: Flag.string("exclude").pipe(
     Flag.withAlias("x"),

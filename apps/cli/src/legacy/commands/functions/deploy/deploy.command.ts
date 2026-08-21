@@ -19,9 +19,11 @@ const config = {
   ),
   noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(
     Flag.withDescription("Disable JWT verification for the Function."),
+    Flag.withDefault(false),
   ),
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Bundle functions server-side without using Docker."),
+    Flag.withDefault(true),
   ),
   importMap: Flag.string("import-map").pipe(
     Flag.withDescription("Path to import map file."),
@@ -29,6 +31,7 @@ const config = {
   ),
   prune: Flag.boolean("prune").pipe(
     Flag.withDescription("Delete Functions that exist in Supabase project but not locally."),
+    Flag.withDefault(false),
   ),
   jobs: Flag.integer("jobs").pipe(
     Flag.withAlias("j"),
@@ -46,6 +49,7 @@ const config = {
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
     Flag.withDescription("Use legacy bundling."),
+    Flag.withDefault(false),
     Flag.withHidden,
   ),
 } as const;

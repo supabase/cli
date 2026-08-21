@@ -19,6 +19,7 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Squashes the migration history of the linked project."),
+    Flag.withDefault(false),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Squashes the migration history of the local database."),

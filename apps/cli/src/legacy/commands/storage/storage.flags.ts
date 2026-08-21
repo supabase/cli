@@ -26,6 +26,7 @@ export const LegacyStorageLinkedFlagDef = Flag.boolean("linked").pipe(
 
 export const LegacyStorageLocalFlagDef = Flag.boolean("local").pipe(
   Flag.withDescription("Connects to Storage API of the local database."),
+  Flag.withDefault(false),
 );
 
 // TS-only override of the linked project ref — see push.command.ts (db push).

@@ -11,7 +11,10 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  metadata: Flag.boolean("metadata").pipe(Flag.withDescription("Show SAML 2.0 XML Metadata only")),
+  metadata: Flag.boolean("metadata").pipe(
+    Flag.withDescription("Show SAML 2.0 XML Metadata only"),
+    Flag.withDefault(false),
+  ),
   providerId: Argument.string("provider-id").pipe(
     Argument.withDescription("The ID of the SSO identity provider to show."),
   ),

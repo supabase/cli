@@ -36,13 +36,17 @@ const config = {
     Flag.withDescription("Path to import map file."),
     Flag.optional,
   ),
-  inspect: Flag.boolean("inspect").pipe(Flag.withDescription("Alias of --inspect-mode brk.")),
+  inspect: Flag.boolean("inspect").pipe(
+    Flag.withDescription("Alias of --inspect-mode brk."),
+    Flag.withDefault(false),
+  ),
   inspectMode: Flag.choice("inspect-mode", FUNCTIONS_SERVE_INSPECT_MODES).pipe(
     Flag.withDescription("Activate inspector capability for debugging."),
     Flag.optional,
   ),
   inspectMain: Flag.boolean("inspect-main").pipe(
     Flag.withDescription("Allow inspecting the main worker."),
+    Flag.withDefault(false),
   ),
   all: Flag.boolean("all").pipe(
     Flag.withDescription("Serve all Functions."),

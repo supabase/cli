@@ -9,20 +9,25 @@ import { legacyDbPushRuntimeLayer } from "./push.layers.ts";
 const config = {
   includeAll: Flag.boolean("include-all").pipe(
     Flag.withDescription("Include all migrations not found on remote history table."),
+    Flag.withDefault(false),
   ),
   includeRoles: Flag.boolean("include-roles").pipe(
     Flag.withDescription("Include custom roles from supabase/roles.sql."),
+    Flag.withDefault(false),
   ),
   includeSeed: Flag.boolean("include-seed").pipe(
     Flag.withDescription("Include seed data from your config."),
+    Flag.withDefault(false),
   ),
   skipVault: Flag.boolean("skip-vault").pipe(
     Flag.withDescription("Skip updating vault secrets from config.toml."),
+    Flag.withDefault(false),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription(
       "Print the migrations that would be applied, but don't actually apply them.",
     ),
+    Flag.withDefault(false),
   ),
   dbUrl: Flag.string("db-url").pipe(
     Flag.withDescription(
@@ -30,8 +35,14 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Pushes to the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Pushes to the local database.")),
+  linked: Flag.boolean("linked").pipe(
+    Flag.withDescription("Pushes to the linked project."),
+    Flag.withDefault(false),
+  ),
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Pushes to the local database."),
+    Flag.withDefault(false),
+  ),
   // TS-only flag on every user-facing `db` subcommand (Go's user-facing `db`
   // commands never registered --project-ref; only the SUPABASE_PROJECT_ID env
   // var could override the linked ref). The one Go exception is a hidden seam,

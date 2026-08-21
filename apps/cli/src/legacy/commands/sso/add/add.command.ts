@@ -43,6 +43,7 @@ const config = {
     Flag.withDescription(
       "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
     ),
+    Flag.withDefault(false),
   ),
   attributeMappingFile: Flag.string("attribute-mapping-file").pipe(
     Flag.withDescription(
