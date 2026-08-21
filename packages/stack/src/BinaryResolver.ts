@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { zstdDecompressSync } from "node:zlib";
+import { zstdDecompress } from "node:zlib";
 import {
   Context,
   Duration,
@@ -132,6 +132,29 @@ const verifyChecksum = (
       return Effect.void;
     }),
   );
+
+const decompressArchive = (
+  data: ArrayBuffer,
+  url: string,
+): Effect.Effect<Uint8Array, DownloadError> =>
+  Effect.callback<Uint8Array, DownloadError>((resume) => {
+    let completed = false;
+    const complete = (effect: Effect.Effect<Uint8Array, DownloadError>) => {
+      if (completed) return;
+      completed = true;
+      resume(effect);
+    };
+    try {
+      zstdDecompress(new Uint8Array(data), (cause, archive) =>
+        complete(
+          cause === null ? Effect.succeed(archive) : Effect.fail(new DownloadError({ url, cause })),
+        ),
+      );
+    } catch (cause) {
+      complete(Effect.fail(new DownloadError({ url, cause })));
+    }
+    return Effect.void;
+  });
 
 const checksumForArchive = (contents: string, archiveName: string): string | undefined => {
   for (const line of contents.split(/\r?\n/)) {
@@ -686,10 +709,7 @@ export class BinaryResolver extends Context.Service<
             yield* verifyChecksum(tarball, expected, release.checksumUrl);
 
             const archivePath = path.join(destination, "_download.tar");
-            const archive = yield* Effect.try({
-              try: () => zstdDecompressSync(new Uint8Array(tarball)),
-              catch: (cause) => new DownloadError({ url: release.downloadUrl, cause }),
-            });
+            const archive = yield* decompressArchive(tarball, release.downloadUrl);
             yield* fs.writeFile(archivePath, archive);
 
             const members = yield* spawner
@@ -737,36 +757,57 @@ export class BinaryResolver extends Context.Service<
 
             yield* fs.remove(archivePath).pipe(Effect.ignore);
 
+            const requirePostProcess = (name: string, command: ChildProcess.Command) =>
+              Effect.gen(function* () {
+                const exitCode = yield* spawner.exitCode(command).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new BinaryRuntimeError({
+                        path: destination,
+                        detail: `${name} could not run: ${String(cause)}`,
+                      }),
+                  ),
+                );
+                if (exitCode !== 0) {
+                  return yield* Effect.fail(
+                    new BinaryRuntimeError({
+                      path: destination,
+                      detail: `${name} exited with code ${exitCode}`,
+                    }),
+                  );
+                }
+              });
+
             if (platform.os !== "win32") {
-              yield* spawner
-                .exitCode(ChildProcess.make("chmod", ["-R", "u+x", destination]))
-                .pipe(Effect.ignore);
+              yield* requirePostProcess(
+                "chmod",
+                ChildProcess.make("chmod", ["-R", "u+x", destination]),
+              );
             }
 
             if (platform.os === "darwin") {
-              yield* spawner
-                .exitCode(
-                  ChildProcess.make("find", [
-                    destination,
-                    "-type",
-                    "f",
-                    "(",
-                    "-perm",
-                    "+111",
-                    "-o",
-                    "-name",
-                    "*.dylib",
-                    ")",
-                    "-exec",
-                    "codesign",
-                    "-f",
-                    "-s",
-                    "-",
-                    "{}",
-                    "+",
-                  ]),
-                )
-                .pipe(Effect.ignore);
+              yield* requirePostProcess(
+                "codesign",
+                ChildProcess.make("find", [
+                  destination,
+                  "-type",
+                  "f",
+                  "(",
+                  "-perm",
+                  "+111",
+                  "-o",
+                  "-name",
+                  "*.dylib",
+                  ")",
+                  "-exec",
+                  "codesign",
+                  "-f",
+                  "-s",
+                  "-",
+                  "{}",
+                  "+",
+                ]),
+              );
             }
 
             const requiredPaths = [...new Set(release.requiredRuntimePaths)];

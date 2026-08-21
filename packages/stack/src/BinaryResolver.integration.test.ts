@@ -17,7 +17,7 @@ import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, FileSystem, Layer, Predicate } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import {
   BinaryHostCompatibilityError,
@@ -36,6 +36,7 @@ const makeFixture = (
   root: string,
   manifestOverride: Record<string, unknown> = {},
   includePostgrest = true,
+  paddingBytes = 0,
 ) => {
   const source = join(root, "source");
   const tar = join(root, "postgrest.tar");
@@ -44,6 +45,9 @@ const makeFixture = (
   mkdirSync(join(source, "bin"), { recursive: true });
   if (includePostgrest) {
     writeFileSync(join(source, "bin", "postgrest"), "#!/bin/sh\necho postgrest\n");
+  }
+  if (paddingBytes > 0) {
+    writeFileSync(join(source, "bin", "padding"), Buffer.alloc(paddingBytes));
   }
   execFileSync("tar", ["-cf", tar, "-C", source, "."]);
   writeFileSync(archive, zstdCompressSync(readFileSync(tar)));
@@ -100,6 +104,8 @@ const makeResolverLayer = (
     readonly checksum?: string;
     readonly checksumText?: string;
     readonly spawnedCommands?: Array<{ command: string; args: ReadonlyArray<string> }>;
+    readonly onChecksumRead?: () => void;
+    readonly exitCodeForCommand?: (command: string) => number | undefined;
     readonly transformFileSystem?: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem;
   } = {},
 ) => {
@@ -132,26 +138,53 @@ const makeResolverLayer = (
         const checksumText =
           options.checksumText ??
           `${hash}  postgrest-${DEFAULT_VERSIONS.postgrest}-${process.platform === "darwin" ? "darwin-arm64" : "linux-amd64"}.tar.zst\n`;
-        return HttpClientResponse.fromWeb(request, new Response(checksumText, { status: 200 }));
+        const response = HttpClientResponse.fromWeb(
+          request,
+          new Response(checksumText, { status: 200 }),
+        );
+        if (options.onChecksumRead !== undefined) {
+          Object.defineProperty(response, "text", {
+            value: Effect.sync(() => {
+              options.onChecksumRead?.();
+              return checksumText;
+            }),
+          });
+        }
+        return response;
       }
       return HttpClientResponse.fromWeb(request, new Response(fixture.archive, { status: 200 }));
     }),
   );
   const spawnerLayer =
-    options.spawnedCommands === undefined
+    options.spawnedCommands === undefined && options.exitCodeForCommand === undefined
       ? NodeServices.layer
       : Layer.effect(
           ChildProcessSpawner.ChildProcessSpawner,
           Effect.gen(function* () {
             const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-            return ChildProcessSpawner.make((command) => {
+            const record = (command: ChildProcess.Command) => {
               if (Predicate.isTagged(command, "StandardCommand")) {
                 options.spawnedCommands?.push({
                   command: command.command,
                   args: command.args,
                 });
               }
+            };
+            const spawner = ChildProcessSpawner.make((command) => {
+              record(command);
               return delegate.spawn(command);
+            });
+            return ChildProcessSpawner.ChildProcessSpawner.of({
+              ...spawner,
+              exitCode: (command) => {
+                if (!Predicate.isTagged(command, "StandardCommand")) {
+                  return spawner.exitCode(command);
+                }
+                const exitCode = options.exitCodeForCommand?.(command.command);
+                if (exitCode === undefined) return spawner.exitCode(command);
+                record(command);
+                return Effect.succeed(ChildProcessSpawner.ExitCode(exitCode));
+              },
             });
           }),
         ).pipe(Layer.provide(NodeServices.layer));
@@ -175,6 +208,80 @@ const makeResolverLayer = (
 };
 
 describe("BinaryResolver slim-services installer", () => {
+  it.live("keeps the Effect runtime responsive while decompressing an archive", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      try {
+        let eventLoopAdvanced = false;
+        let advancedBeforeArchiveWrite = false;
+        const resolverLayer = makeResolverLayer(
+          root,
+          makeFixture(root, {}, true, 32 * 1024 * 1024),
+          {
+            onChecksumRead: () => {
+              setImmediate(() => {
+                eventLoopAdvanced = true;
+              });
+            },
+            transformFileSystem: (fileSystem) =>
+              FileSystem.FileSystem.of({
+                ...fileSystem,
+                writeFile: (requestedPath, data, options) => {
+                  if (requestedPath.endsWith("_download.tar")) {
+                    advancedBeforeArchiveWrite = eventLoopAdvanced;
+                  }
+                  return fileSystem.writeFile(requestedPath, data, options);
+                },
+              }),
+          },
+        );
+
+        yield* Effect.gen(function* () {
+          const resolver = yield* BinaryResolver;
+          yield* resolver.resolve({
+            service: "postgrest",
+            version: DEFAULT_VERSIONS.postgrest,
+          });
+        }).pipe(Effect.provide(resolverLayer));
+
+        expect(advancedBeforeArchiveWrite).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.live("rejects failed binary post-processing before publishing the cache", () =>
+    Effect.gen(function* () {
+      const commands = [
+        ...(process.platform === "win32" ? [] : ["chmod"]),
+        ...(process.platform === "darwin" ? ["find"] : []),
+      ];
+      for (const failedCommand of commands) {
+        const root = makeRoot();
+        try {
+          const resolverLayer = makeResolverLayer(root, makeFixture(root), {
+            exitCodeForCommand: (command) => (command === failedCommand ? 73 : undefined),
+          });
+          const failure = yield* Effect.gen(function* () {
+            const resolver = yield* BinaryResolver;
+            return yield* resolver.resolve({
+              service: "postgrest",
+              version: DEFAULT_VERSIONS.postgrest,
+            });
+          }).pipe(Effect.provide(resolverLayer), Effect.flip);
+
+          expect(failure).toBeInstanceOf(BinaryRuntimeError);
+          if (failure instanceof BinaryRuntimeError) {
+            expect(failure.detail).toContain("73");
+          }
+        } finally {
+          rmSync(root, { recursive: true, force: true });
+        }
+      }
+    }),
+  );
+
   it.live("installs a tar.zst archive into an empty cache and reuses it", () =>
     Effect.gen(function* () {
       const root = makeRoot();
