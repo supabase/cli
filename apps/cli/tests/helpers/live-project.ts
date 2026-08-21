@@ -143,6 +143,11 @@ function databasePassword(): string {
   return `supabase-cli-live-${randomBytes(12).toString("hex")}`;
 }
 
+function liveProjectBaseUrl(ref: string, host: string): string {
+  const protocol = new URL(liveApiUrl()).protocol;
+  return `${protocol}//${ref}.${host}`;
+}
+
 function resolveOrganization(api: LiveApi): Effect.Effect<Organization, Error, never> {
   return timeoutLiveRequest("organization lookup", api.v1.listAllOrganizations()).pipe(
     Effect.mapError(apiError),
@@ -334,7 +339,7 @@ function createStorageBucket(
 ): Effect.Effect<void, Error, never> {
   return Effect.tryPromise({
     try: async () => {
-      const response = await fetch(`https://${ref}.${host}/storage/v1/bucket`, {
+      const response = await fetch(`${liveProjectBaseUrl(ref, host)}/storage/v1/bucket`, {
         method: "POST",
         headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ id: bucket, name: bucket, public: false }),
@@ -463,7 +468,7 @@ export function provisionLiveEnvironment(
           dbPassword: password,
           anonKey: keys.anonKey,
           serviceRoleKey: keys.serviceRoleKey,
-          functionsUrl: `https://${ref}.${projectHost}/functions/v1`,
+          functionsUrl: `${liveProjectBaseUrl(ref, projectHost)}/functions/v1`,
           storageBucket,
         },
         profilePath,
