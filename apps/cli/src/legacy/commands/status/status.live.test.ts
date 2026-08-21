@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 
 const START_TIMEOUT_MS = 280_000;
 
@@ -28,13 +29,13 @@ describeLive("supabase status (live)", () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-status-live-"));
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       const start = await runSupabaseLive(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      requireLiveSuccess(start, "start setup");
 
       const pretty = await runSupabaseLive(["status"], { cwd: projectDir });
       expect(pretty.exitCode, `stdout:\n${pretty.stdout}\nstderr:\n${pretty.stderr}`).toBe(0);

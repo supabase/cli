@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 import { describeDockerLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../../tests/helpers/live-context.ts";
 
 const COMMAND_TIMEOUT_MS = 280_000;
 const SCENARIO_TIMEOUT_MS = 900_000;
@@ -45,7 +46,7 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
       cwd: projectDir,
       exitTimeoutMs: COMMAND_TIMEOUT_MS,
     });
-    expect(init.exitCode, commandFailure(init)).toBe(0);
+    requireLiveSuccess(init, "init setup");
 
     const configPath = path.join(projectDir, "supabase", "config.toml");
     const config = readFileSync(configPath, "utf8");
@@ -83,7 +84,7 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
       ],
       { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
     );
-    expect(start.exitCode, commandFailure(start)).toBe(0);
+    requireLiveSuccess(start, "start setup");
   }, COMMAND_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -124,7 +125,7 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
         cwd: projectDir,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
-      expect(reset.exitCode, commandFailure(reset)).toBe(0);
+      requireLiveSuccess(reset, "db reset setup");
 
       const converged = await runSupabaseLive(["db", "diff", "--local", "--use-pg-delta"], {
         cwd: projectDir,

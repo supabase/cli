@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import {
+  liveDatabaseTargetArgs,
   requireLiveSuccess,
-  testLiveDataPlane,
+  testLiveDestructiveDataPlane,
 } from "../../../../../tests/helpers/live-context.ts";
 
-testLiveDataPlane(
+testLiveDestructiveDataPlane(
   "pulls the remote schema after a local migration is applied",
-  async ({ run, dbUrl, workspace }) => {
+  async ({ run, dbUrl, projectRef, workspace }) => {
     const version = `${Date.now()}${Math.floor(Math.random() * 10_000)
       .toString()
       .padStart(4, "0")}`;
@@ -19,17 +20,32 @@ testLiveDataPlane(
     await writeFile(migrationFile, `create table if not exists e2e_pull_${version} (id int);\n`);
 
     try {
-      const pushed = await run(["db", "push", "--db-url", dbUrl, "--yes"]);
+      const pushed = await run([
+        "db",
+        "push",
+        ...liveDatabaseTargetArgs(dbUrl, projectRef),
+        "--yes",
+      ]);
       requireLiveSuccess(pushed, "db push setup");
 
-      const result = await run(["db", "pull", "--db-url", dbUrl, "--yes"]);
+      const result = await run([
+        "db",
+        "pull",
+        ...liveDatabaseTargetArgs(dbUrl, projectRef),
+        "--yes",
+      ]);
       expect(result.exitCode, result.stderr).toBe(0);
       expect(`${result.stdout}${result.stderr}`).not.toMatch(
         /dial|no route|connection refused|could not connect|server closed the connection|i\/o timeout/i,
       );
     } finally {
       await unlink(migrationFile).catch(() => undefined);
-      const reset = await run(["db", "reset", "--db-url", dbUrl, "--yes"]);
+      const reset = await run([
+        "db",
+        "reset",
+        ...liveDatabaseTargetArgs(dbUrl, projectRef),
+        "--yes",
+      ]);
       requireLiveSuccess(reset, "db reset cleanup after db pull");
     }
   },

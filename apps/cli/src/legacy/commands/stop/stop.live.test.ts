@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 import { legacySanitizeProjectId } from "../../shared/legacy-docker-ids.ts";
 
 const execFileAsync = promisify(execFile);
@@ -42,7 +43,7 @@ describeLive("supabase stop (live)", () => {
       projectId = path.basename(projectDir);
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services (Next.js Studio build, the
       // logging pipeline) — `stop`'s Docker label-filtering logic doesn't care
@@ -52,11 +53,11 @@ describeLive("supabase stop (live)", () => {
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      requireLiveSuccess(start, "start setup");
 
       // Sanity: confirm the stack is actually up before testing `stop` against it.
       const before = await runSupabaseLive(["status"], { cwd: projectDir });
-      expect(before.exitCode, `stdout:\n${before.stdout}\nstderr:\n${before.stderr}`).toBe(0);
+      requireLiveSuccess(before, "status setup");
 
       const stop = await runSupabaseLive(["stop"], { cwd: projectDir });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
@@ -88,13 +89,13 @@ describeLive("supabase stop (live)", () => {
       projectId = legacySanitizeProjectId(path.basename(projectDir));
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       const start = await runSupabaseLive(
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      requireLiveSuccess(start, "start setup");
 
       // `--no-backup` exercises the volume-prune branch; `--debug` turns on
       // the `Pruned …:` stderr reports, which are

@@ -150,15 +150,16 @@ export const testLiveProject = base.skipIf(!isLiveConfigured() || !liveProjectRe
 export const testLiveFunctions = base.skipIf(
   !isLiveConfigured() ||
     !liveProjectRef() ||
-    (!isManagedLive() &&
-      ((process.env["SUPABASE_LIVE_ANON_KEY"] ?? "").length === 0 ||
-        (process.env["SUPABASE_LIVE_FUNCTIONS_URL"] ?? "").length === 0)),
+    (!isManagedLive() && (process.env["SUPABASE_LIVE_ANON_KEY"] ?? "").length === 0),
 );
 
 /** Fixture for scenarios that require the project's Postgres data plane. */
-export const testLiveDataPlane = base.skipIf(
+export const testLiveDataPlane = base.skipIf(!(await liveProjectDataPlaneReady()));
+
+/** Fixture for remote database tests that create/drop transient schema state. */
+export const testLiveDestructiveDataPlane = base.skipIf(
   !(await liveProjectDataPlaneReady()) ||
-    (!isManagedLive() && (process.env["SUPABASE_LIVE_DB_URL"] ?? "").length === 0),
+    (!isManagedLive() && process.env["SUPABASE_LIVE_ALLOW_DESTRUCTIVE"] !== "1"),
 );
 
 /** Fixture for Storage scenarios requiring a linked database password. */
@@ -180,6 +181,15 @@ export function requireLiveSuccess(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
+}
+
+/** Resolve a remote database target without requiring staging-only pooler data. */
+export function liveDatabaseTargetArgs(dbUrl: string, projectRef: string): string[] {
+  if (dbUrl.length > 0) return ["--db-url", dbUrl];
+  if (projectRef.length === 0) {
+    throw new Error("A project ref is required when SUPABASE_LIVE_DB_URL is unavailable");
+  }
+  return ["--linked", "--project-ref", projectRef];
 }
 
 export function expectFunctionOk(

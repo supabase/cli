@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../tests/helpers/live-context.ts";
 import {
   legacySanitizeProjectId,
   legacyServiceContainerName,
@@ -102,7 +103,7 @@ describeLive("supabase start (live)", () => {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       const start = await runSupabaseLive(startArgs, {
         cwd: projectDir,
@@ -199,7 +200,7 @@ describeLive("supabase start (live)", () => {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      expect(status.exitCode, `stdout:\n${status.stdout}\nstderr:\n${status.stderr}`).toBe(0);
+      requireLiveSuccess(status, "status setup");
     },
   );
 
@@ -213,7 +214,7 @@ describeLive("supabase start (live)", () => {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       let proxyConnections = 0;
       const proxy = createServer((socket) => {
@@ -284,7 +285,7 @@ describeLive("supabase start (live)", () => {
         cwd: projectDir,
         exitTimeoutMs: SHORT_LIVE_TIMEOUT_MS,
       });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       // A `scratch` image whose entrypoint is not an executable binary — the
       // kernel refuses it with exactly the "exec format error" this diagnoses.

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess } from "../../../../../tests/helpers/live-context.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,7 +47,7 @@ describeLive("supabase db diff (live, pg-delta declarative privileges)", () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-live-"));
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       // `init`'s template already enables pg-delta by default (CLI-1877/#5511), but
       // point `[db.migrations] schema_paths` at a declarative schema directory so
@@ -83,7 +84,7 @@ revoke execute on function public.probe_fn() from public;
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      requireLiveSuccess(start, "start setup");
 
       const diff = await runSupabaseLive(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
@@ -161,7 +162,7 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
       projectId = path.basename(projectDir);
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
-      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+      requireLiveSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services — `db diff --use-pgadmin` only
       // needs the local Postgres container reachable, same rationale as stop/status.
@@ -169,7 +170,7 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
         ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
         { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
       );
-      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+      requireLiveSuccess(start, "start setup");
 
       const diff = await runSupabaseLive(["db", "diff", "--use-pgadmin"], {
         cwd: projectDir,

@@ -103,9 +103,11 @@ values without changing test code.
 - Live mode requires a working Docker daemon on the runner (enforced by a
   `docker info` preflight) — unlike the replay suite, which served Docker
   fixtures and needed no daemon.
-- Each live run provisions and tears down a real staging project, so the suite is
-  inherently slower and subject to provisioning flake. Mitigated by a CI-level
-  re-run (up to 3×) rather than in-setup retry.
+- Explicit managed runs provision and tear down one real staging project, so those
+  runs are inherently slower and subject to provisioning flake. The default attached
+  mode uses the caller-provided Supabox/local project; global setup never deletes it.
+  Managed provisioning is mitigated by a CI-level re-run (up to 3×) rather than
+  in-setup retry.
 - A second wiring path now exists for the same harness (replay-via-server vs
   live-direct); contributors must know which mode wires the CLI how.
 
