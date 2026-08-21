@@ -6,7 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
-import { Deferred, Duration, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { Deferred, Duration, Effect, Exit, Fiber, Layer, Predicate, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { runHealthProbe } from "./HealthProbe.ts";
 import type { HealthCheckConfig, ProbeConfig } from "./ServiceDef.ts";
@@ -79,6 +79,37 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
   });
 
 describe("HealthProbe", () => {
+  it.live("aborts an in-flight HTTP probe when its fiber is interrupted", () => {
+    const originalFetch = globalThis.fetch;
+    return Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      let aborted = false;
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        Effect.runSync(Deferred.succeed(started, void 0));
+        return new Promise<Response>(() => undefined);
+      }) as typeof fetch;
+
+      const { config } = yield* setupProbe({
+        _tag: "Http",
+        scheme: "http",
+        host: "127.0.0.1",
+        port: 80,
+        path: "/health",
+      });
+      const fiber = yield* Effect.forkChild(runHealthProbe(config), { startImmediately: true });
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+
+      expect(aborted).toBe(true);
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => (globalThis.fetch = originalFetch))),
+      Effect.provide(platformLayer),
+    );
+  });
+
   it.live("Exec probes require explicit args", () =>
     Effect.sync(() => {
       // @ts-expect-error Exec probes must declare args explicitly.
@@ -129,7 +160,7 @@ describe("HealthProbe", () => {
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make((command) =>
           Effect.sync(() => {
-            if (command._tag === "StandardCommand") {
+            if (Predicate.isTagged(command, "StandardCommand")) {
               spawned.push({
                 command: command.command,
                 args: command.args,

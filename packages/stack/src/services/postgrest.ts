@@ -2,7 +2,11 @@ import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
-import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import {
+  dockerRunService,
+  type ContainerRuntimeOptions,
+  type ServiceDependency,
+} from "./service-utils.ts";
 
 interface PostgrestServiceOptions {
   readonly dbPort: number;
@@ -18,7 +22,7 @@ interface NativePostgrestOptions extends PostgrestServiceOptions {
   readonly binPath: string;
 }
 
-interface DockerPostgrestOptions extends PostgrestServiceOptions {
+interface DockerPostgrestOptions extends PostgrestServiceOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly dbHost: string;
   readonly platformOs: string;
@@ -52,7 +56,7 @@ const postgrestHealthCheck = (port: number) => ({
 
 export const makePostgrestService = (opts: NativePostgrestOptions): ServiceDef => ({
   name: "postgrest",
-  command: `${opts.binPath}/postgrest`,
+  command: `${opts.binPath}/bin/postgrest`,
   env: postgrestEnv(opts),
   dependencies: opts.dependencies,
   healthCheck: postgrestHealthCheck(opts.port),
@@ -66,6 +70,7 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
     PGRST_ADMIN_SERVER_PORT: String(opts.adminPort),
   };
   return dockerRunService({
+    runtime: opts.runtime,
     name: "postgrest",
     identity: opts.identity,
     image: opts.image,

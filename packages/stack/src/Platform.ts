@@ -5,39 +5,21 @@ export interface PlatformInfo {
   readonly arch: string;
 }
 
+/** Native slim-service release targets. The release set intentionally has no
+ * windows or x64 macOS artifacts. */
+export type NativeTarget = "darwin-arm64" | "linux-amd64" | "linux-arm64";
+
+export const nativeTargetForPlatform = (platform: PlatformInfo): NativeTarget | undefined => {
+  if (platform.os === "darwin" && platform.arch === "arm64") return "darwin-arm64";
+  if (platform.os === "linux" && platform.arch === "x64") return "linux-amd64";
+  if (platform.os === "linux" && platform.arch === "arm64") return "linux-arm64";
+  return undefined;
+};
+
 export const detectPlatform: Effect.Effect<PlatformInfo> = Effect.sync(() => ({
   os: process.platform,
   arch: process.arch,
 }));
-
-export const postgresAssetName = (p: PlatformInfo): string | null => {
-  if (p.os === "darwin" && p.arch === "arm64") return "darwin-arm64";
-  if (p.os === "linux" && p.arch === "x64") return "linux-x64";
-  if (p.os === "linux" && p.arch === "arm64") return "linux-arm64";
-  return null;
-};
-
-export const postgrestAssetName = (p: PlatformInfo): string | null => {
-  if (p.os === "darwin" && p.arch === "arm64") return "macos-aarch64";
-  if (p.os === "linux" && p.arch === "x64") return "linux-static-x86-64";
-  if (p.os === "linux" && p.arch === "arm64") return "ubuntu-aarch64";
-  if (p.os === "win32" && p.arch === "x64") return "windows-x86-64";
-  return null;
-};
-
-export const authAssetName = (p: PlatformInfo): string | null => {
-  if (p.os === "darwin" && p.arch === "arm64") return "darwin-arm64";
-  if (p.os === "linux" && p.arch === "x64") return "x86";
-  if (p.os === "linux" && p.arch === "arm64") return "arm64";
-  return null;
-};
-
-export const edgeRuntimeAssetName = (p: PlatformInfo): string | null => {
-  if (p.os === "darwin" && p.arch === "arm64") return "aarch64-darwin";
-  if (p.os === "linux" && p.arch === "x64") return "x86_64-linux";
-  if (p.os === "linux" && p.arch === "arm64") return "aarch64-linux";
-  return null;
-};
 
 /** Host address that Docker containers should use to reach services on the host machine. */
 export const dockerHostAddress = (_os: string): string => "host.docker.internal";

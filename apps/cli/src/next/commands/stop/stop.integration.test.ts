@@ -1,9 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer } from "effect";
 import { existsSync } from "node:fs";
 import { stop } from "./stop.handler.ts";
-import { managedStackDocumentPath } from "@supabase/stack/managed";
+import { managedStackDocumentPathEffect } from "@supabase/stack/managed";
 import { mockOutput, mockProjectLinkState } from "../../../../tests/helpers/mocks.ts";
 import { makeRunningStackFixture } from "../../../../tests/helpers/running-stack.ts";
 
@@ -48,12 +48,14 @@ describe("stop handler", () => {
           BunServices.layer,
         );
         return stop({ stack: fixture.stackName, noBackup: true }).pipe(
-          Effect.provide(layer),
           Effect.tap(
-            Effect.sync(() => {
-              expect(existsSync(managedStackDocumentPath(fixture.stateRoot, fixture.stackId))).toBe(
-                false,
+            Effect.gen(function* () {
+              const fs = yield* FileSystem.FileSystem;
+              const documentPath = yield* managedStackDocumentPathEffect(
+                fixture.stateRoot,
+                fixture.stackId,
               );
+              expect(yield* fs.exists(documentPath)).toBe(false);
               expect(out.messages).toContainEqual(
                 expect.objectContaining({
                   type: "success",
@@ -62,6 +64,7 @@ describe("stop handler", () => {
               );
             }),
           ),
+          Effect.provide(layer),
           Effect.ensuring(Effect.promise(() => fixture.dispose())),
         );
       }),

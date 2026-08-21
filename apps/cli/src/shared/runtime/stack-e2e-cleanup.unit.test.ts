@@ -72,6 +72,45 @@ describe("stack e2e cleanup manager", () => {
     expect(calls).toEqual(["stop:/tmp/project:/tmp/home", "cleanup-project", "dispose-home"]);
   });
 
+  it("keeps cleanup best-effort when the associated home cannot be disposed", async () => {
+    const calls: Array<string> = [];
+    const manager = createStackE2eCleanupManager(
+      cleanupEnvironment(calls, {
+        captureSnapshot: () => ({
+          managedStacksRootExists: true,
+          documentFiles: [],
+          stackDirs: [],
+          trackedPids: [],
+        }),
+      }),
+    );
+
+    manager.registerHome({
+      dir: "/tmp/home",
+      dispose: () => {
+        calls.push("dispose-home");
+        throw permissionError("home is not removable");
+      },
+    });
+    manager.registerStackProject({
+      dir: "/tmp/project",
+      cleanup: async () => {
+        calls.push("cleanup-project");
+      },
+    });
+    manager.associateHome("/tmp/project", "/tmp/home");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(manager.drain()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("/tmp/home"));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("home is not removable"));
+    } finally {
+      warn.mockRestore();
+    }
+    expect(calls).toEqual(["stop:/tmp/project:/tmp/home", "cleanup-project", "dispose-home"]);
+  });
+
   it("canonicalizes symlinked project and home paths before matching stack state", async () => {
     const root = mkdtempSync(join(tmpdir(), "stack-e2e-cleanup-"));
     const project = join(root, "project");

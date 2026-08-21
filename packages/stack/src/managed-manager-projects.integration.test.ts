@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, ControlTransport } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { listStacks as listStackSummaries, resolveStackSummary } from "./discovery.ts";
@@ -25,6 +25,7 @@ import {
   automaticDocument,
   cleanupRoots,
   setupManagedManager,
+  startManagedStack,
   startWithOwner,
 } from "../tests/helpers/managed-manager.ts";
 
@@ -41,8 +42,8 @@ describe("managed stack projects journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         const ownership = yield* acquireControl({ stackId });
-        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
-        const initial = yield* manager.startStack({
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
+        const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
           stackName: "default",
           portDocument: automaticDocument(),
@@ -71,15 +72,13 @@ describe("managed stack projects journeys", () => {
           });
         }
 
-        const copiedStart = yield* manager
-          .startStack({
-            workspacePath: copied,
-            stackName: "default",
-            portDocument: automaticDocument(),
-            ownership,
-            lifecycle: "stopped",
-          })
-          .pipe(Effect.exit);
+        const copiedStart = yield* startManagedStack(manager, {
+          workspacePath: copied,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        }).pipe(Effect.exit);
         expect(Exit.isFailure(copiedStart)).toBe(true);
         if (Exit.isFailure(copiedStart)) {
           const error = Cause.squash(copiedStart.cause);
@@ -100,7 +99,7 @@ describe("managed stack projects journeys", () => {
         const movedDiscovery = yield* manager.discoverWorkspace(copied);
         expect(movedDiscovery.state).toBe("ready");
         writeFileSync(workspace, "stale workspace path");
-        const moved = yield* manager.startStack({
+        const moved = yield* startManagedStack(manager, {
           workspacePath: copied,
           stackName: "default",
           portDocument: automaticDocument(),
@@ -197,7 +196,7 @@ describe("managed stack projects journeys", () => {
               ready: true,
             },
           });
-          if (owner._tag !== "Owned") throw new Error("status probe took control ownership");
+          if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");
           yield* Deferred.succeed(continueRead, void 0);
           const summary = yield* Fiber.join(summaryFiber);
           expect(summary.running).toBe(true);
