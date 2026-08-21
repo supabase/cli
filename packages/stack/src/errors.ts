@@ -110,6 +110,7 @@ const taggedStackErrorCodes = [
   ["StackNotRunningError", "STACK_NOT_RUNNING"],
   ["StackReadinessError", "STACK_READINESS_TIMEOUT"],
   ["BinaryNotFoundError", "BINARY_NOT_FOUND"],
+  ["ChecksumMismatchError", "CHECKSUM_MISMATCH"],
   ["BinaryManifestError", "BINARY_MANIFEST"],
   ["BinaryRuntimeError", "BINARY_RUNTIME"],
   ["BinaryHostCompatibilityError", "BINARY_HOST"],

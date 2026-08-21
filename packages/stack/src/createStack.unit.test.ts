@@ -6,7 +6,7 @@ import { basename, dirname } from "node:path";
 import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import { runForegroundOperation } from "./createStack.ts";
-import { StackReadinessError } from "./errors.ts";
+import { ChecksumMismatchError, StackReadinessError } from "./errors.ts";
 import { shortTempPrefixRoot } from "./paths.ts";
 import {
   portRequestsForConfig,
@@ -52,6 +52,23 @@ const resolveConfig = (
   );
 
 describe("foreground operation lifecycle", () => {
+  it("preserves checksum mismatch classification for non-Effect consumers", async () => {
+    const mismatch = new ChecksumMismatchError({
+      url: "https://example.com/archive.tar.gz",
+      expected: "expected",
+      actual: "actual",
+    });
+
+    await expect(
+      Effect.runPromise(
+        runForegroundOperation(Effect.fail(mismatch), Effect.succeed(false), Effect.void),
+      ),
+    ).rejects.toMatchObject({
+      code: "CHECKSUM_MISMATCH",
+      cause: mismatch,
+    });
+  });
+
   it("disposes the foreground runtime after a direct readiness timeout", async () => {
     let disposeCount = 0;
     const operation = Effect.fail(

@@ -10,14 +10,14 @@ import { createServer, type Server } from "node:http";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
-import { StackBuildError } from "./errors.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { functionsRuntimeConfigPath, type ResolvedFunctionsBundle } from "./functions.ts";
 import type { AllocatedPorts, PortField, ResolvedPorts } from "./PortCatalog.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { StackServiceActivator } from "./ServiceActivation.ts";
 import { Stack } from "./Stack.ts";
-import { localStackLayer } from "./LocalStack.ts";
+import { attachReadinessDiagnostics, localStackLayer } from "./LocalStack.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
@@ -167,6 +167,37 @@ function setupLayer(
 }
 
 describe("Stack", () => {
+  it.effect("preserves defects and interruption while collecting readiness diagnostics", () =>
+    Effect.gen(function* () {
+      const readinessError = new StackReadinessError({
+        target: "stack",
+        timeoutMs: 10,
+        detail: "Timed out waiting for stack readiness",
+      });
+      const defect = new Error("diagnostic state collection failed");
+
+      const defectExit = yield* attachReadinessDiagnostics(
+        readinessError,
+        Effect.die(defect),
+        Effect.succeed([]),
+      ).pipe(Effect.exit);
+      const interruptionExit = yield* attachReadinessDiagnostics(
+        readinessError,
+        Effect.interrupt,
+        Effect.succeed([]),
+      ).pipe(Effect.exit);
+
+      expect(Exit.isFailure(defectExit)).toBe(true);
+      if (Exit.isFailure(defectExit)) {
+        expect(Cause.squash(defectExit.cause)).toBe(defect);
+      }
+      expect(Exit.isFailure(interruptionExit)).toBe(true);
+      if (Exit.isFailure(interruptionExit)) {
+        expect(Cause.hasInterruptsOnly(interruptionExit.cause)).toBe(true);
+      }
+    }),
+  );
+
   it.effect("getInfo returns correct URLs based on config", () => {
     const { layer } = setupLayer();
 
