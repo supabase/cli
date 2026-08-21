@@ -1,5 +1,7 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { makeTempHome, makeTempStackProject, runSupabase } from "../../../../tests/helpers/cli.ts";
+import { makeTempCliProject, makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
 import { cleanupRegisteredStackProjects } from "../../../../tests/helpers/stack-e2e-cleanup.ts";
 
 const START_TIMEOUT_MS = 180_000;
@@ -32,7 +34,7 @@ const LIGHTWEIGHT_DOCKER_ARGS = [
 // Lazy service activation crosses the real proxy, daemon, Docker network, and
 // container lifecycle boundaries, so keep one golden-path Docker e2e test.
 describe("supabase start lazy lifecycle (e2e)", () => {
-  let project: Awaited<ReturnType<typeof makeTempStackProject>> | undefined;
+  let project: Awaited<ReturnType<typeof makeTempCliProject>> | undefined;
   let home: ReturnType<typeof makeTempHome> | undefined;
 
   afterEach(async () => {
@@ -45,8 +47,16 @@ describe("supabase start lazy lifecycle (e2e)", () => {
     "keeps an HTTP service dormant until its first proxied request",
     { timeout: START_TIMEOUT_MS + 120_000 },
     async () => {
-      project = await makeTempStackProject("supabase-lazy-start-e2e-");
+      project = await makeTempCliProject("supabase-lazy-start-e2e-");
       home = makeTempHome();
+      await mkdir(join(project.dir, "supabase"), { recursive: true });
+      const projectId = basename(project.dir)
+        .replace(/[^a-z0-9]/giu, "")
+        .toLowerCase();
+      await writeFile(
+        join(project.dir, "supabase", "config.toml"),
+        `project_id = "${projectId}"\n`,
+      );
 
       const started = await runSupabase([...LIGHTWEIGHT_DOCKER_ARGS], {
         ...COMMAND_OPTIONS,
@@ -64,7 +74,17 @@ describe("supabase start lazy lifecycle (e2e)", () => {
       expect(before.exitCode, `stdout:\n${before.stdout}\nstderr:\n${before.stderr}`).toBe(0);
       expect(before.stdout).toContain("auth: Dormant");
 
-      const response = await fetch(`http://127.0.0.1:${project.ports.apiPort}/auth/v1/health`, {
+      const apiUrlMatch =
+        `${started.stdout}\n${started.stderr}\n${before.stdout}\n${before.stderr}`.match(
+          /API URL:\s+(https?:\/\/[^\s]+)/,
+        );
+      if (apiUrlMatch?.[1] === undefined) {
+        throw new Error(
+          `Start/status output did not include an API URL.\nstdout:\n${before.stdout}\nstderr:\n${before.stderr}`,
+        );
+      }
+
+      const response = await fetch(`${apiUrlMatch[1]}/auth/v1/health`, {
         signal: AbortSignal.timeout(60_000),
       });
       expect(response.ok).toBe(true);

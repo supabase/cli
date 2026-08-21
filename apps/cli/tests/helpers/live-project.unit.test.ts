@@ -11,6 +11,7 @@ import {
   resolvePoolerDatabaseUrl,
   retryLiveEffect,
   selectPrimaryPoolerConfig,
+  supportedRegion,
   type PoolerConfig,
 } from "./live-project.ts";
 
@@ -41,6 +42,15 @@ function poolerConfig(overrides: Partial<PoolerConfig> = {}): PoolerConfig {
 }
 
 describe("live project lifecycle", () => {
+  it("fails invalid regions before provisioning", async () => {
+    await expect(
+      Effect.runPromise(Effect.flip(supportedRegion("not-a-region"))),
+    ).resolves.toMatchObject({
+      message: expect.stringContaining("Unsupported SUPABASE_LIVE_REGION"),
+    });
+    await expect(Effect.runPromise(supportedRegion("us-east-1"))).resolves.toBe("us-east-1");
+  });
+
   it("retries transient failures until the management operation succeeds", async () => {
     let attempts = 0;
     const result = await Effect.runPromise(

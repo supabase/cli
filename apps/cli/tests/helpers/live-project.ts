@@ -97,10 +97,11 @@ function apiError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function supportedRegion(value: string): Region {
+export function supportedRegion(value: string): Effect.Effect<Region, Error> {
   const region = REGIONS.find((candidate) => candidate === value);
-  if (region !== undefined) return region;
-  throw new Error(`Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`);
+  return region === undefined
+    ? Effect.fail(new Error(`Unsupported SUPABASE_LIVE_REGION ${JSON.stringify(value)}`))
+    : Effect.succeed(region);
 }
 
 /** HTTP statuses that can occur while a newly-created project propagates. */
@@ -220,17 +221,21 @@ function createProject(
   name: string,
   password: string,
 ): Effect.Effect<string, Error, never> {
-  return resolveOrganization(api).pipe(
-    Effect.flatMap((organization) =>
-      timeoutLiveRequest(
-        "project creation",
-        api.v1.createAProject({
-          name,
-          db_pass: password,
-          organization_slug: organization.slug,
-          region: supportedRegion(liveRegion()),
-        }),
-      ).pipe(Effect.mapError(apiError)),
+  return supportedRegion(liveRegion()).pipe(
+    Effect.flatMap((region) =>
+      resolveOrganization(api).pipe(
+        Effect.flatMap((organization) =>
+          timeoutLiveRequest(
+            "project creation",
+            api.v1.createAProject({
+              name,
+              db_pass: password,
+              organization_slug: organization.slug,
+              region,
+            }),
+          ).pipe(Effect.mapError(apiError)),
+        ),
+      ),
     ),
     Effect.flatMap((project) =>
       PROJECT_REF_RE.test(project.ref)
@@ -399,11 +404,12 @@ function createStorageBucket(
   bucket: string,
 ): Effect.Effect<void, Error, never> {
   const attempt = Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const response = await fetch(`https://${ref}.${host}/storage/v1/bucket`, {
         method: "POST",
         headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
         body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+        signal,
       });
       if (!response.ok && response.status !== 409) {
         throw new LiveStorageError({

@@ -199,11 +199,10 @@ from the provisioned project's database metadata.
 
 Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
-To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run:
+To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the Nx target from the repository root. The target's build dependency prepares the CLI artifacts before Vitest starts:
 
 ```sh
-cd apps/cli
-pnpm test:live
+pnpm exec nx run supabase:test:live
 ```
 
 Optional `SUPABASE_LIVE_ORG_ID`, `SUPABASE_LIVE_REGION`, and
