@@ -191,21 +191,21 @@ The replay/record harness has two modes:
 
 ### Live remote-project coverage
 
-The live suite lives in `apps/cli/src/**` as collocated `*.live.test.ts` files and runs in the CLI package's `live` Vitest project. Global setup provisions one shared environment per run. Attached mode (the default) preserves the local Supabox contract: `SUPABASE_PROFILE` selects the platform, `SUPABASE_LIVE_API_URL` is used for readiness, and `SUPABASE_LIVE_PROJECT_REF` identifies the existing project; attached teardown never deletes it. Managed mode is explicit (`SUPABASE_LIVE_MODE=managed`) and provisions one uniquely named staging project, shares it across all live tests, then deletes exactly that project during teardown unless `SUPABASE_LIVE_KEEP_PROJECT=1` is set.
+The live suite lives in `apps/cli/src/**` as collocated `*.live.test.ts` files and runs in the CLI package's separate, serial `live` Vitest project. Global setup requires `SUPABASE_LIVE_API_URL` and `SUPABASE_ACCESS_TOKEN`, then provisions one uniquely named project through the typed Management API client, waits for it to become healthy, creates the shared storage fixture, and writes a temporary YAML profile. Every live subprocess receives that profile, so the same contract works with Supabox, a Docker-hosted API platform, or staging by changing only the URL and token. Teardown always removes the temporary profile and deletes the exact owned project unless `SUPABASE_LIVE_KEEP_PROJECT=1` is set.
 
 Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
-To run the live suite locally against an attached Supabox/local platform, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), fill in the platform values, and run:
+To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run:
 
 ```sh
 cd apps/cli
 pnpm test:live
 ```
 
-For an explicit managed staging run, set `SUPABASE_LIVE_MODE=managed`,
-`SUPABASE_PROFILE=supabase-staging`, `SUPABASE_LIVE_API_URL=https://api.supabase.green`,
-and `SUPABASE_ACCESS_TOKEN` before invoking the same command. The suite's global setup
-handles project provisioning and teardown.
+Optional `SUPABASE_LIVE_ORG_ID`, `SUPABASE_LIVE_REGION`, and
+`SUPABASE_LIVE_PROJECT_NAME` values select provisioning details. Set
+`SUPABASE_LIVE_KEEP_PROJECT=1` only when debugging a failed run; the temporary
+profile is still cleaned up.
 
 Live CI is manual or daily scheduled and is not PR-blocking; run it manually on a PR branch when you need pre-merge remote coverage.
 
