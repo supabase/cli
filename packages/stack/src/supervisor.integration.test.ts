@@ -1027,7 +1027,10 @@ describe("detached supervisor child journeys", () => {
       await Promise.race([
         waitForExit(child.child),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("owner did not stop")), 2_000),
+          setTimeout(
+            () => reject(new Error(`owner did not stop within ${FILE_WAIT_TIMEOUT_MS}ms`)),
+            FILE_WAIT_TIMEOUT_MS,
+          ),
         ),
       ]);
       const stopped = await waitForStackDocument(roots, "stopped");
