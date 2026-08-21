@@ -385,8 +385,9 @@ const releaseReservations = (
     (field) => {
       const server = reservations.get(field);
       if (server === undefined) return Effect.void;
-      reservations.delete(field);
-      return closeServer(server);
+      return Effect.uninterruptible(
+        closeServer(server).pipe(Effect.tap(() => Effect.sync(() => reservations.delete(field)))),
+      );
     },
     { discard: true },
   );
@@ -401,8 +402,9 @@ const releaseClaims = (
     (field) => {
       const claim = claims.get(field);
       if (claim === undefined) return Effect.void;
-      claims.delete(field);
-      return releasePortClaim(claim, fs);
+      return Effect.uninterruptible(
+        releasePortClaim(claim, fs).pipe(Effect.tap(() => Effect.sync(() => claims.delete(field)))),
+      );
     },
     { discard: true },
   );
