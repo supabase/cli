@@ -153,7 +153,7 @@ export const SERVICE_CATALOG = {
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "v16.1",
+    defaultVersion: "v16.2",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgrest" },
@@ -203,7 +203,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.3",
+    defaultVersion: "v2.129.8",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "realtime" },
@@ -215,7 +215,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.70.3",
+    defaultVersion: "v1.70.6",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "storage" },
@@ -275,7 +275,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.4",
+    defaultVersion: "v1.50.6",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "analytics" },
@@ -287,7 +287,7 @@ export const SERVICE_CATALOG = {
   vector: {
     name: "vector",
     configKey: "vector",
-    defaultVersion: "0.53.0",
+    defaultVersion: "0.53.0-alpine",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "vector" },
@@ -299,7 +299,7 @@ export const SERVICE_CATALOG = {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "v2.9.10",
+    defaultVersion: "v2.9.7",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { repository: "pooler" },
