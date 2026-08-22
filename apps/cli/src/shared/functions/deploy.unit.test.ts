@@ -1,11 +1,12 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import {
   buildDockerBinds,
+  dockerBindContainerPath,
   dockerBindHostPath,
   type ResolvedDeployFunctionConfig,
 } from "./deploy.ts";
@@ -346,6 +347,163 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("skips a missing scope target when missing import targets are skipped", async () => {
+    const { root, functionsDir, outputDir, config } = await createFunctionProjectWithDenoJson(
+      {
+        scopes: {
+          __local: { __missing: "../../does-not-exist" },
+        },
+      },
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+    const warnings: Array<string> = [];
+
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+        onWarning: async (message) => {
+          warnings.push(message);
+        },
+        skipMissingImportMapTargets: true,
+      });
+
+      expect(binds.some((bind) => bind.includes("does-not-exist"))).toBe(false);
+      expect(
+        warnings.some((warning) => warning.includes("Skipping missing import map target")),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps scanning imports from file-valued scope targets", async () => {
+    const { root, functionsDir, outputDir, config } = await createFunctionProjectWithDenoJson(
+      {
+        scopes: {
+          __local: { __scope: "../../_scope/entry.ts" },
+        },
+      },
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+    const scopeDir = join(root, "supabase", "_scope");
+    const scopeEntrypoint = join(scopeDir, "entry.ts");
+    const scopeDependency = join(scopeDir, "dependency.ts");
+    await mkdir(scopeDir, { recursive: true });
+    await writeFile(scopeEntrypoint, 'export { dependency } from "./dependency.ts";\n');
+    await writeFile(scopeDependency, 'export const dependency = "scope";\n');
+
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      const hostPaths = binds.map(dockerBindHostPath);
+
+      expect(hostPaths).toContain(scopeEntrypoint);
+      expect(hostPaths).toContain(scopeDependency);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mounts an out-of-root file-valued scope target itself, warns, and does not follow its imports", async () => {
+    const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "deploy-external-scope-")));
+    const libsDir = join(workspaceRoot, "libs", "thing");
+    const projectRoot = join(workspaceRoot, "infra", "my-project");
+    const functionsDir = join(projectRoot, "supabase", "functions");
+    const functionDir = join(functionsDir, "hello");
+    const outputDir = join(projectRoot, "out");
+    const scopeEntrypoint = join(libsDir, "mod.ts");
+    const scopeDependency = join(libsDir, "util.ts");
+    const warnings: Array<string> = [];
+
+    try {
+      await mkdir(join(workspaceRoot, ".git"), { recursive: true });
+      await mkdir(libsDir, { recursive: true });
+      await mkdir(functionDir, { recursive: true });
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(join(projectRoot, ".git"), "gitdir: ignored\n");
+      await writeFile(scopeEntrypoint, 'export { util } from "./util.ts";\n');
+      await writeFile(scopeDependency, 'export const util = "thing";\n');
+
+      const entrypoint = join(functionDir, "index.ts");
+      const importMap = join(functionDir, "deno.json");
+      await writeFile(entrypoint, 'Deno.serve(() => new Response("ok"));\n');
+      await writeFile(
+        importMap,
+        JSON.stringify({
+          scopes: { __local: { __mod: "../../../../../libs/thing/mod.ts" } },
+        }),
+      );
+
+      const config: ResolvedDeployFunctionConfig = {
+        slug: "hello",
+        enabled: true,
+        entrypoint,
+        importMap,
+        staticFiles: [],
+        env: {},
+      };
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+        onWarning: async (message) => {
+          warnings.push(message);
+        },
+      });
+      const hostPaths = binds.map(dockerBindHostPath);
+
+      expect(hostPaths).toContain(scopeEntrypoint);
+      expect(hostPaths).not.toContain(scopeDependency);
+      expect(warnings).toContainEqual(
+        `WARN: Mounting import map scope target outside the project root: ${scopeEntrypoint}\n`,
+      );
+    } finally {
+      await rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not duplicate the functions mount when its directory is symlinked",
+    async () => {
+      const { root, functionsDir, outputDir, config } = await createFunctionProjectWithDenoJson(
+        {
+          scopes: {
+            __local: { __functions: ".." },
+          },
+        },
+        'Deno.serve(() => new Response("ok"));\n',
+      );
+      const externalRoot = await realpath(
+        await mkdtemp(join(tmpdir(), "deploy-external-functions-")),
+      );
+      const externalFunctionsDir = join(externalRoot, "functions");
+      await rename(functionsDir, externalFunctionsDir);
+      await symlink(externalFunctionsDir, functionsDir, "dir");
+
+      const reportedScopeBinds: Array<string> = [];
+      const warnings: Array<string> = [];
+
+      try {
+        const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+          onScopeBindOutsideRoots: (bind) => {
+            reportedScopeBinds.push(bind);
+          },
+          onWarning: async (message) => {
+            warnings.push(message);
+          },
+        });
+        const functionsBinds = binds.filter(
+          (bind) => dockerBindContainerPath(bind) === resolve(functionsDir),
+        );
+
+        expect(functionsBinds).toHaveLength(1);
+        expect(dockerBindHostPath(functionsBinds[0] ?? "")).toBe(resolve(functionsDir));
+        expect(reportedScopeBinds).toHaveLength(0);
+        expect(
+          warnings.filter((warning) => warning.includes("Mounting import map scope target")),
+        ).toHaveLength(0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+        await rm(externalRoot, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("drops a `/`-suffixed key whose value lacks a trailing slash (spec-invalid mapping), instead of fabricating a concatenated path", async () => {
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
