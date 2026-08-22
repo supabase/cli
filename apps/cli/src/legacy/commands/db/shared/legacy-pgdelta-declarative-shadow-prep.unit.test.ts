@@ -102,6 +102,41 @@ $function$;`,
     ).toEqual(new Set(["pgcrypto"]));
   });
 
+  it("ignores CREATE EXTENSION inside double-quoted identifiers", () => {
+    expect(
+      legacyDeclaredSqlExtensions([
+        {
+          name: "quoted-table.sql",
+          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto" (id int);',
+        },
+      ]),
+    ).toEqual(new Set());
+    expect(
+      legacyDeclaredSqlExtensions([
+        {
+          name: "quoted-then-real.sql",
+          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto" (id int); CREATE EXTENSION pgjwt;',
+        },
+      ]),
+    ).toEqual(new Set(["pgjwt"]));
+    expect(
+      legacyDeclaredSqlExtensions([
+        {
+          name: "quoted-ext.sql",
+          sql: 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
+        },
+      ]),
+    ).toEqual(new Set(["uuid-ossp"]));
+    expect(
+      legacyDeclaredSqlExtensions([
+        {
+          name: "doubled-quote.sql",
+          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto""x" (id int);',
+        },
+      ]),
+    ).toEqual(new Set());
+  });
+
   it("ignores CREATE EXTENSION inside E-string escape quotes", () => {
     expect(
       legacyDeclaredSqlExtensions([
