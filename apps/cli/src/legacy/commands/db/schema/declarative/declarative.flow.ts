@@ -1,5 +1,6 @@
 import type { LegacyPgDeltaImplementation } from "../../../../shared/legacy-pgdelta-next-flag.ts";
 import { legacySchemaToCsvField } from "../../../../shared/legacy-schema-flags.ts";
+import { legacyDeclaredSqlExtensions } from "../../shared/legacy-pgdelta-declarative-shadow-prep.ts";
 import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-engine.service.ts";
 
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
@@ -159,18 +160,6 @@ function matchImplicitExtension(message: string): LegacyImplicitExtensionMatch |
   };
 }
 
-/**
- * Masks SQL comments and strings while preserving offsets. Extension declarations
- * are DDL, so occurrences inside comments, quoted values, and dollar bodies must
- * not suppress compatibility guidance.
- */
-function maskSqlNonCode(sql: string): string {
-  return sql.replaceAll(
-    /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|\$(?:[a-zA-Z_][\w$]*)?\$[\s\S]*?\$(?:[a-zA-Z_][\w$]*)?\$/g,
-    (matched) => matched.replaceAll(/[^\r\n]/g, " "),
-  );
-}
-
 function maskSqlComments(sql: string): string {
   return sql.replaceAll(/--[^\r\n]*|\/\*[\s\S]*?\*\//g, (matched) =>
     matched.replaceAll(/[^\r\n]/g, " "),
@@ -180,16 +169,7 @@ function maskSqlComments(sql: string): string {
 export function legacyDeclaredExtensions(
   files: readonly LegacyDeclarativeSqlFile[],
 ): ReadonlySet<string> {
-  const declared = new Set<string>();
-  const pattern =
-    /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
-  for (const file of files) {
-    for (const match of maskSqlNonCode(file.sql).matchAll(pattern)) {
-      const extension = match[1] ?? match[2];
-      if (extension !== undefined) declared.add(extension.toLowerCase());
-    }
-  }
-  return declared;
+  return legacyDeclaredSqlExtensions(files);
 }
 
 function declaredImplicitExtensions(
