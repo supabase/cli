@@ -1,6 +1,9 @@
 import type { LegacyPgDeltaImplementation } from "../../../../shared/legacy-pgdelta-next-flag.ts";
 import { legacySchemaToCsvField } from "../../../../shared/legacy-schema-flags.ts";
-import { legacyDeclaredSqlExtensions } from "../../shared/legacy-pgdelta-declarative-shadow-prep.ts";
+import {
+  legacyDeclaredSqlExtensions,
+  legacyMaskSqlComments,
+} from "../../shared/legacy-pgdelta-declarative-shadow-prep.ts";
 import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-engine.service.ts";
 
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
@@ -160,12 +163,6 @@ function matchImplicitExtension(message: string): LegacyImplicitExtensionMatch |
   };
 }
 
-function maskSqlComments(sql: string): string {
-  return sql.replaceAll(/--[^\r\n]*|\/\*[\s\S]*?\*\//g, (matched) =>
-    matched.replaceAll(/[^\r\n]/g, " "),
-  );
-}
-
 export function legacyDeclaredExtensions(
   files: readonly LegacyDeclarativeSqlFile[],
 ): ReadonlySet<string> {
@@ -190,7 +187,7 @@ function locateSignature(
   const diagnosticFile = files.find((file) => diagnosticMessage.startsWith(`${file.name}:`));
   const candidates = diagnosticFile === undefined ? files : [diagnosticFile];
   for (const file of candidates) {
-    const match = pattern.exec(maskSqlComments(file.sql));
+    const match = pattern.exec(legacyMaskSqlComments(file.sql));
     if (match?.index === undefined) continue;
     return {
       file: file.name,

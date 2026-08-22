@@ -29,191 +29,23 @@ const DROP_IMAGE_DEFAULT_EXTENSION: Record<(typeof IMAGE_DEFAULT_EXTENSIONS)[num
   "uuid-ossp": 'DROP EXTENSION IF EXISTS "uuid-ossp"',
 };
 
-const DOLLAR_TAG_RE = /^\$[A-Za-z_]?[A-Za-z0-9_]*\$/;
+const CREATE_EXTENSION_RE =
+  /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
 
-const isIdentChar = (ch: string): boolean =>
-  (ch >= "A" && ch <= "Z") ||
-  (ch >= "a" && ch <= "z") ||
-  (ch >= "0" && ch <= "9") ||
-  ch === "_" ||
-  ch === "$";
-
-const isIdentStart = (ch: string): boolean =>
-  (ch >= "A" && ch <= "Z") || (ch >= "a" && ch <= "z") || ch === "_";
-
-const isWs = (ch: string | undefined): boolean =>
-  ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
-
-/** `E'...'` / `e'...'` only when E is not part of a preceding identifier. */
-const isEscapeString = (sql: string, quoteIndex: number): boolean => {
-  if (quoteIndex < 1) return false;
-  const prefix = sql[quoteIndex - 1];
-  if (prefix !== "E" && prefix !== "e") return false;
-  if (quoteIndex === 1) return true;
-  return !isIdentChar(sql[quoteIndex - 2] ?? "");
-};
-
-const blankRange = (sql: string, start: number, end: number): string => {
-  let blanked = "";
-  for (let i = start; i < end; i++) {
-    const ch = sql[i];
-    blanked += ch === "\n" || ch === "\r" ? ch : " ";
-  }
-  return blanked;
-};
-
-/** Blank comments and literals, including nested block comments and E-string escapes. */
-const maskSqlNonCode = (sql: string): string => {
-  const out: string[] = [];
-  let i = 0;
-  const n = sql.length;
-  while (i < n) {
-    const c = sql[i] ?? "";
-    const next = sql[i + 1];
-    if (c === "-" && next === "-") {
-      const start = i;
-      while (i < n && sql[i] !== "\n") i++;
-      out.push(blankRange(sql, start, i));
-      continue;
-    }
-    if (c === "/" && next === "*") {
-      const start = i;
-      let depth = 1;
-      i += 2;
-      while (i < n && depth > 0) {
-        if (sql[i] === "/" && sql[i + 1] === "*") {
-          depth += 1;
-          i += 2;
-        } else if (sql[i] === "*" && sql[i + 1] === "/") {
-          depth -= 1;
-          i += 2;
-        } else i += 1;
-      }
-      out.push(blankRange(sql, start, i));
-      continue;
-    }
-    if (c === "'") {
-      const start = i;
-      const escape = isEscapeString(sql, i);
-      i += 1;
-      while (i < n) {
-        if (escape && sql[i] === "\\") {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
-        else if (sql[i] === "'") {
-          i += 1;
-          break;
-        } else i += 1;
-      }
-      out.push(blankRange(sql, start, i));
-      continue;
-    }
-    if (c === "$") {
-      const tagMatch = DOLLAR_TAG_RE.exec(sql.slice(i));
-      if (tagMatch !== null) {
-        const tag = tagMatch[0];
-        const end = sql.indexOf(tag, i + tag.length);
-        const stop = end === -1 ? n : end + tag.length;
-        out.push(blankRange(sql, i, stop));
-        i = stop;
-        continue;
-      }
-    }
-    out.push(c);
-    i += 1;
-  }
-  return out.join("");
-};
-
-const matchKeyword = (sql: string, i: number, word: string): number | undefined => {
-  if (i > 0 && isIdentChar(sql[i - 1] ?? "")) return undefined;
-  const end = i + word.length;
-  if (sql.slice(i, end).toLowerCase() !== word) return undefined;
-  const next = sql[end];
-  if (next !== undefined && isIdentChar(next)) return undefined;
-  return end;
-};
-
-const skipWs = (sql: string, i: number): number => {
-  while (isWs(sql[i])) i += 1;
-  return i;
-};
-
-const readQuotedIdent = (sql: string, start: number): { value: string; end: number } => {
-  let i = start + 1;
-  let value = "";
-  while (i < sql.length) {
-    if (sql[i] === '"' && sql[i + 1] === '"') {
-      value += '"';
-      i += 2;
-    } else if (sql[i] === '"') {
-      return { value, end: i + 1 };
-    } else {
-      value += sql[i] ?? "";
-      i += 1;
-    }
-  }
-  return { value, end: i };
-};
-
-/** CREATE EXTENSION names only; skip `"CREATE EXTENSION pgcrypto"` identifiers. */
-const scanCreateExtensionNames = (sql: string): ReadonlyArray<string> => {
-  const names: string[] = [];
-  let i = 0;
-  const n = sql.length;
-  while (i < n) {
-    if (sql[i] === '"') {
-      i = readQuotedIdent(sql, i).end;
-      continue;
-    }
-    const afterCreate = matchKeyword(sql, i, "create");
-    if (afterCreate === undefined) {
-      i += 1;
-      continue;
-    }
-    let j = skipWs(sql, afterCreate);
-    const afterExt = matchKeyword(sql, j, "extension");
-    if (afterExt === undefined) {
-      i += 1;
-      continue;
-    }
-    j = skipWs(sql, afterExt);
-    const afterIf = matchKeyword(sql, j, "if");
-    if (afterIf !== undefined) {
-      const afterNot = matchKeyword(sql, skipWs(sql, afterIf), "not");
-      if (afterNot !== undefined) {
-        const afterExists = matchKeyword(sql, skipWs(sql, afterNot), "exists");
-        if (afterExists !== undefined) j = skipWs(sql, afterExists);
-      }
-    }
-    if (sql[j] === '"') {
-      const ident = readQuotedIdent(sql, j);
-      if (ident.value !== "") names.push(ident.value.toLowerCase());
-      i = ident.end;
-      continue;
-    }
-    if (sql[j] !== undefined && isIdentStart(sql[j] ?? "")) {
-      const start = j;
-      j += 1;
-      while (j < n && (isIdentChar(sql[j] ?? "") || sql[j] === "-")) j += 1;
-      names.push(sql.slice(start, j).toLowerCase());
-      i = j;
-      continue;
-    }
-    i = afterExt;
-  }
-  return names;
-};
+/** Blank comments and simple strings; keep offsets for locateSignature line mapping. */
+export const legacyMaskSqlComments = (sql: string): string =>
+  sql.replaceAll(/--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:[^']|'')*'/g, (matched) =>
+    matched.replaceAll(/[^\r\n]/g, " "),
+  );
 
 export const legacyDeclaredSqlExtensions = (
   files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
 ): ReadonlySet<string> => {
   const declared = new Set<string>();
   for (const file of files) {
-    for (const name of scanCreateExtensionNames(maskSqlNonCode(file.sql))) {
-      declared.add(name);
+    for (const match of legacyMaskSqlComments(file.sql).matchAll(CREATE_EXTENSION_RE)) {
+      const name = (match[1] ?? match[2] ?? "").toLowerCase();
+      if (name !== "") declared.add(name);
     }
   }
   return declared;

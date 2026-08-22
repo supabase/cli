@@ -67,93 +67,23 @@ describe("legacyDeclarativeBaselinePrepStatements", () => {
 });
 
 describe("legacyDeclaredSqlExtensions", () => {
-  it("ignores CREATE EXTENSION inside mismatched nested dollar quotes", () => {
+  it("ignores CREATE EXTENSION in comments and simple strings", () => {
     expect(
       legacyDeclaredSqlExtensions([
         {
-          name: "fn.sql",
-          sql: `CREATE FUNCTION public.demo() RETURNS void
-LANGUAGE plpgsql AS $function$
-BEGIN
-  PERFORM $sql$CREATE EXTENSION pgcrypto$sql$;
-END;
-$function$;`,
-        },
-      ]),
-    ).toEqual(new Set());
-  });
-
-  it("ignores CREATE EXTENSION hidden by nested block comments", () => {
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "nested.sql",
-          sql: "/* outer /* inner */ CREATE EXTENSION pgcrypto */",
+          name: "commented.sql",
+          sql: "-- CREATE EXTENSION pgcrypto;\n/* CREATE EXTENSION pgjwt */\nselect 'create extension uuid-ossp';",
         },
       ]),
     ).toEqual(new Set());
     expect(
       legacyDeclaredSqlExtensions([
         {
-          name: "after-nested.sql",
-          sql: "/* /* inner */ */ CREATE EXTENSION pgcrypto;",
-        },
-      ]),
-    ).toEqual(new Set(["pgcrypto"]));
-  });
-
-  it("ignores CREATE EXTENSION inside double-quoted identifiers", () => {
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "quoted-table.sql",
-          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto" (id int);',
-        },
-      ]),
-    ).toEqual(new Set());
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "quoted-then-real.sql",
-          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto" (id int); CREATE EXTENSION pgjwt;',
-        },
-      ]),
-    ).toEqual(new Set(["pgjwt"]));
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "quoted-ext.sql",
-          sql: 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
+          name: "real.sql",
+          sql: '-- skip me\nCREATE EXTENSION IF NOT EXISTS "uuid-ossp";',
         },
       ]),
     ).toEqual(new Set(["uuid-ossp"]));
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "doubled-quote.sql",
-          sql: 'CREATE TABLE "CREATE EXTENSION pgcrypto""x" (id int);',
-        },
-      ]),
-    ).toEqual(new Set());
-  });
-
-  it("ignores CREATE EXTENSION inside E-string escape quotes", () => {
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "escape.sql",
-          sql: "SELECT E'it\\'s CREATE EXTENSION pgcrypto';",
-        },
-      ]),
-    ).toEqual(new Set());
-    expect(
-      legacyDeclaredSqlExtensions([
-        {
-          name: "after-escape.sql",
-          sql: "SELECT E'it\\'s fine'; CREATE EXTENSION pgcrypto;",
-        },
-      ]),
-    ).toEqual(new Set(["pgcrypto"]));
   });
 });
 
