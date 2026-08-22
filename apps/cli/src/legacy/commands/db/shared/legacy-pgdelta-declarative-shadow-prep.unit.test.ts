@@ -3,6 +3,7 @@ import { Cause, Effect, Exit, Option } from "effect";
 
 import {
   legacyDeclarativeBaselinePrepStatements,
+  legacyDeclaredSqlExtensions,
   legacyFilesForDeclarativeShadowLoad,
   legacyParsePostgresMajorVersion,
   legacyPrepareDeclarativeShadow,
@@ -50,20 +51,35 @@ describe("legacyDeclarativeBaselinePrepStatements", () => {
   });
 });
 
+describe("legacyDeclaredSqlExtensions", () => {
+  it("ignores CREATE EXTENSION inside mismatched nested dollar quotes", () => {
+    expect(
+      legacyDeclaredSqlExtensions([
+        {
+          name: "fn.sql",
+          sql: `CREATE FUNCTION public.demo() RETURNS void
+LANGUAGE plpgsql AS $function$
+BEGIN
+  PERFORM $sql$CREATE EXTENSION pgcrypto$sql$;
+END;
+$function$;`,
+        },
+      ]),
+    ).toEqual(new Set());
+  });
+});
+
 describe("legacyFilesForDeclarativeShadowLoad", () => {
-  it("restores omitted pgjwt after a pgcrypto recreate", () => {
+  it("restores omitted pgjwt only when prep dropped an installed image copy", () => {
     const files = [{ name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" }];
-    expect(legacyFilesForDeclarativeShadowLoad(files)).toEqual([
+    expect(legacyFilesForDeclarativeShadowLoad(files, false)).toEqual(files);
+    expect(legacyFilesForDeclarativeShadowLoad(files, true)).toEqual([
       ...files,
       {
         name: "_cli/restore-pgjwt.sql",
         sql: "CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;\n",
       },
     ]);
-  });
-
-  it("does not restore pgjwt when declarations recreate it", () => {
-    expect(legacyFilesForDeclarativeShadowLoad(allImageCreates)).toEqual(allImageCreates);
   });
 });
 
@@ -85,9 +101,10 @@ describe("legacyPrepareDeclarativeShadow", () => {
       },
     };
     return Effect.gen(function* () {
-      yield* legacyPrepareDeclarativeShadow(client, [
+      const prep = yield* legacyPrepareDeclarativeShadow(client, [
         { name: "a.sql", sql: "create table a (id int);" },
       ]);
+      expect(prep.restorePgjwt).toBe(false);
       expect(queries).toEqual([]);
     });
   });
@@ -130,13 +147,51 @@ describe("legacyPrepareDeclarativeShadow", () => {
       },
     };
     return Effect.gen(function* () {
-      yield* legacyPrepareDeclarativeShadow(client, allImageCreates);
+      const prep = yield* legacyPrepareDeclarativeShadow(client, allImageCreates);
+      expect(prep.restorePgjwt).toBe(false);
       expect(queries).toEqual([
         "SHOW server_version",
         "DROP EXTENSION IF EXISTS pgjwt",
         "DROP EXTENSION IF EXISTS pgcrypto",
         'DROP EXTENSION IF EXISTS "uuid-ossp"',
       ]);
+    });
+  });
+
+  it.live("restores pgjwt only when the image had it installed", () => {
+    const queries: string[] = [];
+    const client = {
+      query: (sql: string) => {
+        queries.push(sql);
+        if (sql.startsWith("SELECT extname")) {
+          return Promise.resolve({ rows: [{ extname: "pgjwt" }] });
+        }
+        return Promise.resolve({
+          rows: sql === "SHOW server_version" ? [{ server_version: "14.15" }] : [],
+        });
+      },
+    };
+    return Effect.gen(function* () {
+      const prep = yield* legacyPrepareDeclarativeShadow(client, [
+        { name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" },
+      ]);
+      expect(prep.restorePgjwt).toBe(true);
+      expect(queries[0]).toContain("pg_extension");
+    });
+  });
+
+  it.live("does not restore pgjwt on images that never installed it", () => {
+    const client = {
+      query: (sql: string) =>
+        Promise.resolve({
+          rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
+        }),
+    };
+    return Effect.gen(function* () {
+      const prep = yield* legacyPrepareDeclarativeShadow(client, [
+        { name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" },
+      ]);
+      expect(prep.restorePgjwt).toBe(false);
     });
   });
 });

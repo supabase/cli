@@ -353,11 +353,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               ],
               { concurrency: 2 },
             );
-            yield* legacyPrepareDeclarativeShadow(declarativePool, input.files);
+            const prep = yield* legacyPrepareDeclarativeShadow(declarativePool, input.files);
             const result = yield* adapter.planDeclarativeSchema({
               targetPool: migrationsPool,
               shadowPool: declarativePool,
-              files: legacyFilesForDeclarativeShadowLoad(input.files),
+              files: legacyFilesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
               allowDrops: true,
               debug: input.debug,
               schema: input.schema,

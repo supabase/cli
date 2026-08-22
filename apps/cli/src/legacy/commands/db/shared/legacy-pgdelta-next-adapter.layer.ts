@@ -234,6 +234,27 @@ function legacyTryPgDeltaNext<Success>(
   });
 }
 
+function legacyIsLibraryDiagnostic<Subject>(
+  value: unknown,
+): value is LegacyPgDeltaNextLibraryDiagnostic<Subject> {
+  if (typeof value !== "object" || value === null) return false;
+  const severity = Reflect.get(value, "severity");
+  return (
+    typeof Reflect.get(value, "code") === "string" &&
+    typeof Reflect.get(value, "message") === "string" &&
+    (severity === "error" || severity === "warning" || severity === "info")
+  );
+}
+
+function legacyReadPlanDiagnostics<Subject>(
+  plan: unknown,
+): readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[] {
+  if (typeof plan !== "object" || plan === null) return [];
+  const diagnostics = Reflect.get(plan, "diagnostics");
+  if (!Array.isArray(diagnostics)) return [];
+  return diagnostics.filter((diagnostic) => legacyIsLibraryDiagnostic<Subject>(diagnostic));
+}
+
 function legacyNormalizePgDeltaNextDiagnostics<Subject>(
   diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
   origin: LegacyPgDeltaNextDiagnosticOrigin,
@@ -405,7 +426,8 @@ function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInp
       ...(loadOrder !== undefined ? { loadOrder: [...loadOrder] } : {}),
     };
   }
-  // Isolated load only — do not pin scope/redactSecrets; the sidecar owns those.
+  // Isolated load only. pg-delta's preflight derives scope/redactSecrets from
+  // the manifest and files — do not pin those here.
   return {
     profile: legacyPgDeltaNextProfile(input.schema),
     ...(manifest !== undefined ? { manifest } : {}),
@@ -442,6 +464,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           allowDrops: input.allowDrops,
         });
         const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = legacyReadPlanDiagnostics<Subject>(generatedPlan);
         const diagnostics = [
           ...legacyNormalizePgDeltaNextDiagnostics(
             source.diagnostics,
@@ -453,6 +476,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
             "desired",
             libraries.encodeSubject,
           ),
+          ...legacyNormalizePgDeltaNextDiagnostics(
+            planDiagnostics,
+            "plan",
+            libraries.encodeSubject,
+          ),
         ];
         return {
           changes: rendered.changes,
@@ -462,6 +490,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           hazards: libraries.summarizeHazards(generatedPlan, [
             ...source.diagnostics,
             ...desired.diagnostics,
+            ...planDiagnostics,
           ]),
           ...(input.debug
             ? {
@@ -514,10 +543,12 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           allowDrops: input.allowDrops,
         });
         const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = legacyReadPlanDiagnostics<Subject>(result.plan);
         const libraryDiagnostics = [
           ...result.loadDiagnostics,
           ...result.targetDiagnostics,
           ...result.driftDiagnostics,
+          ...planDiagnostics,
         ];
         return {
           changes: rendered.changes,
@@ -537,6 +568,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
             ...legacyNormalizePgDeltaNextDiagnostics(
               result.driftDiagnostics,
               "declarativeDrift",
+              libraries.encodeSubject,
+            ),
+            ...legacyNormalizePgDeltaNextDiagnostics(
+              planDiagnostics,
+              "plan",
               libraries.encodeSubject,
             ),
             ...legacySkippedStatementDiagnostics(result.skipped),

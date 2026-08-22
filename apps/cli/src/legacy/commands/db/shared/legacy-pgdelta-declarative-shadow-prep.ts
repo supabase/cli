@@ -6,6 +6,11 @@ export type LegacyDeclarativeShadowClient = {
   readonly query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>;
 };
 
+export interface LegacyDeclarativeShadowPrepResult {
+  /** True only when prep dropped an installed image pgjwt to recreate pgcrypto. */
+  readonly restorePgjwt: boolean;
+}
+
 /** Image-default extensions the user may still declare; omit means keep the install. */
 const IMAGE_DEFAULT_EXTENSIONS = ["pgjwt", "pgcrypto", "uuid-ossp"] as const;
 
@@ -20,12 +25,68 @@ const DROP_IMAGE_DEFAULT_EXTENSION: Record<(typeof IMAGE_DEFAULT_EXTENSIONS)[num
 const CREATE_EXTENSION_RE =
   /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
 
-/** Blank comments and literals so CREATE EXTENSION in those positions is ignored. */
-const maskSqlNonCode = (sql: string): string =>
-  sql.replaceAll(
-    /--[^\r\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|\$(?:[a-zA-Z_][\w$]*)?\$[\s\S]*?\$(?:[a-zA-Z_][\w$]*)?\$/g,
-    (matched) => matched.replaceAll(/[^\r\n]/g, " "),
-  );
+const DOLLAR_TAG_RE = /^\$[A-Za-z_]?[A-Za-z0-9_]*\$/;
+
+const blankRange = (sql: string, start: number, end: number): string => {
+  let blanked = "";
+  for (let i = start; i < end; i++) {
+    const ch = sql[i];
+    blanked += ch === "\n" || ch === "\r" ? ch : " ";
+  }
+  return blanked;
+};
+
+/** Blank comments and literals; dollar quotes close on the matching tag only. */
+const maskSqlNonCode = (sql: string): string => {
+  const out: string[] = [];
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i] ?? "";
+    const next = sql[i + 1];
+    if (c === "-" && next === "-") {
+      const start = i;
+      while (i < n && sql[i] !== "\n") i++;
+      out.push(blankRange(sql, start, i));
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const start = i;
+      i += 2;
+      while (i < n && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
+      if (i < n) i += 2;
+      out.push(blankRange(sql, start, i));
+      continue;
+    }
+    if (c === "'") {
+      const start = i;
+      i += 1;
+      while (i < n) {
+        if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
+        else if (sql[i] === "'") {
+          i += 1;
+          break;
+        } else i += 1;
+      }
+      out.push(blankRange(sql, start, i));
+      continue;
+    }
+    if (c === "$") {
+      const tagMatch = DOLLAR_TAG_RE.exec(sql.slice(i));
+      if (tagMatch !== null) {
+        const tag = tagMatch[0];
+        const end = sql.indexOf(tag, i + tag.length);
+        const stop = end === -1 ? n : end + tag.length;
+        out.push(blankRange(sql, i, stop));
+        i = stop;
+        continue;
+      }
+    }
+    out.push(c);
+    i += 1;
+  }
+  return out.join("");
+};
 
 export const legacyDeclaredSqlExtensions = (
   files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
@@ -76,9 +137,9 @@ export const legacyDeclarativeBaselinePrepStatements = (
 /** Recreate image pgjwt after a pgcrypto-only drop so omit still means keep. */
 export const legacyFilesForDeclarativeShadowLoad = (
   files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
+  restorePgjwt: boolean,
 ): ReadonlyArray<{ readonly name: string; readonly sql: string }> => {
-  const declared = declaredImageExtensions(files);
-  if (!declared.has("pgcrypto") || declared.has("pgjwt")) return files;
+  if (!restorePgjwt) return files;
   return [
     ...files,
     {
@@ -108,13 +169,31 @@ const readServerVersion = (rows: ReadonlyArray<unknown>): string => {
   return typeof value === "string" ? value : "";
 };
 
+const rowHasPgjwt = (rows: ReadonlyArray<unknown>): boolean =>
+  rows.some((row) => {
+    if (typeof row !== "object" || row === null) return false;
+    const name = Reflect.get(row, "extname");
+    return name === "pgjwt";
+  });
+
+const INSTALLED_PGJWT_SQL = "SELECT extname FROM pg_extension WHERE extname = 'pgjwt'";
+
 export const legacyPrepareDeclarativeShadow = (
   client: LegacyDeclarativeShadowClient,
   files: ReadonlyArray<{ readonly name: string; readonly sql: string }>,
 ) =>
   Effect.gen(function* () {
     const declared = declaredImageExtensions(files);
-    if (declared.size === 0) return;
+    if (declared.size === 0)
+      return { restorePgjwt: false } satisfies LegacyDeclarativeShadowPrepResult;
+    let restorePgjwt = false;
+    if (declared.has("pgcrypto") && !declared.has("pgjwt")) {
+      const installed = yield* Effect.tryPromise({
+        try: () => client.query(INSTALLED_PGJWT_SQL),
+        catch: (cause) => queryError(INSTALLED_PGJWT_SQL, cause),
+      });
+      restorePgjwt = rowHasPgjwt(installed.rows);
+    }
     const versionRows = yield* Effect.tryPromise({
       try: () => client.query("SHOW server_version"),
       catch: (cause) => queryError("SHOW server_version", cause),
@@ -129,4 +208,5 @@ export const legacyPrepareDeclarativeShadow = (
         catch: (cause) => queryError(sql, cause),
       });
     }
+    return { restorePgjwt } satisfies LegacyDeclarativeShadowPrepResult;
   });

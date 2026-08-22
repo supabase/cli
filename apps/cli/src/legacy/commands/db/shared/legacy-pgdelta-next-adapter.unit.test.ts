@@ -574,6 +574,58 @@ describe("LegacyPgDeltaNextAdapter", () => {
     },
   );
 
+  it.effect("forwards plan-time vault_presence into the diagnostic report", () => {
+    const sourcePool = new Pool();
+    const desiredPool = new Pool();
+    const layer = legacyPgDeltaNextAdapterLayerFromLibraries({
+      ...unusedLibraries,
+      resolveProfile: async () => ({
+        id: "supabase",
+        planOptions: {},
+        extract: async () => ({
+          factBase: "facts",
+          pgVersion: "17.6",
+          diagnostics: [],
+        }),
+      }),
+      plan: () => ({
+        source: "s",
+        desired: "d",
+        diagnostics: [fakeDiagnostic("vault_presence", "vault")],
+      }),
+      renderPlanFiles: () => ({ changes: false, files: [] }),
+      encodeSubject: (subject) =>
+        typeof subject === "object" && subject !== null && "id" in subject
+          ? `subject:${String(Reflect.get(subject, "id"))}`
+          : String(subject),
+      summarizeHazards: () => ({
+        actions: [],
+        dataLoss: [],
+        coverage: ["vault_presence"],
+        kinds: ["vault_presence"],
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* LegacyPgDeltaNextAdapter;
+      const result = yield* adapter.diff({
+        sourcePool,
+        desiredPool,
+        allowDrops: false,
+        debug: false,
+      });
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          origin: "plan",
+          code: "vault_presence",
+          subject: "subject:vault",
+        }),
+      ]);
+      expect(result.hazards.kinds).toEqual(["vault_presence"]);
+      yield* Effect.promise(() => Promise.all([sourcePool.end(), desiredPool.end()]));
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("preserves shadow-load diagnostics in the actionable error", () => {
     const targetPool = new Pool();
     const shadowPool = new Pool();
