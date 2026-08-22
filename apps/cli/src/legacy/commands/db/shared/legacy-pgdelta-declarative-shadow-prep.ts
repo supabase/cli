@@ -2,8 +2,15 @@ import { Effect } from "effect";
 
 import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 
-export type LegacyDeclarativeShadowClient = {
+export type LegacyDeclarativeShadowConnection = {
   readonly query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>;
+  readonly release: (error?: Error | boolean) => void;
+  readonly on?: (event: "error", listener: (error: Error) => void) => void;
+  readonly removeListener?: (event: "error", listener: (error: Error) => void) => void;
+};
+
+export type LegacyDeclarativeShadowClient = {
+  readonly connect: () => Promise<LegacyDeclarativeShadowConnection>;
 };
 
 export interface LegacyDeclarativeShadowPrepResult {
@@ -27,6 +34,22 @@ const CREATE_EXTENSION_RE =
 
 const DOLLAR_TAG_RE = /^\$[A-Za-z_]?[A-Za-z0-9_]*\$/;
 
+const isIdentChar = (ch: string): boolean =>
+  (ch >= "A" && ch <= "Z") ||
+  (ch >= "a" && ch <= "z") ||
+  (ch >= "0" && ch <= "9") ||
+  ch === "_" ||
+  ch === "$";
+
+/** `E'...'` / `e'...'` only when E is not part of a preceding identifier. */
+const isEscapeString = (sql: string, quoteIndex: number): boolean => {
+  if (quoteIndex < 1) return false;
+  const prefix = sql[quoteIndex - 1];
+  if (prefix !== "E" && prefix !== "e") return false;
+  if (quoteIndex === 1) return true;
+  return !isIdentChar(sql[quoteIndex - 2] ?? "");
+};
+
 const blankRange = (sql: string, start: number, end: number): string => {
   let blanked = "";
   for (let i = start; i < end; i++) {
@@ -36,7 +59,7 @@ const blankRange = (sql: string, start: number, end: number): string => {
   return blanked;
 };
 
-/** Blank comments and literals; dollar quotes close on the matching tag only. */
+/** Blank comments and literals, including nested block comments and E-string escapes. */
 const maskSqlNonCode = (sql: string): string => {
   const out: string[] = [];
   let i = 0;
@@ -52,16 +75,29 @@ const maskSqlNonCode = (sql: string): string => {
     }
     if (c === "/" && next === "*") {
       const start = i;
+      let depth = 1;
       i += 2;
-      while (i < n && !(sql[i] === "*" && sql[i + 1] === "/")) i++;
-      if (i < n) i += 2;
+      while (i < n && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth += 1;
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth -= 1;
+          i += 2;
+        } else i += 1;
+      }
       out.push(blankRange(sql, start, i));
       continue;
     }
     if (c === "'") {
       const start = i;
+      const escape = isEscapeString(sql, i);
       i += 1;
       while (i < n) {
+        if (escape && sql[i] === "\\") {
+          i += 2;
+          continue;
+        }
         if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
         else if (sql[i] === "'") {
           i += 1;
@@ -177,6 +213,57 @@ const rowHasPgjwt = (rows: ReadonlyArray<unknown>): boolean =>
   });
 
 const INSTALLED_PGJWT_SQL = "SELECT extname FROM pg_extension WHERE extname = 'pgjwt'";
+const SHADOW_PREP_INTERRUPTED = "shadow prep interrupted";
+
+/** Checkout so interrupt can discard a locked DROP instead of hanging the shared pool. */
+const queryShadow = (client: LegacyDeclarativeShadowClient, sql: string) =>
+  Effect.callback<{ readonly rows: ReadonlyArray<unknown> }, LegacyPgDeltaEngineError>((resume) => {
+    let settled = false;
+    let released = false;
+    let conn: LegacyDeclarativeShadowConnection | undefined;
+    const onError = (error: Error) => {
+      finish(Effect.fail(queryError(sql, error)), error);
+    };
+    const releaseConn = (error?: Error) => {
+      if (released || conn === undefined) return;
+      released = true;
+      conn.removeListener?.("error", onError);
+      conn.release(error);
+    };
+    const finish = (
+      effect: Effect.Effect<{ readonly rows: ReadonlyArray<unknown> }, LegacyPgDeltaEngineError>,
+      releaseError?: Error,
+    ) => {
+      if (settled) return;
+      settled = true;
+      releaseConn(releaseError);
+      resume(effect);
+    };
+    void client.connect().then(
+      (acquired) => {
+        conn = acquired;
+        acquired.on?.("error", onError);
+        if (settled) {
+          releaseConn(new Error(SHADOW_PREP_INTERRUPTED));
+          return;
+        }
+        void acquired.query(sql).then(
+          (result) => finish(Effect.succeed(result)),
+          (cause) =>
+            finish(
+              Effect.fail(queryError(sql, cause)),
+              cause instanceof Error ? cause : new Error(String(cause)),
+            ),
+        );
+      },
+      (cause) => finish(Effect.fail(queryError(sql, cause))),
+    );
+    return Effect.sync(() => {
+      if (settled) return;
+      settled = true;
+      releaseConn(new Error(SHADOW_PREP_INTERRUPTED));
+    });
+  });
 
 export const legacyPrepareDeclarativeShadow = (
   client: LegacyDeclarativeShadowClient,
@@ -188,25 +275,16 @@ export const legacyPrepareDeclarativeShadow = (
       return { restorePgjwt: false } satisfies LegacyDeclarativeShadowPrepResult;
     let restorePgjwt = false;
     if (declared.has("pgcrypto") && !declared.has("pgjwt")) {
-      const installed = yield* Effect.tryPromise({
-        try: () => client.query(INSTALLED_PGJWT_SQL),
-        catch: (cause) => queryError(INSTALLED_PGJWT_SQL, cause),
-      });
+      const installed = yield* queryShadow(client, INSTALLED_PGJWT_SQL);
       restorePgjwt = rowHasPgjwt(installed.rows);
     }
-    const versionRows = yield* Effect.tryPromise({
-      try: () => client.query("SHOW server_version"),
-      catch: (cause) => queryError("SHOW server_version", cause),
-    });
+    const versionRows = yield* queryShadow(client, "SHOW server_version");
     const statements = legacyDeclarativeBaselinePrepStatements(
       legacyParsePostgresMajorVersion(readServerVersion(versionRows.rows)),
       declared,
     );
     for (const sql of statements) {
-      yield* Effect.tryPromise({
-        try: () => client.query(sql),
-        catch: (cause) => queryError(sql, cause),
-      });
+      yield* queryShadow(client, sql);
     }
     return { restorePgjwt } satisfies LegacyDeclarativeShadowPrepResult;
   });
