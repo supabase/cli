@@ -1,13 +1,26 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 
 import { describe } from "vitest";
-import { requireCliSuccess, runSupabase } from "../../../../../tests/helpers/cli.ts";
+import {
+  makeTempLegacyStackProject,
+  requireCliSuccess,
+  runSupabase,
+} from "../../../../../tests/helpers/cli.ts";
 
-const START_TIMEOUT_MS = 280_000;
+const CLI_COMMAND_TIMEOUT_MS = 60_000;
+const STACK_START_TIMEOUT_MS = 280_000;
+const DIFF_COMMAND_TIMEOUT_MS = 280_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
+const LIFECYCLE_MARGIN_MS = 30_000;
+const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
+const DIFF_TEST_TIMEOUT_MS =
+  CLI_COMMAND_TIMEOUT_MS +
+  STACK_START_TIMEOUT_MS +
+  CLI_COMMAND_TIMEOUT_MS * 2 +
+  DIFF_COMMAND_TIMEOUT_MS +
+  LIFECYCLE_MARGIN_MS;
 
 // CLI-1947 regression: pg-delta's `filterPublicBuiltInDefaults()` unconditionally
 // treated PUBLIC's implicit built-in privilege as a no-op on both sides of a diff,
@@ -20,34 +33,32 @@ const START_TIMEOUT_MS = 280_000;
 // Docker-stack e2e coverage and never calls the Management API. See AGENTS.md's
 // "E2e tests" section.
 describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
-  let projectDir: string | undefined;
+  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
 
   afterEach(async () => {
-    if (projectDir === undefined) return;
-    // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
-    // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
-      cwd: projectDir,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-    projectDir = undefined;
-  });
+    await project?.cleanup().catch(() => undefined);
+    project = undefined;
+  }, CLEANUP_HOOK_TIMEOUT_MS);
 
   test(
     "keeps REVOKE ... FROM PUBLIC on a function when diffing a declarative schema against local",
-    { timeout: START_TIMEOUT_MS },
+    { timeout: DIFF_TEST_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-e2e-"));
+      project = await makeTempLegacyStackProject("sb-db-diff-e2e-");
+      const projectDir = project.dir;
 
-      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
+      const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
+      });
       requireCliSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services — `db diff` only needs the
       // local Postgres container reachable, same rationale as stop/status.
       const start = await runSupabase(
-        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -65,19 +76,19 @@ language sql
 as $$ select 1; $$;`,
           "--local",
         ],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
       );
       requireCliSuccess(createFunction, "db query create-function setup");
 
       const revoke = await runSupabase(
         ["db", "query", "revoke execute on function public.probe_fn() from public;", "--local"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS },
       );
       requireCliSuccess(revoke, "db query revoke setup");
 
       const diff = await runSupabase(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "revoke_public_execute"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: DIFF_COMMAND_TIMEOUT_MS },
       );
       expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
 

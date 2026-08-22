@@ -1,13 +1,21 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
 import { describe } from "vitest";
-import { requireCliSuccess, runSupabase } from "../../../../../../../tests/helpers/cli.ts";
+import {
+  makeTempLegacyStackProject,
+  requireCliSuccess,
+  runSupabase,
+} from "../../../../../../../tests/helpers/cli.ts";
 
-const COMMAND_TIMEOUT_MS = 280_000;
+const CLI_COMMAND_TIMEOUT_MS = 60_000;
+const STACK_START_TIMEOUT_MS = 280_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
+const LIFECYCLE_MARGIN_MS = 30_000;
+const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
+const SCENARIO_COMMAND_TIMEOUT_MS = 280_000;
+const BEFORE_ALL_TIMEOUT_MS = CLI_COMMAND_TIMEOUT_MS + STACK_START_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
 const SCENARIO_TIMEOUT_MS = 900_000;
 const NEXT_ENV = { SUPABASE_USE_PG_DELTA_NEXT: "true" };
 
@@ -37,15 +45,16 @@ function migrationFiles(projectDir: string): ReadonlyArray<string> {
 }
 
 describe("db schema declarative sync (e2e)", () => {
-  let projectDir = "";
+  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
 
   beforeAll(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-e2e-"));
+    project = await makeTempLegacyStackProject("sb-pgdelta-next-e2e-");
+    const projectDir = project.dir;
 
     const init = await runSupabase(["init"], {
       entrypoint: "legacy",
       cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+      exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
     });
     requireCliSuccess(init, "init setup");
 
@@ -90,25 +99,23 @@ describe("db schema declarative sync (e2e)", () => {
         "--exclude",
         "storage-api",
       ],
-      { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
+      { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
     );
     requireCliSuccess(start, "start setup");
-  }, COMMAND_TIMEOUT_MS);
+  }, BEFORE_ALL_TIMEOUT_MS);
 
   afterAll(async () => {
-    if (projectDir.length === 0) return;
-    await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-  }, COMMAND_TIMEOUT_MS);
+    await project?.cleanup().catch(() => undefined);
+    project = undefined;
+  }, CLEANUP_HOOK_TIMEOUT_MS);
 
   test(
     "applies a representative declarative schema and converges",
     { timeout: SCENARIO_TIMEOUT_MS },
     async () => {
+      const projectDir = project?.dir;
+      if (projectDir === undefined) throw new Error("declarative sync project was not initialized");
+
       const sync = await runSupabase(
         [
           "db",
@@ -124,7 +131,7 @@ describe("db schema declarative sync (e2e)", () => {
           entrypoint: "legacy",
           cwd: projectDir,
           env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+          exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
       expect(sync.exitCode, commandFailure(sync)).toBe(0);
@@ -145,7 +152,7 @@ describe("db schema declarative sync (e2e)", () => {
       const reset = await runSupabase(["db", "reset", "--local", "--no-seed"], {
         entrypoint: "legacy",
         cwd: projectDir,
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
+        exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(reset, "db reset setup");
 
@@ -155,7 +162,7 @@ describe("db schema declarative sync (e2e)", () => {
           entrypoint: "legacy",
           cwd: projectDir,
           env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
+          exitTimeoutMs: SCENARIO_COMMAND_TIMEOUT_MS,
         },
       );
       expect(converged.exitCode, commandFailure(converged)).toBe(0);

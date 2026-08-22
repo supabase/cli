@@ -25,16 +25,9 @@ const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 /**
  * `--exclude` values for the 3 heaviest/least-relevant services — same intent
- * `stop.e2e.test.ts`/`status.e2e.test.ts` already documented for their own
- * reduced-stack `start` call (Studio's Next.js build, the Logflare/Vector
- * logging pipeline), but "logflare" here, NOT "analytics" like those two
- * siblings. `LEGACY_SERVICE_CATALOG`'s `excludeKey` for the logflare service
- * is "logflare" — "analytics" is only that service's *container suffix*
- * (`legacy-service-catalog.ts`), never a valid `--exclude` value. The
- * siblings' `--exclude analytics` is a silent no-op — harmless for their own
- * coarse "is the stack up/down" assertions, but this suite's exact-
- * container-set assertions need the genuinely valid key so logflare is
- * actually excluded.
+ * as the reduced-stack `start` calls in the sibling Docker e2e suites (Studio's
+ * Next.js build and the Logflare/Vector logging pipeline). The legacy service
+ * catalog uses `logflare` as the exclusion key for that logging service.
  */
 const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare", "vector"]);
 

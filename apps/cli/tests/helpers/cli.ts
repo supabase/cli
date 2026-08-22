@@ -76,6 +76,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
+const DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS = 120_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
@@ -146,6 +147,44 @@ export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
   const project = await makeTempProject(prefix);
   registerTempStackProject(project);
   return project;
+}
+
+export async function makeTempLegacyStackProject(
+  prefix = "supabase-legacy-stack-e2e-",
+  cleanupTimeoutMs = DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS,
+) {
+  const project = await makeTempProject(prefix);
+  const cleanup = async () => {
+    if (!existsSync(project.dir)) return;
+
+    // `init` can fail before creating a project config. There is no stack to
+    // stop in that case, so remove the exact owned directory directly.
+    if (!existsSync(path.join(project.dir, "supabase", "config.toml"))) {
+      await rm(project.dir, { recursive: true, force: true });
+      return;
+    }
+
+    const stopped = await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: project.dir,
+      exitTimeoutMs: cleanupTimeoutMs,
+    });
+    if (stopped.exitCode !== 0) {
+      throw new Error(
+        [
+          `Failed to stop legacy stack in ${project.dir} (exit code ${stopped.exitCode}).`,
+          `stdout:\n${stopped.stdout}`,
+          `stderr:\n${stopped.stderr}`,
+        ].join("\n"),
+      );
+    }
+
+    await rm(project.dir, { recursive: true, force: true });
+  };
+
+  const stackProject = { dir: project.dir, cleanup };
+  registerTempStackProject(stackProject);
+  return stackProject;
 }
 
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {

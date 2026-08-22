@@ -1,16 +1,31 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { requireCliSuccess, runSupabase } from "../../../../tests/helpers/cli.ts";
+import {
+  makeTempLegacyStackProject,
+  requireCliSuccess,
+  runSupabase,
+} from "../../../../tests/helpers/cli.ts";
 import { legacySanitizeProjectId } from "../../shared/legacy-docker-ids.ts";
 
 const execFileAsync = promisify(execFile);
 
-const START_TIMEOUT_MS = 280_000;
+const CLI_COMMAND_TIMEOUT_MS = 60_000;
+const STACK_START_TIMEOUT_MS = 280_000;
+const STOP_COMMAND_TIMEOUT_MS = 120_000;
+const DOCKER_INSPECT_TIMEOUT_MS = 30_000;
+const CLEANUP_TIMEOUT_MS = 120_000;
+const LIFECYCLE_MARGIN_MS = 30_000;
+const CLEANUP_HOOK_TIMEOUT_MS = CLEANUP_TIMEOUT_MS + LIFECYCLE_MARGIN_MS;
+const STOP_TEST_TIMEOUT_MS =
+  CLI_COMMAND_TIMEOUT_MS +
+  STACK_START_TIMEOUT_MS +
+  CLI_COMMAND_TIMEOUT_MS +
+  STOP_COMMAND_TIMEOUT_MS +
+  DOCKER_INSPECT_TIMEOUT_MS +
+  LIFECYCLE_MARGIN_MS;
 
 // `stop` never calls the Management API — it talks directly to the real local
 // Docker stack `start` creates. `describe` gates
@@ -19,32 +34,30 @@ const START_TIMEOUT_MS = 280_000;
 // SUPABASE_ACCESS_TOKEN it gates on is otherwise irrelevant here. See
 // AGENTS.md's "e2e tests" section for the full convention.
 describe("supabase stop (e2e)", () => {
-  let projectDir: string | undefined;
+  let project: Awaited<ReturnType<typeof makeTempLegacyStackProject>> | undefined;
   let projectId: string | undefined;
 
   afterEach(async () => {
-    if (projectDir === undefined) return;
-    // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
-    // leaked local stack would otherwise pollute the CI runner for later jobs.
-    await runSupabase(["stop", "--no-backup"], {
-      entrypoint: "legacy",
-      cwd: projectDir,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-    projectDir = undefined;
+    await project?.cleanup().catch(() => undefined);
+    project = undefined;
     projectId = undefined;
-  });
+  }, CLEANUP_HOOK_TIMEOUT_MS);
 
   test(
     "starts a real local stack, then stops it and removes its containers",
-    { timeout: START_TIMEOUT_MS },
+    { timeout: STOP_TEST_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-e2e-"));
+      project = await makeTempLegacyStackProject("sb-stop-e2e-");
+      const projectDir = project.dir;
       // No `project_id` override, so the cli resolves it from the workdir
       // basename (see legacy-docker-ids.ts).
       projectId = path.basename(projectDir);
 
-      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
+      const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
+      });
       requireCliSuccess(init, "init setup");
 
       // Exclude the heaviest, least relevant services (Next.js Studio build, the
@@ -52,50 +65,67 @@ describe("supabase stop (e2e)", () => {
       // which services are running, only that at least one real container
       // exists to stop.
       const start = await runSupabase(
-        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
       // Sanity: confirm the stack is actually up before testing `stop` against it.
-      const before = await runSupabase(["status"], { entrypoint: "legacy", cwd: projectDir });
+      const before = await runSupabase(["status"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
+      });
       requireCliSuccess(before, "status setup");
 
-      const stop = await runSupabase(["stop"], { entrypoint: "legacy", cwd: projectDir });
+      const stop = await runSupabase(["stop"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
+      });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
       expect(stop.stdout).toContain("Stopped");
 
       // The real Docker daemon must agree: no container carrying this project's
       // label survives `stop` — the actual behavior under test, not just the
       // cli's own exit code.
-      const { stdout: remaining } = await execFileAsync("docker", [
-        "ps",
-        "-a",
-        "--filter",
-        `label=com.supabase.cli.project=${projectId}`,
-        "--format",
-        "{{.ID}}",
-      ]);
+      const { stdout: remaining } = await execFileAsync(
+        "docker",
+        [
+          "ps",
+          "-a",
+          "--filter",
+          `label=com.supabase.cli.project=${projectId}`,
+          "--format",
+          "{{.ID}}",
+        ],
+        { timeout: DOCKER_INSPECT_TIMEOUT_MS },
+      );
       expect(remaining.trim()).toBe("");
     },
   );
 
   test(
     "stop --no-backup --debug reports real pruned containers, volumes, and network",
-    { timeout: START_TIMEOUT_MS },
+    { timeout: STOP_TEST_TIMEOUT_MS },
     async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-stop-e2e-"));
+      project = await makeTempLegacyStackProject("sb-stop-e2e-");
+      const projectDir = project.dir;
       // Sanitizing is a no-op for a `mkdtemp`-generated basename (already
       // alphanumeric/`-`), but mirrors the port's actual resolution rather
       // than assuming that stays true (same note as `start.e2e.test.ts`).
       projectId = legacySanitizeProjectId(path.basename(projectDir));
 
-      const init = await runSupabase(["init"], { entrypoint: "legacy", cwd: projectDir });
+      const init = await runSupabase(["init"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
+      });
       requireCliSuccess(init, "init setup");
 
       const start = await runSupabase(
-        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
-        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
+        { entrypoint: "legacy", cwd: projectDir, exitTimeoutMs: STACK_START_TIMEOUT_MS },
       );
       requireCliSuccess(start, "start setup");
 
@@ -107,6 +137,7 @@ describe("supabase stop (e2e)", () => {
       const stop = await runSupabase(["stop", "--no-backup", "--debug"], {
         entrypoint: "legacy",
         cwd: projectDir,
+        exitTimeoutMs: STOP_COMMAND_TIMEOUT_MS,
       });
       expect(stop.exitCode, `stdout:\n${stop.stdout}\nstderr:\n${stop.stderr}`).toBe(0);
       expect(stop.stdout).toContain("Stopped");
@@ -126,14 +157,18 @@ describe("supabase stop (e2e)", () => {
 
       // The real Docker daemon must agree with the report: nothing carrying
       // this project's label survives.
-      const { stdout: remaining } = await execFileAsync("docker", [
-        "ps",
-        "-a",
-        "--filter",
-        `label=com.supabase.cli.project=${projectId}`,
-        "--format",
-        "{{.ID}}",
-      ]);
+      const { stdout: remaining } = await execFileAsync(
+        "docker",
+        [
+          "ps",
+          "-a",
+          "--filter",
+          `label=com.supabase.cli.project=${projectId}`,
+          "--format",
+          "{{.ID}}",
+        ],
+        { timeout: DOCKER_INSPECT_TIMEOUT_MS },
+      );
       expect(remaining.trim()).toBe("");
     },
   );
