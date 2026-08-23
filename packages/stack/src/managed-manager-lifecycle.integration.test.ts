@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/crypto-random-uuid-in-effect, effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer } from "effect";

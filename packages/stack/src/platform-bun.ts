@@ -1,3 +1,6 @@
+// oxlint-disable effecttsgo/async-function -- Bun request and Web Streams callbacks are native asynchronous platform boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Native Bun callbacks preserve foreign causes until protocol mapping.
+// oxlint-disable effecttsgo/global-fetch-in-effect -- Bun control transport owns the native fetch boundary and maps protocol failures.
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
@@ -140,14 +143,21 @@ const controlTransport: ControlTransport["Service"] = {
               }),
           });
           const close = yield* Effect.cached(
+            // oxlint-disable-next-line effecttsgo/global-error-in-effect-catch -- Native Bun shutdown Promise is a foreign cleanup boundary.
             Effect.tryPromise({
               try: () => {
                 const stopped = server.stop(false);
                 for (const request of activeRpcRequests) request.interrupt();
                 return stopped;
               },
-              catch: (cause) => cause,
-            }).pipe(Effect.asVoid, Effect.orDie),
+              // Bun's server.stop Promise is a foreign platform boundary; normalize only for the surrounding orDie cleanup.
+              // oxlint-disable-next-line effecttsgo/global-error-in-effect-catch, effecttsgo/global-error-in-effect-failure -- Native Bun shutdown error cannot be represented by the control protocol.
+              catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+            }).pipe(
+              Effect.asVoid,
+              // oxlint-disable-next-line effecttsgo/global-error-in-effect-failure -- Shutdown cleanup intentionally converts the foreign Bun failure into a defect.
+              Effect.orDie,
+            ),
           );
           const service = HttpServer.make({
             address: {
@@ -253,6 +263,8 @@ const controlTransport: ControlTransport["Service"] = {
             connection: "close",
             "content-type": "application/json",
           },
+          // The control endpoint speaks JSON over native fetch.
+          // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native HTTP protocol boundary.
           body: JSON.stringify(stopRequest),
         }),
       catch: (cause) =>

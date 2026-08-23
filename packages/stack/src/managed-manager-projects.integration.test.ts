@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect";

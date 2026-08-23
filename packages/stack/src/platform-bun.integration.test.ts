@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import { Cause, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
 import {

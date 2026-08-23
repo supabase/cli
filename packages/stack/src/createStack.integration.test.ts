@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";

@@ -89,7 +89,7 @@ export const validateManagedStackName = (
   if (name.length === 0) {
     return Effect.fail(new InvalidManagedStackNameError({ name, reason: "empty" }));
   }
-  const character = [...name].find((value) => {
+  const character = Array.from(name).find((value) => {
     const code = value.codePointAt(0);
     return code !== undefined && (code <= 0x1f || code === 0x7f);
   });

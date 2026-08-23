@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Public Node package APIs intentionally expose Promise facades over Effect programs.
 import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -57,6 +58,7 @@ export async function prefetch(options?: PrefetchOptions): Promise<PrefetchResul
       : { ...options, mode: "docker", containerRuntime: runtime.containerRuntime };
   return Effect.runPromise(
     prefetchEffect(resolvedOptions).pipe(
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- The preparation layer and Node platform layer have ordered service ownership at this package edge.
       Effect.provide(preparationLayer),
       Effect.provide(NodeServices.layer),
     ),

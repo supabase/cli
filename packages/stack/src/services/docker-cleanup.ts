@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- This module owns a native subprocess boundary that cannot be expressed through an Effect service.
 import type { ExternalCleanupAction } from "@supabase/process-compose";
 import { execFileSync } from "node:child_process";
 import { Effect } from "effect";

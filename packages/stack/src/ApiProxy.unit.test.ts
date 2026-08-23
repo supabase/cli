@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as http from "node:http";
 import { gzipSync } from "node:zlib";

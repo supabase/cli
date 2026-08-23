@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This file is emitted as raw Deno source and must remain dependency-free at the runtime boundary.
 declare const Deno: any;
 declare const EdgeRuntime: any;
 

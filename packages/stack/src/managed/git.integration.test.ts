@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/unnecessary-effect-gen -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, PlatformError } from "effect";

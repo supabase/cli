@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Synchronous schema path validation runs before an Effect program and requires native path resolution.
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, FileSystem, Path, Schema } from "effect";
@@ -204,10 +205,14 @@ const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const filePath = functionsRuntimeConfigPath(runtimeRoot);
   const directory = path.dirname(filePath);
+  // Temporary filenames only need host-level uniqueness at this filesystem boundary.
+  // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- Native temp-file coordination boundary.
   const temporaryPath = `${filePath}.tmp-${crypto.randomUUID()}`;
 
   yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
   yield* Effect.gen(function* () {
+    // The persisted runtime config is a stable JSON file consumed by the edge runtime.
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON is the on-disk interchange format.
     yield* fs.writeFileString(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
       flag: "wx",
       mode: 0o600,

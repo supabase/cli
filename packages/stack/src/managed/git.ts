@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- This module owns a native subprocess boundary that cannot be expressed through an Effect service.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Git inspection narrows arbitrary filesystem causes at the protocol boundary.
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -133,7 +135,9 @@ const readOptionalFile = (
   path: string,
 ): Effect.Effect<string | undefined, PlatformError.PlatformError> =>
   Effect.catch(fs.readFileString(path), (error) =>
-    Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed(undefined) : Effect.fail(error),
+    Predicate.isTagged(error.reason, "NotFound")
+      ? Effect.map(Effect.void, () => undefined)
+      : Effect.fail(error),
   );
 
 const realPathOrMalformed = (
@@ -549,6 +553,7 @@ export interface GitConfigStoreShape {
  * claiming at once safe. Reads go through it too, because a value may be quoted
  * or continued across lines and only git decides what it means.
  */
+// oxlint-disable-next-line effecttsgo/leaking-requirements -- Platform-specific callers intentionally provide FileSystem to each git operation.
 export class GitConfigStore extends Context.Service<GitConfigStore, GitConfigStoreShape>()(
   "stack/managed/GitConfigStore",
 ) {}
@@ -795,16 +800,13 @@ const ensureConfigId = (
 
     const settled = settledValue(values);
     if (settled === undefined) {
-      return yield* Effect.fail(
-        new InvalidManagedIdentityError({ message: `${key} was claimed but is not set` }),
-      );
+      return yield* new InvalidManagedIdentityError({
+        message: `${key} was claimed but is not set`,
+      });
     }
     const id = yield* requireUuid(settled, label);
     if (values.length > 1) {
-      yield* Effect.catchDefect(
-        Effect.catch(store.replace(file, key, id), () => Effect.void),
-        () => Effect.void,
-      );
+      yield* Effect.catchDefect(Effect.ignore(store.replace(file, key, id)), () => Effect.void);
     }
     return id;
   });
@@ -827,7 +829,7 @@ const readCheckoutIdentity = (
     const content = yield* fs.readFileString(gitCheckoutIdentityPath(gitDirectory)).pipe(
       Effect.catchTag("PlatformError", (error) =>
         Predicate.isTagged(error.reason, "NotFound")
-          ? Effect.succeed<string | undefined>(undefined)
+          ? Effect.map(Effect.void, () => undefined)
           : Effect.fail(
               new UnsupportedGitWorkspaceError({
                 path: gitCheckoutIdentityPath(gitDirectory),
@@ -859,27 +861,29 @@ const ensureCheckoutIdentity = (
     };
     const outcome = yield* claimFileAtomically(
       markerPath,
+      // Git checkout identity is a durable marker file.
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- This is the persistence boundary.
       `${JSON.stringify(identity, null, 2)}\n`,
       { mode: 0o600 },
     ).pipe(
-      Effect.catchTag("AtomicClaimUnsupportedError", (error) =>
-        Effect.fail(
-          new UnsupportedGitWorkspaceError({
-            path: markerPath,
-            reason: error.message,
-            workspaceCause: "metadata-inaccessible",
-          }),
-        ),
-      ),
-      Effect.catchTag("PlatformError", (error) =>
-        Effect.fail(
-          new UnsupportedGitWorkspaceError({
-            path: gitCheckoutIdentityPath(gitDirectory),
-            reason: `Git checkout identity is inaccessible (${error.message})`,
-            workspaceCause: "metadata-inaccessible",
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        AtomicClaimUnsupportedError: (error) =>
+          Effect.fail(
+            new UnsupportedGitWorkspaceError({
+              path: markerPath,
+              reason: error.message,
+              workspaceCause: "metadata-inaccessible",
+            }),
+          ),
+        PlatformError: (error) =>
+          Effect.fail(
+            new UnsupportedGitWorkspaceError({
+              path: gitCheckoutIdentityPath(gitDirectory),
+              reason: `Git checkout identity is inaccessible (${error.message})`,
+              workspaceCause: "metadata-inaccessible",
+            }),
+          ),
+      }),
     );
     if (outcome === "claimed") {
       return { checkoutId: identity.checkoutId, created: true };
@@ -887,11 +891,9 @@ const ensureCheckoutIdentity = (
 
     const winner = yield* readCheckoutIdentity(gitDirectory);
     if (winner === undefined) {
-      return yield* Effect.fail(
-        new InvalidManagedIdentityError({
-          message: "Checkout identity publication raced without a winning marker",
-        }),
-      );
+      return yield* new InvalidManagedIdentityError({
+        message: "Checkout identity publication raced without a winning marker",
+      });
     }
     return { checkoutId: winner.checkoutId, created: false };
   });
@@ -980,7 +982,7 @@ export const readGitCheckoutIdentityWithFileSystem = (
         .pipe(
           Effect.catchTag("PlatformError", (error) =>
             Predicate.isTagged(error.reason, "NotFound")
-              ? Effect.succeed(undefined)
+              ? Effect.void
               : Effect.fail(
                   new UnsupportedGitWorkspaceError({
                     path: gitCheckoutIdentityPath(inspection.gitDirectory),

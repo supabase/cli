@@ -1,8 +1,9 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
 // @supabase/stack/effect — Node-bound Effect interfaces and consumer layers.
 
 export * from "./effect.ts";
 
-import { Effect, type Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { join } from "node:path";
 import type { PortLease } from "./PortAllocator.ts";
 import type { Stack } from "./Stack.ts";
@@ -74,6 +75,5 @@ export const updateManagedLaunch = (opts: {
   readonly launch: import("./managed/document.ts").ManagedStackLaunchUpdate;
 }) =>
   updateManagedLaunchCore(opts).pipe(
-    Effect.provide(managedLayer(opts.cacheRoot)),
-    Effect.provide(httpTransportClientLayer),
+    Effect.provide(Layer.mergeAll(managedLayer(opts.cacheRoot), httpTransportClientLayer)),
   );

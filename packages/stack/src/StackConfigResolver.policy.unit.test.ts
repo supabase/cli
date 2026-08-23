@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { describe, expect, it } from "vitest";
 import { NodeFileSystem } from "@effect/platform-node";
 import { Cause, Effect, Exit, FileSystem } from "effect";

@@ -17,7 +17,7 @@ const gitCheckoutIdentitySchema = Schema.fromJsonString(
 export const decodeGitCheckoutIdentity = (
   content: string,
 ): Effect.Effect<GitCheckoutIdentity, InvalidManagedIdentityError> =>
-  Schema.decodeUnknownEffect(gitCheckoutIdentitySchema)(content).pipe(
+  Schema.decodeEffect(gitCheckoutIdentitySchema)(content).pipe(
     Effect.mapError(
       (error) =>
         new InvalidManagedIdentityError({

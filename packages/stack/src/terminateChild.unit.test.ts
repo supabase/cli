@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { describe, expect, it, vi } from "vitest";
 import { Effect, Fiber } from "effect";
 import { terminateChildProcess } from "./terminateChild.ts";

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date -- JWT generation is a synchronous config-boundary helper that stamps wall-clock claims.
 import { createHmac } from "node:crypto";
 
 // Hardcoded opaque key defaults matching Go CLI (pkg/config/apikeys.go:19-20).

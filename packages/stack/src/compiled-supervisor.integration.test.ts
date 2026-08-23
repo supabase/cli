@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/catch-to-or-else-succeed, effecttsgo/crypto-random-uuid, effecttsgo/effect-succeed-with-void, effecttsgo/extends-native-error, effecttsgo/global-error-in-effect-failure, effecttsgo/global-fetch, effecttsgo/global-fetch-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json, effecttsgo/process-env, effecttsgo/unknown-in-effect-catch -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fork, type ChildProcess } from "node:child_process";
@@ -228,7 +230,7 @@ const waitForEndpointUnavailable = (endpoint: ControlEndpoint): Promise<void> =>
     catch: (cause) => cause,
   }).pipe(
     Effect.catch((cause) =>
-      cause instanceof EndpointStillAliveError ? Effect.fail(cause) : Effect.succeed(undefined),
+      cause instanceof EndpointStillAliveError ? Effect.fail(cause) : Effect.void,
     ),
     Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
     Effect.asVoid,

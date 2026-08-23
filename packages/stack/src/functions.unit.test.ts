@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";

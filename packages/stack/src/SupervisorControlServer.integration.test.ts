@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch-in-effect, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Predicate } from "effect";
 import { HttpServer } from "effect/unstable/http";

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- This module owns a native subprocess boundary that cannot be expressed through an Effect service.
 import { execFile } from "node:child_process";
 import { Data, Duration, Effect, FileSystem, Schedule } from "effect";
 import type { ContainerRuntime } from "./ContainerRuntime.ts";
@@ -59,7 +60,7 @@ const cleanupAutoManagedPathsWithRetry = (
           fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(true))),
         { concurrency: 4 },
       );
-      if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
+      if (remaining.some(Boolean)) return yield* new CleanupPending();
     }).pipe(Effect.uninterruptible);
     const retries = Effect.sleep(Duration.millis(250)).pipe(
       Effect.andThen(
@@ -93,7 +94,7 @@ export const cleanupLocalStackResources = (opts: {
     // exited or the scope is partially closed. Make the stop path
     // uninterruptible so SIGTERM-driven scope closure does not abandon it
     // mid-shutdown and leak child processes.
-    yield* Effect.uninterruptible(opts.stop()).pipe(Effect.catch(() => Effect.void));
+    yield* Effect.uninterruptible(opts.stop()).pipe(Effect.ignore);
 
     // Safety net: force-remove any Docker containers that survived
     // signal-based shutdown. On macOS, killing the `docker run` client

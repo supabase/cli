@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/new-promise, effecttsgo/process-env -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { Context, Effect, Layer, Schema } from "effect";
 import { runTestSupervisor } from "./supervisor-child.ts";
 import { Stack } from "../../src/Stack.ts";

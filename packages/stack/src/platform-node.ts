@@ -1,3 +1,6 @@
+// oxlint-disable effecttsgo/node-builtin-import -- This module is the native Node process/HTTP boundary and owns the platform resource directly.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Native Node HTTP callbacks preserve foreign causes until protocol mapping.
+// oxlint-disable effecttsgo/global-error-in-effect-failure -- Native Node HTTP callbacks translate platform errors at the transport boundary.
 import { NodeServices } from "@effect/platform-node";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createServer } from "node:http";
@@ -247,6 +250,8 @@ const controlTransport: ControlTransport["Service"] = {
         }
       };
       request.once("error", onRequestError);
+      // The control endpoint speaks JSON over native Node HTTP.
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native HTTP protocol boundary.
       const body = JSON.stringify(stopRequest);
       request.setHeader("content-type", "application/json");
       request.setHeader("content-length", Buffer.byteLength(body));

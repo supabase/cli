@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
 import { join } from "node:path";
 import { Data, Effect, Layer } from "effect";
 import { FileSystem, Path } from "effect";

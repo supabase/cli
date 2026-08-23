@@ -374,6 +374,8 @@ const defaultStatus = (
         controlProtocol: CONTROL_PROTOCOL,
         controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
         ownershipId,
+        // Session identifiers fence native control ownership across processes.
+        // oxlint-disable-next-line effecttsgo/crypto-random-uuid -- Native process ownership boundary.
         ownerSessionId: crypto.randomUUID(),
         state: "starting",
         ready: false,
@@ -469,7 +471,7 @@ export const probeControl = (
     const transport = yield* ControlTransport;
     for (const endpoint of candidates) {
       const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.catch(() => Effect.void),
       );
       if (status !== undefined) return { status, endpoint };
     }
@@ -548,11 +550,12 @@ const scanForOwner = (
     for (const endpoint of candidates) {
       const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
         Effect.map((status) => status),
-        Effect.catchTag("ControlTransportError", (cause) =>
-          cause.reason === "unreachable" ? Effect.succeed(undefined) : Effect.fail(cause),
-        ),
-        Effect.catchTag("ControlProtocolError", () => Effect.succeed(undefined)),
-        Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(undefined)),
+        Effect.catchTags({
+          ControlTransportError: (cause) =>
+            cause.reason === "unreachable" ? Effect.void : Effect.fail(cause),
+          ControlProtocolError: () => Effect.void,
+          ControlAddressConflictError: () => Effect.void,
+        }),
       );
       if (status !== undefined) return { endpoint, status };
     }
@@ -620,7 +623,7 @@ const acquireAtCandidates = (
         return owned;
       }
       const error = bound.failure;
-      if (error.reason !== "in-use") return yield* Effect.fail(error);
+      if (error.reason !== "in-use") return yield* error;
       // The address was taken between the scan and the bind: attach if the
       // occupant is our owner, retry the walk if it is not serving yet, and
       // move to the next candidate if it belongs to someone else.
@@ -630,36 +633,35 @@ const acquireAtCandidates = (
         transport,
       ).pipe(
         Effect.map((acquisition): ControlAcquisition | undefined => acquisition),
-        Effect.catchTag("ControlAddressConflictError", (cause) =>
-          Effect.sync(() => {
-            conflict = cause;
-            return undefined;
-          }),
-        ),
-        Effect.catchTag("ControlProtocolError", (cause) =>
-          Effect.sync(() => {
-            conflict = new ControlAddressConflictError({ endpoint, cause });
-            return undefined;
-          }),
-        ),
-        Effect.catchTag("ControlTransportError", (cause) =>
-          cause.reason === "unreachable"
-            ? Effect.sync(() => {
-                pending = unavailable(endpoint, cause);
-                return undefined;
-              })
-            : Effect.fail(cause),
-        ),
+        Effect.catchTags({
+          ControlAddressConflictError: (cause) =>
+            Effect.sync(() => {
+              conflict = cause;
+              return undefined;
+            }),
+          ControlProtocolError: (cause) =>
+            Effect.sync(() => {
+              conflict = new ControlAddressConflictError({ endpoint, cause });
+              return undefined;
+            }),
+          ControlTransportError: (cause) =>
+            cause.reason === "unreachable"
+              ? Effect.sync(() => {
+                  pending = unavailable(endpoint, cause);
+                  return undefined;
+                })
+              : Effect.fail(cause),
+        }),
       );
       if (attached !== undefined) return attached;
     }
-    if (pending !== undefined) return yield* Effect.fail(pending);
-    return yield* Effect.fail(
+    if (pending !== undefined) return yield* pending;
+    return yield* (
       conflict ??
         new ControlAddressConflictError({
           endpoint: candidates[0]!,
           cause: new Error("Every control endpoint candidate is occupied"),
-        }),
+        })
     );
   });
 

@@ -78,6 +78,7 @@ const RETRYABLE_PULL_PATTERNS = [
   /i\/o timeout/i,
 ] as const;
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- Internal retry state carries native daemon detail before mapping to DockerPullError.
 class PullAttemptError extends Error {
   constructor(
     readonly detail: string,
@@ -225,6 +226,8 @@ export class StackPreparation extends Context.Service<
                   ? (publishEvent?.(new ServiceDownloadFinished({ service })) ?? Effect.void)
                   : Effect.void,
               );
+            // This key is a deterministic in-memory cache identity.
+            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- JSON provides stable structural keying.
             const key = JSON.stringify({
               service,
               resolution,
@@ -333,15 +336,14 @@ const pullImage = (
         schedule: pullRetrySchedule,
       }),
       Effect.as(image),
-      Effect.catch((failure) =>
-        Effect.fail(
+      Effect.mapError(
+        (failure) =>
           new DockerPullError({
             image,
             detail: `Failed to pull canonical Docker image. ${failure.detail}`,
             cause: new Error(failure.detail),
             daemonDown: failure.daemonDown,
           }),
-        ),
       ),
     );
   });

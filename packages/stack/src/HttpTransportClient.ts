@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect -- This service is the native fetch transport boundary and maps failures into HttpTransportClientError.
 import { Context, Data, Effect, Layer } from "effect";
 import {
   CONTROL_STATUS_PATH,
@@ -102,6 +103,8 @@ const makeHttpControlTransport = (
     Effect.suspend(() =>
       transport.request(endpoint, CONTROL_STOP_PATH, {
         method: "POST",
+        // Control requests cross the HTTP protocol boundary as JSON.
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Native HTTP transport owns this wire encoding.
         body: JSON.stringify(request),
         headers: { "content-type": "application/json", connection: "close" },
         signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),

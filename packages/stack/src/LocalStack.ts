@@ -25,6 +25,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/unstable/http";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import {
@@ -260,7 +261,15 @@ export const localStackLayer = (
           if (index === -1 || current[index]?.status === "Downloading") return current;
           return current.map((entry, entryIndex) =>
             entryIndex === index
-              ? new StackServiceState({ ...entry, status: "Downloading" })
+              ? new StackServiceState({
+                  name: entry.name,
+                  status: "Downloading",
+                  pid: entry.pid,
+                  exitCode: entry.exitCode,
+                  restartCount: entry.restartCount,
+                  startedAt: entry.startedAt,
+                  error: entry.error,
+                })
               : entry,
           );
         });
@@ -280,20 +289,20 @@ export const localStackLayer = (
       const syncProjectedStates = (
         orchestrator: Orchestrator["Service"],
         serviceProjection: StackServiceProjectionCatalog,
-      ) =>
+      ): Effect.Effect<void> =>
         Effect.gen(function* () {
-          const rawStates = yield* orchestrator.getAllStates();
+          const rawStates = yield* orchestrator.getAllStates;
           yield* Effect.forEach(projectStackStates(rawStates, serviceProjection), updateState, {
             discard: true,
           });
-        }).pipe(projectionLock.withPermit);
+        }).pipe((effect) => projectionLock.withPermit(effect));
 
       const requireKnownService = (name: string) =>
         Effect.gen(function* () {
           const currentStates = SubscriptionRef.getUnsafe(stateRef);
           const match = currentStates.find((state) => state.name === name);
           if (match === undefined) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name }));
+            return yield* new ServiceNotFoundError({ name });
           }
           return match;
         });
@@ -304,7 +313,7 @@ export const localStackLayer = (
           yield* requireKnownService(name);
           const service = SERVICE_NAMES.find((candidate) => candidate === name);
           if (service === undefined) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name }));
+            return yield* new ServiceNotFoundError({ name });
           }
           return service;
         });
@@ -469,82 +478,82 @@ export const localStackLayer = (
           }),
         );
 
-      const ensureRuntime = Effect.uninterruptibleMask((restore) =>
-        Effect.suspend(() => {
-          if (disposed || disposing) {
-            return Effect.fail(
-              new StackBuildError({
-                detail: "Cannot ensure stack runtime after stack disposal has begun",
-              }),
-            );
-          }
-          if (runtimeState !== undefined) {
-            return Effect.succeed(runtimeState);
-          }
-          if (runtimeDeferred !== undefined) return restore(Deferred.await(runtimeDeferred));
-
-          const deferred = Deferred.makeUnsafe<RuntimeState, StackBuildError>();
-          runtimeDeferred = deferred;
-
-          const effect = Effect.gen(function* () {
-            const prepared = yield* ensurePlanned;
-            const { graph, serviceProjection, cleanupTargets } = yield* builder
-              .build(config, prepared)
-              .pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(Scope.Scope, scope),
-              );
-            const graphServices = new Set(graph.startOrder.map((definition) => definition.name));
-            const missingEnabledService = enabledServices.find(
-              (service) => !graphServices.has(service),
-            );
-            if (missingEnabledService !== undefined) {
-              return yield* Effect.fail(
+      const ensureRuntime: Effect.Effect<RuntimeState, StackBuildError> =
+        Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            if (disposed || disposing) {
+              return Effect.fail(
                 new StackBuildError({
-                  detail: `Prepared graph does not contain enabled service ${missingEnabledService}`,
+                  detail: "Cannot ensure stack runtime after stack disposal has begun",
                 }),
               );
             }
-            exactCleanupTargets = cleanupTargets;
+            if (runtimeState !== undefined) {
+              return Effect.succeed(runtimeState);
+            }
+            if (runtimeDeferred !== undefined) return restore(Deferred.await(runtimeDeferred));
 
-            const orchLayer = Orchestrator.layer(graph).pipe(
-              Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
-              Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+            const deferred = Deferred.makeUnsafe<RuntimeState, StackBuildError>();
+            runtimeDeferred = deferred;
+
+            const effect = Effect.gen(function* () {
+              const prepared = yield* ensurePlanned;
+              const { graph, serviceProjection, cleanupTargets } = yield* builder
+                .build(config, prepared)
+                .pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                  Effect.provideService(Scope.Scope, scope),
+                );
+              const graphServices = new Set(graph.startOrder.map((definition) => definition.name));
+              const missingEnabledService = enabledServices.find(
+                (service) => !graphServices.has(service),
+              );
+              if (missingEnabledService !== undefined) {
+                return yield* new StackBuildError({
+                  detail: `Prepared graph does not contain enabled service ${missingEnabledService}`,
+                });
+              }
+              exactCleanupTargets = cleanupTargets;
+
+              const orchLayer = Orchestrator.layer(graph).pipe(
+                Layer.provide(FetchHttpClient.layer),
+                Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
+                Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+              );
+              const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
+              const orchestrator = Context.get(orchServices, Orchestrator);
+
+              yield* syncProjectedStates(orchestrator, serviceProjection);
+              yield* orchestrator.allStateChanges.pipe(
+                Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
+                Effect.ignore,
+                Effect.forkIn(scope),
+              );
+
+              return {
+                orchestrator,
+                graph,
+                serviceProjection,
+              } satisfies RuntimeState;
+            }).pipe(
+              Effect.tap((value) =>
+                Effect.sync(() => {
+                  runtimeState = value;
+                }),
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  runtimeDeferred = undefined;
+                }),
+              ),
             );
-            const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
-            const orchestrator = Context.get(orchServices, Orchestrator);
 
-            yield* syncProjectedStates(orchestrator, serviceProjection);
-            yield* orchestrator.allStateChanges().pipe(
-              Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
-              Effect.ignore,
-              Effect.forkIn(scope),
-            );
-
-            return {
-              orchestrator,
-              graph,
-              serviceProjection,
-            } satisfies RuntimeState;
-          }).pipe(
-            Effect.tap((value) =>
-              Effect.sync(() => {
-                runtimeState = value;
-              }),
-            ),
-            Effect.ensuring(
-              Effect.sync(() => {
-                runtimeDeferred = undefined;
-              }),
-            ),
-          );
-
-          return Effect.gen(function* () {
-            yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
-            return yield* restore(Deferred.await(deferred));
-          });
-        }),
-      );
+            return Effect.gen(function* () {
+              yield* Effect.forkIn(effect.pipe(Deferred.into(deferred)), preparationScope);
+              return yield* restore(Deferred.await(deferred));
+            });
+          }),
+        );
 
       let disposed = false;
       let disposing = false;
@@ -598,7 +607,7 @@ export const localStackLayer = (
         Effect.gen(function* () {
           const currentEdgeRuntime = yield* Ref.get(edgeRuntimeConfigRef);
           if (currentEdgeRuntime === false || opts.edgeRuntime.enabled === false) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+            return yield* new ServiceNotFoundError({ name: "edge-runtime" });
           }
 
           return {
@@ -623,7 +632,8 @@ export const localStackLayer = (
             (previous, current) => [current, changedStatesBetween(previous, current)],
           ),
         );
-      const withLifecycleLock = lifecycleLock.withPermit;
+      const withLifecycleLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        lifecycleLock.withPermit(effect);
       const syncRuntimeProjectedStates = (runtime: RuntimeState) =>
         syncProjectedStates(runtime.orchestrator, runtime.serviceProjection);
       const serviceStartOptions = {
@@ -642,7 +652,10 @@ export const localStackLayer = (
       const beginStartTargets = (
         root: ServiceName,
         allowExplicitlyStopped: ReadonlySet<ServiceName>,
-      ) =>
+      ): Effect.Effect<
+        { readonly runtime: RuntimeState; readonly targets: ReadonlyArray<ServiceName> },
+        StackBuildError | ServiceReadyError
+      > =>
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime;
           const targets = activationTargetsForService(enabledServices, root);
@@ -666,11 +679,9 @@ export const localStackLayer = (
               publicDependency !== undefined &&
               !allowExplicitlyStopped.has(publicDependency)
             ) {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot activate ${root} because dependency ${dependency} was explicitly stopped`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot activate ${root} because dependency ${dependency} was explicitly stopped`,
+              });
             }
           }
 
@@ -691,7 +702,7 @@ export const localStackLayer = (
       }: {
         readonly runtime: RuntimeState;
         readonly targets: ReadonlyArray<ServiceName>;
-      }) =>
+      }): Effect.Effect<void, StackBuildError | ServiceReadyError> =>
         Effect.gen(function* () {
           yield* Effect.forEach(
             targets,
@@ -707,7 +718,17 @@ export const localStackLayer = (
           );
           yield* syncRuntimeProjectedStates(runtime);
         });
-      const inspectStartedTargets = (root: ServiceName) =>
+      const inspectStartedTargets = (
+        root: ServiceName,
+      ): Effect.Effect<
+        | {
+            readonly runtime: RuntimeState;
+            readonly targets: ReadonlyArray<ServiceName>;
+            readonly ready: boolean;
+          }
+        | undefined,
+        StackBuildError
+      > =>
         Effect.gen(function* () {
           const runtime = yield* ensureRuntime;
           const targets = activationTargetsForService(enabledServices, root);
@@ -732,13 +753,15 @@ export const localStackLayer = (
             ),
           };
         });
-      const requireRunningPhase = Effect.gen(function* () {
-        const phase = yield* Ref.get(phaseRef);
-        if (phase !== "running") {
-          return yield* Effect.fail(new StackNotRunningError({ phase }));
-        }
-      });
-      const requireMutable = (operation: string) =>
+      const requireRunningPhase: Effect.Effect<void, StackNotRunningError> = Effect.gen(
+        function* () {
+          const phase = yield* Ref.get(phaseRef);
+          if (phase !== "running") {
+            return yield* new StackNotRunningError({ phase });
+          }
+        },
+      );
+      const requireMutable = (operation: string): Effect.Effect<void, StackBuildError> =>
         Effect.suspend(() =>
           disposed || disposing
             ? Effect.fail(
@@ -774,7 +797,7 @@ export const localStackLayer = (
             yield* Scope.close(preparationScope, Exit.void);
             yield* cleanupLocalStackResources({
               stop: () =>
-                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
+                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop,
               cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
@@ -790,7 +813,7 @@ export const localStackLayer = (
           Effect.uninterruptible,
         );
 
-      const withReadinessPolicy = <A, E, R>(
+      const withReadinessPolicy = <A, E extends Error, R>(
         effect: Effect.Effect<A, E, R>,
         target: string,
         readyOptions?: ReadyOptions,
@@ -823,10 +846,10 @@ export const localStackLayer = (
           ? Effect.succeed(error)
           : attachReadinessDiagnostics(
               error,
-              runtimeState.orchestrator.getAllStates(),
+              runtimeState.orchestrator.getAllStates,
               logBuffer.historyAll(READINESS_DIAGNOSTIC_LOG_LIMIT),
             );
-      const cleanupOnReadinessFailure = <A, E, R>(
+      const cleanupOnReadinessFailure = <A, E extends Error, R>(
         effect: Effect.Effect<A, E | StackReadinessError, R>,
       ): Effect.Effect<A, E | StackReadinessError, R> =>
         effect.pipe(
@@ -940,9 +963,9 @@ export const localStackLayer = (
               yield* requireMutable("start");
               serviceStartupBegan = true;
               yield* runtime.orchestrator.start(serviceStartOptions);
-              yield* runtime.orchestrator
-                .waitAllReady()
-                .pipe((effect) => withReadinessPolicy(effect, "stack"));
+              yield* runtime.orchestrator.waitAllReady.pipe((effect) =>
+                withReadinessPolicy(effect, "stack"),
+              );
               yield* syncRuntimeProjectedStates(runtime);
             }
             yield* requireMutable("start");
@@ -964,7 +987,7 @@ export const localStackLayer = (
               return;
             }
             yield* Ref.set(phaseRef, "stopping");
-            yield* runtimeState.orchestrator.stop();
+            yield* runtimeState.orchestrator.stop;
             yield* Ref.set(phaseRef, "stopped");
           }).pipe(withLifecycleLock),
         dispose: disposeOnce,
@@ -1050,7 +1073,7 @@ export const localStackLayer = (
             yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
             if (opts.edgeRuntime.enabled === false) {
-              return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+              return yield* new ServiceNotFoundError({ name: "edge-runtime" });
             }
             const requestedBundle =
               opts.functions === undefined
@@ -1076,7 +1099,7 @@ export const localStackLayer = (
               );
 
               if (edgeRuntimeDef === undefined) {
-                return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+                return yield* new ServiceNotFoundError({ name: "edge-runtime" });
               }
 
               yield* configureFunctions(nextConfig, nextBundle);
@@ -1109,7 +1132,7 @@ export const localStackLayer = (
             const currentStates = SubscriptionRef.getUnsafe(stateRef);
             const match = currentStates.find((state) => state.name === name);
             if (match === undefined) {
-              return yield* Effect.fail(new ServiceNotFoundError({ name }));
+              return yield* new ServiceNotFoundError({ name });
             }
             return match;
           }),
@@ -1124,11 +1147,9 @@ export const localStackLayer = (
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);
             if (phase !== "running") {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot wait for service ${name} while the stack is ${phase}`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot wait for service ${name} while the stack is ${phase}`,
+              });
             }
             yield* requireKnownServiceName(name);
             const runtime = yield* ensureRuntime;
@@ -1141,25 +1162,23 @@ export const localStackLayer = (
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);
             if (phase !== "running") {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot wait for stack readiness while the stack is ${phase}`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot wait for stack readiness while the stack is ${phase}`,
+              });
             }
             const runtime = yield* ensureRuntime;
-            yield* runtime.orchestrator
-              .waitAllReady()
-              .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
+            yield* runtime.orchestrator.waitAllReady.pipe((effect) =>
+              withReadinessPolicy(effect, "stack", opts),
+            );
             yield* syncRuntimeProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         subscribeLogs: (name) => logBuffer.subscribe(name),
         subscribeAllLogs: (services) =>
           services === undefined || services.length === 0
-            ? logBuffer.subscribeAll()
-            : logBuffer
-                .subscribeAll()
-                .pipe(Stream.filter((entry) => services.includes(entry.service))),
+            ? logBuffer.subscribeAll
+            : logBuffer.subscribeAll.pipe(
+                Stream.filter((entry) => services.includes(entry.service)),
+              ),
         logHistory: (name, limit) => logBuffer.history(name, limit),
         logHistoryAll: (limit, services) => logBuffer.historyAll(limit, services),
       } satisfies StackService;

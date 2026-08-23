@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stackIdentity } from "../StackIdentity.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";

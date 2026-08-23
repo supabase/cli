@@ -30,8 +30,12 @@ export const makeSupervisorControlApplication = (
         ? StackRpcHandlers
         : StackRpcHandlers.pipe(Layer.provide(Layer.succeed(StackLaunchUpdater, launchUpdater)));
     const rpc = yield* RpcServer.toHttpEffect(StackRpc).pipe(
-      Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorLifecycle, lifecycle)))),
-      Effect.provide(RpcSerialization.layerNdjson),
+      Effect.provide(
+        Layer.mergeAll(
+          handlers.pipe(Layer.provide(Layer.succeed(SupervisorLifecycle, lifecycle))),
+          RpcSerialization.layerNdjson,
+        ),
+      ),
     );
     const fencedRpc = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
@@ -82,6 +86,7 @@ export const makeSupervisorControlApplication = (
       HttpRouter.route("POST", "/rpc", fencedRpc),
     ];
     const application = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
+    // oxlint-disable-next-line effecttsgo/return-effect-in-gen -- The route application is intentionally returned as an Effect value for HttpServer wiring.
     return application.pipe(Effect.orDie);
   });
 

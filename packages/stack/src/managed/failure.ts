@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- This recovery helper intentionally accepts arbitrary foreign failures before narrowing the protocol error.
 import { Effect } from "effect";
 
 /** A stable human-readable rendering for failures crossing process boundaries. */

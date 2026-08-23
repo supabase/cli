@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/prefer-schema-over-json -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import { it } from "@effect/vitest";
 import { Context, Effect, Layer, Stream } from "effect";

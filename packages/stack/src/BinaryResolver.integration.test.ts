@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date-in-effect, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { zstdCompressSync } from "node:zlib";

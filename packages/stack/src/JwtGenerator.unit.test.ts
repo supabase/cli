@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-date -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { defaultJwtSecret, generateJwks, generateJwt } from "./JwtGenerator.ts";

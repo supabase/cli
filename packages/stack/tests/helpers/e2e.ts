@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 /**
  * Poll an Edge Function endpoint until the gateway can actually serve it.
  *

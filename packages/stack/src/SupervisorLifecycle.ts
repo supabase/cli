@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Lifecycle teardown deliberately preserves the exact Cause from stop, dispose, and close operations.
 import { Context, Deferred, Effect, Exit, Ref, Scope } from "effect";
 import {
   CONTROL_PROTOCOL,
@@ -108,7 +109,7 @@ export class SupervisorLifecycle extends Context.Service<
                 : Exit.isFailure(closeExit)
                   ? closeExit.cause
                   : undefined;
-            if (failure !== undefined) yield* Effect.failCause(failure);
+            if (failure !== undefined) return yield* Effect.failCause(failure);
           }),
         );
       const completeShutdown = (exit: Exit.Exit<void, unknown>) =>
@@ -151,12 +152,10 @@ export class SupervisorLifecycle extends Context.Service<
         runtimeStack: Effect.gen(function* () {
           const state = yield* Ref.get(stateRef);
           if (state.phase === "running") return state.stack;
-          return yield* Effect.fail(
-            new StackUnavailableError({
-              phase: state.phase === "closed" ? "stopping" : state.phase,
-              ...(state.phase === "failed" ? { detail: state.detail } : {}),
-            }),
-          );
+          return yield* new StackUnavailableError({
+            phase: state.phase === "closed" ? "stopping" : state.phase,
+            ...(state.phase === "failed" ? { detail: state.detail } : {}),
+          });
         }),
         publishStack: (stack) =>
           Ref.modify(stateRef, (state): [undefined, SupervisorState] =>

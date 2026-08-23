@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- This standalone Node maintenance script intentionally uses native filesystem and path APIs.
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console -- This standalone script is a native Node CLI entrypoint.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

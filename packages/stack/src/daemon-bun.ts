@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- The detached Bun entrypoint forwards the supervisor's process-boundary Cause.
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { runSupervisor } from "./supervisor.ts";
@@ -14,10 +15,14 @@ const managerLayer = (stateRoot: string) =>
 export const runBunDaemon = (): void => {
   void Effect.runPromise(
     runSupervisor({ platformFactory, managerLayer }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(gitConfigStoreLayer),
-      Effect.provide(controlTransportLayer),
+      Effect.provide(
+        Layer.mergeAll(
+          BunServices.layer,
+          BunFileSystem.layer,
+          gitConfigStoreLayer,
+          controlTransportLayer,
+        ),
+      ),
     ),
   );
 };

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { createClient } from "@supabase/supabase-js";
 import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

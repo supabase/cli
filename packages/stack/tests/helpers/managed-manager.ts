@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/effect-succeed-with-void, effecttsgo/global-date, effecttsgo/global-date-in-effect, effecttsgo/global-error-in-effect-failure, effecttsgo/lazy-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Predicate, Stream } from "effect";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

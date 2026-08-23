@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/lazy-effect -- Callable service methods intentionally re-evaluate lifecycle effects against current stack state.
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
 import { Context, Effect, Schema, Stream } from "effect";
@@ -46,7 +47,7 @@ export const StackInfoSchema = Schema.Struct({
 
 const EdgeRuntimeConfigSchema = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  inspectorPort: Schema.optionalKey(Schema.Number),
+  inspectorPort: Schema.optionalKey(Schema.Finite),
   policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"])),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });

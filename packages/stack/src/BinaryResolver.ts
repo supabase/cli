@@ -213,10 +213,10 @@ const validateManifest = (
 > =>
   Effect.gen(function* () {
     if (typeof raw !== "object" || raw === null) {
-      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest must be an object"));
+      return yield* manifestError(release.manifestUrl, "Manifest must be an object");
     }
     if (!isSlimServiceManifest(raw)) {
-      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest schema is invalid"));
+      return yield* manifestError(release.manifestUrl, "Manifest schema is invalid");
     }
     const manifest = raw;
     if (
@@ -224,11 +224,9 @@ const validateManifest = (
       manifest.version !== release.version ||
       manifest.target !== release.target
     ) {
-      return yield* Effect.fail(
-        manifestError(
-          release.manifestUrl,
-          "Manifest service/version/target does not match release",
-        ),
+      return yield* manifestError(
+        release.manifestUrl,
+        "Manifest service/version/target does not match release",
       );
     }
     if (
@@ -237,12 +235,13 @@ const validateManifest = (
       !Array.isArray(manifest.cmd) ||
       !manifest.cmd.every((value) => typeof value === "string")
     ) {
-      return yield* Effect.fail(
-        manifestError(release.manifestUrl, "Manifest entrypoint/cmd must be string arrays"),
+      return yield* manifestError(
+        release.manifestUrl,
+        "Manifest entrypoint/cmd must be string arrays",
       );
     }
     if (manifest.entrypoint.length === 0 && manifest.cmd.length === 0) {
-      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest has no command"));
+      return yield* manifestError(release.manifestUrl, "Manifest has no command");
     }
     const runtimeRequires = manifest.runtime_requires ?? null;
     const commandPaths = [...manifest.entrypoint, ...manifest.cmd].filter(
@@ -254,21 +253,17 @@ const validateManifest = (
         entry === "..",
     );
     if (commandPaths.some((entry) => hasTraversalSegment(entry))) {
-      return yield* Effect.fail(
-        manifestError(release.manifestUrl, "Manifest command path is unsafe"),
-      );
+      return yield* manifestError(release.manifestUrl, "Manifest command path is unsafe");
     }
     const osFloor = manifest.os_floor;
     if (osFloor !== null && typeof osFloor !== "object") {
-      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest os_floor is invalid"));
+      return yield* manifestError(release.manifestUrl, "Manifest os_floor is invalid");
     }
     if (osFloor !== null && osFloor.kind !== "macos" && osFloor.kind !== "glibc") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target: release.target,
-          detail: `Unsupported manifest host kind ${osFloor.kind}`,
-        }),
-      );
+      return yield* new BinaryHostCompatibilityError({
+        target: release.target,
+        detail: `Unsupported manifest host kind ${osFloor.kind}`,
+      });
     }
     const hostCompatibility: HostCompatibilityRequirement = {
       runtimeRequires,
@@ -296,20 +291,16 @@ const validateHostCompatibility = (
       requirement.runtimeRequires === "glibc" ||
       requirement.osFloor?.kind === "glibc";
     if (requirement.osFloor?.kind === "macos" && platform.os !== "darwin") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target,
-          detail: "Manifest requires macOS",
-        }),
-      );
+      return yield* new BinaryHostCompatibilityError({
+        target,
+        detail: "Manifest requires macOS",
+      });
     }
     if (requiresGlibc && platform.os !== "linux") {
-      return yield* Effect.fail(
-        new BinaryHostCompatibilityError({
-          target,
-          detail: "Manifest requires Linux/glibc",
-        }),
-      );
+      return yield* new BinaryHostCompatibilityError({
+        target,
+        detail: "Manifest requires Linux/glibc",
+      });
     }
     const floor = requirement.osFloor?.floor;
     if (requiresGlibc) {
@@ -334,30 +325,24 @@ const validateHostCompatibility = (
         }
       });
       if (typeof host !== "string" || host.trim().length === 0) {
-        return yield* Effect.fail(
-          new BinaryHostCompatibilityError({
-            target,
-            detail: "Unable to determine host glibc version",
-          }),
-        );
+        return yield* new BinaryHostCompatibilityError({
+          target,
+          detail: "Unable to determine host glibc version",
+        });
       }
       if (floor !== null && floor !== undefined) {
         const comparison = compareVersions(host, floor);
         if (comparison === undefined) {
-          return yield* Effect.fail(
-            new BinaryHostCompatibilityError({
-              target,
-              detail: `Host glibc ${host} or manifest floor ${floor} is not a dotted numeric version`,
-            }),
-          );
+          return yield* new BinaryHostCompatibilityError({
+            target,
+            detail: `Host glibc ${host} or manifest floor ${floor} is not a dotted numeric version`,
+          });
         }
         if (comparison < 0) {
-          return yield* Effect.fail(
-            new BinaryHostCompatibilityError({
-              target,
-              detail: `Host glibc ${host} is below manifest floor ${floor}`,
-            }),
-          );
+          return yield* new BinaryHostCompatibilityError({
+            target,
+            detail: `Host glibc ${host} is below manifest floor ${floor}`,
+          });
         }
       }
     }
@@ -378,29 +363,23 @@ const validateHostCompatibility = (
       );
       const hostVersion = host.trim().split(/\s+/)[0] ?? "";
       if (hostVersion.length === 0) {
-        return yield* Effect.fail(
-          new BinaryHostCompatibilityError({
-            target,
-            detail: "Unable to determine macOS version",
-          }),
-        );
+        return yield* new BinaryHostCompatibilityError({
+          target,
+          detail: "Unable to determine macOS version",
+        });
       }
       const comparison = compareVersions(hostVersion, floor);
       if (comparison === undefined) {
-        return yield* Effect.fail(
-          new BinaryHostCompatibilityError({
-            target,
-            detail: `Host macOS ${hostVersion} or manifest floor ${floor} is not a dotted numeric version`,
-          }),
-        );
+        return yield* new BinaryHostCompatibilityError({
+          target,
+          detail: `Host macOS ${hostVersion} or manifest floor ${floor} is not a dotted numeric version`,
+        });
       }
       if (comparison < 0) {
-        return yield* Effect.fail(
-          new BinaryHostCompatibilityError({
-            target,
-            detail: `Host macOS ${hostVersion} is below manifest floor ${floor}`,
-          }),
-        );
+        return yield* new BinaryHostCompatibilityError({
+          target,
+          detail: `Host macOS ${hostVersion} is below manifest floor ${floor}`,
+        });
       }
     }
   });
@@ -530,6 +509,8 @@ export class BinaryResolver extends Context.Service<
             if (Option.isNone(marker)) return false;
             const parsed = yield* Effect.sync(() => {
               try {
+                // The cache marker is intentionally decoded as unknown before manifest validation.
+                // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Cache metadata is an untyped compatibility boundary.
                 const value: unknown = JSON.parse(marker.value);
                 return value;
               } catch {
@@ -568,12 +549,10 @@ export class BinaryResolver extends Context.Service<
             const platform = yield* detectPlatform;
             const release = nativeReleaseForService(spec.service, spec.version, platform);
             if (release === undefined) {
-              return yield* Effect.fail(
-                new BinaryNotFoundError({
-                  service: spec.service,
-                  platform: `${platform.os}-${platform.arch}`,
-                }),
-              );
+              return yield* new BinaryNotFoundError({
+                service: spec.service,
+                platform: `${platform.os}-${platform.arch}`,
+              });
             }
             const info: AssetInfo = {
               service: spec.service,
@@ -603,6 +582,8 @@ export class BinaryResolver extends Context.Service<
                       Option.match(info.mtime, {
                         onNone: () => Effect.void,
                         onSome: (modifiedAt) =>
+                          // Staging cleanup compares filesystem mtimes to the host wall clock.
+                          // oxlint-disable-next-line effecttsgo/global-date -- Native filesystem freshness boundary.
                           Date.now() - modifiedAt.getTime() >= STALE_PREPARATION_ENTRY_AGE_MS
                             ? fs.remove(stagingPath, { recursive: true, force: true })
                             : Effect.void,
@@ -638,12 +619,10 @@ export class BinaryResolver extends Context.Service<
                 relative === ".." ||
                 relative.startsWith(`..${path.sep}`)
               ) {
-                return yield* Effect.fail(
-                  new BinaryRuntimeError({
-                    path: candidate,
-                    detail: `Extracted path resolves outside private staging: ${entry}`,
-                  }),
-                );
+                return yield* new BinaryRuntimeError({
+                  path: candidate,
+                  detail: `Extracted path resolves outside private staging: ${entry}`,
+                });
               }
             }
           });
@@ -668,6 +647,8 @@ export class BinaryResolver extends Context.Service<
             );
             const hostCompatibility = yield* Effect.try({
               try: () => {
+                // The release manifest is validated by validateManifest immediately after parsing.
+                // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- External registry payload is intentionally unknown here.
                 const parsed: unknown = JSON.parse(manifestText);
                 return parsed;
               },
@@ -702,8 +683,9 @@ export class BinaryResolver extends Context.Service<
             );
             const expected = checksumForArchive(checksumText, `${release.assetName}.tar.zst`);
             if (expected === undefined) {
-              return yield* Effect.fail(
-                manifestError(release.checksumUrl, "SHA256SUMS has no entry for the archive"),
+              return yield* manifestError(
+                release.checksumUrl,
+                "SHA256SUMS has no entry for the archive",
               );
             }
             yield* verifyChecksum(tarball, expected, release.checksumUrl);
@@ -715,13 +697,12 @@ export class BinaryResolver extends Context.Service<
             const members = yield* spawner
               .string(ChildProcess.make("tar", ["-tf", archivePath]))
               .pipe(
-                Effect.catch((cause) =>
-                  Effect.fail(
+                Effect.mapError(
+                  (cause) =>
                     new DownloadError({
                       url: release.downloadUrl,
                       cause,
                     }),
-                  ),
                 ),
               );
             const unsafeMember = members
@@ -729,12 +710,10 @@ export class BinaryResolver extends Context.Service<
               .map((member) => member.trim())
               .find(isUnsafeArchiveMember);
             if (unsafeMember !== undefined) {
-              return yield* Effect.fail(
-                new DownloadError({
-                  url: release.downloadUrl,
-                  cause: new Error(`archive member is unsafe: ${unsafeMember}`),
-                }),
-              );
+              return yield* new DownloadError({
+                url: release.downloadUrl,
+                cause: new Error(`archive member is unsafe: ${unsafeMember}`),
+              });
             }
 
             const exitCode = yield* spawner
@@ -745,12 +724,10 @@ export class BinaryResolver extends Context.Service<
                 ),
               );
             if (exitCode !== 0) {
-              return yield* Effect.fail(
-                new DownloadError({
-                  url: release.downloadUrl,
-                  cause: new Error(`extraction exited with code ${exitCode}`),
-                }),
-              );
+              return yield* new DownloadError({
+                url: release.downloadUrl,
+                cause: new Error(`extraction exited with code ${exitCode}`),
+              });
             }
 
             yield* validateExtractedTree(destination);
@@ -769,12 +746,10 @@ export class BinaryResolver extends Context.Service<
                   ),
                 );
                 if (exitCode !== 0) {
-                  return yield* Effect.fail(
-                    new BinaryRuntimeError({
-                      path: destination,
-                      detail: `${name} exited with code ${exitCode}`,
-                    }),
-                  );
+                  return yield* new BinaryRuntimeError({
+                    path: destination,
+                    detail: `${name} exited with code ${exitCode}`,
+                  });
                 }
               });
 
@@ -815,12 +790,10 @@ export class BinaryResolver extends Context.Service<
               fs.exists(path.join(destination, entry)),
             ).pipe(Effect.map((exists) => requiredPaths.filter((_entry, index) => !exists[index])));
             if (missing.length > 0) {
-              return yield* Effect.fail(
-                new BinaryRuntimeError({
-                  path: destination,
-                  detail: `Manifest runtime paths are missing: ${missing.join(", ")}`,
-                }),
-              );
+              return yield* new BinaryRuntimeError({
+                path: destination,
+                detail: `Manifest runtime paths are missing: ${missing.join(", ")}`,
+              });
             }
             return hostCompatibility;
           });
@@ -853,6 +826,8 @@ export class BinaryResolver extends Context.Service<
               yield* fs.writeFile(
                 path.join(stagingDir, CACHE_COMPLETE_MARKER),
                 new TextEncoder().encode(
+                  // This marker is a stable cache interchange format, not an in-memory schema value.
+                  // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Cache metadata is written as JSON.
                   JSON.stringify({
                     provider: release.provider,
                     service: spec.service,
@@ -911,7 +886,7 @@ export class BinaryResolver extends Context.Service<
                   if (yield* isCompleteCache(cacheDir, release, info, platform)) {
                     return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
                   }
-                  return yield* Effect.fail(retryFailure);
+                  return yield* retryFailure;
                 }),
               );
             }).pipe(

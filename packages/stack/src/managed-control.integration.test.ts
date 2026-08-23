@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/crypto-random-uuid-in-effect, effecttsgo/global-fetch-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json, effecttsgo/unnecessary-effect-gen -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- Integration tests and subprocess fixtures intentionally inspect generic Effect failures at the boundary.
 import { it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";

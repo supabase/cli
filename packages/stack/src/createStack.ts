@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/lazy-effect -- The public foreground handle exposes callable operations so each invocation observes current lifecycle state.
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- The package edge accepts arbitrary platform failures and maps them to StackError.
 import type { LogEntry } from "@supabase/process-compose";
 import {
   Cause,
@@ -211,7 +213,7 @@ const createStackAttempt = (
           apiProxy.awaitTerminalFailure.pipe(
             Effect.andThen(Effect.sleep("25 millis")),
             Effect.andThen(dispose),
-            Effect.catchCause(() => Effect.void),
+            Effect.ignoreCause,
           ),
         );
 

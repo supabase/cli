@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-catch-tag -- Separate transport/protocol defect mappings preserve their distinct typed boundaries.
 import { Context, Effect, Stream } from "effect";
 import {
   StackBuildError,

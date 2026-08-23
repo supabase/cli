@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
+// oxlint-disable effecttsgo/process-env -- Docker/Podman socket discovery intentionally reads host runtime environment at the platform boundary.
 import { accessSync, constants } from "node:fs";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { ContainerRuntime } from "../ContainerRuntime.ts";

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- The detached Node entrypoint forwards the supervisor's process-boundary Cause.
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { runSupervisor } from "./supervisor.ts";
@@ -21,11 +22,15 @@ const managerLayer = (stateRoot: string) =>
 export const runNodeSupervisor = (): void => {
   void Effect.runPromise(
     runSupervisor({ platformFactory, managerLayer }).pipe(
-      Effect.provide(NodeServices.layer),
-      Effect.provide(NodeFileSystem.layer),
-      Effect.provide(NodePath.layer),
-      Effect.provide(gitConfigStoreLayer),
-      Effect.provide(controlTransportLayer),
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          NodeFileSystem.layer,
+          NodePath.layer,
+          gitConfigStoreLayer,
+          controlTransportLayer,
+        ),
+      ),
     ),
   );
 };

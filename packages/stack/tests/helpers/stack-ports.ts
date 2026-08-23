@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { createStack, type StackHandle } from "../../src/node.ts";

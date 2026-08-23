@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/global-timers, effecttsgo/multiple-effect-provide, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- Tests intentionally exercise native async, HTTP, timer, and subprocess boundaries.
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";

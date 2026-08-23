@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
+// oxlint-disable effecttsgo/process-env -- Port claim names intentionally include the host user namespace.
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
@@ -141,7 +143,7 @@ const readClaimSnapshot = (
       .readFileString(path)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+          isNotFound(error) ? Effect.void : Effect.fail(error),
         ),
       );
     if (contents === undefined) return undefined;
@@ -149,7 +151,7 @@ const readClaimSnapshot = (
       .stat(path)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+          isNotFound(error) ? Effect.void : Effect.fail(error),
         ),
       );
     if (info === undefined) return undefined;
@@ -161,6 +163,8 @@ const claimIsStale = (snapshot: ClaimSnapshot): boolean => {
   if (snapshot.record !== undefined) return !isProcessAlive(snapshot.record.pid);
   return (
     Option.isSome(snapshot.info.mtime) &&
+    // Port claim staleness compares native filesystem mtimes to the host wall clock.
+    // oxlint-disable-next-line effecttsgo/global-date -- Native filesystem coordination boundary.
     Date.now() - snapshot.info.mtime.value.getTime() > CLAIM_STALE_AFTER_MS
   );
 };
@@ -258,6 +262,8 @@ const acquirePortClaimInternal = (
     yield* fs.makeDirectory(root, { recursive: true });
     const path = claimPath(port, root);
     const token = randomUUID();
+    // Port claim files are a small native coordination marker shared across processes.
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- The marker format is intentionally JSON.
     const contents = JSON.stringify({ pid: process.pid, token });
 
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt += 1) {
@@ -281,7 +287,7 @@ const acquirePortClaimInternal = (
       const failure = Cause.findErrorOption(openedExit.cause);
       if (Option.isNone(failure)) return yield* Effect.failCause(openedExit.cause);
       if (!isAlreadyExists(failure.value)) {
-        return yield* Effect.fail(failure.value);
+        return yield* failure.value;
       }
       const inspection = yield* inspectClaim(path);
       if (inspection === undefined) continue;
@@ -591,10 +597,10 @@ const reserveRandomPort = (
       return yield* reserveRandomPort(exclude, field, claims, fs, root, attempt + 1);
     }
     if (Option.isSome(failure) && failure.value instanceof PlatformError) {
-      return yield* Effect.fail(portAllocationFromCause(bound.port, failure.value));
+      return yield* portAllocationFromCause(bound.port, failure.value);
     }
     if (Option.isSome(failure) && failure.value instanceof PortAllocationError) {
-      return yield* Effect.fail(failure.value);
+      return yield* failure.value;
     }
     return yield* Effect.failCause(
       Cause.map(claimExit.cause, (error) =>
@@ -618,7 +624,7 @@ const withPortField = (field: PortField, error: PortAllocationError): PortAlloca
 const decodePortSet = (
   partial: Partial<Record<PortField, number>>,
 ): Effect.Effect<PortSet, PortAllocationError> =>
-  Schema.decodeUnknownEffect(PortSetSchema)(partial).pipe(
+  Schema.decodeEffect(PortSetSchema)(partial).pipe(
     Effect.mapError(
       (cause) =>
         new PortAllocationError({

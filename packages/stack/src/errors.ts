@@ -150,6 +150,7 @@ export class PortConflictError extends Data.TaggedError("PortConflictError")<{
   readonly service: string;
 }> {}
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- Public Promise adapter exposes a conventional Error with stable code/cause fields.
 export class StackError extends Error {
   readonly code: string;
   constructor(opts: { code: string; message: string; cause?: unknown }) {

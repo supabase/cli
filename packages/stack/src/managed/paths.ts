@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Effect } from "effect";
@@ -152,7 +153,7 @@ export const assertManagedStackRootEffect = (
     const actual = resolve(stackRoot);
     return actual === expected
       ? actual
-      : yield* Effect.fail(new UnsafeManagedStackPathError({ path: stackRoot }));
+      : yield* new UnsafeManagedStackPathError({ path: stackRoot });
   });
 
 export const ordinaryWorkspaceIdentityPath = (workspacePath: string): string =>

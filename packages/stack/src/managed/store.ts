@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Pure path/config helpers use the host path API at a synchronous platform boundary.
+// oxlint-disable effecttsgo/lazy-effect -- Store operations remain callable to defer filesystem effects until invocation.
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { Effect, FileSystem, Path, PlatformError, Predicate } from "effect";
@@ -87,7 +89,7 @@ const decodeAtPath = (
     const content = yield* fs.readFileString(documentPath);
     const document = yield* decodeManagedStackDocument(documentPath, content);
     if (document.id !== stackId) {
-      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path: documentPath }));
+      return yield* new InvalidManagedStackDocumentError({ path: documentPath });
     }
     return document;
   });
@@ -107,24 +109,24 @@ const makeListEntry = (
     const documentPath = yield* managedStackDocumentPathEffect(stateRoot, stackId);
     return yield* decodeAtPath(fs, documentPath, stackId).pipe(
       Effect.map((document): ManagedStackListing => ({ id: stackId, status: "healthy", document })),
-      Effect.catchTag("InvalidManagedStackDocumentError", (cause) =>
-        Effect.succeed<ManagedStackListing>({
-          id: stackId,
-          status: "corrupt",
-          path: documentPath,
-          cause,
-        }),
-      ),
-      Effect.catchTag("PlatformError", (error) =>
-        isNotFound(error)
-          ? Effect.succeed(undefined)
-          : Effect.succeed<ManagedStackListing>({
-              id: stackId,
-              status: "corrupt",
-              path: documentPath,
-              cause: error,
-            }),
-      ),
+      Effect.catchTags({
+        InvalidManagedStackDocumentError: (cause) =>
+          Effect.succeed<ManagedStackListing>({
+            id: stackId,
+            status: "corrupt",
+            path: documentPath,
+            cause,
+          }),
+        PlatformError: (error) =>
+          isNotFound(error)
+            ? Effect.map(Effect.void, () => undefined)
+            : Effect.succeed<ManagedStackListing>({
+                id: stackId,
+                status: "corrupt",
+                path: documentPath,
+                cause: error,
+              }),
+      }),
     );
   });
 
@@ -150,7 +152,7 @@ export const makeStackStore = (
         const documentPath = yield* managedStackDocumentPathEffect(resolvedStateRoot, stackId);
         return yield* decodeAtPath(fs, documentPath, stackId).pipe(
           Effect.catchTag("PlatformError", (error) =>
-            isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+            isNotFound(error) ? Effect.map(Effect.void, () => undefined) : Effect.fail(error),
           ),
         );
       });
@@ -176,7 +178,7 @@ export const makeStackStore = (
           names.map((name) =>
             managedStackPathsEffect(resolvedStateRoot, name).pipe(
               Effect.map(() => name),
-              Effect.catchTag("InvalidManagedIdentityError", () => Effect.succeed(undefined)),
+              Effect.catchTag("InvalidManagedIdentityError", () => Effect.void),
             ),
           ),
         );

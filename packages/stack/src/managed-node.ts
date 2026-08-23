@@ -30,6 +30,7 @@ export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
 ): ReturnType<typeof managedDaemonLayerForPlatform> =>
   managedDaemonLayerForPlatform(input, managedDaemonEntryPoint).pipe(
+    // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- Node daemon entrypoint layers are ordered platform bindings.
     Effect.provide(NodeFileSystem.layer),
     Effect.provide(NodePath.layer),
   );

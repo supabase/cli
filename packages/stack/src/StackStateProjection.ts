@@ -23,7 +23,15 @@ function projectPublicState(
   catalog: StackServiceProjectionCatalog,
 ): StackServiceState {
   if (raw.desired === "inactive" && (raw.status === "Pending" || raw.status === "Stopped")) {
-    return new StackServiceState({ ...fromRawServiceState(raw), status: "Dormant" });
+    return new StackServiceState({
+      name: raw.name,
+      status: "Dormant",
+      pid: raw.pid,
+      exitCode: raw.exitCode,
+      restartCount: raw.restartCount,
+      startedAt: raw.startedAt,
+      error: raw.error,
+    });
   }
 
   const ownerHelpers = [...rawByName.values()].filter((candidate) => {
