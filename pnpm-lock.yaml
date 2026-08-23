@@ -25,8 +25,8 @@ catalogs:
       specifier: ^23.1.1
       version: 23.1.1
     '@tsconfig/bun':
-      specifier: ^1.0.10
-      version: 1.0.10
+      specifier: ^1.0.11
+      version: 1.0.11
     '@types/bun':
       specifier: ^1.4.0
       version: 1.4.0
@@ -99,8 +99,8 @@ importers:
         specifier: ^0.5.0
         version: 0.5.0
       jose:
-        specifier: ^6.2.8
-        version: 6.2.8
+        specifier: ^6.2.9
+        version: 6.2.9
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.233
@@ -152,7 +152,7 @@ importers:
         version: link:../../packages/stack
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -265,7 +265,7 @@ importers:
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -345,7 +345,7 @@ importers:
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -387,7 +387,7 @@ importers:
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -437,7 +437,7 @@ importers:
     devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -477,7 +477,7 @@ importers:
         version: 4.0.0-rc.111(effect@4.0.0-rc.111)(vitest@4.1.10)
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -526,7 +526,7 @@ importers:
         version: 2.112.3
       '@tsconfig/bun':
         specifier: 'catalog:'
-        version: 1.0.10
+        version: 1.0.11
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.0
@@ -2803,8 +2803,8 @@ packages:
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
 
-  '@tsconfig/bun@1.0.10':
-    resolution: {integrity: sha512-5AV5YknQjNyoYzZ/8NG0dawqew/wH+x7ANiCfCIn29qo0cdbd1EryvFD1k5NSZWLBMOI/fGqMIaxi58GPIP9Cg==}
+  '@tsconfig/bun@1.0.11':
+    resolution: {integrity: sha512-DQA3HOKFQ+/yPTUa73k5QGcuEM1ExtL6uWQMR0QrfOTitm0oLHqHd1tI74WtEtMqlIu+tvSMELJ6p5uNxVE7lw==}
 
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
@@ -4736,8 +4736,8 @@ packages:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
 
-  jose@6.2.8:
-    resolution: {integrity: sha512-Bsdjwm3Qsd/P0jR+BHDe3LytDfY7WBq2HmCCLIwuVRHMuEC9ae7/R474GIUdF1NgCyZjzVo/A9DOiOBtXq8ZoQ==}
+  jose@6.2.9:
+    resolution: {integrity: sha512-XrchZOFZUl/T3vTwRe8XK+cJrGtMF4th1ARnDfwbBXFKThGhlsxEE4Zu03AD/bjJSt/9jT/mxrOCkJWOg77aPA==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -7647,7 +7647,7 @@ snapshots:
       express: 5.2.1
       express-rate-limit: 8.6.1(express@5.2.1)
       hono: 4.12.32
-      jose: 6.2.8
+      jose: 6.2.9
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
@@ -8863,7 +8863,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@tsconfig/bun@1.0.10': {}
+  '@tsconfig/bun@1.0.11': {}
 
   '@tybys/wasm-util@0.10.3':
     dependencies:
@@ -10913,7 +10913,7 @@ snapshots:
 
   jiti@2.7.0: {}
 
-  jose@6.2.8: {}
+  jose@6.2.9: {}
 
   js-tokens@4.0.0: {}
 
