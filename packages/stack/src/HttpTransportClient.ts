@@ -1,5 +1,15 @@
 import { Context, Data, Effect, Layer } from "effect";
-import type { ControlEndpoint } from "./managed/control.ts";
+import {
+  CONTROL_STATUS_PATH,
+  CONTROL_STOP_PATH,
+  ControlProtocolError,
+  ControlStopConflictError,
+  ControlTransportError,
+  makeControlClient,
+  type ControlClientShape,
+  type ControlClientTransport,
+  type ControlEndpoint,
+} from "./managed/control.ts";
 
 export class HttpTransportClientError extends Data.TaggedError("HttpTransportClientError")<{
   readonly endpoint: ControlEndpoint;
@@ -25,13 +35,78 @@ export const httpTransportClientLayer = Layer.succeed(HttpTransportClient, {
       try: (signal) =>
         fetch(`${endpoint.url}${path}`, {
           ...init,
-          signal: AbortSignal.any(
+          signal:
             init?.signal === undefined || init.signal === null
-              ? [signal, AbortSignal.timeout(30_000)]
-              : [signal, init.signal],
-          ),
+              ? signal
+              : AbortSignal.any([signal, init.signal]),
         }),
       catch: (cause) =>
         new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
     }),
 });
+
+const CONTROL_REQUEST_TIMEOUT_MS = 500;
+
+const errorCode = (cause: unknown): string | undefined => {
+  if (typeof cause !== "object" || cause === null) return undefined;
+  if ("code" in cause && typeof cause.code === "string") return cause.code;
+  if ("cause" in cause) return errorCode(cause.cause);
+  return undefined;
+};
+
+const controlTransportError = (
+  endpoint: ControlEndpoint,
+  cause: HttpTransportClientError,
+): ControlTransportError =>
+  new ControlTransportError({
+    endpoint,
+    reason: errorCode(cause) === "ECONNREFUSED" ? "unreachable" : "transport",
+    cause,
+  });
+
+const makeHttpControlTransport = (
+  transport: HttpTransportClient["Service"],
+): ControlClientTransport => ({
+  read: (endpoint) =>
+    Effect.suspend(() =>
+      transport.request(endpoint, CONTROL_STATUS_PATH, {
+        method: "GET",
+        headers: { connection: "close" },
+        signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+      }),
+    ).pipe(
+      Effect.mapError((cause) => controlTransportError(endpoint, cause)),
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.tryPromise({
+              try: () => response.json(),
+              catch: (cause) => new ControlProtocolError({ endpoint, cause }),
+            })
+          : Effect.fail(new ControlProtocolError({ endpoint, cause: response.status })),
+      ),
+    ),
+  requestStop: (endpoint, request) =>
+    Effect.suspend(() =>
+      transport.request(endpoint, CONTROL_STOP_PATH, {
+        method: "POST",
+        body: JSON.stringify(request),
+        headers: { "content-type": "application/json", connection: "close" },
+        signal: AbortSignal.timeout(CONTROL_REQUEST_TIMEOUT_MS),
+      }),
+    ).pipe(
+      Effect.mapError((cause) => controlTransportError(endpoint, cause)),
+      Effect.flatMap(
+        (response): Effect.Effect<void, ControlProtocolError | ControlStopConflictError> => {
+          if (response.ok) return Effect.void;
+          if (response.status === 409)
+            return Effect.fail(new ControlStopConflictError({ endpoint }));
+          return Effect.fail(new ControlProtocolError({ endpoint, cause: response.status }));
+        },
+      ),
+    ),
+});
+
+/** Stable control client backed by the shared HTTP transport service. */
+export const makeHttpControlClient = (
+  transport: HttpTransportClient["Service"],
+): ControlClientShape => makeControlClient(makeHttpControlTransport(transport));

@@ -17,7 +17,11 @@ import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import { HttpTransportClient, httpTransportClientLayer } from "./HttpTransportClient.ts";
+import {
+  HttpTransportClient,
+  HttpTransportClientError,
+  httpTransportClientLayer,
+} from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { StackRpcProtocolError } from "./errors.ts";
 import {
@@ -36,6 +40,33 @@ import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { makeTestStack } from "./testing.ts";
 
 const ownerId = "b".repeat(64);
+
+const remoteOwner = (ownerSessionId: string) => ({
+  controlProtocol: "supabase-stack-control" as const,
+  controlProtocolVersion: 1 as const,
+  ownershipId: ownerId,
+  ownerSessionId,
+  state: "running" as const,
+  ready: true,
+  daemonCliVersion: "test",
+  daemonBuildId: "test-build",
+});
+
+const remoteLayer = (
+  endpoint: { readonly hostname: string; readonly port: number; readonly url: string },
+  ownerSessionId: string,
+  transport: HttpTransportClient["Service"],
+) =>
+  RemoteStack.layer(endpoint, {
+    buildIdentity: { cliVersion: "test", buildId: "test-build" },
+    owner: {
+      ownershipId: ownerId,
+      ownerSessionId,
+      controlProtocolVersion: 1,
+      daemonCliVersion: "test",
+      daemonBuildId: "test-build",
+    },
+  }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, transport)));
 
 const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(controlTransportLayer));
@@ -725,6 +756,144 @@ it.effect("does not apply the fast timeout to a long-running StopService RPC", (
     yield* Effect.yieldNow;
     expect(request.pollUnsafe()).toBeUndefined();
     yield* Fiber.interrupt(request);
+  }),
+);
+
+it.effect("observes the captured session after the stop was accepted and its response resets", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12350, url: "http://127.0.0.1:12350" };
+    const ownerSessionId = "accepted-reset-session";
+    let ownerReads = 0;
+    const transport: HttpTransportClient["Service"] = {
+      request: (requestEndpoint, path) => {
+        if (path === "/owner") {
+          ownerReads += 1;
+          return ownerReads === 1
+            ? Effect.succeed(Response.json(remoteOwner(ownerSessionId)))
+            : Effect.fail(
+                new HttpTransportClientError({
+                  endpoint: requestEndpoint,
+                  path,
+                  reason: "transport",
+                  cause: { code: "ECONNREFUSED" },
+                }),
+              );
+        }
+        if (path === "/stop")
+          return Effect.fail(
+            new HttpTransportClientError({
+              endpoint: requestEndpoint,
+              path,
+              reason: "transport",
+              cause: new Error("connection reset after the supervisor accepted the stop"),
+            }),
+          );
+        return Effect.die(`unexpected request ${path}`);
+      },
+    };
+
+    const result = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const remote = yield* Stack;
+        return yield* remote.stop().pipe(Effect.result);
+      }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
+    );
+
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(ownerReads).toBe(2);
+  }),
+);
+
+it.effect(
+  "keeps observing when a transient owner read fails while the target session is alive",
+  () =>
+    Effect.gen(function* () {
+      const endpoint = { hostname: "127.0.0.1", port: 12351, url: "http://127.0.0.1:12351" };
+      const ownerSessionId = "transient-read-session";
+      const transientRead = yield* Deferred.make<void>();
+      const targetObserved = yield* Deferred.make<void>();
+      let ownerReads = 0;
+      const transport: HttpTransportClient["Service"] = {
+        request: (requestEndpoint, path) => {
+          if (path === "/owner") {
+            ownerReads += 1;
+            if (ownerReads === 1) return Effect.succeed(Response.json(remoteOwner(ownerSessionId)));
+            if (ownerReads === 2)
+              return Deferred.succeed(transientRead, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new HttpTransportClientError({
+                      endpoint: requestEndpoint,
+                      path,
+                      reason: "transport",
+                      cause: { code: "ETIMEDOUT" },
+                    }),
+                  ),
+                ),
+              );
+            if (ownerReads === 3)
+              return Deferred.succeed(targetObserved, undefined).pipe(
+                Effect.as(Response.json(remoteOwner(ownerSessionId))),
+              );
+            return Effect.succeed(Response.json(remoteOwner("replacement-session")));
+          }
+          if (path === "/stop") return Effect.succeed(new Response(null, { status: 202 }));
+          return Effect.die(`unexpected request ${path}`);
+        },
+      };
+      const stop = yield* Effect.forkChild(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const remote = yield* Stack;
+            yield* remote.stop();
+          }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
+        ),
+      );
+
+      yield* Deferred.await(transientRead);
+      yield* Effect.yieldNow;
+      expect(stop.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("25 millis");
+      yield* Deferred.await(targetObserved);
+      expect(stop.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("25 millis");
+      yield* Fiber.join(stop);
+      expect(ownerReads).toBe(4);
+    }),
+);
+
+it.effect("finishes the captured stop when a replacement session answers with conflict", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12352, url: "http://127.0.0.1:12352" };
+    const ownerSessionId = "replaced-session";
+    let ownerReads = 0;
+    let stopRequests = 0;
+    const transport: HttpTransportClient["Service"] = {
+      request: (_requestEndpoint, path) => {
+        if (path === "/owner") {
+          ownerReads += 1;
+          return Effect.succeed(
+            Response.json(remoteOwner(ownerReads === 1 ? ownerSessionId : "replacement-session")),
+          );
+        }
+        if (path === "/stop") {
+          stopRequests += 1;
+          return Effect.succeed(new Response(null, { status: 409 }));
+        }
+        return Effect.die(`unexpected request ${path}`);
+      },
+    };
+
+    const result = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const remote = yield* Stack;
+        return yield* remote.stop().pipe(Effect.result);
+      }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
+    );
+
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(stopRequests).toBe(1);
+    expect(ownerReads).toBe(2);
   }),
 );
 

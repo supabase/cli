@@ -72,6 +72,11 @@ export class ControlProtocolError extends Data.TaggedError("ControlProtocolError
   readonly cause: unknown;
 }> {}
 
+/** A fenced stop reached an owner other than the captured session. */
+export class ControlStopConflictError extends Data.TaggedError("ControlStopConflictError")<{
+  readonly endpoint: ControlEndpoint;
+}> {}
+
 export class ControlProtocolMismatchError extends Data.TaggedError("ControlProtocolMismatchError")<{
   readonly endpoint: ControlEndpoint;
   readonly expectedVersion: 1;
@@ -107,20 +112,23 @@ interface ControlListener {
   readonly close: Effect.Effect<void>;
 }
 
-export interface ControlTransportShape {
-  readonly bind: (
-    endpoint: ControlEndpoint,
-    ownerStatus: () => ControlOwnerStatus,
-    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
-    application?: ControlApplication,
-  ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
+export interface ControlClientTransport {
   readonly read: (
     endpoint: ControlEndpoint,
   ) => Effect.Effect<unknown, ControlTransportError | ControlProtocolError>;
   readonly requestStop: (
     endpoint: ControlEndpoint,
     request: ControlStopRequest,
-  ) => Effect.Effect<void, ControlTransportError | ControlProtocolError>;
+  ) => Effect.Effect<void, ControlTransportError | ControlProtocolError | ControlStopConflictError>;
+}
+
+export interface ControlTransportShape extends ControlClientTransport {
+  readonly bind: (
+    endpoint: ControlEndpoint,
+    ownerStatus: () => ControlOwnerStatus,
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    application?: ControlApplication,
+  ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
 }
 
 /** Runtime-specific loopback bind/connect operations supplied by Node or Bun. */
@@ -285,7 +293,7 @@ export const requestControlStopForSession = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   ownerSessionId: string,
-  transport: ControlTransportShape,
+  transport: ControlClientTransport,
 ): Effect.Effect<
   void,
   | ControlTransportError
@@ -299,7 +307,10 @@ export const requestControlStopForSession = (
     // accepted it and closed the connection before the response arrived.
     // Observe the exact captured session instead of failing or refreshing the
     // descriptor; a still-live session will reach the existing timeout.
-    Effect.catchTag("ControlTransportError", () => Effect.void),
+    Effect.catchTags({
+      ControlTransportError: () => Effect.void,
+      ControlStopConflictError: () => Effect.void,
+    }),
     Effect.flatMap(() =>
       waitForControlSessionEnd(
         endpoint,
@@ -402,6 +413,39 @@ export const readControlOwnerStatus = (
     ),
   );
 
+export interface ControlClientShape {
+  readonly readOwner: (
+    endpoint: ControlEndpoint,
+    ownershipId: string,
+  ) => Effect.Effect<
+    ControlOwnerStatus,
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError
+  >;
+  readonly stopSession: (
+    endpoint: ControlEndpoint,
+    ownershipId: string,
+    ownerSessionId: string,
+  ) => Effect.Effect<
+    void,
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError
+    | StopTimeout
+  >;
+}
+
+/** Stable owner/session client shared by platform and remote HTTP transports. */
+export const makeControlClient = (transport: ControlClientTransport): ControlClientShape => ({
+  readOwner: (endpoint, ownershipId) =>
+    readControlOwnerStatus(endpoint, ownershipId, transport.read),
+  stopSession: (endpoint, ownershipId, ownerSessionId) =>
+    requestControlStopForSession(endpoint, ownershipId, ownerSessionId, transport),
+});
+
 /** A located owner: its published status and the candidate it bound. */
 export interface ControlProbe {
   readonly status: ControlOwnerStatus;
@@ -430,11 +474,10 @@ const makeAttached = (
   transport: ControlTransportShape,
   observedStatus: ControlOwnerStatus,
 ): ControlAttached => {
-  const ownerStatus = readControlOwnerStatus(endpoint, ownershipId, transport.read);
+  const client = makeControlClient(transport);
+  const ownerStatus = client.readOwner(endpoint, ownershipId);
   const requestStop = ownerStatus.pipe(
-    Effect.flatMap((status) =>
-      requestControlStopForSession(endpoint, ownershipId, status.ownerSessionId, transport),
-    ),
+    Effect.flatMap((status) => client.stopSession(endpoint, ownershipId, status.ownerSessionId)),
   );
   return {
     _tag: "Attached",
