@@ -91,6 +91,7 @@ import {
   replaceIncompatibleOwner,
   runtimeSelectionForLaunch,
   applyNativeDefaults,
+  SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT,
 } from "./SupervisorReplacement.ts";
 import type {
   SupervisorErrorMessage,
@@ -175,8 +176,18 @@ class SupervisorOwnerReacquirePending extends Data.TaggedError(
 const OWNER_STOPPED_AFTER_TAKEOVER = "Attached supervisor owner stopped before takeover";
 const STACK_STOPPED_DURING_STARTUP = "Stack was stopped during startup";
 
-const SUPERVISOR_STARTUP_TIMEOUT = "30 seconds" as const;
-const SUPERVISOR_HANDSHAKE_TIMEOUT = "35 seconds" as const;
+const SUPERVISOR_STARTUP_TIMEOUT = Duration.seconds(30);
+const SUPERVISOR_HANDSHAKE_GRACE = Duration.seconds(5);
+const SUPERVISOR_HANDSHAKE_TIMEOUT = Duration.sum(
+  SUPERVISOR_STARTUP_TIMEOUT,
+  SUPERVISOR_HANDSHAKE_GRACE,
+);
+// Preflight, old-session stop, and endpoint reacquisition each have one phase
+// budget before the normal child startup budget begins.
+const SUPERVISOR_REPLACEMENT_HANDSHAKE_TIMEOUT = Duration.sum(
+  Duration.times(SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT, 3),
+  SUPERVISOR_HANDSHAKE_TIMEOUT,
+);
 
 const awaitOwnerReady = (
   acquisition: ControlAttached,
@@ -1119,7 +1130,11 @@ export const supervisorLayer = (
     let detached = false;
     return yield* Effect.gen(function* () {
       const responseFiber = yield* waitForStarted(child, onReplacing).pipe(
-        Effect.timeout(SUPERVISOR_HANDSHAKE_TIMEOUT),
+        Effect.timeout(
+          input.incompatibleOwnerPolicy === "replace"
+            ? SUPERVISOR_REPLACEMENT_HANDSHAKE_TIMEOUT
+            : SUPERVISOR_HANDSHAKE_TIMEOUT,
+        ),
         Effect.catchTag("TimeoutError", () =>
           Effect.fail(
             new SupervisorStartError({ message: "Timed out waiting for supervisor startup" }),

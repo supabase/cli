@@ -9,6 +9,7 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
+import { STACK_RPC_PATH } from "./StackRpc.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
@@ -61,7 +62,68 @@ const controlTransport: ControlTransport["Service"] = {
         const parentScope = yield* Effect.scope;
         if (application !== undefined) {
           const webHandler = HttpEffect.toWebHandler(application.app);
-          const handler = (request: Request) => webHandler(request);
+          const activeRpcRequests = new Set<{ readonly interrupt: () => void }>();
+          const handler = async (request: Request): Promise<Response> => {
+            const path = new URL(request.url).pathname;
+            if (path !== STACK_RPC_PATH && path !== `${STACK_RPC_PATH}/`) {
+              return webHandler(request);
+            }
+            const controller = new AbortController();
+            let cancelBody: (() => Promise<void>) | undefined;
+            const onClientAbort = () => controller.abort(request.signal.reason);
+            const active = {
+              interrupt: () => {
+                controller.abort();
+                void cancelBody?.();
+              },
+            };
+            const release = () => {
+              request.signal.removeEventListener("abort", onClientAbort);
+              activeRpcRequests.delete(active);
+            };
+            activeRpcRequests.add(active);
+            request.signal.addEventListener("abort", onClientAbort, { once: true });
+            if (request.signal.aborted) onClientAbort();
+            try {
+              const response = await webHandler(
+                new Request(request, { signal: controller.signal }),
+              );
+              if (response.body === null) {
+                release();
+                return response;
+              }
+              const reader = response.body.getReader();
+              cancelBody = () => reader.cancel();
+              const body = new ReadableStream<Uint8Array>({
+                pull: async (streamController) => {
+                  try {
+                    const next = await reader.read();
+                    if (next.done) {
+                      release();
+                      streamController.close();
+                    } else {
+                      streamController.enqueue(next.value);
+                    }
+                  } catch (cause) {
+                    release();
+                    streamController.error(cause);
+                  }
+                },
+                cancel: async (reason) => {
+                  release();
+                  await reader.cancel(reason);
+                },
+              });
+              return new Response(body, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              });
+            } catch (cause) {
+              release();
+              throw cause;
+            }
+          };
           const server = yield* Effect.try({
             try: () =>
               Bun.serve({
@@ -79,7 +141,11 @@ const controlTransport: ControlTransport["Service"] = {
           });
           const close = yield* Effect.cached(
             Effect.tryPromise({
-              try: () => Promise.resolve(server.stop(false)),
+              try: () => {
+                const stopped = server.stop(false);
+                for (const request of activeRpcRequests) request.interrupt();
+                return stopped;
+              },
               catch: (cause) => cause,
             }).pipe(Effect.asVoid, Effect.orDie),
           );

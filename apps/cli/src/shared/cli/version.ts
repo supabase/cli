@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Data, Effect } from "effect";
@@ -106,7 +106,10 @@ const captureSourceIdentity = (repositoryRoot?: string): SourceIdentitySnapshot 
     .sort()
     .map((path) => {
       const absolutePath = join(root, path);
-      const stats = statSync(absolutePath);
+      const stats = lstatSync(absolutePath);
+      if (stats.isSymbolicLink()) {
+        return { path, content: new TextEncoder().encode(readlinkSync(absolutePath)) };
+      }
       if (!stats.isFile()) throw new Error(`untracked source is not a file: ${path}`);
       return stats.size <= MAX_UNTRACKED_FILE_BYTES
         ? { path, content: readFileSync(absolutePath) }

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Effect, Layer, Scope, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
+import { STACK_RPC_PATH } from "./StackRpc.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
@@ -35,13 +36,17 @@ const isDefinitivelyUnreachable = (cause: unknown): boolean => {
   return code === "ECONNREFUSED";
 };
 
-const closeControlServer = (server: Http.Server): Effect.Effect<void> =>
+const closeControlServer = (
+  server: Http.Server,
+  interruptRpcRequests: () => void = () => {},
+): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
     if (!server.listening) {
       resume(Effect.void);
       return Effect.void;
     }
     server.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)));
+    interruptRpcRequests();
     return Effect.void;
   });
 
@@ -112,10 +117,24 @@ const controlTransport: ControlTransport["Service"] = {
     if (application !== undefined) {
       return Effect.gen(function* () {
         const scope = yield* Effect.scope;
+        const activeRpcRequests = new Set<() => void>();
+        const interruptRpcRequests = () => {
+          for (const interrupt of activeRpcRequests) interrupt();
+        };
+        const close = closeControlServer(rawServer, interruptRpcRequests);
         const handler = yield* NodeHttpServer.makeHandler(application.app, {
           scope,
         });
         rawServer.removeAllListeners("request");
+        rawServer.on("request", (request, response) => {
+          if (request.url === STACK_RPC_PATH || request.url === `${STACK_RPC_PATH}/`) {
+            const interrupt = () => response.destroy();
+            activeRpcRequests.add(interrupt);
+            const release = () => activeRpcRequests.delete(interrupt);
+            response.once("finish", release);
+            response.once("close", release);
+          }
+        });
         rawServer.on("request", handler);
         yield* Effect.callback<void, Error>((resume) => {
           const onError = (cause: Error) => {
@@ -154,8 +173,8 @@ const controlTransport: ControlTransport["Service"] = {
           },
           serve: () => Effect.void,
         });
-        yield* Scope.addFinalizer(scope, closeControlServer(rawServer));
-        return { server, close: closeControlServer(rawServer) };
+        yield* Scope.addFinalizer(scope, close);
+        return { server, close };
       });
     }
     return NodeHttpServer.make(() => rawServer, {

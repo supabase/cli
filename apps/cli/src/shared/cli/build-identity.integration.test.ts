@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -174,6 +174,33 @@ describe("CLI build identity", () => {
         expect(changed.buildId, path).not.toBe(baseline.buildId);
         await rm(join(root, path));
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("hashes untracked symlink targets without following them", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-cli-source-identity-links-"));
+    try {
+      await execFile("git", ["init", root]);
+      await execFile("git", ["-C", root, "config", "user.email", "test@example.com"]);
+      await execFile("git", ["-C", root, "config", "user.name", "Test"]);
+      await writeFile(join(root, "tracked.ts"), "export const tracked = true;\n");
+      await execFile("git", ["-C", root, "add", "tracked.ts"]);
+      await execFile("git", ["-C", root, "commit", "-m", "initial"]);
+      await mkdir(join(root, "source-directory"));
+      await symlink("missing-target", join(root, "dangling-link"));
+      await symlink("source-directory", join(root, "directory-link"));
+
+      const captured = captureCliSourceIdentityAt(root);
+      const decode = (path: string) => {
+        const file = captured.untrackedFiles.find((candidate) => candidate.path === path);
+        return file !== undefined && "content" in file
+          ? new TextDecoder().decode(file.content)
+          : undefined;
+      };
+      expect(decode("dangling-link")).toBe("missing-target");
+      expect(decode("directory-link")).toBe("source-directory");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

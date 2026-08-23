@@ -31,6 +31,7 @@ import {
   StopTimeout,
   SupervisorStartError,
   UpgradePreflightError,
+  UpgradeRestartError,
 } from "./errors.ts";
 
 export interface SupervisorReplacementContext {
@@ -64,6 +65,8 @@ export interface SupervisorReplacementResult {
   readonly oldSessionEnded: true;
   readonly attachedOwnerWasStopping: boolean;
 }
+
+export const SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT = Duration.seconds(30);
 
 const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
   launch.mode === "native"
@@ -116,16 +119,105 @@ export const applyNativeDefaults = (config: DaemonConfigInput): DaemonConfigInpu
   return { ...config, servicePolicies };
 };
 
-/** Persisted exclusions are authoritative only for an upgrade replacement. */
-const applyPersistedExclusions = (
+const enableService = (
   config: DaemonConfigInput,
-  launch: ManagedStackLaunch,
+  service: (typeof SERVICE_NAMES)[number],
+  version: string | undefined,
 ): DaemonConfigInput => {
-  const servicePolicies = { ...config.servicePolicies };
-  for (const excluded of expandExcludedServices(launch.excludedServices ?? [])) {
+  const versionField = version === undefined ? {} : { version };
+  switch (service) {
+    case "postgres":
+      return { ...config, postgres: { ...config.postgres, ...versionField } };
+    case "postgrest":
+      return {
+        ...config,
+        postgrest: { ...(config.postgrest === false ? {} : config.postgrest), ...versionField },
+      };
+    case "auth":
+      return {
+        ...config,
+        auth: { ...(config.auth === false ? {} : config.auth), ...versionField },
+      };
+    case "edge-runtime":
+      return {
+        ...config,
+        edgeRuntime: {
+          ...(config.edgeRuntime === false ? {} : config.edgeRuntime),
+          ...versionField,
+        },
+      };
+    case "realtime":
+      return {
+        ...config,
+        realtime: { ...(config.realtime === false ? {} : config.realtime), ...versionField },
+      };
+    case "storage":
+      return {
+        ...config,
+        storage: { ...(config.storage === false ? {} : config.storage), ...versionField },
+      };
+    case "imgproxy":
+      return {
+        ...config,
+        imgproxy: { ...(config.imgproxy === false ? {} : config.imgproxy), ...versionField },
+      };
+    case "mailpit":
+      return {
+        ...config,
+        mailpit: { ...(config.mailpit === false ? {} : config.mailpit), ...versionField },
+      };
+    case "pgmeta":
+      return {
+        ...config,
+        pgmeta: { ...(config.pgmeta === false ? {} : config.pgmeta), ...versionField },
+      };
+    case "studio":
+      return {
+        ...config,
+        studio: { ...(config.studio === false ? {} : config.studio), ...versionField },
+      };
+    case "analytics":
+      return {
+        ...config,
+        analytics: { ...(config.analytics === false ? {} : config.analytics), ...versionField },
+      };
+    case "vector":
+      return {
+        ...config,
+        vector: { ...(config.vector === false ? {} : config.vector), ...versionField },
+      };
+    case "pooler":
+      return {
+        ...config,
+        pooler: { ...(config.pooler === false ? {} : config.pooler), ...versionField },
+      };
+  }
+};
+
+/** Persisted exclusions are authoritative; restored services keep their pinned version. */
+const applyPersistedLaunch = (
+  config: DaemonConfigInput,
+  persisted: ManagedStackLaunch,
+  requested: SupervisorStartMessage["launch"],
+): DaemonConfigInput => {
+  let effective = config;
+  const requestedExclusions = expandExcludedServices(requested?.excludedServices ?? []);
+  const persistedExclusions = expandExcludedServices(persisted.excludedServices ?? []);
+  for (const service of requestedExclusions) {
+    if (!persistedExclusions.has(service)) {
+      effective = enableService(effective, service, persisted.versions[service]);
+    }
+  }
+  const servicePolicies = { ...effective.servicePolicies };
+  for (const service of requestedExclusions) {
+    if (!persistedExclusions.has(service) && servicePolicies[service] === "off") {
+      delete servicePolicies[service];
+    }
+  }
+  for (const excluded of persistedExclusions) {
     servicePolicies[excluded] = "off";
   }
-  return { ...config, servicePolicies };
+  return { ...effective, servicePolicies };
 };
 
 const preflightError = (
@@ -140,7 +232,6 @@ const preflightError = (
   });
 
 const causeMessage = (cause: unknown): string => {
-  if (cause instanceof Error && cause.message.length > 0) return cause.message;
   if (
     typeof cause === "object" &&
     cause !== null &&
@@ -149,6 +240,16 @@ const causeMessage = (cause: unknown): string => {
   ) {
     return cause.detail;
   }
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "cause" in cause &&
+    cause.cause !== undefined &&
+    cause.cause !== cause
+  ) {
+    return causeMessage(cause.cause);
+  }
+  if (cause instanceof Error && cause.message.length > 0) return cause.message;
   return typeof cause === "string" ? cause : String(cause);
 };
 
@@ -171,7 +272,11 @@ const preflight = (
       Effect.mapError((cause) => preflightError(context, causeMessage(cause))),
     );
 
-    const withExclusions = applyPersistedExclusions(context.configInput, existing.launch);
+    const withExclusions = applyPersistedLaunch(
+      context.configInput,
+      existing.launch,
+      context.input.launch,
+    );
     const effectiveConfigInput =
       persistedRuntime.mode === "native" && context.configInput.mode === undefined
         ? applyNativeDefaults(withExclusions)
@@ -229,7 +334,8 @@ export const replaceIncompatibleOwner = (
   | ControlAddressConflictError
   | InvalidControlOwnershipIdError
   | ControlBindError
-  | DaemonUpgradeRequired,
+  | DaemonUpgradeRequired
+  | UpgradeRestartError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
@@ -244,7 +350,15 @@ export const replaceIncompatibleOwner = (
         }),
       );
     }
-    const effectiveConfigInput = yield* preflight(context);
+    const phaseTimeout = context.resolutionTimeout ?? SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT;
+    const effectiveConfigInput = yield* preflight(context).pipe(
+      Effect.timeout(phaseTimeout),
+      Effect.catchTag("TimeoutError", () =>
+        Effect.fail(
+          preflightError(context, "Timed out preflighting incompatible daemon replacement"),
+        ),
+      ),
+    );
     const attachedOwnerWasStopping = context.oldOwner.observedStatus.state === "stopping";
     yield* context.authorize({
       type: "replacing",
@@ -263,7 +377,7 @@ export const replaceIncompatibleOwner = (
       )
       .pipe(
         Effect.timeoutOrElse({
-          duration: context.resolutionTimeout ?? "30 seconds",
+          duration: phaseTimeout,
           orElse: () =>
             client
               .readOwner(context.oldOwner.endpoint, context.oldOwner.observedStatus.ownershipId)
@@ -293,13 +407,21 @@ export const replaceIncompatibleOwner = (
         }),
       );
     const acquisition = yield* context.reacquire().pipe(
-      Effect.timeout(context.resolutionTimeout ?? "30 seconds"),
+      Effect.timeout(phaseTimeout),
       Effect.catchTag("TimeoutError", () =>
         Effect.fail(
           new SupervisorStartError({
             message: "Timed out waiting for incompatible daemon replacement",
           }),
         ),
+      ),
+      Effect.mapError(
+        (error) =>
+          new UpgradeRestartError({
+            stackId: context.stackId,
+            newBuildId: context.input.buildIdentity.buildId,
+            detail: causeMessage(error),
+          }),
       ),
     );
     return { acquisition, effectiveConfigInput, oldSessionEnded: true, attachedOwnerWasStopping };

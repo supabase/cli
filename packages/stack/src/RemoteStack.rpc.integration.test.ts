@@ -31,7 +31,7 @@ import {
   StackReadinessError,
   StackUnavailableError,
 } from "./errors.ts";
-import { acquireControl, isControlOwnership } from "./managed/control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { makeTestStack } from "./testing.ts";
@@ -714,6 +714,76 @@ it.live("interrupts an owned server RPC request when the client disconnects", ()
       );
     }),
   ).pipe(Effect.provide(controlTransportLayer)),
+);
+
+it.live("closes an owner while another client still consumes an RPC stream", () =>
+  live(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ownerSessionId = "active-stream-stop-session";
+        const streamStarted = Deferred.makeUnsafe<void>();
+        const streamReleased = Deferred.makeUnsafe<void>();
+        const log = {
+          timestamp: 1,
+          service: "auth",
+          stream: "stdout" as const,
+          line: "ready",
+        };
+        const lifecycle = yield* SupervisorLifecycle.make({
+          ownershipId: ownerId,
+          ownerSessionId,
+          daemonCliVersion: "test",
+          daemonBuildId: "test-build",
+        });
+        yield* lifecycle.publishStack({
+          ...makeTestStack(),
+          subscribeLogs: () =>
+            Stream.concat(
+              Stream.succeed(log).pipe(
+                Stream.tap(() => Deferred.succeed(streamStarted, undefined).pipe(Effect.asVoid)),
+              ),
+              Stream.never,
+            ).pipe(
+              Stream.ensuring(Deferred.succeed(streamReleased, undefined).pipe(Effect.asVoid)),
+            ),
+        });
+        const owner = yield* acquireControl({
+          stackId: ownerId,
+          initialStatus: yield* lifecycle.currentStatus,
+          application: { app: yield* makeSupervisorControlApplication(lifecycle) },
+        });
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        yield* lifecycle.setClose(owner.close);
+        const layer = RemoteStack.layer(owner.endpoint, {
+          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          owner: {
+            ownershipId: owner.ownershipId,
+            ownerSessionId,
+            controlProtocolVersion: 1,
+            daemonCliVersion: "test",
+            daemonBuildId: "test-build",
+          },
+        }).pipe(Layer.provide(httpTransportClientLayer));
+        const shutdownExit = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const remote = yield* Stack;
+            yield* Effect.forkChild(Stream.runDrain(remote.subscribeLogs("auth")), {
+              startImmediately: true,
+            });
+            yield* Deferred.await(streamStarted);
+            const transport = yield* ControlTransport;
+            yield* transport.requestStop(owner.endpoint, {
+              ownershipId: owner.ownershipId,
+              ownerSessionId,
+            });
+            return yield* lifecycle.awaitShutdown.pipe(Effect.timeout("2 seconds"), Effect.exit);
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isSuccess(shutdownExit)).toBe(true);
+        yield* Deferred.await(streamReleased);
+      }),
+    ),
+  ),
 );
 
 it.effect("times out a hung fast unary RPC with endpoint and procedure context", () =>
