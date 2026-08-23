@@ -175,5 +175,15 @@ export const resolveCliBuildIdentity = (
       }),
   });
 
+/**
+ * Creates a process-local, lazy single-flight identity effect. Construction
+ * allocates only the memoization state; it does not capture source or run git.
+ * The first evaluation owns source capture, and later evaluations reuse it.
+ * @internal
+ */
+export const makeCliBuildIdentityCache = (
+  effect: Effect.Effect<CliBuildIdentity, CliBuildIdentityError> = resolveCliBuildIdentity(),
+): Effect.Effect<CliBuildIdentity, CliBuildIdentityError> => Effect.runSync(Effect.cached(effect));
+
 /** Identity used by stack composition; source mode fails closed if git is unavailable. */
-export const currentCliBuildIdentity = resolveCliBuildIdentity();
+export const currentCliBuildIdentity = makeCliBuildIdentityCache();

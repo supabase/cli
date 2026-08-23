@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   captureCliSourceIdentityAt,
+  makeCliBuildIdentityCache,
   resolveCliBuildIdentity,
   type SourceIdentitySnapshot,
 } from "./version.ts";
@@ -74,6 +75,25 @@ describe("CLI build identity", () => {
         source: null,
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
+
+  it.effect("keeps one identity for a process while a fresh cache sees source changes", () =>
+    Effect.gen(function* () {
+      let source = snapshot({ unstagedDiff: "before" });
+      const resolveFromCurrentSource = Effect.sync(() => source).pipe(
+        Effect.flatMap((current) => resolveCliBuildIdentity({ source: current })),
+      );
+      const processCache = makeCliBuildIdentityCache(resolveFromCurrentSource);
+
+      const first = yield* processCache;
+      source = snapshot({ unstagedDiff: "after" });
+      const second = yield* processCache;
+      const freshProcessCache = makeCliBuildIdentityCache(resolveFromCurrentSource);
+      const fresh = yield* freshProcessCache;
+
+      expect(second).toEqual(first);
+      expect(fresh.buildId).not.toBe(first.buildId);
     }),
   );
 
