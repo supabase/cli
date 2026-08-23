@@ -20,7 +20,7 @@ import type { ManagedStackLaunch } from "./managed/document.ts";
 import { PORT_CATALOG, type PortField } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
-import type { ServiceName } from "./ServiceName.ts";
+import { expandExcludedServices } from "./ServiceExclusions.ts";
 import {
   portRequestsForConfig,
   resolveConfig,
@@ -95,9 +95,6 @@ const persistedPortField = (key: string): PortField | undefined => {
   }
 };
 
-const isServiceName = (value: string): value is ServiceName =>
-  SERVICE_NAMES.some((service) => service === value);
-
 const isCatalogDefaultServiceConfig = (value: unknown): boolean => {
   if (value === undefined) return true;
   if (typeof value !== "object" || value === null) return false;
@@ -125,8 +122,8 @@ const applyPersistedExclusions = (
   launch: ManagedStackLaunch,
 ): DaemonConfigInput => {
   const servicePolicies = { ...config.servicePolicies };
-  for (const excluded of launch.excludedServices ?? []) {
-    if (isServiceName(excluded)) servicePolicies[excluded] = "off";
+  for (const excluded of expandExcludedServices(launch.excludedServices ?? [])) {
+    servicePolicies[excluded] = "off";
   }
   return { ...config, servicePolicies };
 };

@@ -836,6 +836,7 @@ describe("detached supervisor child journeys", () => {
           config: {
             ...messageFor(roots).config,
             analytics: { port: blockedAnalyticsPort },
+            vector: {},
           },
           launch: {
             mode: "native",

@@ -38,6 +38,21 @@ describe("toStartStackConfig", () => {
       postgrest: false,
     });
   });
+
+  it("excludes graph companions for storage, pgmeta, and analytics", () => {
+    expect(toStartStackConfig(["storage"], "docker")).toMatchObject({
+      storage: false,
+      imgproxy: false,
+    });
+    expect(toStartStackConfig(["pgmeta"], "docker")).toMatchObject({
+      pgmeta: false,
+      studio: false,
+    });
+    expect(toStartStackConfig(["analytics"], "docker")).toMatchObject({
+      analytics: false,
+      vector: false,
+    });
+  });
 });
 
 describe("withServiceVersions", () => {

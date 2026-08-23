@@ -24,6 +24,8 @@ export {
 export type { NativeTarget, PlatformInfo } from "./Platform.ts";
 export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
 
+export { expandExcludedServices } from "./ServiceExclusions.ts";
+
 export type { ContainerRuntime, StackRuntimeSelection } from "./ContainerRuntime.ts";
 export { selectStackRuntime, validateStackRuntime } from "./ContainerRuntime.ts";
 
