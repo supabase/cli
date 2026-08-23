@@ -117,6 +117,17 @@ const mappedError = (
         suggestion: "Check that the stack is running, then retry the command.",
       };
     }
+    case "StackRpcProtocolError": {
+      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
+      const procedure = readString(error, "procedure") ?? "the requested operation";
+      const detail = readString(error, "detail") ?? "the response did not match the RPC protocol";
+      return {
+        code: tag,
+        message: "The local Supabase stack returned an invalid RPC response.",
+        detail: `RPC ${procedure} at ${endpoint} failed protocol validation: ${detail}`,
+        suggestion: "Restart the stack with `supabase start`, then retry the command.",
+      };
+    }
     case "StopTimeout": {
       const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
       const lastState = readString(error, "lastState");

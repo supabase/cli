@@ -33,14 +33,14 @@ import { Stack } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackRpc, STACK_RPC_PATH, type StackLaunchUpdateRpc } from "./StackRpc.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import { ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
+import { CONTROL_PROTOCOL_VERSION, ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
 import type { BuildIdentityValue } from "./BuildIdentity.ts";
 
 interface RemoteOwnerDescriptor {
   readonly ownershipId: string;
   readonly ownerSessionId: string;
   readonly endpoint: ControlEndpoint;
-  readonly controlProtocolVersion: 1;
+  readonly controlProtocolVersion: typeof CONTROL_PROTOCOL_VERSION;
   readonly daemonCliVersion: string;
   readonly daemonBuildId: string;
 }
@@ -164,7 +164,9 @@ const controlErrorToRpc = (
     Predicate.isTagged(error, "ControlProtocolMismatchError") ||
     Predicate.isTagged(error, "ControlAddressConflictError")
       ? error.message
-      : `Invalid ${procedure} response`;
+      : procedure === "owner" && typeof error.cause === "number"
+        ? `Owner probe returned HTTP ${error.cause}`
+        : `Invalid ${procedure} response`;
   return protocolError(endpoint, procedure, detail, error);
 };
 
@@ -471,6 +473,8 @@ export const RemoteStack = {
               mutating,
             ),
           stopService: (name: string) =>
+            // LocalStack/Orchestrator stopService signals owned fibers and settles projected state
+            // without a graceful readiness wait, preserving the bounded fast-unary policy.
             fastCall(
               "StopService",
               client.StopService({ name }),

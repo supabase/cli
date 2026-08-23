@@ -86,6 +86,23 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("maps RPC protocol failures with the procedure, endpoint, and detail", () => {
+    expect(
+      normalizeCliError({
+        _tag: "StackRpcProtocolError",
+        endpoint: "http://127.0.0.1:54321",
+        procedure: "GetInfo",
+        detail: "Invalid GetInfo response",
+      }),
+    ).toEqual({
+      code: "StackRpcProtocolError",
+      message: "The local Supabase stack returned an invalid RPC response.",
+      detail:
+        "RPC GetInfo at http://127.0.0.1:54321 failed protocol validation: Invalid GetInfo response",
+      suggestion: "Restart the stack with `supabase start`, then retry the command.",
+    });
+  });
+
   test("maps stop timeouts with the endpoint and last observed state", () => {
     expect(
       normalizeCliError({

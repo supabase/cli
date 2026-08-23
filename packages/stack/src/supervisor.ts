@@ -50,6 +50,7 @@ import {
   type ControlAttached,
   type ControlEndpoint,
   type ControlOwnership,
+  type ControlOwnerStatus,
   type ControlApplication,
 } from "./managed/control.ts";
 import {
@@ -168,6 +169,14 @@ const isControlOwnership = (value: ControlAcquisition): value is ControlOwnershi
 
 const isControlAttached = (value: ControlAcquisition): value is ControlAttached =>
   Predicate.isTagged(value, "Attached");
+
+const startedOwnerDescriptor = (status: ControlOwnerStatus): SupervisorStartedMessage["owner"] => ({
+  ownershipId: status.ownershipId,
+  ownerSessionId: status.ownerSessionId,
+  controlProtocolVersion: status.controlProtocolVersion,
+  daemonCliVersion: status.daemonCliVersion,
+  daemonBuildId: status.daemonBuildId,
+});
 
 const decodeSupervisorStartMessage = (
   value: unknown,
@@ -948,13 +957,7 @@ const runManaged = (
       yield* sendMessage({
         type: "started",
         endpoint: acquisition.endpoint,
-        owner: {
-          ownershipId: attachedStatus.ownershipId,
-          ownerSessionId: attachedStatus.ownerSessionId,
-          controlProtocolVersion: attachedStatus.controlProtocolVersion,
-          daemonCliVersion: attachedStatus.daemonCliVersion,
-          daemonBuildId: attachedStatus.daemonBuildId,
-        },
+        owner: startedOwnerDescriptor(attachedStatus),
         attached: true,
       });
       process.disconnect?.();
@@ -1098,13 +1101,7 @@ const runManaged = (
       yield* sendMessage({
         type: "started",
         endpoint: ownership.endpoint,
-        owner: {
-          ownershipId: publishedStatus.ownershipId,
-          ownerSessionId: publishedStatus.ownerSessionId,
-          controlProtocolVersion: publishedStatus.controlProtocolVersion,
-          daemonCliVersion: publishedStatus.daemonCliVersion,
-          daemonBuildId: publishedStatus.daemonBuildId,
-        },
+        owner: startedOwnerDescriptor(publishedStatus),
         attached: false,
       });
       process.disconnect?.();

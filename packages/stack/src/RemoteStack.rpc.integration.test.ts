@@ -484,6 +484,60 @@ it.live.each([
   ).pipe(Effect.provide(controlTransportLayer)),
 );
 
+it.effect("reports the HTTP status when the owner probe is non-successful", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12348, url: "http://127.0.0.1:12348" };
+    const layer = RemoteStack.layer(endpoint, {
+      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: "owner-probe-session",
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+    }).pipe(
+      Layer.provide(
+        Layer.succeed(HttpTransportClient, {
+          request: (_endpoint, path) =>
+            path === "/owner"
+              ? Effect.succeed(
+                  new Response(JSON.stringify({ error: "internal details must not leak" }), {
+                    status: 503,
+                    headers: { "content-type": "application/json" },
+                  }),
+                )
+              : Effect.die(`unexpected request ${path}`),
+        }),
+      ),
+    );
+    const exit = yield* Effect.exit(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Stack;
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value).toMatchObject({
+          _tag: "StackRpcProtocolError",
+          endpoint: endpoint.url,
+          procedure: "owner",
+          detail: "Owner probe returned HTTP 503",
+        });
+        expect(failure.value).not.toHaveProperty(
+          "detail",
+          expect.stringContaining("internal details"),
+        );
+      }
+    }
+  }),
+);
+
 it.live("interrupts an owned server RPC request when the client disconnects", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -1,4 +1,4 @@
-import { Data, Deferred, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
+import { Data, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import {
@@ -140,8 +140,6 @@ export interface ControlOwnership {
   readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
   readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
-  readonly requestStop: Effect.Effect<void>;
-  readonly stopRequested: Effect.Effect<void>;
   readonly close: Effect.Effect<void>;
 }
 
@@ -468,7 +466,6 @@ const makeOwned = (
   ownershipId: string,
   listener: ControlListener,
   statusRef: Ref.Ref<ControlOwnerStatus>,
-  stopRequested: Deferred.Deferred<void>,
 ): Effect.Effect<ControlOwnership> => {
   let closed = false;
   const close = Effect.suspend(() => {
@@ -482,8 +479,6 @@ const makeOwned = (
     ownershipId,
     endpoint,
     ownerStatus: Ref.get(statusRef),
-    requestStop: Deferred.succeed(stopRequested, void 0).pipe(Effect.asVoid),
-    stopRequested: Deferred.await(stopRequested),
     close,
   });
 };
@@ -531,7 +526,6 @@ const acquireAtCandidates = (
   import("effect/Scope").Scope
 > => {
   const statusRef = Ref.makeUnsafe(status);
-  const stopRequested = Deferred.makeUnsafe<void>();
   const attempt: Effect.Effect<
     ControlAcquisition,
     | ControlBindError
@@ -566,20 +560,13 @@ const acquireAtCandidates = (
             ) {
               return "conflict";
             }
-            Deferred.doneUnsafe(stopRequested, Effect.succeed(undefined));
             return "accepted";
           },
           application,
         )
         .pipe(Effect.result);
       if (Result.isSuccess(bound)) {
-        const owned = yield* makeOwned(
-          endpoint,
-          ownershipId,
-          bound.success,
-          statusRef,
-          stopRequested,
-        );
+        const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef);
         yield* Effect.addFinalizer(() => owned.close);
         return owned;
       }

@@ -20,10 +20,16 @@ export interface CliBuildIdentity {
   readonly buildId: string;
 }
 
-interface SourceIdentityFile {
-  readonly path: string;
-  readonly content: Uint8Array;
-}
+type SourceIdentityFile =
+  | {
+      readonly path: string;
+      readonly content: Uint8Array;
+    }
+  | {
+      readonly path: string;
+      readonly size: number;
+      readonly mtimeMs: number;
+    };
 
 export interface SourceIdentitySnapshot {
   readonly repositoryRoot: string;
@@ -42,6 +48,9 @@ export class CliBuildIdentityError extends Data.TaggedError("CliBuildIdentityErr
 }
 
 const SOURCE_SENTINELS = new Set(["", "0.0.0-dev", "dev", "unknown"]);
+
+/** Maximum size of an untracked source file whose raw bytes are hashed. */
+const MAX_UNTRACKED_FILE_BYTES = 1_048_576;
 
 const runGit = (repositoryRoot: string, args: ReadonlyArray<string>): string =>
   execFileSync("git", ["-C", repositoryRoot, ...args], {
@@ -95,7 +104,9 @@ const captureSourceIdentity = (repositoryRoot?: string): SourceIdentitySnapshot 
       const absolutePath = join(root, path);
       const stats = statSync(absolutePath);
       if (!stats.isFile()) throw new Error(`untracked source is not a file: ${path}`);
-      return { path, content: readFileSync(absolutePath) };
+      return stats.size <= MAX_UNTRACKED_FILE_BYTES
+        ? { path, content: readFileSync(absolutePath) }
+        : { path, size: stats.size, mtimeMs: stats.mtimeMs };
     });
   return { repositoryRoot: root, head, stagedDiff, unstagedDiff, untrackedFiles };
 };
@@ -117,7 +128,14 @@ const hashSourceIdentity = (source: SourceIdentitySnapshot): string => {
     digest.update("\0");
     digest.update(file.path);
     digest.update("\0");
-    digest.update(file.content);
+    if ("content" in file) {
+      digest.update(file.content);
+    } else {
+      digest.update("metadata\0");
+      digest.update(String(file.size));
+      digest.update("\0");
+      digest.update(String(file.mtimeMs));
+    }
   }
   return `source:${digest.digest("hex")}`;
 };

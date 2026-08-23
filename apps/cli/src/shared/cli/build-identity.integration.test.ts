@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -154,6 +154,72 @@ describe("CLI build identity", () => {
         expect(changed.buildId, path).not.toBe(baseline.buildId);
         await rm(join(root, path));
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses path, size, and mtime metadata for large untracked files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-cli-source-identity-large-"));
+    try {
+      await execFile("git", ["init", root]);
+      await execFile("git", ["-C", root, "config", "user.email", "test@example.com"]);
+      await execFile("git", ["-C", root, "config", "user.name", "Test"]);
+      await writeFile(join(root, "tracked.ts"), "export const tracked = true;\n");
+      await execFile("git", ["-C", root, "add", "tracked.ts"]);
+      await execFile("git", ["-C", root, "commit", "-m", "initial"]);
+
+      const largePath = join(root, "large-source.bin");
+      const largeSize = 1_048_577;
+      const initialMtime = new Date("2020-01-02T03:04:05.000Z");
+      await writeFile(largePath, new Uint8Array(largeSize).fill(65));
+      await utimes(largePath, initialMtime, initialMtime);
+
+      const captured = captureCliSourceIdentityAt(root);
+      const largeFile = captured.untrackedFiles.find(({ path }) => path === "large-source.bin");
+      expect(largeFile).toMatchObject({
+        path: "large-source.bin",
+        size: largeSize,
+        mtimeMs: initialMtime.getTime(),
+      });
+      expect(largeFile).not.toHaveProperty("content");
+
+      const baseline = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captured,
+        }),
+      );
+
+      const changedMtime = new Date(initialMtime.getTime() + 1_000);
+      await utimes(largePath, changedMtime, changedMtime);
+      const changedMetadata = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captureCliSourceIdentityAt(root),
+        }),
+      );
+      expect(changedMetadata.buildId).not.toBe(baseline.buildId);
+
+      const smallPath = join(root, "small-source.ts");
+      const smallMtime = new Date("2020-01-02T03:05:05.000Z");
+      await writeFile(smallPath, "a".repeat(128));
+      await utimes(smallPath, smallMtime, smallMtime);
+      const smallBaseline = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captureCliSourceIdentityAt(root),
+        }),
+      );
+      await writeFile(smallPath, "b".repeat(128));
+      await utimes(smallPath, smallMtime, smallMtime);
+      const smallChanged = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captureCliSourceIdentityAt(root),
+        }),
+      );
+      expect(smallChanged.buildId).not.toBe(smallBaseline.buildId);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
