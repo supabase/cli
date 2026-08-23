@@ -678,6 +678,56 @@ it.effect("does not apply the fast timeout to a long-running StartStack RPC", ()
   }),
 );
 
+it.effect("does not apply the fast timeout to a long-running StopService RPC", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12349, url: "http://127.0.0.1:12349" };
+    const rpcStarted = yield* Deferred.make<void>();
+    const transportLayer = Layer.succeed(HttpTransportClient, {
+      request: (_requestEndpoint, path) =>
+        path === "/owner"
+          ? Effect.succeed(
+              new Response(
+                JSON.stringify({
+                  controlProtocol: "supabase-stack-control",
+                  controlProtocolVersion: 1,
+                  ownershipId: ownerId,
+                  ownerSessionId: "long-stop-service-session",
+                  state: "running",
+                  ready: true,
+                  daemonCliVersion: "test",
+                  daemonBuildId: "test-build",
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            )
+          : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    const layer = RemoteStack.layer(endpoint, {
+      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: "long-stop-service-session",
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+    }).pipe(Layer.provide(transportLayer));
+    const request = yield* Effect.forkChild(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          yield* remote.stopService("postgres");
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+    yield* Deferred.await(rpcStarted);
+    yield* TestClock.adjust("30 seconds");
+    yield* Effect.yieldNow;
+    expect(request.pollUnsafe()).toBeUndefined();
+    yield* Fiber.interrupt(request);
+  }),
+);
+
 it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () =>
   Effect.gen(function* () {
     const endpoint = { hostname: "127.0.0.1", port: 12346, url: "http://127.0.0.1:12346" };

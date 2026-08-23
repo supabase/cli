@@ -473,9 +473,7 @@ export const RemoteStack = {
               mutating,
             ),
           stopService: (name: string) =>
-            // LocalStack/Orchestrator stopService signals owned fibers and settles projected state
-            // without a graceful readiness wait, preserving the bounded fast-unary policy.
-            fastCall(
+            call(
               "StopService",
               client.StopService({ name }),
               [
