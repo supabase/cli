@@ -16,10 +16,7 @@ import {
   type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
 import { acquireControl, ControlTransport, isControlOwnership } from "./control.ts";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-} from "../SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "../SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "../SupervisorLifecycle.ts";
 import {
   DaemonUpgradeRequired,
@@ -225,7 +222,6 @@ export const deleteManagedStack = (
         });
         const application = {
           app: yield* makeSupervisorControlApplication(lifecycle),
-          middleware: makeSupervisorControlMiddleware(lifecycle),
         };
         const acquisition = yield* acquireControl({
           stackId,

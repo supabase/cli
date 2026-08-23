@@ -155,7 +155,6 @@ describe("managed stack lifecycle journeys", () => {
         });
         const application = {
           app: yield* SupervisorControlServer.make(lifecycle),
-          middleware: SupervisorControlServer.middleware(lifecycle),
         };
         const owner = yield* acquireControl({
           stackId,

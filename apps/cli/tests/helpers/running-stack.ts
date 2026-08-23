@@ -6,11 +6,7 @@ import {
   type StackInfo,
   httpTransportClientLayer,
 } from "@supabase/stack/effect";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-  SupervisorLifecycle,
-} from "@supabase/stack/testing";
+import { makeSupervisorControlApplication, SupervisorLifecycle } from "@supabase/stack/testing";
 import {
   ManagedStackManager,
   acquireControl,
@@ -153,7 +149,6 @@ export async function makeManagedStackFixture(
                     Effect.mapError((error) => new StackBuildError({ detail: String(error) })),
                   ),
           }),
-          middleware: makeSupervisorControlMiddleware(supervisorLifecycle),
         };
         const ownership = yield* acquireControl({ stackId, application });
         if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");

@@ -1,6 +1,6 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Predicate, Scope } from "effect";
-import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Predicate } from "effect";
+import { HttpServer } from "effect/unstable/http";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { SupervisorControlServer } from "./SupervisorControlServer.ts";
@@ -8,53 +8,6 @@ import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { makeTestStack } from "./testing.ts";
 
 describe("SupervisorControlServer", () => {
-  it("releases an accepted stop when the response fiber is interrupted", async () => {
-    const scope = Scope.makeUnsafe();
-    const lifecycle = await Effect.runPromise(
-      SupervisorLifecycle.make({
-        ownershipId: "stack",
-        ownerSessionId: "session",
-        daemonCliVersion: "test",
-        daemonBuildId: "build",
-        close: Effect.void,
-      }).pipe(Effect.provideService(Scope.Scope, scope)),
-    );
-    const entered = Deferred.makeUnsafe<void>();
-    try {
-      await Effect.runPromise(lifecycle.publishStack(makeTestStack()));
-      const self: Effect.Effect<HttpServerResponse.HttpServerResponse, never> = Effect.gen(
-        function* () {
-          yield* lifecycle.submitShutdown("stop");
-          yield* Deferred.succeed(entered, undefined);
-          yield* Effect.never;
-          return HttpServerResponse.empty({ status: 202 });
-        },
-      );
-      const middleware = SupervisorControlServer.middleware(lifecycle)(self);
-      const request = HttpServerRequest.fromWeb(
-        new Request("http://127.0.0.1/stop", { method: "POST" }),
-      );
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const fiber = yield* Effect.forkChild(
-              middleware.pipe(
-                Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-                Effect.provideService(Scope.Scope, scope),
-              ),
-            );
-            yield* Deferred.await(entered);
-            yield* Fiber.interrupt(fiber);
-            yield* lifecycle.awaitShutdown;
-          }),
-        ),
-      );
-      expect((await Effect.runPromise(lifecycle.currentState)).phase).toBe("closed");
-    } finally {
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-    }
-  });
-
   it("publishes owner status from the lifecycle application", async () => {
     const serverLayer = NodeHttpServer.layer(() => createServer(), { port: 0 }).pipe(Layer.orDie);
     const runtime = ManagedRuntime.make(serverLayer);
@@ -93,7 +46,7 @@ describe("SupervisorControlServer", () => {
     }
   });
 
-  it("flushes the fenced stop response before gated shutdown completes", async () => {
+  it("flushes the fenced stop response before shutdown completes", async () => {
     const serverLayer = NodeHttpServer.layer(() => createServer(), { port: 0 }).pipe(Layer.orDie);
     const runtime = ManagedRuntime.make(serverLayer);
     try {
@@ -119,7 +72,7 @@ describe("SupervisorControlServer", () => {
             );
             const server = yield* HttpServer.HttpServer;
             const application = yield* SupervisorControlServer.make(lifecycle);
-            yield* server.serve(application, SupervisorControlServer.middleware(lifecycle));
+            yield* server.serve(application);
             const address = server.address;
             if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("expected tcp address");
             const response = yield* Effect.promise(() =>
@@ -166,7 +119,7 @@ describe("SupervisorControlServer", () => {
             const release = Deferred.makeUnsafe<void>();
             const server = yield* HttpServer.HttpServer;
             const application = yield* SupervisorControlServer.make(lifecycle);
-            yield* server.serve(application, SupervisorControlServer.middleware(lifecycle));
+            yield* server.serve(application);
             const address = server.address;
             if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("expected tcp address");
             const deleting = yield* Effect.forkScoped(

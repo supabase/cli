@@ -1,4 +1,4 @@
-import { Effect, Layer, Match, Stream } from "effect";
+import { Effect, Exit, Layer, Match, Scope, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -242,9 +242,16 @@ export const RemoteStack = {
     Layer.effect(
       Stack,
       Effect.gen(function* () {
+        const parentScope = yield* Effect.scope;
+        const rpcScope = yield* Scope.fork(parentScope);
         const transport = yield* HttpTransportClient;
         const control = makeHttpControlClient(transport);
-        const { client } = yield* makeRemoteRpcClient(endpoint, options);
+        const { client } = yield* makeRemoteRpcClient(endpoint, options).pipe(
+          Scope.provide(rpcScope),
+        );
+        const closeRpcScope = yield* Effect.cached(Scope.close(rpcScope, Exit.void));
+        const scopedRpcStream = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
+          stream.pipe(Stream.provideService(Scope.Scope, rpcScope));
         const call = <A, E extends StackRpcFailure, R>(
           procedure: string,
           effect: Effect.Effect<A, E, R>,
@@ -261,7 +268,9 @@ export const RemoteStack = {
           );
         const requestStop = () => {
           const owner = options.owner;
-          return control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId);
+          return closeRpcScope.pipe(
+            Effect.andThen(control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId)),
+          );
         };
         return {
           getInfo: () => fastCall("GetInfo", client.GetInfo(undefined)),
@@ -288,13 +297,15 @@ export const RemoteStack = {
           stateChanges: (name: string) =>
             fastCall("GetServiceState", client.GetServiceState({ name })).pipe(
               Effect.as(
-                streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({ name })).pipe(
-                  Stream.map((state) => new StackServiceState(state)),
-                ),
+                scopedRpcStream(
+                  streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({ name })),
+                ).pipe(Stream.map((state) => new StackServiceState(state))),
               ),
             ),
           allStateChanges: () =>
-            streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({})).pipe(
+            scopedRpcStream(
+              streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({})),
+            ).pipe(
               Stream.catchTag("ServiceNotFoundError", Stream.die),
               Stream.map((state) => new StackServiceState(state)),
             ),
@@ -306,12 +317,14 @@ export const RemoteStack = {
           waitAllReady: (opts) =>
             call("WaitStackReady", client.WaitStackReady({ options: opts ?? inheritReadyOptions })),
           subscribeLogs: (name: string) =>
-            streamRpc(endpoint, "WatchLogs", client.WatchLogs({ name })),
+            scopedRpcStream(streamRpc(endpoint, "WatchLogs", client.WatchLogs({ name }))),
           subscribeAllLogs: (services) =>
-            streamRpc(
-              endpoint,
-              "WatchLogs",
-              client.WatchLogs(services === undefined ? {} : { services }),
+            scopedRpcStream(
+              streamRpc(
+                endpoint,
+                "WatchLogs",
+                client.WatchLogs(services === undefined ? {} : { services }),
+              ),
             ),
           logHistory: (name: string, limit?: number) =>
             fastCall(

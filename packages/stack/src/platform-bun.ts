@@ -2,8 +2,12 @@ import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
 import { Effect, Exit, Layer, Scope } from "effect";
-import { HttpEffect, HttpServer } from "effect/unstable/http";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import {
+  HttpEffect,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
@@ -31,6 +35,16 @@ const isDefinitivelyUnreachable = (cause: unknown): boolean => {
   return code === "ECONNREFUSED" || code === "ConnectionRefused";
 };
 
+const consumeControlResponse = (
+  endpoint: ControlEndpoint,
+  response: Response,
+): Effect.Effect<void, ControlTransportError> =>
+  Effect.tryPromise({
+    try: () =>
+      (response.body === null ? Promise.resolve() : response.arrayBuffer()).then(() => undefined),
+    catch: (cause) => new ControlTransportError({ endpoint, reason: "transport", cause }),
+  });
+
 const controlTransport: ControlTransport["Service"] = {
   bind: (
     endpoint: ControlEndpoint,
@@ -46,7 +60,7 @@ const controlTransport: ControlTransport["Service"] = {
       Effect.gen(function* () {
         const parentScope = yield* Effect.scope;
         if (application !== undefined) {
-          const webHandler = HttpEffect.toWebHandler(application.app, application.middleware);
+          const webHandler = HttpEffect.toWebHandler(application.app);
           const handler = (request: Request) => webHandler(request);
           const server = yield* Effect.try({
             try: () =>
@@ -208,6 +222,9 @@ const controlTransport: ControlTransport["Service"] = {
           cause,
         }),
     }).pipe(
+      Effect.flatMap((response) =>
+        consumeControlResponse(endpoint, response).pipe(Effect.as(response)),
+      ),
       Effect.flatMap(
         (response): Effect.Effect<void, ControlStopConflictError | ControlTransportError> => {
           if (response.ok) return Effect.void;

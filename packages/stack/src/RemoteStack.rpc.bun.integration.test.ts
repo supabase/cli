@@ -4,10 +4,7 @@ import { ControlTransport } from "./managed/control.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-} from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { makeTestStack } from "./testing.ts";
 
@@ -33,7 +30,6 @@ describe("Bun runtime RPC", () => {
           Effect.provide(Layer.succeed(Scope.Scope, scope)),
         ),
       ),
-      middleware: makeSupervisorControlMiddleware(lifecycle),
     };
     const listener = await Effect.runPromise(
       Effect.flatMap(ControlTransport, (transport) =>

@@ -31,15 +31,16 @@ import {
   StackUnavailableError,
 } from "./errors.ts";
 import { acquireControl, isControlOwnership } from "./managed/control.ts";
-import { controlTransportLayer } from "./platform-node.ts";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-} from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { makeTestStack } from "./testing.ts";
 
 const ownerId = "b".repeat(64);
+
+const controlTransportLayer =
+  typeof Bun === "undefined"
+    ? (await import("./platform-node.ts")).controlTransportLayer
+    : (await import("./platform-bun.ts")).controlTransportLayer;
 
 const remoteOwner = (ownerSessionId: string) => ({
   controlProtocol: "supabase-stack-control" as const,
@@ -231,6 +232,9 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
         });
         let calls = 0;
         const logReleased = Deferred.makeUnsafe<void>();
+        const activeLogStarted = Deferred.makeUnsafe<void>();
+        const activeLogReleased = Deferred.makeUnsafe<void>();
+        let logSubscriptions = 0;
         const serviceState = new StackServiceState({
           name: "auth",
           status: "Running",
@@ -323,10 +327,21 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
             Effect.sync(() => {
               calls += 1;
             }),
-          subscribeLogs: () =>
-            Stream.concat(Stream.fromIterable(logs), Stream.never).pipe(
-              Stream.ensuring(Deferred.succeed(logReleased, undefined)),
-            ),
+          subscribeLogs: () => {
+            const active = logSubscriptions++ > 0;
+            const entries = active
+              ? Stream.fromIterable(logs).pipe(
+                  Stream.tap(() =>
+                    Deferred.succeed(activeLogStarted, undefined).pipe(Effect.asVoid),
+                  ),
+                )
+              : Stream.fromIterable(logs);
+            return Stream.concat(entries, Stream.never).pipe(
+              Stream.ensuring(
+                Deferred.succeed(active ? activeLogReleased : logReleased, undefined),
+              ),
+            );
+          },
           subscribeAllLogs: () => Stream.fromIterable(logs),
           logHistory: () => Effect.succeed(logs),
           logHistoryAll: () => Effect.succeed(logs),
@@ -334,7 +349,6 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
         yield* lifecycle.publishStack(stack);
         const application = {
           app: yield* makeSupervisorControlApplication(lifecycle),
-          middleware: makeSupervisorControlMiddleware(lifecycle),
         };
         const owner = yield* acquireControl({
           stackId: ownerId,
@@ -468,7 +482,11 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
           yield* Deferred.await(logReleased);
           expect(yield* Stream.runCollect(remote.subscribeAllLogs(["auth"]))).toEqual(logs);
           expect(calls).toBeGreaterThan(0);
+          const activeLogs = yield* Effect.forkChild(Stream.runDrain(remote.subscribeLogs("auth")));
+          yield* Deferred.await(activeLogStarted);
           yield* remote.stop();
+          yield* Deferred.await(activeLogReleased);
+          expect(Exit.isFailure(yield* Fiber.join(activeLogs).pipe(Effect.exit))).toBe(true);
         }).pipe(Effect.provide(remoteLayer));
       }),
     ),
@@ -760,48 +778,50 @@ it.effect("does not apply the fast timeout to a long-running StopService RPC", (
 );
 
 it.effect("observes the captured session after the stop was accepted and its response resets", () =>
-  Effect.gen(function* () {
-    const endpoint = { hostname: "127.0.0.1", port: 12350, url: "http://127.0.0.1:12350" };
-    const ownerSessionId = "accepted-reset-session";
-    let ownerReads = 0;
-    const transport: HttpTransportClient["Service"] = {
-      request: (requestEndpoint, path) => {
-        if (path === "/owner") {
-          ownerReads += 1;
-          return ownerReads === 1
-            ? Effect.succeed(Response.json(remoteOwner(ownerSessionId)))
-            : Effect.fail(
-                new HttpTransportClientError({
-                  endpoint: requestEndpoint,
-                  path,
-                  reason: "transport",
-                  cause: { code: "ECONNREFUSED" },
-                }),
-              );
-        }
-        if (path === "/stop")
-          return Effect.fail(
-            new HttpTransportClientError({
-              endpoint: requestEndpoint,
-              path,
-              reason: "transport",
-              cause: new Error("connection reset after the supervisor accepted the stop"),
-            }),
-          );
-        return Effect.die(`unexpected request ${path}`);
-      },
-    };
+  Effect.forEach(["ECONNREFUSED", "ConnectionRefused"] as const, (refusedCode) =>
+    Effect.gen(function* () {
+      const endpoint = { hostname: "127.0.0.1", port: 12350, url: "http://127.0.0.1:12350" };
+      const ownerSessionId = "accepted-reset-session";
+      let ownerReads = 0;
+      const transport: HttpTransportClient["Service"] = {
+        request: (requestEndpoint, path) => {
+          if (path === "/owner") {
+            ownerReads += 1;
+            return ownerReads === 1
+              ? Effect.succeed(Response.json(remoteOwner(ownerSessionId)))
+              : Effect.fail(
+                  new HttpTransportClientError({
+                    endpoint: requestEndpoint,
+                    path,
+                    reason: "transport",
+                    cause: { code: refusedCode },
+                  }),
+                );
+          }
+          if (path === "/stop")
+            return Effect.fail(
+              new HttpTransportClientError({
+                endpoint: requestEndpoint,
+                path,
+                reason: "transport",
+                cause: new Error("connection reset after the supervisor accepted the stop"),
+              }),
+            );
+          return Effect.die(`unexpected request ${path}`);
+        },
+      };
 
-    const result = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const remote = yield* Stack;
-        return yield* remote.stop().pipe(Effect.result);
-      }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
-    );
+      const result = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          return yield* remote.stop().pipe(Effect.result);
+        }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
+      );
 
-    expect(Result.isSuccess(result)).toBe(true);
-    expect(ownerReads).toBe(2);
-  }),
+      expect(Result.isSuccess(result)).toBe(true);
+      expect(ownerReads).toBe(2);
+    }),
+  ).pipe(Effect.asVoid),
 );
 
 it.effect(
@@ -985,7 +1005,6 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         yield* lifecycle.publishStack(stack);
         const application = {
           app: yield* makeSupervisorControlApplication(lifecycle),
-          middleware: makeSupervisorControlMiddleware(lifecycle),
         };
         const owner = yield* acquireControl({
           stackId: ownerId,

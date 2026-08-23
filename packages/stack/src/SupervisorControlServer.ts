@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Layer } from "effect";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -52,8 +52,7 @@ export const makeSupervisorControlApplication = (
             return HttpServerResponse.jsonUnsafe({ error: "conflict" }, { status: 409 });
           }
           // Submit ownership of the stop transaction before returning 202. The
-          // post-response middleware releases the graceful-close gate only
-          // after the platform has flushed this response.
+          // listener closes gracefully after the response is flushed.
           yield* lifecycle.submitShutdown("stop");
           return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 202 });
         }).pipe(
@@ -73,40 +72,4 @@ export const makeSupervisorControlApplication = (
 
 export const SupervisorControlServer = {
   make: makeSupervisorControlApplication,
-  middleware: (lifecycle: SupervisorLifecycle["Service"]) =>
-    makeSupervisorControlMiddleware(lifecycle),
 };
-
-/**
- * Releases the fenced stop transaction after the response has been handed to
- * the platform adapter. The lifecycle-owned shutdown fiber performs teardown
- * independently; awaiting it in this request fiber would keep Node's active
- * response open while server.close waits for that same response to finish.
- */
-export const makeSupervisorControlMiddleware =
-  (lifecycle: SupervisorLifecycle["Service"]) =>
-  <E, R>(
-    self: Effect.Effect<
-      HttpServerResponse.HttpServerResponse,
-      E,
-      R | HttpServerRequest.HttpServerRequest
-    >,
-  ): Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    E,
-    R | HttpServerRequest.HttpServerRequest
-  > =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const isStop = request.method === "POST" && request.url === "/stop";
-      const guarded = Effect.gen(function* () {
-        const response = yield* self;
-        if (isStop && response.status === 202) {
-          yield* lifecycle.releaseStopResponse;
-        }
-        return response;
-      });
-      return yield* Effect.onExit(guarded, (exit) =>
-        isStop && Exit.isFailure(exit) ? lifecycle.releaseStopResponse : Effect.void,
-      );
-    });

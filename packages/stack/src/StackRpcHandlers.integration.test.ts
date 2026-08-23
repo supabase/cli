@@ -8,10 +8,7 @@ import { Stack } from "./Stack.ts";
 import { StackBuildError } from "./errors.ts";
 import { acquireControl, isControlOwnership } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-} from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
@@ -100,7 +97,6 @@ it.live("serves handler behavior over the RPC boundary", () =>
       });
       const application = {
         app: yield* makeSupervisorControlApplication(lifecycle),
-        middleware: makeSupervisorControlMiddleware(lifecycle),
       };
       const owner = yield* acquireControl({
         stackId: OWNER_ID,

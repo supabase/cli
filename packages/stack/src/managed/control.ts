@@ -1,6 +1,5 @@
 import { Data, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
 import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import type * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import {
   CONTROL_PROTOCOL,
   CONTROL_PROTOCOL_VERSION,
@@ -40,7 +39,6 @@ export interface ControlApplication {
     never,
     HttpServerRequest.HttpServerRequest | import("effect/Scope").Scope
   >;
-  readonly middleware?: HttpMiddleware.HttpMiddleware;
 }
 
 const controlOwnershipBrand: unique symbol = Symbol("stack/ControlOwnership");

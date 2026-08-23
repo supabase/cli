@@ -60,8 +60,21 @@ const controlTransportError = (
 ): ControlTransportError =>
   new ControlTransportError({
     endpoint,
-    reason: errorCode(cause) === "ECONNREFUSED" ? "unreachable" : "transport",
+    reason:
+      errorCode(cause) === "ECONNREFUSED" || errorCode(cause) === "ConnectionRefused"
+        ? "unreachable"
+        : "transport",
     cause,
+  });
+
+const consumeControlResponse = (
+  endpoint: ControlEndpoint,
+  response: Response,
+): Effect.Effect<void, ControlTransportError> =>
+  Effect.tryPromise({
+    try: () =>
+      (response.body === null ? Promise.resolve() : response.arrayBuffer()).then(() => undefined),
+    catch: (cause) => new ControlTransportError({ endpoint, reason: "transport", cause }),
   });
 
 const makeHttpControlTransport = (
@@ -95,6 +108,9 @@ const makeHttpControlTransport = (
       }),
     ).pipe(
       Effect.mapError((cause) => controlTransportError(endpoint, cause)),
+      Effect.flatMap((response) =>
+        consumeControlResponse(endpoint, response).pipe(Effect.as(response)),
+      ),
       Effect.flatMap(
         (response): Effect.Effect<void, ControlProtocolError | ControlStopConflictError> => {
           if (response.ok) return Effect.void;

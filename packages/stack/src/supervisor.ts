@@ -25,10 +25,7 @@ import {
 import type { PlatformFactory } from "./createStack.ts";
 import { Stack } from "./Stack.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
-import {
-  makeSupervisorControlApplication,
-  makeSupervisorControlMiddleware,
-} from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import type { StackLaunchUpdater } from "./StackRpcHandlers.ts";
 import type { StackLaunchUpdateRpc } from "./StackRpc.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
@@ -509,7 +506,6 @@ const runManaged = (
     };
     const controlApplication: ControlApplication = {
       app: yield* makeSupervisorControlApplication(supervisorLifecycle, launchUpdater),
-      middleware: makeSupervisorControlMiddleware(supervisorLifecycle),
     };
     let initialAcquisition = yield* acquireControl({
       stackId: input.stackId,

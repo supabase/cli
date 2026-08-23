@@ -108,10 +108,10 @@ requests share its result and interrupting one caller cannot cancel the owner.
 The transaction independently attempts runtime stop, runtime disposal,
 ownership/listener close, and publication of `closed`; the first cleanup
 failure (including the exact primary `Cause`) is returned only after all
-cleanup steps have been attempted. For HTTP stop, a response-completion gate
-allows a successful `202` to flush before listener close. If the accepted stop
-request is canceled or defects before returning, its finalizer releases the
-same gate so teardown cannot strand.
+cleanup steps have been attempted. For HTTP stop, Node and Bun close the
+listener gracefully after flushing a successful `202`; the stable client
+consumes that bounded response and polls the exact session fence until the
+owner disappears.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
 Its closure includes the resources for every public graph dependency a requested
@@ -325,12 +325,12 @@ containing the old session id receives `409` from a replacement owner.
 
 `SupervisorLifecycle` owns the atomic lifecycle state, owner session, runtime
 publication, and one cached shutdown transaction. All shutdown sources join
-that transaction. The accepted `202` stop response is flushed before listener
-closure; canceled or defective accepted stop requests release the response gate
-through finalization. Teardown then attempts runtime stop and disposal,
-ownership/listener close, and `closed` publication while preserving the first
-cleanup `Cause`. Node, Bun, and compiled Bun children use the same pre-bind
-application and lifecycle composition.
+that transaction. The accepted `202` stop response is flushed by the listener's
+graceful close; the stable control client consumes the bounded response body and
+polls the exact fenced session until it disappears. Teardown then attempts
+runtime stop and disposal, ownership/listener close, and `closed` publication
+while preserving the first cleanup `Cause`. Node, Bun, and compiled Bun
+children use the same pre-bind application and lifecycle composition.
 
 ## Service execution and `ApiProxy`
 

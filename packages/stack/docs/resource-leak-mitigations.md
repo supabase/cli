@@ -45,10 +45,9 @@ Every shutdown source joins one cached lifecycle transaction. Once accepted,
 the transaction always attempts runtime stop, runtime disposal,
 ownership/listener close, and `closed` publication, even when an earlier step
 fails. It preserves the first cleanup failure and its exact `Cause` after all
-steps have run. A successful `202` stop response releases its completion gate
-only after the platform has flushed it; cancellation or a defect in an
-accepted `/stop` request releases the same gate through finalization, so a
-waiter cannot strand listener close.
+steps have run. Node and Bun close listeners gracefully after flushing the
+accepted `202`; the stable client drains that response and then polls the exact
+session fence, so listener shutdown cannot be stranded by an unread body.
 
 If the owner is gone, the next lifecycle operation acquires control for the
 stack id, force-removes deterministic Docker containers, reconciles persisted

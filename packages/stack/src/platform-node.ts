@@ -114,7 +114,6 @@ const controlTransport: ControlTransport["Service"] = {
         const scope = yield* Effect.scope;
         const handler = yield* NodeHttpServer.makeHandler(application.app, {
           scope,
-          middleware: application.middleware,
         });
         rawServer.removeAllListeners("request");
         rawServer.on("request", handler);

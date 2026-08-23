@@ -41,8 +41,6 @@ export class SupervisorLifecycle extends Context.Service<
     readonly submitShutdown: (
       reason: "stop" | "signal" | "startup-failure" | "dispose",
     ) => Effect.Effect<void, never>;
-    /** Releases an accepted HTTP /stop response for graceful listener close. */
-    readonly releaseStopResponse: Effect.Effect<void, never>;
     readonly requestShutdown: (
       reason: "stop" | "signal" | "startup-failure" | "dispose",
     ) => Effect.Effect<void, unknown>;
@@ -64,7 +62,6 @@ export class SupervisorLifecycle extends Context.Service<
       const shutdownReason = Deferred.makeUnsafe<
         "stop" | "signal" | "startup-failure" | "dispose"
       >();
-      const stopResponseGate = Deferred.makeUnsafe<void>();
       const shutdownExit = Deferred.makeUnsafe<Exit.Exit<void, unknown>>();
       const status = (state: SupervisorState): ControlOwnerStatus => ({
         controlProtocol: CONTROL_PROTOCOL,
@@ -76,10 +73,9 @@ export class SupervisorLifecycle extends Context.Service<
         daemonCliVersion: input.daemonCliVersion,
         daemonBuildId: input.daemonBuildId,
       });
-      const shutdown = (reason: string) =>
+      const shutdown = (_reason: string) =>
         Effect.uninterruptible(
           Effect.gen(function* () {
-            if (reason === "stop") yield* Deferred.await(stopResponseGate);
             const current = yield* Ref.get(stateRef);
             const stack =
               current.phase === "running"
@@ -133,14 +129,10 @@ export class SupervisorLifecycle extends Context.Service<
         ),
       );
       const submitShutdown = (reason: "stop" | "signal" | "startup-failure" | "dispose") =>
-        Effect.gen(function* () {
-          const won = yield* Deferred.succeed(shutdownReason, reason);
-          if (won && reason !== "stop") yield* Deferred.succeed(stopResponseGate, undefined);
-        });
+        Deferred.succeed(shutdownReason, reason).pipe(Effect.asVoid);
       const requestShutdown = (reason: "stop" | "signal" | "startup-failure" | "dispose") =>
         Effect.gen(function* () {
-          const won = yield* Deferred.succeed(shutdownReason, reason);
-          if (won) yield* Deferred.succeed(stopResponseGate, undefined);
+          yield* Deferred.succeed(shutdownReason, reason);
           yield* awaitShutdownExit;
         });
       return {
@@ -191,7 +183,6 @@ export class SupervisorLifecycle extends Context.Service<
               : [undefined, state],
           ).pipe(Effect.asVoid),
         submitShutdown,
-        releaseStopResponse: Deferred.succeed(stopResponseGate, undefined).pipe(Effect.asVoid),
         requestShutdown,
         awaitShutdown: awaitShutdownExit,
       };

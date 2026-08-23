@@ -74,7 +74,6 @@ const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
     });
     const application = {
       app: yield* SupervisorControlServer.make(lifecycle),
-      middleware: SupervisorControlServer.middleware(lifecycle),
     };
     const owner = yield* acquireControl({
       stackId,
@@ -215,7 +214,6 @@ describe("managed control endpoint", () => {
             });
             const application = {
               app: yield* SupervisorControlServer.make(lifecycle),
-              middleware: SupervisorControlServer.middleware(lifecycle),
             };
             const owner = yield* acquireControl({ stackId: STACK_ID, application });
             if (!isControlOwnership(owner)) throw new Error("expected control ownership");
