@@ -12,7 +12,7 @@ Hotfixes are released manually. Follow these steps:
    1. If stable is on `v1.2.3` and beta is on `v1.3.6`, create `1.2.x` branch.
    2. If stable is on `v1.3.1` and beta is on `v1.3.6`, create `1.3.x` branch (or simply release all patch versions).
 2. Cherry-pick your hotfix on top of `N.N.x` branch.
-3. Run the [Release (Beta)](https://github.com/supabase/cli/actions/workflows/release-beta.yml) workflow targetting `N.N.x` branch.
+3. Run the [Release (Beta)](https://github.com/supabase/cli/actions/workflows/release-beta.yml) workflow targeting `N.N.x` branch.
 4. Verify your hotfix locally with `npx supabase@N.N.x help`
 5. Edit [GitHub releases](https://github.com/supabase/cli/releases) to set your hotfix pre-release as latest stable.
 
