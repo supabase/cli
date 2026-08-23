@@ -130,6 +130,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_control_transport",
   "managed_control_protocol",
   "managed_control_address_conflict",
+  "managed_control_stop_conflict",
   "managed_document",
   "managed_control_required",
   "managed_attached",
@@ -1075,6 +1076,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ControlAddressConflictError: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "managed_control_address_conflict",
+  }),
+  ControlStopConflictError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_stop_conflict",
   }),
   InvalidManagedStackDocumentError: () => ({
     ...actionability.invalidConfig,

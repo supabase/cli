@@ -489,6 +489,22 @@ describe("classifyCliErrorActionability", () => {
     expect(readiness.suggested_command).toBe("supabase start");
   });
 
+  it("classifies control stop conflicts as a sanitized internal invariant failure", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlStopConflictError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "internal_bug",
+      error_category: "impossible_state",
+      error_fingerprint: "tag:ControlStopConflictError:managed_control_stop_conflict",
+      has_suggestion: true,
+      suggestion_type: "rerun_debug",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
   it("splits docker pull failures from a stopped docker daemon", () => {
     const daemonDown = classifyCliErrorActionability({
       _tag: "DockerPullError",
