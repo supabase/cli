@@ -6,7 +6,7 @@ import { PORT_FIELDS } from "./PortCatalog.ts";
 const portIntentSchema = Schema.Struct({
   activeFields: Schema.Array(Schema.Literals(PORT_FIELDS)),
   disabledFields: Schema.optionalKey(Schema.Array(Schema.Literals(PORT_FIELDS))),
-  document: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+  document: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
 });
 
 export const SupervisorStartCommandSchema = Schema.Struct({
@@ -20,10 +20,11 @@ export const SupervisorStartCommandSchema = Schema.Struct({
   workspacePath: Schema.String,
   stackName: Schema.String,
   stateRoot: Schema.String,
-  config: Schema.Record(Schema.String, Schema.Json),
+  config: Schema.Record(Schema.String, Schema.Unknown),
   portIntents: portIntentSchema,
   launch: Schema.optionalKey(managedStackLaunchInputSchema),
 });
+export type SupervisorStartMessage = Schema.Schema.Type<typeof SupervisorStartCommandSchema>;
 
 /** Parent acknowledgement required before an incompatible owner is fenced. */
 export const SupervisorReplacementAckCommandSchema = Schema.Struct({
@@ -48,6 +49,7 @@ export const SupervisorStartedEventSchema = Schema.Struct({
   owner: SupervisorOwnerDescriptorSchema,
   attached: Schema.optionalKey(Schema.Boolean),
 });
+export type SupervisorStartedMessage = Schema.Schema.Type<typeof SupervisorStartedEventSchema>;
 
 export const SupervisorReplacingEventSchema = Schema.Struct({
   type: Schema.Literal("replacing"),
@@ -57,6 +59,7 @@ export const SupervisorReplacingEventSchema = Schema.Struct({
   newCliVersion: Schema.String,
   newBuildId: Schema.String,
 });
+export type SupervisorReplacingMessage = Schema.Schema.Type<typeof SupervisorReplacingEventSchema>;
 
 export const SupervisorErrorEventSchema = Schema.Struct({
   type: Schema.Literal("error"),
@@ -68,6 +71,7 @@ export const SupervisorErrorEventSchema = Schema.Struct({
   newCliVersion: Schema.optionalKey(Schema.String),
   newBuildId: Schema.optionalKey(Schema.String),
 });
+export type SupervisorErrorMessage = Schema.Schema.Type<typeof SupervisorErrorEventSchema>;
 
 export const SupervisorEventSchema = Schema.Union([
   SupervisorStartedEventSchema,

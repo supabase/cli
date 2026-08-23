@@ -770,7 +770,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("explicit replacement stops an incompatible owner before acquiring the same stack", async () => {
+  test("replacement preserves persisted runtime exclusions and sticky ports", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
@@ -779,8 +779,21 @@ describe("detached supervisor child journeys", () => {
       }),
     );
     let replacement: ChildHandle | undefined;
+    let analyticsPortBlocker: ReturnType<typeof createServer> | undefined;
     try {
       const oldStarted = await oldOwner.started;
+      analyticsPortBlocker = createServer();
+      const blockedAnalyticsPort = await new Promise<number>((resolve, reject) => {
+        analyticsPortBlocker?.once("error", reject);
+        analyticsPortBlocker?.listen(0, "127.0.0.1", () => {
+          const address = analyticsPortBlocker?.address();
+          if (address === null || typeof address === "string" || address === undefined) {
+            reject(new Error("analytics blocker did not expose an address"));
+            return;
+          }
+          resolve(address.port);
+        });
+      });
       const documentPath = Effect.runSync(
         managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
       );
@@ -795,6 +808,15 @@ describe("detached supervisor child journeys", () => {
         };
         ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
       };
+      const persistedBefore = {
+        ...before,
+        launch: { ...before.launch, excludedServices: ["analytics"] },
+        ports: [
+          ...before.ports,
+          { key: "analytics.port", port: blockedAnalyticsPort, intent: "exact" },
+        ],
+      };
+      writeFileSync(documentPath, `${JSON.stringify(persistedBefore, null, 2)}\n`);
       const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, roots.stackId));
       const sentinel = join(paths.root, "data", "upgrade-sentinel.txt");
       mkdirSync(dirname(sentinel), { recursive: true });
@@ -811,10 +833,14 @@ describe("detached supervisor child journeys", () => {
         messageFor(roots, {
           buildIdentity: { cliVersion: "new", buildId: "release:new" },
           incompatibleOwnerPolicy: "replace",
+          config: {
+            ...messageFor(roots).config,
+            analytics: { port: blockedAnalyticsPort },
+          },
           launch: {
             mode: "native",
             versions: { postgres: "pinned-postgres" },
-            excludedServices: ["analytics"],
+            excludedServices: [],
           },
         }),
         {
@@ -832,6 +858,7 @@ describe("detached supervisor child journeys", () => {
       releaseReplacement();
       const newStarted = await replacement.started;
       expect(newStarted.owner.daemonBuildId).toBe("release:new");
+      expect(analyticsPortBlocker?.listening).toBe(true);
       await waitForExit(oldOwner.child);
       const staleStop = await fetch(`${newStarted.endpoint.url}/stop`, {
         method: "POST",
@@ -849,13 +876,17 @@ describe("detached supervisor child journeys", () => {
       const after = JSON.parse(readFileSync(documentPath, "utf8")) as typeof before;
       expect(after.id).toBe(before.id);
       expect(after.createdAt).toBe(before.createdAt);
-      expect(after.launch).toEqual(before.launch);
-      expect(after.ports).toEqual(before.ports);
+      expect(after.launch).toEqual(persistedBefore.launch);
+      expect(after.ports).toHaveLength(persistedBefore.ports.length);
+      expect(after.ports).toEqual(expect.arrayContaining(persistedBefore.ports));
       expect(readFileSync(sentinel, "utf8")).toBe("preserve-me");
       await remoteStop(newStarted.endpoint);
       await waitForExit(replacement.child);
       expect(oldStarted.owner.ownerSessionId).not.toBe(newStarted.owner.ownerSessionId);
     } finally {
+      if (analyticsPortBlocker?.listening === true) {
+        await new Promise<void>((resolve) => analyticsPortBlocker?.close(() => resolve()));
+      }
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
       if (replacement?.child.exitCode === null) await kill(replacement.child);
       cleanupRoots(roots);

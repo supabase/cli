@@ -43,12 +43,9 @@ import { foregroundLayer } from "./layers.ts";
 import {
   acquireControl,
   ControlTransportError,
-  probeControl,
-  requestControlStopForSession,
   ControlTransport,
   type ControlAcquisition,
   type ControlAttached,
-  type ControlEndpoint,
   type ControlOwnership,
   type ControlOwnerStatus,
   type ControlApplication,
@@ -67,9 +64,9 @@ import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPathsEffect } from "./managed/paths.ts";
-import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
+import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
-import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
+import { SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
@@ -89,58 +86,23 @@ import {
   StackBuildError,
   StackRpcProtocolError,
   StackRpcTransportError,
-  StopTimeout,
   UpgradePreflightError,
   UpgradeRestartError,
+  SupervisorStartError,
 } from "./errors.ts";
-
-/** The only message sent across the detached child IPC boundary. */
-export interface SupervisorStartMessage {
-  readonly type: "start";
-  readonly buildIdentity: BuildIdentityValue;
-  readonly incompatibleOwnerPolicy: "replace" | "fail";
-  readonly stackId: string;
-  readonly workspacePath: string;
-  readonly stackName: string;
-  readonly stateRoot: string;
-  readonly config: Readonly<Record<string, unknown>>;
-  readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: ManagedStackLaunchInput;
-}
-
-export interface SupervisorStartedMessage {
-  readonly type: "started";
-  readonly endpoint: ControlEndpoint;
-  readonly owner: {
-    readonly ownershipId: string;
-    readonly ownerSessionId: string;
-    readonly controlProtocolVersion: typeof CONTROL_PROTOCOL_VERSION;
-    readonly daemonCliVersion: string;
-    readonly daemonBuildId: string;
-  };
-  readonly attached?: boolean;
-}
-
-export interface SupervisorReplacingMessage {
-  readonly type: "replacing";
-  readonly stackId: string;
-  readonly oldCliVersion: string;
-  readonly oldBuildId: string;
-  readonly newCliVersion: string;
-  readonly newBuildId: string;
-}
-
-interface SupervisorErrorMessage {
-  readonly type: "error";
-  readonly message: string;
-  readonly errorCode?: "DAEMON_UPGRADE_REQUIRED";
-  readonly stackId?: string;
-  readonly oldCliVersion?: string;
-  readonly oldBuildId?: string;
-  readonly newCliVersion?: string;
-  readonly newBuildId?: string;
-}
-
+import {
+  replaceIncompatibleOwner,
+  runtimeSelectionForLaunch,
+  applyNativeDefaults,
+} from "./SupervisorReplacement.ts";
+import type {
+  SupervisorErrorMessage,
+  SupervisorReplacingMessage,
+  SupervisorStartMessage,
+  SupervisorStartedMessage,
+} from "./SupervisorProtocol.ts";
+export type { SupervisorReplacingMessage, SupervisorStartMessage, SupervisorStartedMessage };
+export { SupervisorStartError } from "./errors.ts";
 type SupervisorMessage =
   | SupervisorStartedMessage
   | SupervisorReplacingMessage
@@ -201,74 +163,8 @@ const causeMessage = (cause: unknown): string => {
   return typeof cause === "string" ? cause : String(cause);
 };
 
-const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
-  launch.mode === "native"
-    ? { mode: "native", containerRuntime: null }
-    : { mode: "docker", containerRuntime: launch.containerRuntime };
-
-const persistedPortField = (key: string): PortField | undefined => {
-  switch (key) {
-    case "api.port":
-      return "apiPort";
-    case "db.port":
-      return "dbPort";
-    case "edge_runtime.inspector_port":
-      return "edgeRuntimeInspectorPort";
-    case "local_smtp.port":
-      return "mailpitPort";
-    case "local_smtp.smtp_port":
-      return "mailpitSmtpPort";
-    case "local_smtp.pop3_port":
-      return "mailpitPop3Port";
-    case "studio.port":
-      return "studioPort";
-    case "analytics.port":
-      return "analyticsPort";
-    case "db.pooler.port":
-      return "poolerPort";
-    default:
-      return undefined;
-  }
-};
-
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
-
-/**
- * The CLI's omitted-mode defaults are empty service objects, optionally
- * decorated with only a pinned version. A managed caller's non-default field
- * is an explicit request and must survive fallback so native validation can
- * reject it instead of silently changing the requested stack.
- */
-const isCatalogDefaultServiceConfig = (value: unknown): boolean => {
-  if (value === undefined) return true;
-  if (!isRecord(value)) return false;
-  return Object.keys(value).every((key) => key === "version");
-};
-
-const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => {
-  const servicePolicies: NonNullable<DaemonConfigInput["servicePolicies"]> = {
-    ...config.servicePolicies,
-  };
-
-  for (const service of SERVICE_NAMES) {
-    const metadata = SERVICE_CATALOG[service];
-    if (
-      metadata.runtimeSupport === "docker-only" &&
-      servicePolicies[service] === undefined &&
-      isCatalogDefaultServiceConfig(config[metadata.configKey])
-    ) {
-      servicePolicies[service] = "off";
-    }
-  }
-
-  return { ...config, servicePolicies };
-};
-
-export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
-  readonly message: string;
-  readonly reason?: "owner-stopped" | "build-mismatch";
-}> {}
 
 class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerUnavailableError")<{
   readonly retry: boolean;
@@ -651,111 +547,6 @@ const runManaged = (
         ),
       );
     if (owner !== undefined) yield* registerOwnerClose(owner);
-    const preflightUpgrade = Effect.fnUntraced(function* (oldBuildId: string) {
-      const existing = yield* manager.inspectStack(input.stackId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new UpgradePreflightError({
-              stackId: input.stackId,
-              oldBuildId,
-              newBuildId: input.buildIdentity.buildId,
-              detail: causeMessage(cause),
-            }),
-        ),
-      );
-      if (existing === undefined) {
-        return yield* Effect.fail(
-          new UpgradePreflightError({
-            stackId: input.stackId,
-            oldBuildId,
-            newBuildId: input.buildIdentity.buildId,
-            detail: "Managed stack document is missing",
-          }),
-        );
-      }
-      const persistedRuntime = runtimeSelectionForLaunch(existing.launch);
-      if (persistedRuntime === undefined) {
-        return yield* Effect.fail(
-          new UpgradePreflightError({
-            stackId: input.stackId,
-            oldBuildId,
-            newBuildId: input.buildIdentity.buildId,
-            detail: "Persisted runtime selection is missing",
-          }),
-        );
-      }
-      yield* validateStackRuntime(persistedRuntime).pipe(
-        Effect.mapError(
-          (cause) =>
-            new UpgradePreflightError({
-              stackId: input.stackId,
-              oldBuildId,
-              newBuildId: input.buildIdentity.buildId,
-              detail: causeMessage(cause),
-            }),
-        ),
-      );
-      yield* portRequestsForConfig(configInput, {
-        runtime: persistedRuntime,
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new UpgradePreflightError({
-              stackId: input.stackId,
-              oldBuildId,
-              newBuildId: input.buildIdentity.buildId,
-              detail: causeMessage(cause),
-            }),
-        ),
-      );
-      // Validate the complete configuration before fencing the old owner.
-      // Runtime-only ports are synthetic here; the managed allocator chooses
-      // their real values after the replacement acquires its lease. Explicit
-      // roots keep this validation free of lease, bind, container, and
-      // document mutations.
-      const paths = yield* managedStackPathsEffect(input.stateRoot, existing.id);
-      const effectiveConfig =
-        persistedRuntime.mode === "native" && configInput.mode === undefined
-          ? nativeFallbackConfig(configInput)
-          : configInput;
-      const syntheticPorts: Partial<Record<PortField, number>> = {};
-      for (const assignment of existing.ports) {
-        const field = persistedPortField(assignment.key);
-        if (field !== undefined) syntheticPorts[field] = assignment.port;
-      }
-      const activePreflightFields = portFieldsForConfigInput({
-        ...effectiveConfig,
-        mode: persistedRuntime.mode,
-      });
-      for (const [index, field] of activePreflightFields.entries()) {
-        if (syntheticPorts[field] === undefined) {
-          syntheticPorts[field] = PORT_CATALOG[field].preferred ?? 60_000 + index;
-        }
-      }
-      yield* resolveConfig(
-        {
-          ...effectiveConfig,
-          projectDir: effectiveConfig.projectDir ?? input.workspacePath,
-          mode: persistedRuntime.mode,
-        },
-        {
-          runtime: persistedRuntime,
-          stackRoot: paths.root,
-          runtimeRoot: paths.runtime,
-          ports: syntheticPorts,
-        },
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new UpgradePreflightError({
-              stackId: input.stackId,
-              oldBuildId,
-              newBuildId: input.buildIdentity.buildId,
-              detail: causeMessage(cause),
-            }),
-        ),
-      );
-    });
     const discovered = manager
       .ensureWorkspace(input.workspacePath)
       .pipe(Effect.map((discovery) => ({ _tag: "discovered" as const, discovery })));
@@ -776,6 +567,7 @@ const runManaged = (
       );
     }
     const requestedMode = configInput.mode ?? input.launch?.mode;
+    let replacementConfigInput = configInput;
     const existing = yield* manager.inspectStack(stackId);
     const persistedRuntime: StackRuntimeSelection | undefined =
       existing === undefined ? undefined : runtimeSelectionForLaunch(existing.launch);
@@ -793,7 +585,7 @@ const runManaged = (
     }
     let attachedOwnerWasStopping = false;
     const initiallyAttached = isControlAttached(initialAcquisition);
-    const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
+    const reacquireAfterDeath = () =>
       Effect.gen(function* () {
         const status = yield* supervisorLifecycle.currentStatus;
         return yield* acquireControl({
@@ -802,12 +594,14 @@ const runManaged = (
           application: controlApplication,
         }).pipe(
           Effect.provideService(ControlTransport, controlTransport),
-          Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
-            if (isControlOwnership(candidate)) return Effect.succeed(candidate);
-            return candidate.observedStatus.daemonBuildId === input.buildIdentity.buildId
-              ? Effect.succeed(candidate)
-              : Effect.fail(new SupervisorOwnerReacquirePending());
-          }),
+          Effect.flatMap(
+            (candidate): Effect.Effect<ControlAcquisition, SupervisorOwnerReacquirePending> => {
+              if (isControlOwnership(candidate)) return Effect.succeed(candidate);
+              return candidate.observedStatus.daemonBuildId === input.buildIdentity.buildId
+                ? Effect.succeed(candidate)
+                : Effect.fail(new SupervisorOwnerReacquirePending());
+            },
+          ),
           Effect.retry({
             schedule: Schedule.spaced("25 millis"),
             while: (error) => error instanceof SupervisorOwnerReacquirePending,
@@ -818,79 +612,32 @@ const runManaged = (
       const attachedStatus = initialAcquisition.observedStatus;
       attachedOwnerWasStopping = attachedStatus.state === "stopping";
       if (attachedStatus.daemonBuildId !== input.buildIdentity.buildId) {
-        if (input.incompatibleOwnerPolicy === "fail") {
-          return yield* Effect.fail(
-            new DaemonUpgradeRequired({
-              stackId,
-              oldCliVersion: attachedStatus.daemonCliVersion,
-              oldBuildId: attachedStatus.daemonBuildId,
-              newCliVersion: input.buildIdentity.cliVersion,
-              newBuildId: input.buildIdentity.buildId,
-            }),
-          );
-        }
-        yield* preflightUpgrade(attachedStatus.daemonBuildId);
         replacingIncompatibleOwner = true;
-        const replacementAckFiber = yield* receiveReplacementAck().pipe(
-          Effect.forkChild({ startImmediately: true }),
-        );
-        yield* sendMessage({
-          type: "replacing",
+        const replacement = yield* replaceIncompatibleOwner({
           stackId,
-          oldCliVersion: attachedStatus.daemonCliVersion,
-          oldBuildId: attachedStatus.daemonBuildId,
-          newCliVersion: input.buildIdentity.cliVersion,
-          newBuildId: input.buildIdentity.buildId,
-        });
-        // Do not fence the old owner until the parent has handled the warning
-        // and acknowledged the replacement event. The listener is installed
-        // before the event is sent, so this handoff cannot lose the ACK.
-        yield* Fiber.join(replacementAckFiber);
-        // Fence the exact session observed during the mismatch handshake. A
-        // fresh owner may publish between this read and the POST; refreshing
-        // the descriptor here could stop that replacement instead.
-        yield* requestControlStopForSession(
-          initialAcquisition.endpoint,
-          attachedStatus.ownershipId,
-          attachedStatus.ownerSessionId,
+          oldOwner: initialAcquisition,
+          input,
+          configInput,
+          manager,
           controlTransport,
-        ).pipe(
-          Effect.timeoutOrElse({
-            duration: platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT,
-            orElse: () =>
-              probeControl(attachedStatus.ownershipId).pipe(
-                Effect.provideService(ControlTransport, controlTransport),
-                Effect.map((probe) =>
-                  probe?.status.ownerSessionId === attachedStatus.ownerSessionId
-                    ? probe.status.state
-                    : attachedStatus.state,
-                ),
-                Effect.catch(() => Effect.succeed(attachedStatus.state)),
-                Effect.flatMap((lastState) =>
-                  Effect.fail(
-                    new StopTimeout({
-                      endpoint: initialAcquisition.endpoint.url,
-                      ownerSessionId: attachedStatus.ownerSessionId,
-                      lastState,
-                    }),
-                  ),
-                ),
-              ),
-          }),
-        );
-        oldSessionEnded = true;
-        initialAcquisition = yield* reacquireAfterDeath().pipe(
-          Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
-          Effect.catch((error) =>
-            Predicate.isTagged(error, "TimeoutError")
-              ? Effect.fail(
-                  new SupervisorStartError({
-                    message: "Timed out waiting for incompatible daemon replacement",
-                  }),
-                )
-              : Effect.fail(error),
-          ),
-        );
+          resolutionTimeout: platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT,
+          authorize: (event) =>
+            Effect.gen(function* () {
+              const replacementAckFiber = yield* receiveReplacementAck().pipe(
+                Effect.forkChild({ startImmediately: true }),
+              );
+              yield* sendMessage(event);
+              yield* Fiber.join(replacementAckFiber);
+            }),
+          reacquire: () =>
+            reacquireAfterDeath().pipe(
+              Effect.catchTag("SupervisorOwnerReacquirePending", () => Effect.never),
+            ),
+        });
+        oldSessionEnded = replacement.oldSessionEnded;
+        attachedOwnerWasStopping = replacement.attachedOwnerWasStopping;
+        replacementConfigInput = replacement.effectiveConfigInput;
+        initialAcquisition = replacement.acquisition;
       } else if (!(attachedStatus.state === "running" && attachedStatus.ready)) {
         yield* awaitOwnerReady(
           initialAcquisition,
@@ -1000,8 +747,8 @@ const runManaged = (
         : yield* validateStackRuntime(ownedPersistedRuntime);
     const runtimeConfigInput =
       runtime.mode === "native" && requestedMode === undefined
-        ? nativeFallbackConfig(configInput)
-        : configInput;
+        ? applyNativeDefaults(replacementConfigInput)
+        : replacementConfigInput;
     const activeFields = portFieldsForConfigInput({ ...runtimeConfigInput, mode: runtime.mode });
     const activeFieldSet = new Set(activeFields);
     const portIntents: ManagedPortIntentDocument = {
