@@ -7,6 +7,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Option,
   Predicate,
   Queue,
   Result,
@@ -23,6 +24,7 @@ import {
 } from "./ContainerRuntime.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import { Stack } from "./Stack.ts";
+import { LocalStackLifecycle } from "./LocalStack.ts";
 import {
   makeSupervisorControlApplication,
   makeSupervisorControlMiddleware,
@@ -80,6 +82,7 @@ import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
 import type { BuildIdentityValue } from "./BuildIdentity.ts";
+import { CONTROL_PROTOCOL_VERSION } from "./DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
   StackBuildError,
@@ -110,7 +113,7 @@ export interface SupervisorStartedMessage {
   readonly owner: {
     readonly ownershipId: string;
     readonly ownerSessionId: string;
-    readonly controlProtocolVersion: 1;
+    readonly controlProtocolVersion: typeof CONTROL_PROTOCOL_VERSION;
     readonly daemonCliVersion: string;
     readonly daemonBuildId: string;
   };
@@ -313,7 +316,7 @@ export interface SupervisorPlatform {
   readonly runtimeLayer?: (input: {
     readonly config: ResolvedDaemonConfig;
     readonly lease: PortLease;
-  }) => Effect.Effect<Layer.Layer<Stack>, unknown, Scope.Scope>;
+  }) => Effect.Effect<Layer.Layer<Stack | LocalStackLifecycle>, unknown, Scope.Scope>;
   /** Optional notification hook for an attached owner that is not ready yet. */
   readonly onAttachedBeforeReady?: () => Effect.Effect<void, SupervisorStartError>;
   readonly resolutionTimeout?: Duration.Input;
@@ -366,11 +369,18 @@ const receiveReplacementAck = (): Effect.Effect<void, SupervisorStartError> =>
       resume(effect);
     };
     const onMessage = (value: unknown) => {
-      const decoded = Schema.decodeUnknownEffect(SupervisorReplacementAckCommandSchema)(value).pipe(
-        Effect.asVoid,
-        Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+      if (isRecord(value) && value.type === "test-stage") return;
+      const decoded = Schema.decodeUnknownOption(SupervisorReplacementAckCommandSchema)(value);
+      if (Option.isSome(decoded)) {
+        finish(Effect.void);
+        return;
+      }
+      finish(
+        Schema.decodeUnknownEffect(SupervisorReplacementAckCommandSchema)(value).pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+        ),
       );
-      finish(decoded);
     };
     const onDisconnect = () =>
       finish(
@@ -380,7 +390,7 @@ const receiveReplacementAck = (): Effect.Effect<void, SupervisorStartError> =>
           }),
         ),
       );
-    process.once("message", onMessage);
+    process.on("message", onMessage);
     process.once("disconnect", onDisconnect);
     return Effect.sync(cleanup);
   });
@@ -520,7 +530,10 @@ const startDaemon = (input: {
     launch: import("./managed/document.ts").ManagedStackLaunchUpdate,
   ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
-  { readonly stack: Stack["Service"] },
+  {
+    readonly stack: Stack["Service"];
+    readonly localLifecycle: LocalStackLifecycle["Service"];
+  },
   unknown,
   import("effect").FileSystem.FileSystem | import("effect").Path.Path | Scope.Scope
 > =>
@@ -531,7 +544,8 @@ const startDaemon = (input: {
         : yield* input.platform.runtimeLayer({ config: input.config, lease: input.lease });
     const appServices = yield* Layer.buildWithScope(appLayer, input.scope);
     const localStack = Context.get(appServices, Stack);
-    return { stack: localStack };
+    const localLifecycle = Context.get(appServices, LocalStackLifecycle);
+    return { stack: localStack, localLifecycle };
   });
 
 const runManaged = (
@@ -739,10 +753,7 @@ const runManaged = (
     const discoveryResult = yield* isControlOwnership(initialAcquisition)
       ? Effect.raceFirst(
           discovered,
-          Effect.raceFirst(
-            initialAcquisition.stopRequested,
-            supervisorLifecycle.awaitShutdown,
-          ).pipe(Effect.as({ _tag: "stopped" as const })),
+          supervisorLifecycle.awaitShutdown.pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
     if (Predicate.isTagged(discoveryResult, "stopped")) {
@@ -1064,13 +1075,23 @@ const runManaged = (
             .pipe(Effect.asVoid),
       });
       if (lifecycle !== undefined) yield* lifecycle.publishStack(built.stack);
+      if (lifecycle !== undefined) {
+        yield* Effect.forkIn(
+          built.localLifecycle.awaitDisposed.pipe(
+            Effect.andThen(lifecycle.fail("Local stack disposed unexpectedly")),
+            Effect.andThen(lifecycle.requestShutdown("dispose")),
+            Effect.catchCause(() => Effect.void),
+          ),
+          scope,
+        );
+      }
       yield* manager.recordLifecycle(ownership, {
         stackId: started.stack.id,
         lifecycle: "running",
         runtime: {
           pid: process.pid,
           controlEndpoint: ownership.endpoint.url,
-          protocolVersion: 1,
+          protocolVersion: CONTROL_PROTOCOL_VERSION,
         },
       });
       const publishedStatus = yield* supervisorLifecycle.currentStatus;
@@ -1091,22 +1112,18 @@ const runManaged = (
     });
     const startupResult = yield* Effect.raceFirst(
       startup.pipe(Effect.map((result) => ({ _tag: "started" as const, ...result }))),
-      Effect.raceFirst(ownership.stopRequested, lifecycle?.awaitShutdown ?? Effect.never).pipe(
-        Effect.as({ _tag: "stopped" as const }),
-      ),
+      (lifecycle?.awaitShutdown ?? Effect.never).pipe(Effect.as({ _tag: "stopped" as const })),
     );
     if (Predicate.isTagged(startupResult, "stopped")) {
       yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
       return;
     }
     const shutdown = yield* Effect.raceFirst(
-      Effect.raceFirst(waitForSignal(), lifecycle?.awaitShutdown ?? Effect.never).pipe(
-        Effect.as("shutdown" as const),
-      ),
-      ownership.stopRequested.pipe(Effect.as("requested" as const)),
+      waitForSignal().pipe(Effect.as("signal" as const)),
+      (lifecycle?.awaitShutdown ?? Effect.never).pipe(Effect.as("shutdown" as const)),
     );
-    if (lifecycle !== undefined) {
-      yield* lifecycle.requestShutdown(shutdown === "requested" ? "stop" : "signal");
+    if (lifecycle !== undefined && shutdown === "signal") {
+      yield* lifecycle.requestShutdown("signal");
     }
   }).pipe(
     Effect.catchCause((cause) => {

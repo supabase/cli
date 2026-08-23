@@ -1,5 +1,9 @@
 import { Context, Deferred, Effect, Exit, Ref, Scope } from "effect";
-import type { ControlOwnerStatus } from "./DaemonProtocol.ts";
+import {
+  CONTROL_PROTOCOL,
+  CONTROL_PROTOCOL_VERSION,
+  type ControlOwnerStatus,
+} from "./DaemonProtocol.ts";
 import type { Stack } from "./Stack.ts";
 import { StackUnavailableError } from "./errors.ts";
 
@@ -62,76 +66,16 @@ export class SupervisorLifecycle extends Context.Service<
       >();
       const stopResponseGate = Deferred.makeUnsafe<void>();
       const shutdownExit = Deferred.makeUnsafe<Exit.Exit<void, unknown>>();
-      const status = (state: SupervisorState): ControlOwnerStatus => {
-        switch (state.phase) {
-          case "starting":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "starting",
-              ready: false,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-          case "running":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "running",
-              ready: true,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-          case "stopping":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "stopping",
-              ready: false,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-          case "failed":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "failed",
-              ready: false,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-          case "deleting":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "deleting",
-              ready: false,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-          case "closed":
-            return {
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: input.ownershipId,
-              ownerSessionId: input.ownerSessionId,
-              state: "stopping",
-              ready: false,
-              daemonCliVersion: input.daemonCliVersion,
-              daemonBuildId: input.daemonBuildId,
-            };
-        }
-      };
+      const status = (state: SupervisorState): ControlOwnerStatus => ({
+        controlProtocol: CONTROL_PROTOCOL,
+        controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
+        ownershipId: input.ownershipId,
+        ownerSessionId: input.ownerSessionId,
+        state: state.phase === "closed" ? "stopping" : state.phase,
+        ready: state.phase === "running",
+        daemonCliVersion: input.daemonCliVersion,
+        daemonBuildId: input.daemonBuildId,
+      });
       const shutdown = (reason: string) =>
         Effect.uninterruptible(
           Effect.gen(function* () {

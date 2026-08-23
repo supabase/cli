@@ -107,6 +107,51 @@ describe("Bun control transport", () => {
     }
   });
 
+  (isBun ? test : test.skip)("returns a JSON error for malformed /stop requests", async () => {
+    const scope = Scope.makeUnsafe();
+    const endpoint = { hostname: "127.0.0.1", port: 0, url: "http://127.0.0.1:0" };
+    const listener = await Effect.runPromise(
+      Effect.flatMap(ControlTransport, (transport) =>
+        transport.bind(
+          endpoint,
+          () => ({
+            controlProtocol: "supabase-stack-control" as const,
+            controlProtocolVersion: 1 as const,
+            ownershipId: "b".repeat(64),
+            ownerSessionId: "session",
+            state: "running" as const,
+            ready: true,
+            daemonCliVersion: "test",
+            daemonBuildId: "test-build",
+          }),
+          () => "accepted" as const,
+        ),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(Scope.Scope, scope),
+            (await import("./platform-bun.ts")).controlTransportLayer,
+          ),
+        ),
+      ),
+    );
+    try {
+      const address = listener.server.address;
+      expect(Predicate.isTagged(address, "TcpAddress")).toBe(true);
+      if (!Predicate.isTagged(address, "TcpAddress")) return;
+      const response = await fetch(`http://127.0.0.1:${address.port}/stop`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Invalid stop request" });
+    } finally {
+      await Effect.runPromise(listener.close);
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+    }
+  });
+
   (isBun ? test : test.skip)("flushes /stop before graceful Bun close", async () => {
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(

@@ -1,6 +1,6 @@
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Stream, Duration } from "effect";
+import { Deferred, Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -9,8 +9,10 @@ import {
   SupervisorStartError,
   type SupervisorPlatform,
 } from "../../src/supervisor.ts";
+import { LocalStackLifecycle } from "../../src/LocalStack.ts";
 import { Stack } from "../../src/Stack.ts";
 import { validateResolvedConfig } from "../../src/StackBuilder.ts";
+import { StackReadinessError } from "../../src/errors.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
 import {
@@ -26,7 +28,13 @@ import type { PortLease } from "../../src/PortAllocator.ts";
 import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
 import { watchDirectoryWithRetry } from "./file-watch.ts";
 
-type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
+type TestMode =
+  | "bind-all"
+  | "fail-after-bind"
+  | "hold-reservations"
+  | "hold-start"
+  | "hold-stop"
+  | "readiness-failure";
 const FILE_WAIT_TIMEOUT = "30 seconds";
 
 const waitForFile = (path: string): Effect.Effect<void> =>
@@ -68,6 +76,7 @@ const testMode = (): TestMode => {
   if (value === "hold-reservations") return value;
   if (value === "hold-start") return value;
   if (value === "hold-stop") return value;
+  if (value === "readiness-failure") return value;
   return "bind-all";
 };
 
@@ -98,7 +107,11 @@ const closeTestPorts = (servers: ReadonlyArray<Server>): Effect.Effect<void> =>
     { discard: true },
   );
 
-const testStackLayer = (config: ResolvedDaemonConfig, mode: TestMode): Layer.Layer<Stack> => {
+const testStackLayer = (
+  config: ResolvedDaemonConfig,
+  mode: TestMode,
+  disposed: Deferred.Deferred<void>,
+): Layer.Layer<Stack> => {
   const info = {
     url: `http://127.0.0.1:${config.apiPort}`,
     dbUrl: `postgresql://postgres:postgres@127.0.0.1:${config.dbPort}/postgres`,
@@ -139,7 +152,20 @@ const testStackLayer = (config: ResolvedDaemonConfig, mode: TestMode): Layer.Lay
     stateChanges: () => Effect.succeed(Stream.empty),
     allStateChanges: () => Stream.empty,
     waitReady: () => Effect.void,
-    waitAllReady: () => Effect.void,
+    waitAllReady: () =>
+      mode === "readiness-failure"
+        ? Deferred.succeed(disposed, undefined).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new StackReadinessError({
+                  target: "stack",
+                  timeoutMs: 75,
+                  detail: "Timed out waiting for stack readiness after 75ms",
+                }),
+              ),
+            ),
+          )
+        : Effect.void,
     subscribeLogs: () => Stream.empty,
     subscribeAllLogs: () => Stream.empty,
     logHistory: () => Effect.succeed([]),
@@ -153,9 +179,14 @@ const testRuntime = ({
 }: {
   readonly config: ResolvedDaemonConfig;
   readonly lease: PortLease;
-}): Effect.Effect<Layer.Layer<Stack>, unknown, import("effect").Scope.Scope> => {
+}): Effect.Effect<
+  Layer.Layer<Stack | LocalStackLifecycle>,
+  unknown,
+  import("effect").Scope.Scope
+> => {
   const mode = testMode();
   return Effect.gen(function* () {
+    const disposed = Deferred.makeUnsafe<void>();
     yield* validateResolvedConfig(config);
     if (mode === "hold-start") yield* Effect.never;
     const servers: Array<Server> = [];
@@ -173,7 +204,13 @@ const testRuntime = ({
         new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
       );
     }
-    return testStackLayer(config, mode);
+    return Layer.mergeAll(
+      testStackLayer(config, mode, disposed),
+      Layer.succeed(LocalStackLifecycle, {
+        awaitDisposed: Deferred.await(disposed),
+        isDisposed: Effect.succeed(mode === "readiness-failure"),
+      }),
+    );
   });
 };
 

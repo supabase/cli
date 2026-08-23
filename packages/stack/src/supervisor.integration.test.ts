@@ -325,7 +325,10 @@ const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint, { owner }).pipe(Layer.provide(httpTransportClientLayer)),
+          RemoteStack.layer(endpoint, {
+            owner,
+            buildIdentity: { cliVersion: owner.daemonCliVersion, buildId: owner.daemonBuildId },
+          }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         yield* Context.get(context, Stack).stop();
       }),
@@ -368,7 +371,10 @@ const remoteInfo = async (endpoint: ControlEndpoint): Promise<{ readonly url: st
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint, { owner }).pipe(Layer.provide(httpTransportClientLayer)),
+          RemoteStack.layer(endpoint, {
+            owner,
+            buildIdentity: { cliVersion: owner.daemonCliVersion, buildId: owner.daemonBuildId },
+          }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         return yield* Context.get(context, Stack).getInfo();
       }),
@@ -725,6 +731,45 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("shuts down the owner when a readiness failure disposes its local runtime", async () => {
+    const roots = await workspace();
+    const input = messageFor(roots);
+    const child = spawnChild(input, {
+      environment: { SUPABASE_STACK_TEST_RUNTIME_MODE: "readiness-failure" },
+    });
+    try {
+      const started = await child.started;
+      const owner = ownerDescriptor(await fetchOwner(started.endpoint));
+      const readiness = await Effect.runPromiseExit(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const context = yield* Layer.build(
+              RemoteStack.layer(started.endpoint, {
+                owner,
+                buildIdentity: input.buildIdentity,
+              }).pipe(Layer.provide(httpTransportClientLayer)),
+            );
+            return yield* Context.get(context, Stack).waitAllReady();
+          }),
+        ),
+      );
+      expect(Exit.isFailure(readiness)).toBe(true);
+      if (Exit.isFailure(readiness)) {
+        expect(Cause.squash(readiness.cause)).toMatchObject({ _tag: "StackReadinessError" });
+      }
+      await Promise.race([
+        waitForExit(child.child),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("supervisor did not shut down after disposal")), 5_000),
+        ),
+      ]);
+      await expect(fetch(`${started.endpoint.url}/owner`)).rejects.toThrow();
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("explicit replacement stops an incompatible owner before acquiring the same stack", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
@@ -775,6 +820,7 @@ describe("detached supervisor child journeys", () => {
         {
           onReplacing: async () => {
             replacingStarted();
+            replacement?.child.send({ type: "test-stage", stage: "managed-started" });
             await replacementRelease;
           },
         },

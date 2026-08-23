@@ -1,5 +1,5 @@
 import { ServiceNotFoundError, ServiceReadyError } from "@supabase/process-compose";
-import { Effect, Layer, Match, Predicate, Schema, Stream } from "effect";
+import { Effect, Layer, Match, Predicate, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -21,8 +21,11 @@ import {
 } from "./errors.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import {
+  ControlAddressConflictError,
   ControlProtocolError,
+  ControlProtocolMismatchError,
   ControlTransportError,
+  readControlOwnerStatus,
   waitForControlSessionEnd,
   type ControlEndpoint,
 } from "./managed/control.ts";
@@ -44,7 +47,7 @@ interface RemoteOwnerDescriptor {
 
 export interface RemoteStackOptions {
   readonly owner: Omit<RemoteOwnerDescriptor, "endpoint">;
-  readonly buildIdentity?: BuildIdentityValue;
+  readonly buildIdentity: BuildIdentityValue;
   readonly stackId?: string;
 }
 
@@ -121,6 +124,49 @@ const protocolError = (
   });
 const transportError = (endpoint: ControlEndpoint, procedure: string, cause: unknown) =>
   new StackRpcTransportError({ endpoint: endpoint.url, procedure, cause });
+
+const readRemoteOwner = (
+  transport: HttpTransportClient["Service"],
+  endpoint: ControlEndpoint,
+  signal?: AbortSignal,
+): Effect.Effect<unknown, ControlTransportError | ControlProtocolError> =>
+  transport
+    .request(endpoint, "/owner", {
+      method: "GET",
+      ...(signal === undefined ? {} : { signal }),
+    })
+    .pipe(
+      Effect.mapError(
+        (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+      ),
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.tryPromise({
+              try: () => response.json(),
+              catch: (cause) => new ControlProtocolError({ endpoint, cause }),
+            })
+          : Effect.fail(new ControlProtocolError({ endpoint, cause: response.status })),
+      ),
+    );
+
+const controlErrorToRpc = (
+  endpoint: ControlEndpoint,
+  procedure: string,
+  error:
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError,
+): StackRpcTransportError | StackRpcProtocolError => {
+  if (Predicate.isTagged(error, "ControlTransportError"))
+    return transportError(endpoint, procedure, error);
+  const detail =
+    Predicate.isTagged(error, "ControlProtocolMismatchError") ||
+    Predicate.isTagged(error, "ControlAddressConflictError")
+      ? error.message
+      : `Invalid ${procedure} response`;
+  return protocolError(endpoint, procedure, detail, error);
+};
 
 const mapRpcError = (
   error: unknown,
@@ -230,27 +276,13 @@ const makeRemoteRpcClient = (
 > =>
   Effect.gen(function* () {
     const transport = yield* HttpTransportClient;
-    const ownerResponse = yield* transport
-      .request(endpoint, "/owner", { method: "GET" })
-      .pipe(Effect.mapError((error) => transportError(endpoint, "owner", error)));
-    if (!ownerResponse.ok)
-      return yield* Effect.fail(
-        protocolError(endpoint, "owner", `Owner probe returned HTTP ${ownerResponse.status}`),
-      );
-    const ownerValue = yield* Effect.tryPromise({
-      try: () => ownerResponse.json(),
-      catch: (cause) => protocolError(endpoint, "owner", "Invalid owner response", cause),
-    });
-    const ownerStatus = yield* Schema.decodeUnknownEffect(ControlOwnerStatusSchema)(
-      ownerValue,
-    ).pipe(
-      Effect.mapError((cause) => protocolError(endpoint, "owner", "Invalid owner response", cause)),
-    );
     const expectedOwner = options.owner;
-    if (
-      options.buildIdentity !== undefined &&
-      options.buildIdentity.buildId !== ownerStatus.daemonBuildId
-    )
+    const ownerStatus = yield* readControlOwnerStatus(
+      endpoint,
+      expectedOwner.ownershipId,
+      (ownerEndpoint) => readRemoteOwner(transport, ownerEndpoint),
+    ).pipe(Effect.mapError((error) => controlErrorToRpc(endpoint, "owner", error)));
+    if (options.buildIdentity.buildId !== ownerStatus.daemonBuildId)
       return yield* Effect.fail(
         new DaemonUpgradeRequired({
           stackId: options.stackId ?? expectedOwner.ownershipId,
@@ -355,44 +387,29 @@ export const RemoteStack = {
           guard: (error: RemoteDomainError) => error is E,
         ): Effect.Effect<A, E | StackRpcTransportError | StackRpcProtocolError> =>
           effect.pipe(Effect.mapError(allowedError(endpoint, procedure, allowed, guard)));
+        const fastCall = <A, E extends RemoteDomainError>(
+          procedure: string,
+          effect: Effect.Effect<A, unknown>,
+          allowed: ReadonlyArray<string>,
+          guard: (error: RemoteDomainError) => error is E,
+        ): Effect.Effect<A, E | StackRpcTransportError | StackRpcProtocolError> =>
+          call(procedure, effect, allowed, guard).pipe(
+            Effect.timeout("30 seconds"),
+            Effect.catchTag("TimeoutError", (cause) =>
+              Effect.fail(transportError(endpoint, procedure, cause)),
+            ),
+          );
         const requestStop = (signal?: AbortSignal) => {
           const owner = options.owner;
           const body = JSON.stringify({
             ownershipId: owner.ownershipId,
             ownerSessionId: owner.ownerSessionId,
           });
-          const readOwnerAfterStop = transport
-            .request(endpoint, "/owner", {
-              method: "GET",
-              headers: { connection: "close" },
-              ...(signal === undefined ? {} : { signal }),
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
-              ),
-              Effect.flatMap((response) =>
-                response.ok
-                  ? Effect.tryPromise({ try: () => response.json(), catch: (cause) => cause })
-                  : Effect.fail(
-                      new ControlTransportError({
-                        endpoint,
-                        reason: "unreachable",
-                        cause: response.status,
-                      }),
-                    ),
-              ),
-              Effect.mapError((cause) =>
-                cause instanceof ControlTransportError
-                  ? cause
-                  : new ControlProtocolError({ endpoint, cause }),
-              ),
-              Effect.flatMap((value) =>
-                Schema.decodeUnknownEffect(ControlOwnerStatusSchema)(value).pipe(
-                  Effect.mapError(() => new ControlProtocolError({ endpoint, cause: value })),
-                ),
-              ),
-            );
+          const readOwnerAfterStop = readControlOwnerStatus(
+            endpoint,
+            owner.ownershipId,
+            (ownerEndpoint) => readRemoteOwner(transport, ownerEndpoint, signal),
+          );
           return transport
             .request(endpoint, "/stop", {
               method: "POST",
@@ -418,7 +435,7 @@ export const RemoteStack = {
         };
         return {
           getInfo: () =>
-            call("GetInfo", client.GetInfo(undefined), ["StackUnavailableError"], unavailable),
+            fastCall("GetInfo", client.GetInfo(undefined), ["StackUnavailableError"], unavailable),
           start: () =>
             call(
               "StartStack",
@@ -454,7 +471,7 @@ export const RemoteStack = {
               mutating,
             ),
           stopService: (name: string) =>
-            call(
+            fastCall(
               "StopService",
               client.StopService({ name }),
               [
@@ -515,7 +532,7 @@ export const RemoteStack = {
               mutating,
             ),
           getState: (name: string) =>
-            call(
+            fastCall(
               "GetServiceState",
               client.GetServiceState({ name }),
               ["StackUnavailableError", "ServiceNotFoundError"],
@@ -523,23 +540,31 @@ export const RemoteStack = {
                 unavailable(e) || notFound(e),
             ).pipe(Effect.map((state) => new StackServiceState(state))),
           getAllStates: () =>
-            call(
+            fastCall(
               "GetAllServiceStates",
               client.GetAllServiceStates(undefined),
               ["StackUnavailableError"],
               unavailable,
             ).pipe(Effect.map((states) => states.map((state) => new StackServiceState(state)))),
           stateChanges: (name: string) =>
-            Effect.succeed(
-              client.WatchServiceStates({ name }).pipe(
-                Stream.map((state) => new StackServiceState(state)),
-                Stream.mapError(
-                  allowedError(
-                    endpoint,
-                    "WatchServiceStates",
-                    ["StackUnavailableError", "ServiceNotFoundError"],
-                    (e): e is StackUnavailableError | ServiceNotFoundError =>
-                      unavailable(e) || notFound(e),
+            fastCall(
+              "GetServiceState",
+              client.GetServiceState({ name }),
+              ["StackUnavailableError", "ServiceNotFoundError"],
+              (e): e is StackUnavailableError | ServiceNotFoundError =>
+                unavailable(e) || notFound(e),
+            ).pipe(
+              Effect.as(
+                client.WatchServiceStates({ name }).pipe(
+                  Stream.map((state) => new StackServiceState(state)),
+                  Stream.mapError(
+                    allowedError(
+                      endpoint,
+                      "WatchServiceStates",
+                      ["StackUnavailableError", "ServiceNotFoundError"],
+                      (e): e is StackUnavailableError | ServiceNotFoundError =>
+                        unavailable(e) || notFound(e),
+                    ),
                   ),
                 ),
               ),
@@ -624,7 +649,7 @@ export const RemoteStack = {
                 ),
               ),
           logHistory: (name: string, limit?: number) =>
-            call(
+            fastCall(
               "GetLogHistory",
               client.GetLogHistory(limit === undefined ? { name } : { name, limit }),
               ["StackUnavailableError", "ServiceNotFoundError"],
@@ -632,7 +657,7 @@ export const RemoteStack = {
                 unavailable(e) || notFound(e),
             ),
           logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
-            call(
+            fastCall(
               "GetLogHistory",
               client.GetLogHistory({
                 ...(limit === undefined ? {} : { limit }),
@@ -659,7 +684,14 @@ export const updateRemoteLaunch = (
 > =>
   Effect.scoped(
     makeRemoteRpcClient(endpoint, options).pipe(
-      Effect.flatMap(({ client }) => client.UpdateLaunch({ stackId, launch })),
+      Effect.flatMap(({ client }) =>
+        client.UpdateLaunch({ stackId, launch }).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.catchTag("TimeoutError", (cause) =>
+            Effect.fail(transportError(endpoint, "UpdateLaunch", cause)),
+          ),
+        ),
+      ),
       Effect.mapError((error) => {
         if (error instanceof DaemonUpgradeRequired) return error;
         const mapped = mapRpcError(error, endpoint, "UpdateLaunch", ["StackBuildError"]);

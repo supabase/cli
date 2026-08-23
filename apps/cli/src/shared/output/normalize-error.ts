@@ -31,6 +31,16 @@ const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   return typeof field === "string" ? field : undefined;
 };
 
+const readCauseMessage = (value: ErrorRecord): string | undefined => {
+  const cause = value["cause"];
+  if (cause instanceof Error && cause.message.trim().length > 0) return cause.message.trim();
+  if (typeof cause === "string" && cause.trim().length > 0) return cause.trim();
+  if (isErrorRecord(cause)) {
+    return readString(cause, "message") ?? readString(cause, "detail");
+  }
+  return undefined;
+};
+
 const mappedError = (
   error: ErrorRecord,
   context?: CliErrorSuggestionContext,
@@ -64,6 +74,59 @@ const mappedError = (
           ? {}
           : { detail: `Daemon build ${oldBuildId} does not match current build ${newBuildId}.` }),
         suggestion: "Run `supabase start` to restart the stack with the current CLI.",
+      };
+    }
+    case "StackUnavailableError": {
+      const phase = readString(error, "phase");
+      const detail = readString(error, "detail");
+      const message =
+        phase === "starting"
+          ? "The local Supabase stack is still starting."
+          : phase === "stopping"
+            ? "The local Supabase stack is still stopping."
+            : phase === "failed"
+              ? "The local Supabase stack failed to start."
+              : phase === "deleting"
+                ? "The local Supabase stack is being deleted."
+                : "The local Supabase stack is unavailable.";
+      const suggestion =
+        phase === "starting"
+          ? "Wait for `supabase start` to finish, then try again."
+          : phase === "stopping"
+            ? "Wait for the current stop operation to finish, then try again."
+            : phase === "failed"
+              ? "Run `supabase start` again to recreate the local stack."
+              : phase === "deleting"
+                ? "Wait for the current delete operation to finish, then try again."
+                : "Run `supabase start`, then retry the command.";
+      return {
+        code: tag,
+        message,
+        ...(detail === undefined ? {} : { detail }),
+        suggestion,
+      };
+    }
+    case "StackRpcTransportError": {
+      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
+      const procedure = readString(error, "procedure") ?? "the requested operation";
+      const cause = readCauseMessage(error);
+      return {
+        code: tag,
+        message: "Could not communicate with the local Supabase stack.",
+        detail: `RPC ${procedure} at ${endpoint} failed${cause === undefined ? "." : `: ${cause}`}`,
+        suggestion: "Check that the stack is running, then retry the command.",
+      };
+    }
+    case "StopTimeout": {
+      const endpoint = readString(error, "endpoint") ?? "the local stack endpoint";
+      const lastState = readString(error, "lastState");
+      return {
+        code: tag,
+        message: "Timed out waiting for the local Supabase stack to stop.",
+        detail: `The stack at ${endpoint} did not stop before the timeout${
+          lastState === undefined ? "." : ` (last state: ${lastState}).`
+        }`,
+        suggestion: "Check `supabase status`, then retry `supabase stop`.",
       };
     }
     case "MissingOption": {

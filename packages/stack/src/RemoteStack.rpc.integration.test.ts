@@ -1,5 +1,17 @@
 import { it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Result,
+  Stream,
+} from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { ServiceNotFoundError, ServiceReadyError } from "@supabase/process-compose";
 import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
@@ -265,7 +277,10 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
             Effect.sync(() => {
               calls += 1;
             }),
-          getState: () => Effect.succeed(serviceState),
+          getState: (name) =>
+            name === "missing"
+              ? Effect.fail(new ServiceNotFoundError({ name }))
+              : Effect.succeed(serviceState),
           getAllStates: () => Effect.succeed([serviceState]),
           stateChanges: () => Effect.succeed(Stream.fromIterable([serviceState])),
           allStateChanges: () => Stream.fromIterable([serviceState]),
@@ -400,6 +415,17 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
           expect(yield* remote.getAllStates()).toEqual([serviceState]);
           const authChanges = yield* remote.stateChanges("auth");
           expect(yield* Stream.runCollect(authChanges)).toEqual([serviceState]);
+          const missingChanges = yield* Effect.exit(remote.stateChanges("missing"));
+          expect(Exit.isFailure(missingChanges)).toBe(true);
+          if (Exit.isFailure(missingChanges)) {
+            const failure = Cause.findErrorOption(missingChanges.cause);
+            expect(Option.isSome(failure)).toBe(true);
+            if (Option.isSome(failure))
+              expect(failure.value).toMatchObject({
+                _tag: "ServiceNotFoundError",
+                name: "missing",
+              });
+          }
           expect(yield* Stream.runCollect(remote.allStateChanges())).toEqual([serviceState]);
           yield* remote.waitReady("auth");
           yield* remote.waitAllReady();
@@ -485,6 +511,172 @@ it.live("interrupts an owned server RPC request when the client disconnects", ()
       );
     }),
   ).pipe(Effect.provide(controlTransportLayer)),
+);
+
+it.effect("times out a hung fast unary RPC with endpoint and procedure context", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12345, url: "http://127.0.0.1:12345" };
+    const rpcStarted = yield* Deferred.make<void>();
+    const transportLayer = Layer.succeed(HttpTransportClient, {
+      request: (_requestEndpoint, path) =>
+        path === "/owner"
+          ? Effect.succeed(
+              new Response(
+                JSON.stringify({
+                  controlProtocol: "supabase-stack-control",
+                  controlProtocolVersion: 1,
+                  ownershipId: ownerId,
+                  ownerSessionId: "hung-session",
+                  state: "running",
+                  ready: true,
+                  daemonCliVersion: "test",
+                  daemonBuildId: "test-build",
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            )
+          : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    const layer = RemoteStack.layer(endpoint, {
+      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: "hung-session",
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+    }).pipe(Layer.provide(transportLayer));
+    const request = yield* Effect.forkChild(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          yield* remote.getInfo();
+        }).pipe(Effect.provide(layer), Effect.exit),
+      ),
+    );
+    yield* Deferred.await(rpcStarted);
+    yield* TestClock.adjust("30 seconds");
+    yield* Effect.yieldNow;
+    const result = yield* Fiber.join(request);
+    expect(Exit.isFailure(result)).toBe(true);
+    if (Exit.isFailure(result)) {
+      const failure = Cause.findErrorOption(result.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value).toMatchObject({
+          _tag: "StackRpcTransportError",
+          endpoint: endpoint.url,
+          procedure: "GetInfo",
+        });
+      }
+    }
+  }),
+);
+
+it.effect("does not apply the fast timeout to a long-running StartStack RPC", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12347, url: "http://127.0.0.1:12347" };
+    const rpcStarted = yield* Deferred.make<void>();
+    const transportLayer = Layer.succeed(HttpTransportClient, {
+      request: (_requestEndpoint, path) =>
+        path === "/owner"
+          ? Effect.succeed(
+              new Response(
+                JSON.stringify({
+                  controlProtocol: "supabase-stack-control",
+                  controlProtocolVersion: 1,
+                  ownershipId: ownerId,
+                  ownerSessionId: "long-start-session",
+                  state: "running",
+                  ready: true,
+                  daemonCliVersion: "test",
+                  daemonBuildId: "test-build",
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            )
+          : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    const layer = RemoteStack.layer(endpoint, {
+      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: "long-start-session",
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+    }).pipe(Layer.provide(transportLayer));
+    const request = yield* Effect.forkChild(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          yield* remote.start();
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+    yield* Deferred.await(rpcStarted);
+    yield* TestClock.adjust("30 seconds");
+    yield* Effect.yieldNow;
+    expect(request.pollUnsafe()).toBeUndefined();
+    yield* Fiber.interrupt(request);
+  }),
+);
+
+it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12346, url: "http://127.0.0.1:12346" };
+    let ownerReads = 0;
+    const response = (status: unknown) =>
+      new Response(JSON.stringify(status), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const initialOwner = {
+      controlProtocol: "supabase-stack-control",
+      controlProtocolVersion: 1,
+      ownershipId: ownerId,
+      ownerSessionId: "stop-session",
+      state: "running",
+      ready: true,
+      daemonCliVersion: "test",
+      daemonBuildId: "test-build",
+    } as const;
+    const transportLayer = Layer.succeed(HttpTransportClient, {
+      request: (_requestEndpoint, path) => {
+        if (path === "/owner") {
+          ownerReads += 1;
+          return Effect.succeed(
+            response(
+              ownerReads === 1 ? initialOwner : { ...initialOwner, ownershipId: "f".repeat(64) },
+            ),
+          );
+        }
+        if (path === "/stop") return Effect.succeed(new Response(null, { status: 202 }));
+        return Effect.die(`unexpected request ${path}`);
+      },
+    });
+    const layer = RemoteStack.layer(endpoint, {
+      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: initialOwner.ownerSessionId,
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+    }).pipe(Layer.provide(transportLayer));
+    const result = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const remote = yield* Stack;
+        return yield* remote.stop().pipe(Effect.result);
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result))
+      expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
+  }),
 );
 
 it.live("interrupts the real RPC handler fiber when the client request is canceled", () =>

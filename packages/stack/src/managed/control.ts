@@ -307,7 +307,7 @@ export const requestControlStopForSession = (
         endpoint,
         ownershipId,
         ownerSessionId,
-        readOwnerStatus(endpoint, ownershipId, transport),
+        readControlOwnerStatus(endpoint, ownershipId, transport.read),
       ),
     ),
   );
@@ -372,10 +372,15 @@ const defaultStatus = (
 const unavailable = (endpoint: ControlEndpoint, cause: unknown): ControlUnavailableError =>
   new ControlUnavailableError({ endpoint, cause });
 
-const readOwnerStatus = (
+export type ControlOwnerReader = (
+  endpoint: ControlEndpoint,
+) => Effect.Effect<unknown, ControlTransportError | ControlProtocolError>;
+
+/** Reads and verifies one exact owner through a supplied control transport. */
+export const readControlOwnerStatus = (
   endpoint: ControlEndpoint,
   ownershipId: string,
-  transport: ControlTransportShape,
+  read: ControlOwnerReader,
 ): Effect.Effect<
   ControlOwnerStatus,
   | ControlTransportError
@@ -383,7 +388,7 @@ const readOwnerStatus = (
   | ControlProtocolMismatchError
   | ControlAddressConflictError
 > =>
-  transport.read(endpoint).pipe(
+  read(endpoint).pipe(
     Effect.flatMap((value) => decodeOwnerStatus(endpoint, value)),
     Effect.flatMap((status) =>
       status.ownershipId === ownershipId
@@ -413,7 +418,7 @@ export const probeControl = (
     const candidates = yield* controlEndpointCandidates(ownershipId);
     const transport = yield* ControlTransport;
     for (const endpoint of candidates) {
-      const status = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+      const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
         Effect.catch(() => Effect.succeed(undefined)),
       );
       if (status !== undefined) return { status, endpoint };
@@ -427,7 +432,7 @@ const makeAttached = (
   transport: ControlTransportShape,
   observedStatus: ControlOwnerStatus,
 ): ControlAttached => {
-  const ownerStatus = readOwnerStatus(endpoint, ownershipId, transport);
+  const ownerStatus = readControlOwnerStatus(endpoint, ownershipId, transport.read);
   const requestStop = ownerStatus.pipe(
     Effect.flatMap((status) =>
       requestControlStopForSession(endpoint, ownershipId, status.ownerSessionId, transport),
@@ -454,7 +459,7 @@ const attach = (
   | ControlProtocolMismatchError
   | ControlAddressConflictError
 > =>
-  readOwnerStatus(endpoint, ownershipId, transport).pipe(
+  readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
     Effect.map((status) => makeAttached(endpoint, ownershipId, transport, status)),
   );
 
@@ -497,7 +502,7 @@ const scanForOwner = (
 ): Effect.Effect<ControlProbe | undefined, ControlProtocolMismatchError | ControlTransportError> =>
   Effect.gen(function* () {
     for (const endpoint of candidates) {
-      const status = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+      const status = yield* readControlOwnerStatus(endpoint, ownershipId, transport.read).pipe(
         Effect.map((status) => status),
         Effect.catchTag("ControlTransportError", (cause) =>
           cause.reason === "unreachable" ? Effect.succeed(undefined) : Effect.fail(cause),

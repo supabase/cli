@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
-import { Effect, Exit, Layer, Scope, Schema } from "effect";
+import { Effect, Exit, Layer, Scope } from "effect";
 import { HttpEffect, HttpServer } from "effect/unstable/http";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
@@ -119,23 +119,32 @@ const controlTransport: ControlTransport["Service"] = {
                 Effect.gen(function* () {
                   const request = yield* HttpServerRequest.HttpServerRequest;
                   if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
-                    let stopRequest: ControlStopRequest;
-                    try {
-                      stopRequest = Schema.decodeUnknownSync(ControlStopRequestSchema)(
-                        yield* request.json,
-                      );
-                    } catch {
-                      return HttpServerResponse.jsonUnsafe(
-                        { error: "Invalid stop request" },
-                        { status: 400 },
-                      );
-                    }
-                    const decision = onStop(stopRequest);
-                    const status =
-                      decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
-                    return HttpServerResponse.jsonUnsafe(
-                      decision === "accepted" ? { ok: true } : { error: decision },
-                      { status },
+                    return yield* HttpServerRequest.schemaBodyJson(ControlStopRequestSchema).pipe(
+                      Effect.map((stopRequest) => {
+                        const decision = onStop(stopRequest);
+                        const status =
+                          decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
+                        return HttpServerResponse.jsonUnsafe(
+                          decision === "accepted" ? { ok: true } : { error: decision },
+                          { status },
+                        );
+                      }),
+                      Effect.catchTags({
+                        SchemaError: () =>
+                          Effect.succeed(
+                            HttpServerResponse.jsonUnsafe(
+                              { error: "Invalid stop request" },
+                              { status: 400 },
+                            ),
+                          ),
+                        HttpServerError: () =>
+                          Effect.succeed(
+                            HttpServerResponse.jsonUnsafe(
+                              { error: "Invalid stop request" },
+                              { status: 400 },
+                            ),
+                          ),
+                      }),
                     );
                   }
                   return HttpServerResponse.jsonUnsafe(

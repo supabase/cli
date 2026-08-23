@@ -17,6 +17,7 @@ import {
   isControlAttached,
   isControlOwnership,
   probeControl,
+  readControlOwnerStatus,
   requestControlStopForSession,
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
@@ -115,6 +116,28 @@ const closeRaw = (server: Server): Promise<void> =>
     }
     server.close((error) => (error === undefined ? resolve() : reject(error)));
   });
+
+it.effect("canonical owner reads retain foreign-owner conflict diagnostics", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* controlEndpoint(STACK_ID);
+    const result = yield* readControlOwnerStatus(endpoint, STACK_ID, () =>
+      Effect.succeed({
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: "f".repeat(64),
+        ownerSessionId: "foreign-session",
+        state: "running",
+        ready: true,
+        daemonCliVersion: "foreign",
+        daemonBuildId: "foreign",
+      }),
+    ).pipe(Effect.result);
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
+    }
+  }),
+);
 
 const spawnBoundChild = (port: number) => {
   const child = spawn(

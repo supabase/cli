@@ -22,7 +22,7 @@ export interface CliBuildIdentity {
 
 interface SourceIdentityFile {
   readonly path: string;
-  readonly content: string;
+  readonly content: Uint8Array;
 }
 
 export interface SourceIdentitySnapshot {
@@ -61,9 +61,7 @@ const isRelevantUntracked = (path: string): boolean => {
   ) {
     return false;
   }
-  return /\.(?:cjs|css|go|hbs|html|java|js|json|md|mjs|rs|sql|toml|ts|tsx|yaml|yml)$/.test(
-    normalized,
-  );
+  return true;
 };
 
 const findRepositoryRoot = (start: string): string | undefined => {
@@ -76,9 +74,13 @@ const findRepositoryRoot = (start: string): string | undefined => {
   }
 };
 
-const captureSourceIdentity = (): SourceIdentitySnapshot => {
-  const sourcePath = fileURLToPath(import.meta.url);
-  const root = findRepositoryRoot(dirname(sourcePath));
+const captureSourceIdentity = (repositoryRoot?: string): SourceIdentitySnapshot => {
+  const root =
+    repositoryRoot ??
+    (() => {
+      const sourcePath = fileURLToPath(import.meta.url);
+      return findRepositoryRoot(dirname(sourcePath));
+    })();
   if (root === undefined) throw new Error("source repository root is unavailable");
   const head = runGit(root, ["rev-parse", "HEAD"]).trim();
   if (head.length === 0) throw new Error("source repository has no HEAD");
@@ -93,10 +95,14 @@ const captureSourceIdentity = (): SourceIdentitySnapshot => {
       const absolutePath = join(root, path);
       const stats = statSync(absolutePath);
       if (!stats.isFile()) throw new Error(`untracked source is not a file: ${path}`);
-      return { path, content: readFileSync(absolutePath, "utf8") };
+      return { path, content: readFileSync(absolutePath) };
     });
   return { repositoryRoot: root, head, stagedDiff, unstagedDiff, untrackedFiles };
 };
+
+/** @internal Captures source identity from a repository root for build tooling and integration tests. */
+export const captureCliSourceIdentityAt = (repositoryRoot: string): SourceIdentitySnapshot =>
+  captureSourceIdentity(repositoryRoot);
 
 const hashSourceIdentity = (source: SourceIdentitySnapshot): string => {
   const digest = createHash("sha256");

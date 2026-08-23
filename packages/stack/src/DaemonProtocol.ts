@@ -13,15 +13,19 @@ export const CONTROL_PROTOCOL_VERSION = 1 as const;
 
 export type ControlOwnerState = typeof ControlOwnerStateSchema.Type;
 
-export const ControlOwnerStatusSchema = Schema.Struct({
+export const ControlOwnerDescriptorSchema = Schema.Struct({
   controlProtocol: Schema.Literal(CONTROL_PROTOCOL),
   controlProtocolVersion: Schema.Literal(CONTROL_PROTOCOL_VERSION),
   ownershipId: Schema.String,
   ownerSessionId: Schema.String,
-  state: ControlOwnerStateSchema,
-  ready: Schema.Boolean,
   daemonCliVersion: Schema.String,
   daemonBuildId: Schema.String,
+});
+
+export const ControlOwnerStatusSchema = Schema.Struct({
+  ...ControlOwnerDescriptorSchema.fields,
+  state: ControlOwnerStateSchema,
+  ready: Schema.Boolean,
 });
 
 export type ControlOwnerStatus = typeof ControlOwnerStatusSchema.Type;

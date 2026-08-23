@@ -5,7 +5,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { resolveCliBuildIdentity, type SourceIdentitySnapshot } from "./version.ts";
+import {
+  captureCliSourceIdentityAt,
+  resolveCliBuildIdentity,
+  type SourceIdentitySnapshot,
+} from "./version.ts";
+
+const sourceBytes = (value: string): Uint8Array => new TextEncoder().encode(value);
 
 const execFile = promisify(execFileCallback);
 
@@ -36,8 +42,8 @@ describe("CLI build identity", () => {
         cliVersion: "0.0.0-dev",
         source: snapshot({
           untrackedFiles: [
-            { path: "src/z.ts", content: "z" },
-            { path: "src/a.ts", content: "a" },
+            { path: "src/z.ts", content: sourceBytes("z") },
+            { path: "src/a.ts", content: sourceBytes("a") },
           ],
         }),
       });
@@ -45,8 +51,8 @@ describe("CLI build identity", () => {
         cliVersion: "0.0.0-dev",
         source: snapshot({
           untrackedFiles: [
-            { path: "src/a.ts", content: "a" },
-            { path: "src/z.ts", content: "z" },
+            { path: "src/a.ts", content: sourceBytes("a") },
+            { path: "src/z.ts", content: sourceBytes("z") },
           ],
         }),
       });
@@ -111,4 +117,45 @@ describe("CLI build identity", () => {
       await rm(root, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("includes every non-ignored untracked regular file in a real git repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-cli-source-identity-"));
+    try {
+      await execFile("git", ["init", root]);
+      await execFile("git", ["-C", root, "config", "user.email", "test@example.com"]);
+      await execFile("git", ["-C", root, "config", "user.name", "Test"]);
+      await writeFile(join(root, "tracked.ts"), "export const tracked = true;\n");
+      await execFile("git", ["-C", root, "add", "tracked.ts"]);
+      await execFile("git", ["-C", root, "commit", "-m", "initial"]);
+
+      const baseline = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captureCliSourceIdentityAt(root),
+        }),
+      );
+      const files: ReadonlyArray<readonly [string, Uint8Array]> = [
+        ["script.sh", new TextEncoder().encode("#!/bin/sh\nprintf source\n")],
+        ["script.py", new TextEncoder().encode("print('source')\n")],
+        ["module.mts", new TextEncoder().encode("export const source = true;\n")],
+        ["schema.proto", new TextEncoder().encode('syntax = \\"proto3\\";\n')],
+        ["Dockerfile", new TextEncoder().encode("FROM scratch\n")],
+        ["binary-source", new Uint8Array([0, 255, 1, 254])],
+      ];
+
+      for (const [path, content] of files) {
+        await writeFile(join(root, path), content);
+        const changed = await Effect.runPromise(
+          resolveCliBuildIdentity({
+            cliVersion: "0.0.0-dev",
+            source: captureCliSourceIdentityAt(root),
+          }),
+        );
+        expect(changed.buildId, path).not.toBe(baseline.buildId);
+        await rm(join(root, path));
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

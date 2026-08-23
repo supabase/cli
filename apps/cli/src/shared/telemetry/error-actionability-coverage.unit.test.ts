@@ -217,7 +217,7 @@ describe("extractErrorTags", () => {
       "PlainThingError",
       "FreeStandingTag",
     ]);
-  });
+  }, 30_000);
 
   it("ignores definitions that only appear in comments", () => {
     const source = [

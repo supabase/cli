@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ControlOwnerDescriptorSchema } from "./DaemonProtocol.ts";
 import { managedStackLaunchInputSchema } from "./managed/document.ts";
 import { PORT_FIELDS } from "./PortCatalog.ts";
 
@@ -30,11 +31,11 @@ export const SupervisorReplacementAckCommandSchema = Schema.Struct({
 });
 
 const SupervisorOwnerDescriptorSchema = Schema.Struct({
-  ownershipId: Schema.String,
-  ownerSessionId: Schema.String,
-  controlProtocolVersion: Schema.Literal(1),
-  daemonCliVersion: Schema.String,
-  daemonBuildId: Schema.String,
+  ownershipId: ControlOwnerDescriptorSchema.fields.ownershipId,
+  ownerSessionId: ControlOwnerDescriptorSchema.fields.ownerSessionId,
+  controlProtocolVersion: ControlOwnerDescriptorSchema.fields.controlProtocolVersion,
+  daemonCliVersion: ControlOwnerDescriptorSchema.fields.daemonCliVersion,
+  daemonBuildId: ControlOwnerDescriptorSchema.fields.daemonBuildId,
 });
 
 export const SupervisorStartedEventSchema = Schema.Struct({

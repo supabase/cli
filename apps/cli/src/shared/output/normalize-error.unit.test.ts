@@ -44,6 +44,65 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("maps an unavailable starting stack to a wait-and-retry instruction", () => {
+    expect(
+      normalizeCliError({
+        _tag: "StackUnavailableError",
+        phase: "starting",
+      }),
+    ).toEqual({
+      code: "StackUnavailableError",
+      message: "The local Supabase stack is still starting.",
+      suggestion: "Wait for `supabase start` to finish, then try again.",
+    });
+  });
+
+  test("maps an unavailable stopping stack to a stop completion instruction", () => {
+    expect(
+      normalizeCliError({
+        _tag: "StackUnavailableError",
+        phase: "stopping",
+      }),
+    ).toEqual({
+      code: "StackUnavailableError",
+      message: "The local Supabase stack is still stopping.",
+      suggestion: "Wait for the current stop operation to finish, then try again.",
+    });
+  });
+
+  test("maps RPC transport failures with the procedure and endpoint", () => {
+    expect(
+      normalizeCliError({
+        _tag: "StackRpcTransportError",
+        endpoint: "http://127.0.0.1:54321",
+        procedure: "GetInfo",
+        cause: new Error("ECONNRESET"),
+      }),
+    ).toEqual({
+      code: "StackRpcTransportError",
+      message: "Could not communicate with the local Supabase stack.",
+      detail: "RPC GetInfo at http://127.0.0.1:54321 failed: ECONNRESET",
+      suggestion: "Check that the stack is running, then retry the command.",
+    });
+  });
+
+  test("maps stop timeouts with the endpoint and last observed state", () => {
+    expect(
+      normalizeCliError({
+        _tag: "StopTimeout",
+        endpoint: "http://127.0.0.1:54321",
+        ownerSessionId: "session-123",
+        lastState: "stopping",
+      }),
+    ).toEqual({
+      code: "StopTimeout",
+      message: "Timed out waiting for the local Supabase stack to stop.",
+      detail:
+        "The stack at http://127.0.0.1:54321 did not stop before the timeout (last state: stopping).",
+      suggestion: "Check `supabase status`, then retry `supabase stop`.",
+    });
+  });
+
   test("falls back to tagged error fields when no explicit mapping exists", () => {
     const error = {
       _tag: "ExampleError",
