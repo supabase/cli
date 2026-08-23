@@ -231,7 +231,7 @@ export const controlEndpoint = (
   Effect.map(controlEndpointCandidates(ownershipId), (candidates) => candidates[0]!);
 
 /** Waits until the exact owner session disappears after an accepted stop. */
-export const waitForControlSessionEnd = (
+const waitForControlSessionEnd = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   ownerSessionId: string,
