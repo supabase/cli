@@ -88,6 +88,9 @@ Start resolves the candidate versions, applies local and command-line overrides,
 resulting launch selection in the managed document. Starting an existing stack reuses its persisted
 launch baseline unless an explicit update or override changes it. Port intent is read from the raw
 project config before defaults are applied so automatic and exact values remain distinguishable.
+After startup, the managed summary is authoritative for launch updates: the caller must not
+overwrite persisted mode, pinned versions, exclusions, or sticky port assignments with defaults from
+the new CLI build.
 
 ### `supabase stack status`
 
@@ -134,10 +137,15 @@ Values in `.supabase/local-versions.json` override the candidate baseline for th
 
 New stacks can adopt newer catalog defaults immediately. Existing stacks remain pinned until update
 changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
-it performs a lazy stop/start replacement after preflight. The replacement preserves durable stack
-identity and creation metadata, data roots, runtime mode, pinned service versions, exclusions, and
-sticky port assignments. It never invokes destructive deletion. Connect-only commands never replace
-the owner; they report the upgrade requirement instead.
+it performs a lazy stop/start replacement after preflight. The replacement is authorized only by that
+explicit start: it preflights while the old owner is live, obtains the parent replacement ACK, stops
+the exact captured session through the stable `ControlClient`, re-observes it to completion, and
+reacquires ownership within bounded time. Persisted exclusions are reapplied to effective runtime
+service policies before preflight, active-port calculation, allocation, configuration resolution, and
+startup—not merely copied into `stack.json`. The replacement preserves durable stack identity and
+creation metadata, data roots, runtime mode and container runtime, pinned service versions,
+exclusions, and sticky port assignments. It never invokes destructive deletion. Connect-only commands
+never replace the owner; they report the upgrade requirement instead.
 
 ### Team collaboration
 

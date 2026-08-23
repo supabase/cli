@@ -42,17 +42,18 @@ sequenceDiagram
     Child->>Manager: ensure workspace + verify stack id
     Child->>Manager: resolve document, allocate/reuse ports
     Child->>Manager: write starting
-    Child->>Runtime: build Stack and ApiProxy behind RuntimeGate
+    Child->>Runtime: build Stack and ApiProxy
     Child->>Manager: write running + runtime endpoint
     Child-->>Parent: started(endpoint)
     Parent-->>CLI: RemoteStack layer
     CLI->>Control: same-build Stack RPC at /rpc
 ```
 
-`running` in the managed document is recorded only after the lifecycle has
-published a ready runtime. `SupervisorLifecycle` and `RuntimeGate` project one
-atomic state: control is available during `starting`, while `/rpc` fails fast
-until `running` and becomes unavailable again during shutdown.
+`running` in the managed document is recorded only after
+`SupervisorLifecycle` has published a ready runtime. The lifecycle is the one
+atomic state projection: control is available during `starting`, while RPC
+handlers read `runtimeStack` and fail fast with typed `StackUnavailableError`
+until `running` (and again during shutdown).
 
 ## Public entrypoints
 
@@ -104,8 +105,13 @@ stack.
 the first shutdown reason, then runs one uninterruptible teardown transaction.
 Every stop or terminal-readiness caller joins that transaction, so concurrent
 requests share its result and interrupting one caller cannot cancel the owner.
-For HTTP stop, a separate `Deferred` gates teardown until the accepted response
-has flushed; it does not create another shutdown path.
+The transaction independently attempts runtime stop, runtime disposal,
+ownership/listener close, and publication of `closed`; the first cleanup
+failure (including the exact primary `Cause`) is returned only after all
+cleanup steps have been attempted. For HTTP stop, a response-completion gate
+allows a successful `202` to flush before listener close. If the accepted stop
+request is canceled or defects before returning, its finalizer releases the
+same gate so teardown cannot strand.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
 Its closure includes the resources for every public graph dependency a requested
@@ -149,8 +155,9 @@ runtime requests; it never edits the document directly.
 3. The owner re-checks workspace identity, re-reads the document, selects or
    validates its concrete runtime, and reconciles stale named resources. The
    manager allocates or reuses ports and records `starting`.
-4. The child builds the direct runtime, publishes it through `RuntimeGate`,
-   records `running`, and sends the verified owner descriptor to the parent.
+4. The child builds the direct runtime, publishes it through
+   `SupervisorLifecycle`, records `running`, and sends the verified owner
+   descriptor to the parent.
 5. The parent returns a `RemoteStack` layer. The CLI invokes `StackRpc` over
    `POST /rpc` for runtime operations.
 
@@ -292,6 +299,16 @@ managed stack identity and creation metadata, data roots, runtime mode, pinned
 service versions, exclusions, and sticky port intents. It never invokes the
 destructive delete path or silently changes launch metadata.
 
+Replacement is one supervisor-owned transaction. After preflight, the current
+child sends a replacement notice and waits for the parent ACK that authorizes
+the stop. It then uses the shared stable `ControlClient` with the captured
+ownership and session ids, re-observes that exact session until it has ended,
+and reacquires the deterministic endpoint within a bounded timeout. Persisted
+exclusions are applied to effective runtime service policies before preflight,
+active-port calculation, allocation, configuration resolution, and startup;
+copying them only into `stack.json` is insufficient. Once the new runtime is
+up, its managed summary is authoritative for subsequent launch updates.
+
 Connect-only commands use `fail-incompatible`: status renders a degraded
 owner/document summary with an instruction to run `supabase start`, while logs,
 service operations, and other runtime commands return the actionable upgrade
@@ -309,9 +326,11 @@ containing the old session id receives `409` from a replacement owner.
 `SupervisorLifecycle` owns the atomic lifecycle state, owner session, runtime
 publication, and one cached shutdown transaction. All shutdown sources join
 that transaction. The accepted `202` stop response is flushed before listener
-closure, and teardown then disposes the runtime, releases exact resources,
-records the managed document, and closes ownership. Node, Bun, and compiled Bun
-children use the same pre-bind application and lifecycle composition.
+closure; canceled or defective accepted stop requests release the response gate
+through finalization. Teardown then attempts runtime stop and disposal,
+ownership/listener close, and `closed` publication while preserving the first
+cleanup `Cause`. Node, Bun, and compiled Bun children use the same pre-bind
+application and lifecycle composition.
 
 ## Service execution and `ApiProxy`
 
@@ -354,7 +373,7 @@ self-dispatch path; the daemon branch does not run normal CLI command dispatch.
 | Document paths, schema, and atomic persistence    | `managed/paths.ts`, `managed/document.ts`, `managed/store.ts`                           |
 | Managed reads, writes, ports, and lifecycle state | `managed/manager.ts`, `managed/lifecycle.ts`, `discovery.ts`                            |
 | Ownership and deterministic endpoint              | `managed/control.ts`                                                                    |
-| Detached child protocol and startup               | `supervisor.ts`, `daemon-node.ts`, `daemon-bun.ts`                                      |
+| Detached child protocol and startup               | `supervisor.ts`, `SupervisorReplacement.ts`, `daemon-node.ts`, `daemon-bun.ts`          |
 | Runtime control RPC and client                    | `SupervisorControlServer.ts`, `StackRpc.ts`, `RemoteStack.ts`, `HttpTransportClient.ts` |
 | Direct runtime construction and service lifecycle | `createStack.ts`, `layers.ts`, `LocalStack.ts`, `Stack.ts`                              |
 | Asset resolution and native/Docker graph          | `StackPreparation.ts`, `StackBuilder.ts`, `ServiceCatalog.ts`                           |
@@ -368,9 +387,12 @@ documents, sibling worktrees and nested projects, detached start/reattach,
 launch updates through RPC, status and logs, graceful session-fenced stop,
 stale-owner recovery, and deletion. They also cover control before runtime
 construction, real HTTP/NDJSON unary and stream calls, stream cancellation,
-build mismatch, upgrade replacement and preservation, concurrent lifecycle
-requests, and response flush before close. A small number of end-to-end tests
-cover Node, Bun, and compiled-Bun subprocess boundaries.
+build mismatch, upgrade replacement and preservation (including actual
+excluded-service behavior and sticky-port reuse), concurrent lifecycle
+requests, cleanup after cancellation or failure, and response flush before
+close. Node and Bun control adapters share conflict classification, and a small
+number of end-to-end tests cover Node, Bun, and compiled-Bun subprocess
+boundaries.
 
 Unit tests are reserved for pure identity, port, document, projection, and
 platform algorithms or for branches unreachable through the public runtime

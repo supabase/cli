@@ -32,13 +32,23 @@ only three routes:
   daemon build identity;
 - `POST /stop` accepts an ownership id and exact owner session id, returns a
   flushed `202`, and lets the caller wait for that session to end; and
-- `POST /rpc` serves same-build Effect RPC over framed NDJSON when the runtime
-  is published by `RuntimeGate`.
+- `POST /rpc` serves same-build Effect RPC over framed NDJSON when
+  `SupervisorLifecycle.runtimeStack` has published the runtime. Before that
+  publication, handlers fail fast with typed `StackUnavailableError`.
 
 Graceful remote stop therefore uses the stable session-fenced control route,
 waits for the targeted owner session and document transition, then lets the
 owner dispose the runtime before releasing control. A stale delayed stop gets
 `409` from a replacement owner and cannot tear down the replacement.
+
+Every shutdown source joins one cached lifecycle transaction. Once accepted,
+the transaction always attempts runtime stop, runtime disposal,
+ownership/listener close, and `closed` publication, even when an earlier step
+fails. It preserves the first cleanup failure and its exact `Cause` after all
+steps have run. A successful `202` stop response releases its completion gate
+only after the platform has flushed it; cancellation or a defect in an
+accepted `/stop` request releases the same gate through finalization, so a
+waiter cannot strand listener close.
 
 If the owner is gone, the next lifecycle operation acquires control for the
 stack id, force-removes deterministic Docker containers, reconciles persisted
@@ -73,11 +83,14 @@ waits for disposal to begin before interrupting the main Effect. Direct
 
 Integration tests cover manager port/document cleanup, detached supervisor
 startup/reattach/launch-update over RPC, stop during every startup phase,
-session-fenced stop, stale-owner recovery, upgrade replacement, cancellation,
-and delete. The process-compose and stack suites cover supervised child trees,
-Docker cleanup hooks, one-shot exit observation, and Node/Bun/compiled-Bun
-re-entry. Leak helpers compare managed document and runtime roots, temporary
-Postgres paths, processes, and containers before and after each journey.
+session-fenced stop, stale-owner recovery, upgrade replacement with actual
+excluded-service and sticky-port preservation, cancellation, failed-step
+cleanup, and delete. The process-compose and stack suites cover supervised
+child trees, Docker cleanup hooks, one-shot exit observation, and
+Node/Bun/compiled-Bun re-entry. Node and Bun control adapters exercise the
+same conflict classification. Leak helpers compare managed document and
+runtime roots, temporary Postgres paths, processes, and containers before and
+after each journey.
 
 ## Platform notes
 
