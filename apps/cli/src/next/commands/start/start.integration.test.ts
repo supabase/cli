@@ -8,7 +8,7 @@ import {
 } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
 import { start } from "./start.handler.ts";
-import { StartVersionState } from "./start.command.ts";
+import { startVersionStateLaunch, StartVersionState } from "./start.command.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import {
@@ -39,8 +39,13 @@ describe("start handler", () => {
                 pinnedBaseline: versions,
                 candidateBaseline: versions,
               });
+              const postStartLaunch = {
+                ...fixture.launch,
+                versions: { postgres: "17.7.0" },
+                excludedServices: ["analytics"],
+              } as const;
               const state = StartVersionState.of({
-                launch: fixture.launch,
+                launch: startVersionStateLaunch({ launch: postStartLaunch }),
                 serviceVersionContext: {
                   ...serviceVersionContext,
                   updateFingerprint: "new-fingerprint",
@@ -91,7 +96,11 @@ describe("start handler", () => {
                 Effect.tap(
                   Effect.promise(async () => {
                     const document = await fixture.readDocument();
-                    expect(document?.launch?.lastNotifiedUpdateFingerprint).toBe("new-fingerprint");
+                    expect(document?.launch).toMatchObject({
+                      versions: { postgres: "17.7.0" },
+                      excludedServices: ["analytics"],
+                      lastNotifiedUpdateFingerprint: "new-fingerprint",
+                    });
                   }),
                 ),
                 Effect.ensuring(Effect.promise(() => fixture.dispose())),
