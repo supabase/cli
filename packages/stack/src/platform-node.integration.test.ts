@@ -4,8 +4,10 @@ import type { Socket } from "node:net";
 import { describe, expect, test } from "vitest";
 import {
   ControlProtocolError,
+  ControlStopConflictError,
   ControlTransport,
   ControlTransportError,
+  makeControlClient,
   type ControlEndpoint,
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
@@ -80,6 +82,70 @@ const expectTypedFailure = <E extends object>(
 };
 
 describe("Node control transport", () => {
+  test("classifies a fenced stop conflict distinctly from transport failure", async () => {
+    const sockets = new Set<Socket>();
+    const server = createServer((_request, response) => {
+      response.writeHead(409, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "conflict" }));
+    });
+    server.on("connection", (socket) => sockets.add(socket));
+    try {
+      const endpoint = await listen(server);
+      const exit = await runStop(endpoint);
+      expectTypedFailure(exit, ControlStopConflictError);
+    } finally {
+      await close(server, sockets);
+    }
+  });
+
+  test("stable client completes the captured stop after a replacement conflict", async () => {
+    const ownershipId = "0".repeat(64);
+    const ownerSessionId = "captured-session";
+    const stopBodies: Array<string> = [];
+    const sockets = new Set<Socket>();
+    const server = createServer((request, response) => {
+      if (request.url === "/owner") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            controlProtocol: "supabase-stack-control",
+            controlProtocolVersion: 1,
+            ownershipId,
+            ownerSessionId: "replacement-session",
+            state: "running",
+            ready: true,
+            daemonCliVersion: "test",
+            daemonBuildId: "test-build",
+          }),
+        );
+        return;
+      }
+      request.setEncoding("utf8");
+      let body = "";
+      request.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      request.once("end", () => {
+        stopBodies.push(body);
+        response.writeHead(409, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "conflict" }));
+      });
+    });
+    server.on("connection", (socket) => sockets.add(socket));
+    try {
+      const endpoint = await listen(server);
+      const exit = await Effect.runPromise(
+        Effect.flatMap(ControlTransport, (transport) =>
+          makeControlClient(transport).stopSession(endpoint, ownershipId, ownerSessionId),
+        ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(stopBodies).toEqual([JSON.stringify({ ownershipId, ownerSessionId })]);
+    } finally {
+      await close(server, sockets);
+    }
+  });
+
   test("maps post-header resets from owner and stop probes to typed failures", async () => {
     let requestCount = 0;
     let resolveRequest!: () => void;

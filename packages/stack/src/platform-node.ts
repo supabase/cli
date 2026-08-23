@@ -13,6 +13,7 @@ import {
   type ControlStopRequest,
   ControlBindError,
   ControlProtocolError,
+  ControlStopConflictError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
@@ -327,15 +328,13 @@ const controlTransport: ControlTransport["Service"] = {
           let responseAborted = false;
           onEnd = () => {
             ended = true;
-            if ((incoming.statusCode ?? 500) >= 200 && (incoming.statusCode ?? 500) < 300) {
+            const status = incoming.statusCode ?? 500;
+            if (status >= 200 && status < 300) {
               finish(Effect.void);
+            } else if (status === 409) {
+              finish(Effect.fail(new ControlStopConflictError({ endpoint })), true);
             } else {
-              finish(
-                Effect.fail(
-                  new Error(`Control stop request returned ${incoming.statusCode ?? 500}`),
-                ),
-                true,
-              );
+              finish(Effect.fail(new Error(`Control stop request returned ${status}`)), true);
             }
           };
           onResponseError = (cause) => finish(Effect.fail(cause), true);
@@ -392,13 +391,14 @@ const controlTransport: ControlTransport["Service"] = {
         duration: 500,
         orElse: () => Effect.fail(new Error("Control stop request timed out")),
       }),
-      Effect.mapError(
-        (cause) =>
-          new ControlTransportError({
-            endpoint,
-            reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
-            cause,
-          }),
+      Effect.mapError((cause) =>
+        cause instanceof ControlStopConflictError
+          ? cause
+          : new ControlTransportError({
+              endpoint,
+              reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
+              cause,
+            }),
       ),
     ),
 };

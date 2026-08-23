@@ -1,6 +1,11 @@
 import { Cause, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
-import { ControlTransport, ControlTransportError } from "./managed/control.ts";
+import {
+  ControlStopConflictError,
+  ControlTransport,
+  ControlTransportError,
+  makeControlClient,
+} from "./managed/control.ts";
 import {
   makeSupervisorControlApplication,
   makeSupervisorControlMiddleware,
@@ -11,6 +16,91 @@ import { makeTestStack } from "./testing.ts";
 const isBun = typeof Bun !== "undefined";
 
 describe("Bun control transport", () => {
+  (isBun ? test : test.skip)(
+    "classifies a fenced stop conflict distinctly from transport failure",
+    async () => {
+      const { controlTransportLayer } = await import("./platform-bun.ts");
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: () => Response.json({ error: "conflict" }, { status: 409 }),
+      });
+      try {
+        const port = server.port;
+        expect(port).toBeTypeOf("number");
+        if (port === undefined) return;
+        const endpoint = {
+          hostname: "127.0.0.1",
+          port,
+          url: `http://127.0.0.1:${port}`,
+        };
+        const exit = await Effect.runPromise(
+          Effect.flatMap(ControlTransport, (transport) =>
+            transport.requestStop(endpoint, {
+              ownershipId: "0".repeat(64),
+              ownerSessionId: "captured-session",
+            }),
+          ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toBeInstanceOf(ControlStopConflictError);
+        }
+      } finally {
+        await server.stop(true);
+      }
+    },
+  );
+
+  (isBun ? test : test.skip)(
+    "stable client completes the captured stop after a replacement conflict",
+    async () => {
+      const { controlTransportLayer } = await import("./platform-bun.ts");
+      const ownershipId = "0".repeat(64);
+      const ownerSessionId = "captured-session";
+      const stopBodies: Array<string> = [];
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch: async (request) => {
+          const url = new URL(request.url);
+          if (url.pathname === "/owner")
+            return Response.json({
+              controlProtocol: "supabase-stack-control",
+              controlProtocolVersion: 1,
+              ownershipId,
+              ownerSessionId: "replacement-session",
+              state: "running",
+              ready: true,
+              daemonCliVersion: "test",
+              daemonBuildId: "test-build",
+            });
+          stopBodies.push(await request.text());
+          return Response.json({ error: "conflict" }, { status: 409 });
+        },
+      });
+      try {
+        const port = server.port;
+        expect(port).toBeTypeOf("number");
+        if (port === undefined) return;
+        const endpoint = {
+          hostname: "127.0.0.1",
+          port,
+          url: `http://127.0.0.1:${port}`,
+        };
+        const exit = await Effect.runPromise(
+          Effect.flatMap(ControlTransport, (transport) =>
+            makeControlClient(transport).stopSession(endpoint, ownershipId, ownerSessionId),
+          ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(stopBodies).toEqual([JSON.stringify({ ownershipId, ownerSessionId })]);
+      } finally {
+        await server.stop(true);
+      }
+    },
+  );
+
   (isBun ? test : test.skip)("classifies an owner status timeout as transport", async () => {
     const { controlTransportLayer } = await import("./platform-bun.ts");
     const server = Bun.serve({

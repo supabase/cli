@@ -11,6 +11,7 @@ import {
   ControlStopRequestSchema,
   ControlBindError,
   ControlProtocolError,
+  ControlStopConflictError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
@@ -199,8 +200,6 @@ const controlTransport: ControlTransport["Service"] = {
             "content-type": "application/json",
           },
           body: JSON.stringify(stopRequest),
-        }).then((response) => {
-          if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
         }),
       catch: (cause) =>
         new ControlTransportError({
@@ -208,7 +207,22 @@ const controlTransport: ControlTransport["Service"] = {
           reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
           cause,
         }),
-    }),
+    }).pipe(
+      Effect.flatMap(
+        (response): Effect.Effect<void, ControlStopConflictError | ControlTransportError> => {
+          if (response.ok) return Effect.void;
+          if (response.status === 409)
+            return Effect.fail(new ControlStopConflictError({ endpoint }));
+          return Effect.fail(
+            new ControlTransportError({
+              endpoint,
+              reason: "transport",
+              cause: new Error(`Control stop request returned ${response.status}`),
+            }),
+          );
+        },
+      ),
+    ),
 };
 
 export const controlTransportLayer = Layer.succeed(ControlTransport, controlTransport);
