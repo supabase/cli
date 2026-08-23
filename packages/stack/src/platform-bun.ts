@@ -1,18 +1,22 @@
 import { BunServices } from "@effect/platform-bun";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
-import { Effect, Exit, Layer, Scope } from "effect";
+import { Effect, Exit, Layer, Scope, Schema } from "effect";
+import { HttpEffect, HttpServer } from "effect/unstable/http";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
+  ControlStopRequestSchema,
   ControlBindError,
   ControlProtocolError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
+  type ControlStopRequest,
   type ControlEndpoint,
+  type ControlApplication,
 } from "./managed/control.ts";
 const errorCode = (cause: unknown): string | undefined => {
   if (typeof cause !== "object" || cause === null) return undefined;
@@ -27,7 +31,12 @@ const isDefinitivelyUnreachable = (cause: unknown): boolean => {
 };
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) =>
+  bind: (
+    endpoint: ControlEndpoint,
+    ownerStatus: () => ControlOwnerStatus,
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    application?: ControlApplication,
+  ) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
     // constructor yields to register its scope finalizer. Keep only this
     // acquisition window uninterruptible; request handling and listener close
@@ -35,6 +44,41 @@ const controlTransport: ControlTransport["Service"] = {
     Effect.uninterruptibleMask(() =>
       Effect.gen(function* () {
         const parentScope = yield* Effect.scope;
+        if (application !== undefined) {
+          const webHandler = HttpEffect.toWebHandler(application.app, application.middleware);
+          const handler = (request: Request) => webHandler(request);
+          const server = yield* Effect.try({
+            try: () =>
+              Bun.serve({
+                hostname: endpoint.hostname,
+                port: endpoint.port,
+                idleTimeout: 0,
+                fetch: handler,
+              }),
+            catch: (cause) =>
+              new ControlBindError({
+                endpoint,
+                reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+                cause,
+              }),
+          });
+          const close = yield* Effect.cached(
+            Effect.tryPromise({
+              try: () => Promise.resolve(server.stop(false)),
+              catch: (cause) => cause,
+            }).pipe(Effect.asVoid, Effect.orDie),
+          );
+          const service = HttpServer.make({
+            address: {
+              _tag: "TcpAddress",
+              hostname: endpoint.hostname,
+              port: server.port ?? endpoint.port,
+            },
+            serve: () => Effect.void,
+          });
+          yield* Scope.addFinalizer(parentScope, close);
+          return { server: service, close };
+        }
         const serverScope = yield* Scope.fork(parentScope);
         const server = yield* BunHttpServer.make({
           hostname: endpoint.hostname,
@@ -44,15 +88,19 @@ const controlTransport: ControlTransport["Service"] = {
           // the control connection while the stack continues starting.
           idleTimeout: 0,
           disablePreemptiveShutdown: true,
-          routes: {
-            [CONTROL_STATUS_PATH]: {
-              GET: () =>
-                new Response(JSON.stringify(ownerStatus()), {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                }),
-            },
-          },
+          ...(application === undefined
+            ? {
+                routes: {
+                  [CONTROL_STATUS_PATH]: {
+                    GET: () =>
+                      new Response(JSON.stringify(ownerStatus()), {
+                        status: 200,
+                        headers: { "content-type": "application/json" },
+                      }),
+                  },
+                },
+              }
+            : {}),
         }).pipe(
           Scope.provide(serverScope),
           Effect.catchDefect((cause) =>
@@ -65,21 +113,39 @@ const controlTransport: ControlTransport["Service"] = {
             ),
           ),
         );
-        yield* server
-          .serve(
-            Effect.gen(function* () {
-              const request = yield* HttpServerRequest.HttpServerRequest;
-              if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
-                onStop();
-                return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 202 });
-              }
-              return HttpServerResponse.jsonUnsafe(
-                { error: "Stack supervisor is starting" },
-                { status: 503 },
-              );
-            }),
-          )
-          .pipe(Scope.provide(serverScope));
+        yield* (
+          application === undefined
+            ? server.serve(
+                Effect.gen(function* () {
+                  const request = yield* HttpServerRequest.HttpServerRequest;
+                  if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
+                    let stopRequest: ControlStopRequest;
+                    try {
+                      stopRequest = Schema.decodeUnknownSync(ControlStopRequestSchema)(
+                        yield* request.json,
+                      );
+                    } catch {
+                      return HttpServerResponse.jsonUnsafe(
+                        { error: "Invalid stop request" },
+                        { status: 400 },
+                      );
+                    }
+                    const decision = onStop(stopRequest);
+                    const status =
+                      decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
+                    return HttpServerResponse.jsonUnsafe(
+                      decision === "accepted" ? { ok: true } : { error: decision },
+                      { status },
+                    );
+                  }
+                  return HttpServerResponse.jsonUnsafe(
+                    { error: "Stack supervisor is starting" },
+                    { status: 503 },
+                  );
+                }),
+              )
+            : Effect.void
+        ).pipe(Scope.provide(serverScope));
         return {
           server,
           close: Scope.close(serverScope, Exit.void),
@@ -113,13 +179,17 @@ const controlTransport: ControlTransport["Service"] = {
         });
       },
     }),
-  requestStop: (endpoint: ControlEndpoint) =>
+  requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
     Effect.tryPromise({
       try: (signal) =>
         fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
           signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
-          headers: { connection: "close" },
+          headers: {
+            connection: "close",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(stopRequest),
         }).then((response) => {
           if (!response.ok) throw new Error(`Control stop request returned ${response.status}`);
         }),

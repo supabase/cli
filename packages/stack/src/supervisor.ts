@@ -8,11 +8,13 @@ import {
   Fiber,
   Layer,
   Predicate,
+  Queue,
+  Result,
   Schedule,
   Scope,
   Schema,
+  Stream,
 } from "effect";
-import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   selectStackRuntime,
@@ -20,17 +22,33 @@ import {
   type StackRuntimeSelection,
 } from "./ContainerRuntime.ts";
 import type { PlatformFactory } from "./createStack.ts";
-import { DaemonServer } from "./DaemonServer.ts";
 import { Stack } from "./Stack.ts";
+import {
+  makeSupervisorControlApplication,
+  makeSupervisorControlMiddleware,
+} from "./SupervisorControlServer.ts";
+import type { StackLaunchUpdater } from "./StackRpcHandlers.ts";
+import type { StackLaunchUpdateRpc } from "./StackRpc.ts";
+import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import {
+  SupervisorErrorEventSchema,
+  SupervisorReplacingEventSchema,
+  SupervisorReplacementAckCommandSchema,
+  SupervisorStartCommandSchema,
+  SupervisorStartedEventSchema,
+} from "./SupervisorProtocol.ts";
 import { foregroundLayer } from "./layers.ts";
 import {
   acquireControl,
   ControlTransportError,
+  probeControl,
+  requestControlStopForSession,
+  ControlTransport,
   type ControlAcquisition,
   type ControlAttached,
   type ControlEndpoint,
   type ControlOwnership,
-  type ControlTransport,
+  type ControlApplication,
 } from "./managed/control.ts";
 import {
   ManagedStackManager,
@@ -38,7 +56,7 @@ import {
   type ManagedStackStartResult,
 } from "./managed/manager.ts";
 import {
-  managedStackLaunchInputSchema,
+  managedStackLaunchUpdateSchema,
   type ManagedStackLaunch,
   type ManagedStackLaunchInput,
 } from "./managed/document.ts";
@@ -46,7 +64,7 @@ import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { validateManagedStackName, type ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackPathsEffect } from "./managed/paths.ts";
-import { PORT_CATALOG, PORT_FIELDS } from "./PortCatalog.ts";
+import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { dockerContainerName } from "./StackIdentity.ts";
@@ -61,10 +79,22 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
+import type { BuildIdentityValue } from "./BuildIdentity.ts";
+import {
+  DaemonUpgradeRequired,
+  StackBuildError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
+} from "./errors.ts";
 
 /** The only message sent across the detached child IPC boundary. */
 export interface SupervisorStartMessage {
   readonly type: "start";
+  readonly buildIdentity: BuildIdentityValue;
+  readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly stackId: string;
   readonly workspacePath: string;
   readonly stackName: string;
@@ -77,50 +107,58 @@ export interface SupervisorStartMessage {
 export interface SupervisorStartedMessage {
   readonly type: "started";
   readonly endpoint: ControlEndpoint;
+  readonly owner: {
+    readonly ownershipId: string;
+    readonly ownerSessionId: string;
+    readonly controlProtocolVersion: 1;
+    readonly daemonCliVersion: string;
+    readonly daemonBuildId: string;
+  };
   readonly attached?: boolean;
+}
+
+export interface SupervisorReplacingMessage {
+  readonly type: "replacing";
+  readonly stackId: string;
+  readonly oldCliVersion: string;
+  readonly oldBuildId: string;
+  readonly newCliVersion: string;
+  readonly newBuildId: string;
 }
 
 interface SupervisorErrorMessage {
   readonly type: "error";
   readonly message: string;
+  readonly errorCode?: "DAEMON_UPGRADE_REQUIRED";
+  readonly stackId?: string;
+  readonly oldCliVersion?: string;
+  readonly oldBuildId?: string;
+  readonly newCliVersion?: string;
+  readonly newBuildId?: string;
 }
 
-type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
+type SupervisorMessage =
+  | SupervisorStartedMessage
+  | SupervisorReplacingMessage
+  | SupervisorErrorMessage;
 /** Input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
+  readonly buildIdentity: BuildIdentityValue;
+  readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly workspacePath: string;
   readonly stackName: string;
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
+  /** Parent-only callback invoked before an incompatible owner is fenced. */
+  readonly onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>;
 }
 
-const supervisorPortIntentSchema = Schema.Struct({
-  activeFields: Schema.Array(Schema.Literals(PORT_FIELDS)),
-  disabledFields: Schema.optionalKey(Schema.Array(Schema.Literals(PORT_FIELDS))),
-  document: Schema.optionalKey(Schema.Record(Schema.String, Schema.Unknown)),
-});
-
-const supervisorStartMessageSchema = Schema.Struct({
-  type: Schema.Literal("start"),
-  stackId: Schema.String,
-  workspacePath: Schema.String,
-  stackName: Schema.String,
-  stateRoot: Schema.String,
-  config: Schema.Record(Schema.String, Schema.Unknown),
-  portIntents: supervisorPortIntentSchema,
-  launch: Schema.optionalKey(managedStackLaunchInputSchema),
-});
+const supervisorStartMessageSchema = SupervisorStartCommandSchema;
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null;
-
-const isControlEndpoint = (value: unknown): value is ControlEndpoint =>
-  isRecord(value) &&
-  typeof value.hostname === "string" &&
-  typeof value.port === "number" &&
-  typeof value.url === "string";
 
 const isControlOwnership = (value: ControlAcquisition): value is ControlOwnership =>
   Predicate.isTagged(value, "Owned");
@@ -136,6 +174,9 @@ const decodeSupervisorStartMessage = (
   );
 
 const causeMessage = (cause: unknown): string => {
+  if (cause instanceof ControlTransportError) {
+    return `ControlTransportError(${cause.reason}): ${cause.cause instanceof Error ? cause.cause.message : String(cause.cause)}`;
+  }
   if (cause instanceof Error && cause.message.length > 0) return cause.message;
   if (
     typeof cause === "object" &&
@@ -152,6 +193,31 @@ const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSele
   launch.mode === "native"
     ? { mode: "native", containerRuntime: null }
     : { mode: "docker", containerRuntime: launch.containerRuntime };
+
+const persistedPortField = (key: string): PortField | undefined => {
+  switch (key) {
+    case "api.port":
+      return "apiPort";
+    case "db.port":
+      return "dbPort";
+    case "edge_runtime.inspector_port":
+      return "edgeRuntimeInspectorPort";
+    case "local_smtp.port":
+      return "mailpitPort";
+    case "local_smtp.smtp_port":
+      return "mailpitSmtpPort";
+    case "local_smtp.pop3_port":
+      return "mailpitPop3Port";
+    case "studio.port":
+      return "studioPort";
+    case "analytics.port":
+      return "analyticsPort";
+    case "db.pooler.port":
+      return "poolerPort";
+    default:
+      return undefined;
+  }
+};
 
 const toDaemonConfig = (value: Readonly<Record<string, unknown>>): DaemonConfigInput | undefined =>
   typeof value.cwd === "string" ? { ...value, cwd: value.cwd } : undefined;
@@ -189,7 +255,7 @@ const nativeFallbackConfig = (config: DaemonConfigInput): DaemonConfigInput => {
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
-  readonly reason?: "owner-stopped";
+  readonly reason?: "owner-stopped" | "build-mismatch";
 }> {}
 
 class SupervisorOwnerUnavailableError extends Data.TaggedError("SupervisorOwnerUnavailableError")<{
@@ -232,7 +298,9 @@ const awaitOwnerReady = (
       schedule: Schedule.spaced("25 millis").pipe(
         Schedule.tap(({ attempt }) => (attempt === 1 ? onWaiting : Effect.void)),
       ),
-      while: (error) => Predicate.isTagged(error, "SupervisorOwnerUnavailableError") && error.retry,
+      while: (error) =>
+        (Predicate.isTagged(error, "SupervisorOwnerUnavailableError") && error.retry) ||
+        (Predicate.isTagged(error, "ControlTransportError") && error.reason === "transport"),
     }),
     Effect.catchTag("SupervisorOwnerUnavailableError", (error) =>
       Effect.fail(new SupervisorStartError({ message: error.detail })),
@@ -279,25 +347,126 @@ const receiveStartMessage = (): Effect.Effect<SupervisorStartMessage, Supervisor
     return Effect.sync(cleanup);
   });
 
-const sendMessage = (message: SupervisorMessage): Effect.Effect<void, SupervisorStartError> =>
+/**
+ * Wait for the parent to acknowledge a replacement notification. The child
+ * installs this listener before publishing `replacing`, so the acknowledgement
+ * cannot race the listener handoff while the parent callback is running.
+ */
+const receiveReplacementAck = (): Effect.Effect<void, SupervisorStartError> =>
   Effect.callback((resume) => {
-    if (process.send === undefined || !process.connected) {
-      resume(Effect.void);
-      return Effect.void;
-    }
-    try {
-      process.send(message, (error) =>
-        resume(
-          error === null
-            ? Effect.void
-            : Effect.fail(new SupervisorStartError({ message: error.message })),
+    let settled = false;
+    const cleanup = () => {
+      process.off("message", onMessage);
+      process.off("disconnect", onDisconnect);
+    };
+    const finish = (effect: Effect.Effect<void, SupervisorStartError>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(effect);
+    };
+    const onMessage = (value: unknown) => {
+      const decoded = Schema.decodeUnknownEffect(SupervisorReplacementAckCommandSchema)(value).pipe(
+        Effect.asVoid,
+        Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+      );
+      finish(decoded);
+    };
+    const onDisconnect = () =>
+      finish(
+        Effect.fail(
+          new SupervisorStartError({
+            message: "Supervisor parent disconnected during replacement",
+          }),
         ),
       );
-    } catch (cause) {
-      resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
-    }
-    return Effect.void;
+    process.once("message", onMessage);
+    process.once("disconnect", onDisconnect);
+    return Effect.sync(cleanup);
   });
+
+const sendMessage = (message: SupervisorMessage): Effect.Effect<void, SupervisorStartError> =>
+  Effect.gen(function* () {
+    const schema =
+      message.type === "error"
+        ? SupervisorErrorEventSchema
+        : message.type === "replacing"
+          ? SupervisorReplacingEventSchema
+          : SupervisorStartedEventSchema;
+    const encoded = yield* Schema.encodeEffect(schema)(message).pipe(
+      Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+    );
+    yield* Effect.callback<void, SupervisorStartError>((resume) => {
+      if (process.send === undefined || !process.connected) {
+        resume(Effect.void);
+        return Effect.void;
+      }
+      try {
+        process.send(encoded, (error) =>
+          resume(
+            error === null
+              ? Effect.void
+              : Effect.fail(new SupervisorStartError({ message: error.message })),
+          ),
+        );
+      } catch (cause) {
+        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
+      }
+      return Effect.void;
+    });
+  });
+
+const decodeSupervisorEvent = (
+  value: unknown,
+): Effect.Effect<
+  SupervisorStartedMessage | SupervisorReplacingMessage,
+  SupervisorStartError | DaemonUpgradeRequired
+> =>
+  Schema.decodeUnknownEffect(SupervisorReplacingEventSchema)(value).pipe(
+    Effect.map((event): SupervisorReplacingMessage => event),
+    Effect.catch(() => decodeSupervisorStartedOrError(value)),
+  );
+
+const decodeSupervisorStartedOrError = (
+  value: unknown,
+): Effect.Effect<SupervisorStartedMessage, SupervisorStartError | DaemonUpgradeRequired> =>
+  Schema.decodeUnknownEffect(SupervisorStartedEventSchema)(value).pipe(
+    Effect.map((event): SupervisorStartedMessage => ({
+      type: "started",
+      endpoint: event.endpoint,
+      owner: event.owner,
+      ...(event.attached === undefined ? {} : { attached: event.attached }),
+    })),
+    Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+    Effect.catch(() =>
+      Schema.decodeUnknownEffect(SupervisorErrorEventSchema)(value).pipe(
+        Effect.flatMap(
+          (event): Effect.Effect<never, DaemonUpgradeRequired | SupervisorStartError> =>
+            event.errorCode === "DAEMON_UPGRADE_REQUIRED" &&
+            event.stackId !== undefined &&
+            event.oldCliVersion !== undefined &&
+            event.oldBuildId !== undefined &&
+            event.newCliVersion !== undefined &&
+            event.newBuildId !== undefined
+              ? Effect.fail(
+                  new DaemonUpgradeRequired({
+                    stackId: event.stackId,
+                    oldCliVersion: event.oldCliVersion,
+                    oldBuildId: event.oldBuildId,
+                    newCliVersion: event.newCliVersion,
+                    newBuildId: event.newBuildId,
+                  }),
+                )
+              : Effect.fail(new SupervisorStartError({ message: event.message })),
+        ),
+        Effect.mapError((cause) =>
+          cause instanceof DaemonUpgradeRequired || cause instanceof SupervisorStartError
+            ? cause
+            : new SupervisorStartError({ message: causeMessage(cause) }),
+        ),
+      ),
+    ),
+  );
 
 const waitForSignal = (): Effect.Effect<"SIGINT" | "SIGTERM"> =>
   Effect.callback((resume) => {
@@ -318,6 +487,29 @@ const waitForSignal = (): Effect.Effect<"SIGINT" | "SIGTERM"> =>
     return Effect.sync(cleanup);
   });
 
+const supervisorErrorMessage = (cause: Cause.Cause<unknown>): SupervisorErrorMessage => {
+  const error = Cause.squash(cause);
+  if (error instanceof DaemonUpgradeRequired) {
+    return {
+      type: "error",
+      message: `Daemon build mismatch for ${error.stackId}: expected ${error.newBuildId}, observed ${error.oldBuildId}`,
+      errorCode: "DAEMON_UPGRADE_REQUIRED",
+      stackId: error.stackId,
+      oldCliVersion: error.oldCliVersion,
+      oldBuildId: error.oldBuildId,
+      newCliVersion: error.newCliVersion,
+      newBuildId: error.newBuildId,
+    };
+  }
+  if (error instanceof UpgradeRestartError) {
+    return { type: "error", message: `UpgradeRestartError: ${error.detail}` };
+  }
+  if (error instanceof UpgradePreflightError) {
+    return { type: "error", message: `UpgradePreflightError: ${error.detail}` };
+  }
+  return { type: "error", message: causeMessage(error) };
+};
+
 const startDaemon = (input: {
   readonly config: ResolvedDaemonConfig;
   readonly lease: PortLease;
@@ -328,7 +520,7 @@ const startDaemon = (input: {
     launch: import("./managed/document.ts").ManagedStackLaunchUpdate,
   ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
-  { readonly daemon: DaemonServer["Service"] },
+  { readonly stack: Stack["Service"] },
   unknown,
   import("effect").FileSystem.FileSystem | import("effect").Path.Path | Scope.Scope
 > =>
@@ -339,24 +531,7 @@ const startDaemon = (input: {
         : yield* input.platform.runtimeLayer({ config: input.config, lease: input.lease });
     const appServices = yield* Layer.buildWithScope(appLayer, input.scope);
     const localStack = Context.get(appServices, Stack);
-    const daemonLayer = DaemonServer.layerWithShutdown(
-      Effect.gen(function* () {
-        yield* input.ownership.setState("stopping", false);
-        yield* localStack.stop();
-      }),
-      input.ownership.ownerStatus,
-      {
-        includeOwnerRoute: false,
-        stopOnShutdown: false,
-        ...(input.launchUpdate === undefined ? {} : { launchUpdate: input.launchUpdate }),
-      },
-    ).pipe(
-      Layer.provide(Layer.succeed(Stack, localStack)),
-      Layer.provide(Layer.succeed(HttpServer.HttpServer, input.ownership.server)),
-    );
-    const daemonServices = yield* Layer.buildWithScope(daemonLayer, input.scope);
-    const daemon = Context.get(daemonServices, DaemonServer);
-    return { daemon };
+    return { stack: localStack };
   });
 
 const runManaged = (
@@ -375,7 +550,11 @@ const runManaged = (
   let owner: ControlOwnership | undefined;
   let managerService: ManagedStackManager["Service"] | undefined;
   let claimedStack = false;
+  let lifecycle: SupervisorLifecycle["Service"] | undefined;
+  let replacingIncompatibleOwner = false;
+  let oldSessionEnded = false;
   return Effect.gen(function* () {
+    const controlTransport = yield* ControlTransport;
     yield* validateManagedStackName(input.stackName);
     const configInput = toDaemonConfig(input.config);
     if (configInput === undefined) {
@@ -383,19 +562,187 @@ const runManaged = (
         new SupervisorStartError({ message: "Supervisor config is missing cwd" }),
       );
     }
-    const initialAcquisition = yield* acquireControl({ stackId: input.stackId });
-    if (isControlOwnership(initialAcquisition)) owner = initialAcquisition;
+    const supervisorLifecycle = yield* SupervisorLifecycle.make({
+      ownershipId: input.stackId,
+      ownerSessionId: crypto.randomUUID(),
+      daemonCliVersion: input.buildIdentity.cliVersion,
+      daemonBuildId: input.buildIdentity.buildId,
+    });
+    lifecycle = supervisorLifecycle;
+    const launchUpdater: StackLaunchUpdater = {
+      update: (stackId: string, launch: StackLaunchUpdateRpc) => {
+        const currentOwner = owner;
+        const currentManager = managerService;
+        if (currentOwner === undefined || currentManager === undefined) {
+          return Effect.fail(
+            new StackBuildError({ detail: "Managed launch updates require an owned supervisor" }),
+          );
+        }
+        return Schema.decodeUnknownEffect(managedStackLaunchUpdateSchema)(launch).pipe(
+          Effect.mapError((cause) => new StackBuildError({ detail: causeMessage(cause) })),
+          Effect.flatMap((decoded) =>
+            currentManager.updateLaunch(currentOwner, { stackId, launch: decoded }),
+          ),
+          Effect.mapError((cause) => new StackBuildError({ detail: causeMessage(cause) })),
+          Effect.asVoid,
+        );
+      },
+    };
+    const controlApplication: ControlApplication = {
+      app: yield* makeSupervisorControlApplication(supervisorLifecycle, launchUpdater),
+      middleware: makeSupervisorControlMiddleware(supervisorLifecycle),
+    };
+    let initialAcquisition = yield* acquireControl({
+      stackId: input.stackId,
+      initialStatus: yield* supervisorLifecycle.currentStatus,
+      application: controlApplication,
+    });
+    if (isControlOwnership(initialAcquisition)) {
+      owner = initialAcquisition;
+    }
     const manager = yield* ManagedStackManager.pipe(
       Effect.provide(platform.managerLayer(input.stateRoot)),
+      Effect.catchCause((cause) =>
+        supervisorLifecycle
+          .setClose(owner?.close ?? Effect.void)
+          .pipe(Effect.andThen(Effect.failCause(cause))),
+      ),
     );
     managerService = manager;
+    const registerOwnerClose = (ownedOwner: ControlOwnership) =>
+      supervisorLifecycle.setClose(
+        Effect.ensuring(
+          manager.inspectStack(input.stackId).pipe(
+            Effect.flatMap((current) =>
+              current?.lifecycle === "starting" || current?.lifecycle === "running"
+                ? manager
+                    .recordLifecycle(ownedOwner, {
+                      stackId: input.stackId,
+                      lifecycle: "stopped",
+                    })
+                    .pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+          ownedOwner.close,
+        ),
+      );
+    if (owner !== undefined) yield* registerOwnerClose(owner);
+    const preflightUpgrade = Effect.fnUntraced(function* (oldBuildId: string) {
+      const existing = yield* manager.inspectStack(input.stackId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UpgradePreflightError({
+              stackId: input.stackId,
+              oldBuildId,
+              newBuildId: input.buildIdentity.buildId,
+              detail: causeMessage(cause),
+            }),
+        ),
+      );
+      if (existing === undefined) {
+        return yield* Effect.fail(
+          new UpgradePreflightError({
+            stackId: input.stackId,
+            oldBuildId,
+            newBuildId: input.buildIdentity.buildId,
+            detail: "Managed stack document is missing",
+          }),
+        );
+      }
+      const persistedRuntime = runtimeSelectionForLaunch(existing.launch);
+      if (persistedRuntime === undefined) {
+        return yield* Effect.fail(
+          new UpgradePreflightError({
+            stackId: input.stackId,
+            oldBuildId,
+            newBuildId: input.buildIdentity.buildId,
+            detail: "Persisted runtime selection is missing",
+          }),
+        );
+      }
+      yield* validateStackRuntime(persistedRuntime).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UpgradePreflightError({
+              stackId: input.stackId,
+              oldBuildId,
+              newBuildId: input.buildIdentity.buildId,
+              detail: causeMessage(cause),
+            }),
+        ),
+      );
+      yield* portRequestsForConfig(configInput, {
+        runtime: persistedRuntime,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UpgradePreflightError({
+              stackId: input.stackId,
+              oldBuildId,
+              newBuildId: input.buildIdentity.buildId,
+              detail: causeMessage(cause),
+            }),
+        ),
+      );
+      // Validate the complete configuration before fencing the old owner.
+      // Runtime-only ports are synthetic here; the managed allocator chooses
+      // their real values after the replacement acquires its lease. Explicit
+      // roots keep this validation free of lease, bind, container, and
+      // document mutations.
+      const paths = yield* managedStackPathsEffect(input.stateRoot, existing.id);
+      const effectiveConfig =
+        persistedRuntime.mode === "native" && configInput.mode === undefined
+          ? nativeFallbackConfig(configInput)
+          : configInput;
+      const syntheticPorts: Partial<Record<PortField, number>> = {};
+      for (const assignment of existing.ports) {
+        const field = persistedPortField(assignment.key);
+        if (field !== undefined) syntheticPorts[field] = assignment.port;
+      }
+      const activePreflightFields = portFieldsForConfigInput({
+        ...effectiveConfig,
+        mode: persistedRuntime.mode,
+      });
+      for (const [index, field] of activePreflightFields.entries()) {
+        if (syntheticPorts[field] === undefined) {
+          syntheticPorts[field] = PORT_CATALOG[field].preferred ?? 60_000 + index;
+        }
+      }
+      yield* resolveConfig(
+        {
+          ...effectiveConfig,
+          projectDir: effectiveConfig.projectDir ?? input.workspacePath,
+          mode: persistedRuntime.mode,
+        },
+        {
+          runtime: persistedRuntime,
+          stackRoot: paths.root,
+          runtimeRoot: paths.runtime,
+          ports: syntheticPorts,
+        },
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new UpgradePreflightError({
+              stackId: input.stackId,
+              oldBuildId,
+              newBuildId: input.buildIdentity.buildId,
+              detail: causeMessage(cause),
+            }),
+        ),
+      );
+    });
     const discovered = manager
       .ensureWorkspace(input.workspacePath)
       .pipe(Effect.map((discovery) => ({ _tag: "discovered" as const, discovery })));
     const discoveryResult = yield* isControlOwnership(initialAcquisition)
       ? Effect.raceFirst(
           discovered,
-          initialAcquisition.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
+          Effect.raceFirst(
+            initialAcquisition.stopRequested,
+            supervisorLifecycle.awaitShutdown,
+          ).pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
     if (Predicate.isTagged(discoveryResult, "stopped")) {
@@ -425,68 +772,136 @@ const runManaged = (
       );
     }
     let attachedOwnerWasStopping = false;
+    const initiallyAttached = isControlAttached(initialAcquisition);
     const reacquireAfterDeath = (): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> =>
-      manager.acquireControl(stackId).pipe(
-        Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
-          if (isControlOwnership(candidate)) return Effect.succeed(candidate);
-          return candidate.ownerStatus.pipe(
-            Effect.flatMap((status): Effect.Effect<never, unknown> =>
-              status.state === "starting"
-                ? Effect.fail(new SupervisorOwnerReacquirePending())
-                : Effect.fail(
-                    new SupervisorStartError({
-                      message: `Attached supervisor owner is ${status.state} after disconnect`,
+      Effect.gen(function* () {
+        const status = yield* supervisorLifecycle.currentStatus;
+        return yield* acquireControl({
+          stackId,
+          initialStatus: status,
+          application: controlApplication,
+        }).pipe(
+          Effect.provideService(ControlTransport, controlTransport),
+          Effect.flatMap((candidate): Effect.Effect<ControlAcquisition, unknown, Scope.Scope> => {
+            if (isControlOwnership(candidate)) return Effect.succeed(candidate);
+            return candidate.observedStatus.daemonBuildId === input.buildIdentity.buildId
+              ? Effect.succeed(candidate)
+              : Effect.fail(new SupervisorOwnerReacquirePending());
+          }),
+          Effect.retry({
+            schedule: Schedule.spaced("25 millis"),
+            while: (error) => error instanceof SupervisorOwnerReacquirePending,
+          }),
+        );
+      });
+    if (isControlAttached(initialAcquisition)) {
+      const attachedStatus = initialAcquisition.observedStatus;
+      attachedOwnerWasStopping = attachedStatus.state === "stopping";
+      if (attachedStatus.daemonBuildId !== input.buildIdentity.buildId) {
+        if (input.incompatibleOwnerPolicy === "fail") {
+          return yield* Effect.fail(
+            new DaemonUpgradeRequired({
+              stackId,
+              oldCliVersion: attachedStatus.daemonCliVersion,
+              oldBuildId: attachedStatus.daemonBuildId,
+              newCliVersion: input.buildIdentity.cliVersion,
+              newBuildId: input.buildIdentity.buildId,
+            }),
+          );
+        }
+        yield* preflightUpgrade(attachedStatus.daemonBuildId);
+        replacingIncompatibleOwner = true;
+        const replacementAckFiber = yield* receiveReplacementAck().pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* sendMessage({
+          type: "replacing",
+          stackId,
+          oldCliVersion: attachedStatus.daemonCliVersion,
+          oldBuildId: attachedStatus.daemonBuildId,
+          newCliVersion: input.buildIdentity.cliVersion,
+          newBuildId: input.buildIdentity.buildId,
+        });
+        // Do not fence the old owner until the parent has handled the warning
+        // and acknowledged the replacement event. The listener is installed
+        // before the event is sent, so this handoff cannot lose the ACK.
+        yield* Fiber.join(replacementAckFiber);
+        // Fence the exact session observed during the mismatch handshake. A
+        // fresh owner may publish between this read and the POST; refreshing
+        // the descriptor here could stop that replacement instead.
+        yield* requestControlStopForSession(
+          initialAcquisition.endpoint,
+          attachedStatus.ownershipId,
+          attachedStatus.ownerSessionId,
+          controlTransport,
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT,
+            orElse: () =>
+              probeControl(attachedStatus.ownershipId).pipe(
+                Effect.provideService(ControlTransport, controlTransport),
+                Effect.map((probe) =>
+                  probe?.status.ownerSessionId === attachedStatus.ownerSessionId
+                    ? probe.status.state
+                    : attachedStatus.state,
+                ),
+                Effect.catch(() => Effect.succeed(attachedStatus.state)),
+                Effect.flatMap((lastState) =>
+                  Effect.fail(
+                    new StopTimeout({
+                      endpoint: initialAcquisition.endpoint.url,
+                      ownerSessionId: attachedStatus.ownerSessionId,
+                      lastState,
                     }),
                   ),
-            ),
-            Effect.catch((error) =>
-              error instanceof ControlTransportError
-                ? Effect.fail(new SupervisorOwnerReacquirePending())
-                : Effect.fail(error),
-            ),
-          );
-        }),
-        Effect.retry({
-          schedule: Schedule.spaced("25 millis"),
-          while: (error) => error instanceof SupervisorOwnerReacquirePending,
-        }),
-      );
-    const attachedResolution = isControlAttached(initialAcquisition)
-      ? initialAcquisition.ownerStatus.pipe(
-          Effect.tap((status) =>
-            Effect.sync(() => {
-              attachedOwnerWasStopping = status.state === "stopping";
-            }),
-          ),
-          Effect.flatMap((status) =>
-            status.state === "running" && status.ready
-              ? Effect.succeed(status)
-              : awaitOwnerReady(
-                  initialAcquisition,
-                  platform.onAttachedBeforeReady?.() ?? Effect.void,
                 ),
-          ),
-          Effect.as(initialAcquisition),
+              ),
+          }),
+        );
+        oldSessionEnded = true;
+        initialAcquisition = yield* reacquireAfterDeath().pipe(
+          Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
           Effect.catch((error) =>
-            error instanceof ControlTransportError ? reacquireAfterDeath() : Effect.fail(error),
+            Predicate.isTagged(error, "TimeoutError")
+              ? Effect.fail(
+                  new SupervisorStartError({
+                    message: "Timed out waiting for incompatible daemon replacement",
+                  }),
+                )
+              : Effect.fail(error),
           ),
-        )
-      : Effect.succeed(initialAcquisition);
-    const acquisition = yield* attachedResolution.pipe(
-      Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
-      Effect.catch((error) =>
-        typeof error === "object" &&
-        error !== null &&
-        "_tag" in error &&
-        Predicate.isTagged(error, "TimeoutError")
-          ? Effect.fail(
-              new SupervisorStartError({
-                message: "Timed out resolving attached supervisor owner",
-              }),
-            )
-          : Effect.fail(error),
-      ),
-    );
+        );
+      } else if (!(attachedStatus.state === "running" && attachedStatus.ready)) {
+        yield* awaitOwnerReady(
+          initialAcquisition,
+          platform.onAttachedBeforeReady?.() ?? Effect.void,
+        ).pipe(
+          Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
+          Effect.catch((error) =>
+            Predicate.isTagged(error, "TimeoutError")
+              ? Effect.fail(
+                  new SupervisorStartError({
+                    message: "Timed out resolving attached supervisor owner",
+                  }),
+                )
+              : Effect.fail(error),
+          ),
+          Effect.catchTag("ControlTransportError", (error) =>
+            error.reason === "unreachable"
+              ? reacquireAfterDeath().pipe(
+                  Effect.tap((next) =>
+                    Effect.sync(() => {
+                      initialAcquisition = next;
+                    }),
+                  ),
+                  Effect.asVoid,
+                )
+              : Effect.fail(error),
+          ),
+        );
+      }
+    }
+    const acquisition = initialAcquisition;
     if (isControlAttached(initialAcquisition)) {
       const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
       const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
@@ -518,15 +933,31 @@ const runManaged = (
           }),
         );
       }
-      yield* sendMessage({ type: "started", endpoint: acquisition.endpoint, attached: true });
+      const attachedStatus = yield* acquisition.ownerStatus;
+      yield* sendMessage({
+        type: "started",
+        endpoint: acquisition.endpoint,
+        owner: {
+          ownershipId: attachedStatus.ownershipId,
+          ownerSessionId: attachedStatus.ownerSessionId,
+          controlProtocolVersion: attachedStatus.controlProtocolVersion,
+          daemonCliVersion: attachedStatus.daemonCliVersion,
+          daemonBuildId: attachedStatus.daemonBuildId,
+        },
+        attached: true,
+      });
       process.disconnect?.();
       return;
     }
     const ownership = acquisition;
     owner = ownership;
+    // A mismatch replacement starts attached and only acquires this new
+    // owner after the old session has ended. Register the close capability
+    // at that handoff before startup can publish or accept /stop.
+    yield* registerOwnerClose(ownership);
     const ownedExisting = yield* manager.inspectStack(stackId);
-    if (isControlAttached(initialAcquisition) && !attachedOwnerWasStopping) {
-      if (ownedExisting?.lifecycle === "stopped") {
+    if (initiallyAttached && !attachedOwnerWasStopping) {
+      if (ownedExisting?.lifecycle === "stopped" && ownedExisting.stopIntent === "explicit") {
         yield* ownership.close;
         return yield* Effect.fail(
           new SupervisorStartError({
@@ -569,7 +1000,10 @@ const runManaged = (
     // Validate policies and explicit ports before manager.startStack writes
     // `starting` or acquires the managed lease.
     yield* portRequestsForConfig(runtimeConfigInput, { runtime });
-    const launchInput = input.launch ?? { versions: {} };
+    const launchInput =
+      replacingIncompatibleOwner && ownedExisting !== undefined
+        ? ownedExisting.launch
+        : (input.launch ?? { versions: {} });
     const launch: ManagedStackLaunch =
       runtime.mode === "native"
         ? { ...launchInput, mode: "native" }
@@ -629,6 +1063,7 @@ const runManaged = (
             .updateLaunch(ownership, { stackId: started.stack.id, launch })
             .pipe(Effect.asVoid),
       });
+      if (lifecycle !== undefined) yield* lifecycle.publishStack(built.stack);
       yield* manager.recordLifecycle(ownership, {
         stackId: started.stack.id,
         lifecycle: "running",
@@ -638,9 +1073,17 @@ const runManaged = (
           protocolVersion: 1,
         },
       });
+      const publishedStatus = yield* supervisorLifecycle.currentStatus;
       yield* sendMessage({
         type: "started",
         endpoint: ownership.endpoint,
+        owner: {
+          ownershipId: publishedStatus.ownershipId,
+          ownerSessionId: publishedStatus.ownerSessionId,
+          controlProtocolVersion: publishedStatus.controlProtocolVersion,
+          daemonCliVersion: publishedStatus.daemonCliVersion,
+          daemonBuildId: publishedStatus.daemonBuildId,
+        },
         attached: false,
       });
       process.disconnect?.();
@@ -648,43 +1091,89 @@ const runManaged = (
     });
     const startupResult = yield* Effect.raceFirst(
       startup.pipe(Effect.map((result) => ({ _tag: "started" as const, ...result }))),
-      ownership.stopRequested.pipe(Effect.as({ _tag: "stopped" as const })),
+      Effect.raceFirst(ownership.stopRequested, lifecycle?.awaitShutdown ?? Effect.never).pipe(
+        Effect.as({ _tag: "stopped" as const }),
+      ),
     );
     if (Predicate.isTagged(startupResult, "stopped")) {
-      const current = yield* manager.inspectStack(stackId);
-      if (current !== undefined) {
-        yield* manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" });
-      }
       yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
       return;
     }
-    const { started, built } = startupResult;
     const shutdown = yield* Effect.raceFirst(
-      Effect.raceFirst(waitForSignal(), built.daemon.awaitShutdown).pipe(
+      Effect.raceFirst(waitForSignal(), lifecycle?.awaitShutdown ?? Effect.never).pipe(
         Effect.as("shutdown" as const),
       ),
       ownership.stopRequested.pipe(Effect.as("requested" as const)),
     );
-    if (shutdown === "requested") yield* built.daemon.beginShutdown;
-    yield* manager.recordLifecycle(ownership, { stackId: started.stack.id, lifecycle: "stopped" });
+    if (lifecycle !== undefined) {
+      yield* lifecycle.requestShutdown(shutdown === "requested" ? "stop" : "signal");
+    }
   }).pipe(
     Effect.catchCause((cause) => {
-      const failure = Cause.squash(cause);
+      const typed = Cause.findError(cause);
+      const failure = Result.isSuccess(typed) ? typed.success : undefined;
       if (failure instanceof SupervisorStartError && failure.reason === "owner-stopped") {
         return Effect.failCause(cause);
       }
+      const canMapRestart =
+        replacingIncompatibleOwner &&
+        oldSessionEnded &&
+        failure !== undefined &&
+        !Cause.hasDies(cause) &&
+        !Cause.hasInterrupts(cause);
+      const failureDetail = failure === undefined ? causeMessage(cause) : causeMessage(failure);
+      const finalizeFailure =
+        lifecycle === undefined
+          ? Effect.void
+          : lifecycle
+              .setClose(owner?.close ?? Effect.void)
+              .pipe(
+                Effect.andThen(lifecycle.fail(failureDetail)),
+                Effect.andThen(lifecycle.requestShutdown("startup-failure")),
+              );
       if (!claimedStack || owner === undefined || managerService === undefined) {
-        return Effect.failCause(cause);
+        return finalizeFailure.pipe(
+          Effect.andThen(
+            canMapRestart
+              ? Effect.fail(
+                  new UpgradeRestartError({
+                    stackId: input.stackId,
+                    newBuildId: input.buildIdentity.buildId,
+                    detail: failureDetail,
+                  }),
+                )
+              : Effect.failCause(cause),
+          ),
+        );
       }
       return managerService
         .recordLifecycle(owner, {
           stackId: owner.ownershipId,
           lifecycle: "failed",
         })
+        .pipe(Effect.andThen(finalizeFailure))
         .pipe(
           Effect.matchCauseEffect({
-            onFailure: () => Effect.failCause(cause),
-            onSuccess: () => Effect.failCause(cause),
+            onFailure: () =>
+              canMapRestart
+                ? Effect.fail(
+                    new UpgradeRestartError({
+                      stackId: input.stackId,
+                      newBuildId: input.buildIdentity.buildId,
+                      detail: causeMessage(failure),
+                    }),
+                  )
+                : Effect.failCause(cause),
+            onSuccess: () =>
+              canMapRestart
+                ? Effect.fail(
+                    new UpgradeRestartError({
+                      stackId: input.stackId,
+                      newBuildId: input.buildIdentity.buildId,
+                      detail: causeMessage(failure),
+                    }),
+                  )
+                : Effect.failCause(cause),
           }),
         );
     }),
@@ -708,9 +1197,7 @@ export const runSupervisor = (
       const input = yield* receiveStartMessage();
       yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
         onFailure: (cause) =>
-          sendMessage({ type: "error", message: causeMessage(Cause.squash(cause)) }).pipe(
-            Effect.andThen(Effect.failCause(cause)),
-          ),
+          sendMessage(supervisorErrorMessage(cause)).pipe(Effect.andThen(Effect.failCause(cause))),
         onSuccess: Effect.succeed,
       });
     }),
@@ -718,12 +1205,19 @@ export const runSupervisor = (
 
 const forkSupervisor = (entryPoint: string): Effect.Effect<ChildProcess, SupervisorStartError> =>
   Effect.try({
-    try: () =>
-      fork(entryPoint, [], {
+    try: () => {
+      // A compiled Bun executable cannot execute the source daemon path from
+      // Bun's virtual filesystem. Keep that path as the fork module so Bun
+      // installs its IPC channel, but re-execute the current compiled binary
+      // and let the entrypoint's daemon marker select runBunDaemon().
+      const compiledBunEntryPoint = /[\\/]\$bunfs[\\/]/.test(entryPoint);
+      return fork(entryPoint, [], {
         stdio: ["ignore", "ignore", "ignore", "ipc"],
         detached: true,
+        ...(compiledBunEntryPoint ? { execPath: process.execPath } : {}),
         env: { ...process.env, SUPABASE_STACK_RUN_DAEMON: "1" },
-      }),
+      });
+    },
     catch: (cause) =>
       new SupervisorStartError({ message: `Failed to fork supervisor: ${causeMessage(cause)}` }),
   });
@@ -732,69 +1226,133 @@ const sendStart = (
   child: ChildProcess,
   message: SupervisorStartMessage,
 ): Effect.Effect<void, SupervisorStartError> =>
-  Effect.callback((resume) => {
-    try {
-      child.send(message, (error) =>
-        resume(
-          error === null
-            ? Effect.void
-            : Effect.fail(new SupervisorStartError({ message: error.message })),
-        ),
-      );
-    } catch (cause) {
-      resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
-    }
-    return Effect.void;
+  Effect.gen(function* () {
+    const config = yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Json))(
+      message.config,
+    ).pipe(Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })));
+    const document =
+      message.portIntents.document === undefined
+        ? undefined
+        : yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Json))(
+            message.portIntents.document,
+          ).pipe(
+            Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
+          );
+    const encoded = yield* Schema.encodeEffect(SupervisorStartCommandSchema)({
+      ...message,
+      config,
+      portIntents: {
+        activeFields: message.portIntents.activeFields,
+        ...(message.portIntents.disabledFields === undefined
+          ? {}
+          : { disabledFields: message.portIntents.disabledFields }),
+        ...(document === undefined ? {} : { document }),
+      },
+    }).pipe(Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })));
+    yield* Effect.callback<void, SupervisorStartError>((resume) => {
+      try {
+        child.send(encoded, (error) =>
+          resume(
+            error === null
+              ? Effect.void
+              : Effect.fail(new SupervisorStartError({ message: error.message })),
+          ),
+        );
+      } catch (cause) {
+        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
+      }
+      return Effect.void;
+    });
+  });
+
+const sendReplacementAck = (child: ChildProcess): Effect.Effect<void, SupervisorStartError> =>
+  Effect.gen(function* () {
+    const encoded = yield* Schema.encodeEffect(SupervisorReplacementAckCommandSchema)({
+      type: "replacement-ack",
+    }).pipe(Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })));
+    yield* Effect.callback<void, SupervisorStartError>((resume) => {
+      try {
+        child.send(encoded, (error) =>
+          resume(
+            error === null
+              ? Effect.void
+              : Effect.fail(new SupervisorStartError({ message: error.message })),
+          ),
+        );
+      } catch (cause) {
+        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
+      }
+      return Effect.void;
+    });
   });
 
 const waitForStarted = (
   child: ChildProcess,
-): Effect.Effect<SupervisorStartedMessage, SupervisorStartError> =>
-  Effect.callback((resume) => {
-    const cleanup = () => {
-      child.off("message", onMessage);
-      child.off("error", onError);
-      child.off("exit", onExit);
-    };
-    const onMessage = (value: unknown) => {
-      cleanup();
-      if (isRecord(value) && value.type === "started" && isControlEndpoint(value.endpoint)) {
-        resume(
-          Effect.succeed({
-            type: "started",
-            endpoint: value.endpoint,
-            ...(value.attached === true ? { attached: true } : {}),
+  onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>,
+): Effect.Effect<SupervisorStartedMessage, SupervisorStartError | DaemonUpgradeRequired> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const events = Stream.callback<unknown, SupervisorStartError>((queue) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            let finished = false;
+            const cleanup = () => {
+              child.off("message", onMessage);
+              child.off("error", onError);
+              child.off("exit", onExit);
+            };
+            const fail = (error: SupervisorStartError) => {
+              if (finished) return;
+              finished = true;
+              Queue.failCauseUnsafe(queue, Cause.fail(error));
+              cleanup();
+            };
+            const onMessage = (value: unknown) => Queue.offerUnsafe(queue, value);
+            const onError = (cause: Error) =>
+              fail(new SupervisorStartError({ message: cause.message }));
+            const onExit = (code: number | null) =>
+              fail(new SupervisorStartError({ message: `Supervisor exited with code ${code}` }));
+            child.on("message", onMessage);
+            child.on("error", onError);
+            child.on("exit", onExit);
+            return cleanup;
           }),
-        );
-      } else if (isRecord(value) && value.type === "error" && typeof value.message === "string") {
-        resume(Effect.fail(new SupervisorStartError({ message: value.message })));
-      } else {
-        resume(Effect.fail(new SupervisorStartError({ message: "Invalid supervisor response" })));
-      }
-    };
-    const onError = (cause: Error) => {
-      cleanup();
-      resume(Effect.fail(new SupervisorStartError({ message: cause.message })));
-    };
-    const onExit = (code: number | null) => {
-      cleanup();
-      resume(
-        Effect.fail(new SupervisorStartError({ message: `Supervisor exited with code ${code}` })),
+          (cleanup) => Effect.sync(cleanup),
+        ),
       );
-    };
-    child.on("message", onMessage);
-    child.on("error", onError);
-    child.on("exit", onExit);
-    return Effect.sync(cleanup);
-  });
+      const pull = yield* Stream.toPull(events);
+      while (true) {
+        const chunk = yield* pull.pipe(
+          Effect.mapError((error) =>
+            error instanceof SupervisorStartError
+              ? error
+              : new SupervisorStartError({ message: "Supervisor event stream ended" }),
+          ),
+        );
+        // Test/runtime stage notifications share the child IPC channel but
+        // are intentionally outside the supervisor control protocol.
+        if (isRecord(chunk[0]) && chunk[0].type === "test-stage") continue;
+        const event = yield* decodeSupervisorEvent(chunk[0]);
+        if (event.type === "started") return event;
+        if (onReplacing !== undefined) yield* onReplacing(event);
+        yield* sendReplacementAck(child);
+      }
+    }),
+  );
 
 /** Parent-side launcher for the managed supervisor. */
 export const supervisorLayer = (
   input: SupervisorStartMessage,
   entryPoint: string,
+  onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>,
 ): Effect.Effect<
-  Layer.Layer<import("./Stack.ts").Stack>,
-  SupervisorStartError | import("./managed/model.ts").InvalidManagedStackNameError,
+  Layer.Layer<
+    import("./Stack.ts").Stack,
+    DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError
+  >,
+  | SupervisorStartError
+  | DaemonUpgradeRequired
+  | import("./managed/model.ts").InvalidManagedStackNameError,
   HttpTransportClient
 > =>
   Effect.gen(function* () {
@@ -803,7 +1361,7 @@ export const supervisorLayer = (
     const child = yield* forkSupervisor(entryPoint);
     let detached = false;
     return yield* Effect.gen(function* () {
-      const responseFiber = yield* waitForStarted(child).pipe(
+      const responseFiber = yield* waitForStarted(child, onReplacing).pipe(
         Effect.timeout(SUPERVISOR_HANDSHAKE_TIMEOUT),
         Effect.catchTag("TimeoutError", () =>
           Effect.fail(
@@ -814,11 +1372,24 @@ export const supervisorLayer = (
       );
       yield* sendStart(child, input);
       const response = yield* Fiber.join(responseFiber);
+      if (response.owner.daemonBuildId !== input.buildIdentity.buildId) {
+        return yield* Effect.fail(
+          new DaemonUpgradeRequired({
+            stackId: input.stackId,
+            oldCliVersion: response.owner.daemonCliVersion,
+            oldBuildId: response.owner.daemonBuildId,
+            newCliVersion: input.buildIdentity.cliVersion,
+            newBuildId: input.buildIdentity.buildId,
+          }),
+        );
+      }
       child.unref();
       detached = true;
-      return RemoteStack.layer(response.endpoint).pipe(
-        Layer.provide(Layer.succeed(HttpTransportClient, client)),
-      );
+      return RemoteStack.layer(response.endpoint, {
+        owner: response.owner,
+        buildIdentity: input.buildIdentity,
+        stackId: input.stackId,
+      }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, client)));
     }).pipe(
       Effect.onExit(() =>
         detached ? Effect.void : terminateChildProcess(child).pipe(Effect.ignore),
@@ -830,8 +1401,10 @@ export const managedDaemonLayer = (
   input: ManagedDaemonStartInput,
   entryPoint: string,
 ): Effect.Effect<
-  Layer.Layer<Stack>,
-  SupervisorStartError | import("./managed/model.ts").InvalidManagedStackNameError,
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  | SupervisorStartError
+  | DaemonUpgradeRequired
+  | import("./managed/model.ts").InvalidManagedStackNameError,
   HttpTransportClient | import("effect").FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
@@ -843,6 +1416,8 @@ export const managedDaemonLayer = (
     return yield* supervisorLayer(
       {
         type: "start",
+        buildIdentity: input.buildIdentity,
+        incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
         stackId: deriveStackId(discovery.identity, input.stackName),
         workspacePath: input.workspacePath,
         stackName: input.stackName,
@@ -855,5 +1430,6 @@ export const managedDaemonLayer = (
         ...(input.launch === undefined ? {} : { launch: input.launch }),
       },
       entryPoint,
+      input.onReplacing,
     );
   });

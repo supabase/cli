@@ -4,7 +4,9 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { resolveCliBuildIdentity } from "../src/shared/cli/version.ts";
 import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
@@ -44,6 +46,14 @@ if (!version) {
   );
   process.exit(1);
 }
+const buildId = (
+  await Effect.runPromise(
+    resolveCliBuildIdentity({
+      cliVersion: version,
+      release: values.version !== undefined || process.env.SUPABASE_RELEASE_BUILD === "1",
+    }),
+  )
+).buildId;
 if (values.version === undefined) {
   console.warn(
     `[build] --version not provided; falling back to package.json version "${version}". Pass --version explicitly in release builds.`,
@@ -149,6 +159,7 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
     "--minify",
     `--target=${target.bunTarget}`,
     `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+    `--define=process.env.SUPABASE_CLI_BUILD_ID=${JSON.stringify(buildId)}`,
     `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
     serveMainTemplateDefine,
     ...posthogBuildDefines,
@@ -298,6 +309,7 @@ async function buildMuslBinaries() {
         "--minify",
         `--target=${target.bunTarget}`,
         `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+        `--define=process.env.SUPABASE_CLI_BUILD_ID=${JSON.stringify(buildId)}`,
         `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
         serveMainTemplateDefine,
         ...posthogBuildDefines,

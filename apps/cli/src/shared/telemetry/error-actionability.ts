@@ -99,6 +99,10 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "daemon_protocol",
   "daemon_status",
   "daemon_transport",
+  "daemon_upgrade_required",
+  "daemon_upgrade_preflight",
+  "daemon_upgrade_restart",
+  "daemon_stop_timeout",
   "database",
   "docker_not_running",
   "filesystem",
@@ -1022,7 +1026,32 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   StackNotRunningError: () => actionability.startStack,
   StackReadinessError: () => actionability.startStack,
+  StackUnavailableError: () => actionability.startStack,
+  StackRpcTransportError: () => ({
+    ...actionability.externalNetwork,
+    fingerprint_suffix: "daemon_transport",
+  }),
+  StackRpcProtocolError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "daemon_protocol",
+  }),
   NoRunningStackError: () => actionability.startStack,
+  DaemonUpgradeRequired: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_required",
+  }),
+  UpgradePreflightError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_preflight",
+  }),
+  UpgradeRestartError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_restart",
+  }),
+  StopTimeout: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "daemon_stop_timeout",
+  }),
   InvalidControlOwnershipIdError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_control_ownership",

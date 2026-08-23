@@ -1,19 +1,28 @@
 import { Data, Deferred, Effect, Context, Predicate, Ref, Result, Schedule, Schema } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import type * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import {
+  CONTROL_PROTOCOL,
+  CONTROL_PROTOCOL_VERSION,
   ControlOwnerStatusSchema,
   type ControlOwnerStatus,
   type ControlOwnerState,
+  type ControlStopRequest,
 } from "../DaemonProtocol.ts";
+import { StopTimeout } from "../errors.ts";
 
-export type { ControlOwnerState, ControlOwnerStatus } from "../DaemonProtocol.ts";
+export type {
+  ControlOwnerState,
+  ControlOwnerStatus,
+  ControlStopRequest,
+} from "../DaemonProtocol.ts";
+export { ControlStopRequestSchema } from "../DaemonProtocol.ts";
 
 /** The owner status path exposed once the daemon routes are installed. */
 export const CONTROL_STATUS_PATH = "/owner";
 /** The early shutdown path exposed by the deterministic control listener. */
 export const CONTROL_STOP_PATH = "/stop";
 
-const CONTROL_PROTOCOL_VERSION = 1 as const;
 const CONTROL_ID_PATTERN = /^[0-9a-f]{64}$/;
 
 /** Reserved loopback TCP range for deterministic managed control endpoints. */
@@ -23,6 +32,15 @@ export interface ControlEndpoint {
   readonly hostname: string;
   readonly port: number;
   readonly url: string;
+}
+
+export interface ControlApplication {
+  readonly app: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    never,
+    HttpServerRequest.HttpServerRequest | import("effect/Scope").Scope
+  >;
+  readonly middleware?: HttpMiddleware.HttpMiddleware;
 }
 
 const controlOwnershipBrand: unique symbol = Symbol("stack/ControlOwnership");
@@ -58,9 +76,11 @@ export class ControlProtocolMismatchError extends Data.TaggedError("ControlProto
   readonly endpoint: ControlEndpoint;
   readonly expectedVersion: 1;
   readonly observedVersion: number | undefined;
+  readonly expectedProtocol: typeof CONTROL_PROTOCOL;
+  readonly observedProtocol: string | undefined;
 }> {
   override get message(): string {
-    return `Control protocol mismatch: expected ${this.expectedVersion}, observed ${String(this.observedVersion)}`;
+    return `Control protocol mismatch: expected ${this.expectedProtocol}/${this.expectedVersion}, observed ${String(this.observedProtocol)}/${String(this.observedVersion)}`;
   }
 }
 
@@ -78,6 +98,10 @@ class ControlUnavailableError extends Data.TaggedError("ControlUnavailableError"
   readonly cause: unknown;
 }> {}
 
+class ControlStopPending extends Data.TaggedError("ControlStopPending")<{
+  readonly state: ControlOwnerState;
+}> {}
+
 interface ControlListener {
   readonly server: HttpServer.HttpServer["Service"];
   readonly close: Effect.Effect<void>;
@@ -87,13 +111,15 @@ export interface ControlTransportShape {
   readonly bind: (
     endpoint: ControlEndpoint,
     ownerStatus: () => ControlOwnerStatus,
-    onStop: () => void,
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    application?: ControlApplication,
   ) => Effect.Effect<ControlListener, ControlBindError, import("effect/Scope").Scope>;
   readonly read: (
     endpoint: ControlEndpoint,
   ) => Effect.Effect<unknown, ControlTransportError | ControlProtocolError>;
   readonly requestStop: (
     endpoint: ControlEndpoint,
+    request: ControlStopRequest,
   ) => Effect.Effect<void, ControlTransportError | ControlProtocolError>;
 }
 
@@ -105,6 +131,7 @@ export class ControlTransport extends Context.Service<ControlTransport, ControlT
 export interface ControlOwnershipInput {
   readonly stackId: string;
   readonly initialStatus?: ControlOwnerStatus;
+  readonly application?: ControlApplication;
 }
 
 export interface ControlOwnership {
@@ -112,10 +139,7 @@ export interface ControlOwnership {
   readonly [controlOwnershipBrand]: true;
   readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
-  readonly server: HttpServer.HttpServer["Service"];
   readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
-  readonly setOwnerStatus: (status: ControlOwnerStatus) => Effect.Effect<void>;
-  readonly setState: (state: ControlOwnerState, ready?: boolean) => Effect.Effect<void>;
   readonly requestStop: Effect.Effect<void>;
   readonly stopRequested: Effect.Effect<void>;
   readonly close: Effect.Effect<void>;
@@ -125,6 +149,8 @@ export interface ControlAttached {
   readonly _tag: "Attached";
   readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
+  /** Status decoded during the ownership handshake before the result escaped. */
+  readonly observedStatus: ControlOwnerStatus;
   readonly ownerStatus: Effect.Effect<
     ControlOwnerStatus,
     | ControlTransportError
@@ -132,7 +158,14 @@ export interface ControlAttached {
     | ControlProtocolMismatchError
     | ControlAddressConflictError
   >;
-  readonly requestStop: Effect.Effect<void, ControlTransportError | ControlProtocolError>;
+  readonly requestStop: Effect.Effect<
+    void,
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError
+    | StopTimeout
+  >;
 }
 
 export type ControlAcquisition = ControlOwnership | ControlAttached;
@@ -191,24 +224,123 @@ export const controlEndpoint = (
 ): Effect.Effect<ControlEndpoint, InvalidControlOwnershipIdError> =>
   Effect.map(controlEndpointCandidates(ownershipId), (candidates) => candidates[0]!);
 
+/** Waits until the exact owner session disappears after an accepted stop. */
+export const waitForControlSessionEnd = (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+  ownerSessionId: string,
+  read: Effect.Effect<
+    ControlOwnerStatus,
+    | ControlTransportError
+    | ControlProtocolError
+    | ControlProtocolMismatchError
+    | ControlAddressConflictError
+  >,
+): Effect.Effect<
+  void,
+  | ControlTransportError
+  | ControlProtocolError
+  | ControlProtocolMismatchError
+  | ControlAddressConflictError
+  | StopTimeout
+> =>
+  Effect.gen(function* () {
+    const lastState = yield* Ref.make<ControlOwnerState | undefined>(undefined);
+    const observe = read.pipe(
+      Effect.flatMap((current) =>
+        current.ownershipId === ownershipId && current.ownerSessionId === ownerSessionId
+          ? Ref.set(lastState, current.state).pipe(
+              Effect.andThen(Effect.fail(new ControlStopPending({ state: current.state }))),
+            )
+          : Effect.void,
+      ),
+      Effect.catchTag("ControlTransportError", (error) =>
+        error.reason === "unreachable"
+          ? Effect.void
+          : Ref.get(lastState).pipe(
+              Effect.flatMap((state) =>
+                Effect.fail(new ControlStopPending({ state: state ?? "stopping" })),
+              ),
+            ),
+      ),
+    );
+    return yield* observe.pipe(
+      Effect.retry({
+        schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
+        while: (error) => Predicate.isTagged(error, "ControlStopPending"),
+      }),
+      Effect.catchTag("ControlStopPending", (error) =>
+        Effect.fail(
+          new StopTimeout({ endpoint: endpoint.url, ownerSessionId, lastState: error.state }),
+        ),
+      ),
+    );
+  });
+
+/**
+ * Sends a fenced stop to one already-verified owner session and waits for that
+ * exact session to disappear. Callers that have only an ownership id should
+ * re-probe before invoking this helper; the session fence must never be
+ * refreshed after the stop request is accepted.
+ */
+export const requestControlStopForSession = (
+  endpoint: ControlEndpoint,
+  ownershipId: string,
+  ownerSessionId: string,
+  transport: ControlTransportShape,
+): Effect.Effect<
+  void,
+  | ControlTransportError
+  | ControlProtocolError
+  | ControlProtocolMismatchError
+  | ControlAddressConflictError
+  | StopTimeout
+> =>
+  transport.requestStop(endpoint, { ownershipId, ownerSessionId }).pipe(
+    // The stop POST has an ambiguous delivery result: the peer may have
+    // accepted it and closed the connection before the response arrived.
+    // Observe the exact captured session instead of failing or refreshing the
+    // descriptor; a still-live session will reach the existing timeout.
+    Effect.catchTag("ControlTransportError", () => Effect.void),
+    Effect.flatMap(() =>
+      waitForControlSessionEnd(
+        endpoint,
+        ownershipId,
+        ownerSessionId,
+        readOwnerStatus(endpoint, ownershipId, transport),
+      ),
+    ),
+  );
+
 const decodeOwnerStatus = (
   endpoint: ControlEndpoint,
   value: unknown,
 ): Effect.Effect<ControlOwnerStatus, ControlProtocolError | ControlProtocolMismatchError> => {
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "protocolVersion" in value &&
-    typeof value.protocolVersion === "number" &&
-    value.protocolVersion !== CONTROL_PROTOCOL_VERSION
-  ) {
-    return Effect.fail(
-      new ControlProtocolMismatchError({
-        endpoint,
-        expectedVersion: CONTROL_PROTOCOL_VERSION,
-        observedVersion: value.protocolVersion,
-      }),
-    );
+  if (typeof value === "object" && value !== null) {
+    const observedVersion =
+      "controlProtocolVersion" in value && typeof value.controlProtocolVersion === "number"
+        ? value.controlProtocolVersion
+        : undefined;
+    const observedProtocol =
+      "controlProtocol" in value && typeof value.controlProtocol === "string"
+        ? value.controlProtocol
+        : undefined;
+    const hasVersion = "controlProtocolVersion" in value;
+    const hasProtocol = "controlProtocol" in value;
+    if (
+      (hasVersion && observedVersion !== CONTROL_PROTOCOL_VERSION) ||
+      (hasProtocol && observedProtocol !== CONTROL_PROTOCOL)
+    ) {
+      return Effect.fail(
+        new ControlProtocolMismatchError({
+          endpoint,
+          expectedVersion: CONTROL_PROTOCOL_VERSION,
+          observedVersion,
+          expectedProtocol: CONTROL_PROTOCOL,
+          observedProtocol,
+        }),
+      );
+    }
   }
   return Schema.decodeUnknownEffect(ControlOwnerStatusSchema)(value).pipe(
     Effect.mapError(() => new ControlProtocolError({ endpoint, cause: value })),
@@ -220,8 +352,22 @@ const defaultStatus = (
   status: ControlOwnerStatus | undefined,
 ): ControlOwnerStatus =>
   status === undefined
-    ? { protocolVersion: CONTROL_PROTOCOL_VERSION, ownershipId, state: "starting", ready: false }
-    : { ...status, ownershipId };
+    ? {
+        controlProtocol: CONTROL_PROTOCOL,
+        controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
+        ownershipId,
+        ownerSessionId: crypto.randomUUID(),
+        state: "starting",
+        ready: false,
+        daemonCliVersion: "unknown",
+        daemonBuildId: "unknown",
+      }
+    : {
+        ...status,
+        controlProtocol: CONTROL_PROTOCOL,
+        controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
+        ownershipId,
+      };
 
 const unavailable = (endpoint: ControlEndpoint, cause: unknown): ControlUnavailableError =>
   new ControlUnavailableError({ endpoint, cause });
@@ -279,13 +425,23 @@ const makeAttached = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   transport: ControlTransportShape,
-): ControlAttached => ({
-  _tag: "Attached",
-  ownershipId,
-  endpoint,
-  ownerStatus: readOwnerStatus(endpoint, ownershipId, transport),
-  requestStop: transport.requestStop(endpoint),
-});
+  observedStatus: ControlOwnerStatus,
+): ControlAttached => {
+  const ownerStatus = readOwnerStatus(endpoint, ownershipId, transport);
+  const requestStop = ownerStatus.pipe(
+    Effect.flatMap((status) =>
+      requestControlStopForSession(endpoint, ownershipId, status.ownerSessionId, transport),
+    ),
+  );
+  return {
+    _tag: "Attached",
+    ownershipId,
+    endpoint,
+    observedStatus,
+    ownerStatus,
+    requestStop,
+  };
+};
 
 const attach = (
   endpoint: ControlEndpoint,
@@ -299,7 +455,7 @@ const attach = (
   | ControlAddressConflictError
 > =>
   readOwnerStatus(endpoint, ownershipId, transport).pipe(
-    Effect.map(() => makeAttached(endpoint, ownershipId, transport)),
+    Effect.map((status) => makeAttached(endpoint, ownershipId, transport, status)),
   );
 
 const makeOwned = (
@@ -320,16 +476,7 @@ const makeOwned = (
     [controlOwnershipBrand]: true,
     ownershipId,
     endpoint,
-    server: listener.server,
     ownerStatus: Ref.get(statusRef),
-    setOwnerStatus: (next) => Ref.set(statusRef, { ...next, ownershipId }),
-    setState: (state, ready = state === "running") =>
-      Ref.set(statusRef, {
-        protocolVersion: CONTROL_PROTOCOL_VERSION,
-        ownershipId,
-        state,
-        ready,
-      }),
     requestStop: Deferred.succeed(stopRequested, void 0).pipe(Effect.asVoid),
     stopRequested: Deferred.await(stopRequested),
     close,
@@ -347,21 +494,18 @@ const scanForOwner = (
   candidates: ReadonlyArray<ControlEndpoint>,
   ownershipId: string,
   transport: ControlTransportShape,
-): Effect.Effect<
-  ControlEndpoint | undefined,
-  ControlProtocolMismatchError | ControlTransportError
-> =>
+): Effect.Effect<ControlProbe | undefined, ControlProtocolMismatchError | ControlTransportError> =>
   Effect.gen(function* () {
     for (const endpoint of candidates) {
-      const found = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
-        Effect.map(() => true),
+      const status = yield* readOwnerStatus(endpoint, ownershipId, transport).pipe(
+        Effect.map((status) => status),
         Effect.catchTag("ControlTransportError", (cause) =>
-          cause.reason === "unreachable" ? Effect.succeed(false) : Effect.fail(cause),
+          cause.reason === "unreachable" ? Effect.succeed(undefined) : Effect.fail(cause),
         ),
-        Effect.catchTag("ControlProtocolError", () => Effect.succeed(false)),
-        Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(false)),
+        Effect.catchTag("ControlProtocolError", () => Effect.succeed(undefined)),
+        Effect.catchTag("ControlAddressConflictError", () => Effect.succeed(undefined)),
       );
-      if (found) return endpoint;
+      if (status !== undefined) return { endpoint, status };
     }
     return undefined;
   });
@@ -371,6 +515,7 @@ const acquireAtCandidates = (
   ownershipId: string,
   status: ControlOwnerStatus,
   transport: ControlTransportShape,
+  application?: ControlApplication,
 ): Effect.Effect<
   ControlAcquisition,
   | ControlBindError
@@ -398,7 +543,7 @@ const acquireAtCandidates = (
     // read doubles as the attach handshake, so an owner is read exactly once.
     const ownerEndpoint = yield* scanForOwner(candidates, ownershipId, transport);
     if (ownerEndpoint !== undefined) {
-      return makeAttached(ownerEndpoint, ownershipId, transport);
+      return makeAttached(ownerEndpoint.endpoint, ownershipId, transport, ownerEndpoint.status);
     }
     let pending: ControlUnavailableError | undefined;
     let conflict: ControlAddressConflictError | undefined;
@@ -407,9 +552,19 @@ const acquireAtCandidates = (
         .bind(
           endpoint,
           () => Ref.getUnsafe(statusRef),
-          () => {
+          (request) => {
+            if (request === undefined) return "invalid";
+            const current = Ref.getUnsafe(statusRef);
+            if (
+              request.ownershipId !== ownershipId ||
+              request.ownerSessionId !== current.ownerSessionId
+            ) {
+              return "conflict";
+            }
             Deferred.doneUnsafe(stopRequested, Effect.succeed(undefined));
+            return "accepted";
           },
+          application,
         )
         .pipe(Effect.result);
       if (Result.isSuccess(bound)) {
@@ -504,5 +659,6 @@ export const acquireControl = (
       input.stackId,
       defaultStatus(input.stackId, input.initialStatus),
       transport,
+      input.application,
     );
   });

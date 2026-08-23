@@ -113,6 +113,7 @@ export type ManagedStackStartResult = ManagedStackStartResultBase & {
 export interface ManagedStackLifecycleUpdate {
   readonly stackId: string;
   readonly lifecycle: ManagedStackDocument["lifecycle"];
+  readonly stopIntent?: "explicit";
   /** A running runtime descriptor, or `null` to clear stale runtime state. */
   readonly runtime?: ManagedStackDocument["runtime"] | null;
 }
@@ -802,22 +803,17 @@ const makeManager = (
           if (current === undefined) {
             return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
           }
-          const ownerState =
-            update.lifecycle === "running"
-              ? "running"
-              : update.lifecycle === "starting"
-                ? "starting"
-                : update.lifecycle === "deleting"
-                  ? "deleting"
-                  : update.lifecycle === "failed"
-                    ? "failed"
-                    : "stopping";
-          yield* ownership.setState(ownerState, update.lifecycle === "running");
           let next: ManagedStackDocument = {
             ...current,
             lifecycle: update.lifecycle,
             updatedAt: now(),
           };
+          if (update.stopIntent === "explicit") {
+            next = { ...next, stopIntent: "explicit" };
+          } else if (update.lifecycle !== "stopped") {
+            const { stopIntent: _stopIntent, ...withoutStopIntent } = next;
+            next = withoutStopIntent;
+          }
           if (
             update.runtime !== undefined ||
             update.lifecycle === "stopped" ||
@@ -989,7 +985,6 @@ const makeManager = (
           );
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
-          yield* acquisition.setState("deleting", false);
           if (current.launch.mode === "docker") {
             yield* dockerForceRemove(
               current.launch.containerRuntime,

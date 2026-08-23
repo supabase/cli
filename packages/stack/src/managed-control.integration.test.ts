@@ -1,26 +1,28 @@
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, ManagedRuntime, Predicate, Result, Stream } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { describe, expect } from "vitest";
-import { DaemonServer } from "./DaemonServer.ts";
 import {
   acquireControl,
   CONTROL_CANDIDATE_COUNT,
   controlEndpoint,
   controlEndpointCandidates,
   ControlBindError,
+  type ControlOwnerStatus,
   ControlTransport,
+  type ControlTransportShape,
   ControlTransportError,
   isControlAttached,
   isControlOwnership,
   probeControl,
+  requestControlStopForSession,
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
-import { httpTransportClientLayer } from "./HttpTransportClient.ts";
-import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
+import { SupervisorControlServer } from "./SupervisorControlServer.ts";
+import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 
 const STACK_ID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const COLLIDING_STACK_ID = `${STACK_ID.slice(0, 10)}${"f".repeat(54)}`;
@@ -58,6 +60,40 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
   logHistory: () => Effect.succeed([]),
   logHistoryAll: () => Effect.succeed([]),
 });
+
+const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
+  Effect.gen(function* () {
+    const ownerSessionId = crypto.randomUUID();
+    const lifecycle = yield* SupervisorLifecycle.make({
+      ownershipId: stackId,
+      ownerSessionId,
+      daemonCliVersion: "test",
+      daemonBuildId: "test-build",
+      close: Effect.void,
+    });
+    const application = {
+      app: yield* SupervisorControlServer.make(lifecycle),
+      middleware: SupervisorControlServer.middleware(lifecycle),
+    };
+    const owner = yield* acquireControl({
+      stackId,
+      initialStatus: {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: stackId,
+        ownerSessionId,
+        state: "starting",
+        ready: false,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      },
+      application,
+    });
+    if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+    yield* lifecycle.setClose(owner.close);
+    yield* lifecycle.publishStack(stack);
+    return { lifecycle, owner };
+  });
 
 const listenRawResponse = (port: number, body: string): Promise<Server> =>
   new Promise((resolve, reject) => {
@@ -120,84 +156,66 @@ describe("managed control endpoint", () => {
     });
   });
 
-  it.live("serves DaemonServer and RemoteStack on the owned listener", () =>
+  it.live("serves the static supervisor application on the owned listener", () =>
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const started = { value: false };
-          const stackLayer = Layer.succeed(Stack, makeStack(started));
-          const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
-              includeOwnerRoute: false,
-            }).pipe(
-              Layer.provide(stackLayer),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-            ),
-          );
-          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-          const remoteRuntime = ManagedRuntime.make(
-            RemoteStack.layer(owner.endpoint).pipe(Layer.provide(httpTransportClientLayer)),
-          );
-          yield* Effect.promise(() =>
-            remoteRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.start())),
-          );
-          expect(started.value).toBe(true);
-          expect(
-            yield* Effect.promise(() =>
-              remoteRuntime.runPromise(Effect.flatMap(Stack, (stack) => stack.getInfo())),
-            ),
-          ).toMatchObject({ publishableKey: "publishable" });
-          yield* Effect.promise(() => remoteRuntime.dispose());
-          yield* Effect.promise(() => daemonRuntime.dispose());
-        }),
-      ),
-    ),
-  );
-
-  it.live("publishes owner status before and after DaemonServer uses the same listener", () =>
-    Effect.scoped(
-      live(
-        Effect.gen(function* () {
-          const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
-          const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
-          expect(before.status).toBe(200);
-          expect(yield* Effect.promise(() => before.json())).toMatchObject({ state: "starting" });
-          const beforeRoutes = yield* Effect.promise(() =>
-            fetch(`${owner.endpoint.url}/status`, { signal: AbortSignal.timeout(500) }),
-          );
-          expect(beforeRoutes.status).toBe(503);
-          const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
-              includeOwnerRoute: false,
-            }).pipe(
-              Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-            ),
-          );
-          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-          const status = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/status`));
-          expect(status.status).toBe(200);
-          yield* owner.setState("running");
-          const after = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
-          expect(yield* Effect.promise(() => after.json())).toMatchObject({
+          const stack = makeStack(started);
+          const { owner } = yield* makeStaticOwner(STACK_ID, stack);
+          expect(started.value).toBe(false);
+          const response = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
+          expect(response.status).toBe(200);
+          expect(yield* Effect.promise(() => response.json())).toMatchObject({
+            ownershipId: STACK_ID,
             state: "running",
             ready: true,
+            daemonBuildId: "test-build",
           });
-          yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),
     ),
   );
 
-  it.live("hands ready-owner stop requests to DaemonServer exactly once", () =>
+  it.live(
+    "publishes owner status before and after runtime publication on the static listener",
+    () =>
+      Effect.scoped(
+        live(
+          Effect.gen(function* () {
+            const lifecycle = yield* SupervisorLifecycle.make({
+              ownershipId: STACK_ID,
+              ownerSessionId: crypto.randomUUID(),
+              daemonCliVersion: "test",
+              daemonBuildId: "test-build",
+              close: Effect.void,
+            });
+            const application = {
+              app: yield* SupervisorControlServer.make(lifecycle),
+              middleware: SupervisorControlServer.middleware(lifecycle),
+            };
+            const owner = yield* acquireControl({ stackId: STACK_ID, application });
+            if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+            yield* lifecycle.setClose(owner.close);
+            const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
+            expect(before.status).toBe(200);
+            expect(yield* Effect.promise(() => before.json())).toMatchObject({ state: "starting" });
+            yield* lifecycle.publishStack(makeStack({ value: false }));
+            const after = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
+            expect(yield* Effect.promise(() => after.json())).toMatchObject({
+              state: "running",
+              ready: true,
+            });
+            yield* owner.close;
+          }),
+        ),
+      ),
+  );
+
+  it.live("hands a fenced stop request to the supervisor shutdown transaction exactly once", () =>
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           const stopCalls = { value: 0 };
           const stack = {
             ...makeStack({ value: false }),
@@ -206,26 +224,23 @@ describe("managed control endpoint", () => {
                 stopCalls.value += 1;
               }),
           } satisfies Stack["Service"];
-          const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(
-              owner.setState("stopping", false),
-              owner.ownerStatus,
-            ).pipe(
-              Layer.provide(Layer.succeed(Stack, stack)),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-            ),
-          );
-          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-          yield* owner.setState("running");
+          const { owner, lifecycle } = yield* makeStaticOwner(STACK_ID, stack);
+          const ownerStatus = yield* lifecycle.currentStatus;
 
           const response = yield* Effect.promise(() =>
-            fetch(`${owner.endpoint.url}/stop`, { method: "POST" }),
+            fetch(`${owner.endpoint.url}/stop`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ownershipId: STACK_ID,
+                ownerSessionId: ownerStatus.ownerSessionId,
+              }),
+            }),
           );
-          expect(response.status).toBe(200);
+          expect(response.status).toBe(202);
           expect(yield* Effect.promise(() => response.json())).toEqual({ ok: true });
+          yield* lifecycle.awaitShutdown;
           expect(stopCalls.value).toBe(1);
-
-          yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),
     ),
@@ -235,30 +250,14 @@ describe("managed control endpoint", () => {
     Effect.scoped(
       live(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ stackId: STACK_ID });
-          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
-          const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
-              includeOwnerRoute: false,
-            }).pipe(
-              Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-            ),
-          );
-          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
+          yield* makeStaticOwner(STACK_ID, makeStack({ value: false }));
           const contender = yield* acquireControl({ stackId: STACK_ID });
           expect(isControlAttached(contender)).toBe(true);
           expect(yield* contender.ownerStatus).toMatchObject({
-            protocolVersion: 1,
-            state: "starting",
-          });
-          yield* owner.setState("running");
-          expect(yield* contender.ownerStatus).toMatchObject({
-            protocolVersion: 1,
+            controlProtocolVersion: 1,
             state: "running",
             ready: true,
           });
-          yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),
     ),
@@ -273,15 +272,6 @@ describe("managed control endpoint", () => {
           expect(secondEndpoint.port).toBe(firstEndpoint.port);
           const owner = yield* acquireControl({ stackId: STACK_ID });
           if (!isControlOwnership(owner)) throw new Error("expected control ownership");
-          const daemonRuntime = ManagedRuntime.make(
-            DaemonServer.layerWithShutdown(Effect.void, owner.ownerStatus, {
-              includeOwnerRoute: false,
-            }).pipe(
-              Layer.provide(Layer.succeed(Stack, makeStack({ value: false }))),
-              Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-            ),
-          );
-          yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
           const contender = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
           if (!isControlOwnership(contender)) throw new Error("expected contender ownership");
           expect(contender.endpoint.port).not.toBe(owner.endpoint.port);
@@ -296,7 +286,6 @@ describe("managed control endpoint", () => {
           const attached = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
           expect(isControlAttached(attached)).toBe(true);
           expect(attached.endpoint.port).toBe(contender.endpoint.port);
-          yield* Effect.promise(() => daemonRuntime.dispose());
         }),
       ),
     ),
@@ -429,6 +418,179 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.effect("observes the original session after an ambiguous stop delivery", () =>
+    Effect.gen(function* () {
+      const endpoint = yield* controlEndpoint(STACK_ID);
+      const ownerSessionId = "owner-session";
+      const status: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId,
+        state: "running",
+        ready: true,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      };
+      let requestCalls = 0;
+      let reads = 0;
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: () =>
+          Effect.sync(() => {
+            reads += 1;
+            return status;
+          }),
+        requestStop: (requestEndpoint) =>
+          Effect.sync(() => {
+            requestCalls += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ControlTransportError({
+                  endpoint: requestEndpoint,
+                  reason: "transport",
+                  cause: new Error("simulated connection reset after POST delivery"),
+                }),
+              ),
+            ),
+          ),
+      };
+      const pending = yield* requestControlStopForSession(
+        endpoint,
+        STACK_ID,
+        ownerSessionId,
+        transport,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+
+      const result = yield* Fiber.join(pending).pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(
+          Predicate.isTagged(result.failure, "StopTimeout"),
+          `expected StopTimeout, received ${String(result.failure)}`,
+        ).toBe(true);
+        if (Predicate.isTagged(result.failure, "StopTimeout")) {
+          expect(result.failure.lastState).toBe("running");
+        }
+      }
+      expect(requestCalls).toBe(1);
+      expect(reads).toBeGreaterThan(0);
+    }),
+  );
+
+  it.effect("retries an ambiguous observation until the exact session changes", () =>
+    Effect.gen(function* () {
+      const endpoint = yield* controlEndpoint(STACK_ID);
+      const ownerSessionId = "owner-session";
+      const readStarted = yield* Deferred.make<void>();
+      const status: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId,
+        state: "stopping",
+        ready: false,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      };
+      const replacementStatus = { ...status, ownerSessionId: "replacement-session" };
+      let reads = 0;
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: (readEndpoint) => {
+          return Effect.sync(() => {
+            reads += 1;
+            return reads;
+          }).pipe(
+            Effect.flatMap((attempt) =>
+              attempt === 1
+                ? Deferred.succeed(readStarted, void 0).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ControlTransportError({
+                          endpoint: readEndpoint,
+                          reason: "transport",
+                          cause: new Error("simulated observation reset"),
+                        }),
+                      ),
+                    ),
+                  )
+                : Effect.succeed(replacementStatus),
+            ),
+          );
+        },
+        requestStop: () => Effect.void,
+      };
+      const pending = yield* requestControlStopForSession(
+        endpoint,
+        STACK_ID,
+        ownerSessionId,
+        transport,
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(readStarted);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      for (let attempt = 0; attempt < 8 && reads < 2; attempt += 1) {
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+      }
+      const result = yield* Fiber.join(pending).pipe(Effect.result);
+      expect(Result.isSuccess(result)).toBe(true);
+      expect(reads).toBe(2);
+    }),
+  );
+
+  it.effect("retains the verified attach status when a later live read is unreachable", () =>
+    Effect.gen(function* () {
+      const endpoint = yield* controlEndpoint(STACK_ID);
+      const status: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId: "owner-session",
+        state: "running",
+        ready: true,
+        daemonCliVersion: "test",
+        daemonBuildId: "test-build",
+      };
+      let reads = 0;
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: (readEndpoint) =>
+          Effect.suspend(() => {
+            reads += 1;
+            return reads === 1
+              ? Effect.succeed(status)
+              : Effect.fail(
+                  new ControlTransportError({
+                    endpoint: readEndpoint,
+                    reason: "unreachable",
+                    cause: new Error("owner closed after attach handshake"),
+                  }),
+                );
+          }),
+        requestStop: () => Effect.void,
+      };
+      const attached = yield* acquireControl({ stackId: STACK_ID }).pipe(
+        Effect.provideService(ControlTransport, transport),
+      );
+      expect(isControlAttached(attached)).toBe(true);
+      if (!isControlAttached(attached)) return;
+      expect(attached.observedStatus).toEqual(status);
+      const liveStatus = yield* attached.ownerStatus.pipe(Effect.result);
+      expect(Result.isFailure(liveStatus)).toBe(true);
+      expect(reads).toBe(2);
+      expect(endpoint.port).toBe(attached.endpoint.port);
+    }),
+  );
+
   it.live("preserves an explicit owner protocol mismatch", () =>
     live(
       Effect.scoped(
@@ -438,7 +600,16 @@ describe("managed control endpoint", () => {
             Effect.promise(() =>
               listenRawResponse(
                 endpoint.port,
-                JSON.stringify({ protocolVersion: 2, state: "running", ready: true }),
+                JSON.stringify({
+                  controlProtocol: "supabase-stack-control",
+                  controlProtocolVersion: 2,
+                  ownershipId: STACK_ID,
+                  ownerSessionId: "foreign",
+                  state: "running",
+                  ready: true,
+                  daemonCliVersion: "foreign",
+                  daemonBuildId: "foreign",
+                }),
               ),
             ),
             (server) => Effect.promise(() => closeRaw(server)),

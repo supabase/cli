@@ -190,10 +190,14 @@ describe("managed stack projects journeys", () => {
           const owner = yield* acquireControl({
             stackId,
             initialStatus: {
-              protocolVersion: 1,
+              controlProtocol: "supabase-stack-control",
+              controlProtocolVersion: 1,
               ownershipId: stackId,
+              ownerSessionId: "projects-test-session",
               state: "running",
               ready: true,
+              daemonCliVersion: "test",
+              daemonBuildId: "test-build",
             },
           });
           if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");

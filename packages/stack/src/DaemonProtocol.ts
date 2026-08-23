@@ -1,19 +1,5 @@
 import { Schema } from "effect";
 
-const DaemonErrorCodeSchema = Schema.Literals([
-  "SERVICE_NOT_FOUND",
-  "SERVICE_NOT_READY",
-  "STACK_READINESS_TIMEOUT",
-  "STACK_BUILD_ERROR",
-  "STACK_NOT_RUNNING",
-]);
-
-const StackBuildReasonSchema = Schema.Literals([
-  "invalid_config",
-  "docker_not_running",
-  "asset_preparation",
-]);
-
 const ControlOwnerStateSchema = Schema.Literals([
   "starting",
   "running",
@@ -22,25 +8,27 @@ const ControlOwnerStateSchema = Schema.Literals([
   "failed",
 ]);
 
+export const CONTROL_PROTOCOL = "supabase-stack-control" as const;
+export const CONTROL_PROTOCOL_VERSION = 1 as const;
+
 export type ControlOwnerState = typeof ControlOwnerStateSchema.Type;
 
 export const ControlOwnerStatusSchema = Schema.Struct({
-  protocolVersion: Schema.Literal(1),
+  controlProtocol: Schema.Literal(CONTROL_PROTOCOL),
+  controlProtocolVersion: Schema.Literal(CONTROL_PROTOCOL_VERSION),
   ownershipId: Schema.String,
+  ownerSessionId: Schema.String,
   state: ControlOwnerStateSchema,
   ready: Schema.Boolean,
+  daemonCliVersion: Schema.String,
+  daemonBuildId: Schema.String,
 });
 
 export type ControlOwnerStatus = typeof ControlOwnerStatusSchema.Type;
 
-export const DaemonErrorResponseSchema = Schema.Struct({
-  code: DaemonErrorCodeSchema,
-  error: Schema.String,
-  service: Schema.optionalKey(Schema.String),
-  exitCode: Schema.optionalKey(Schema.Number),
-  timeoutMs: Schema.optionalKey(Schema.Number),
-  phase: Schema.optionalKey(Schema.String),
-  reason: Schema.optionalKey(StackBuildReasonSchema),
+export const ControlStopRequestSchema = Schema.Struct({
+  ownershipId: Schema.String,
+  ownerSessionId: Schema.String,
 });
 
-export type DaemonErrorResponse = typeof DaemonErrorResponseSchema.Type;
+export type ControlStopRequest = typeof ControlStopRequestSchema.Type;

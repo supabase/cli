@@ -11,6 +11,8 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { emptyEnv, mockOutput, mockProjectLinkState } from "../../../../../tests/helpers/mocks.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { switchBranch } from "./switch.handler.ts";
+import { makeRunningStackFixture } from "../../../../../tests/helpers/running-stack.ts";
+import { controlTransportLayer } from "@supabase/stack/managed";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -151,7 +153,7 @@ function setup(
   const api = mockPlatformApi(opts.branches ?? [MAIN_BRANCH, DEV_BRANCH], {
     status: opts.status,
   });
-  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer);
+  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer, controlTransportLayer);
   return { out, layer, api };
 }
 
@@ -335,7 +337,13 @@ describe("branches switch handler", () => {
       const out = mockOutput({ format: "json" });
       const linkState = mockProjectLinkState(DEFAULT_LINK_STATE);
       const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH], { status: 503 });
-      const layer = Layer.mergeAll(emptyEnv(), out.layer, linkState, api.layer);
+      const layer = Layer.mergeAll(
+        emptyEnv(),
+        out.layer,
+        linkState,
+        api.layer,
+        controlTransportLayer,
+      );
 
       yield* switchBranch({ name: Option.some("dev") }).pipe(
         withJsonErrorHandling,
@@ -371,5 +379,39 @@ describe("branches switch handler", () => {
         expect.objectContaining({ type: "info", message: expect.stringContaining("detach mode") }),
       );
     }),
+  );
+
+  it.live("does not stop an incompatible local stack before branch restart", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(DEFAULT_LINK_STATE),
+          api.layer,
+        );
+        return switchBranch({ name: Option.some("dev") }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+          Effect.andThen((exit) =>
+            Effect.promise(async () => {
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(JSON.stringify(exit.cause)).toContain("DaemonUpgradeRequired");
+              }
+              expect(api.requests).toHaveLength(1);
+              expect((await fixture.readDocument())?.lifecycle).toBe("running");
+            }),
+          ),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+        );
+      }),
+    ),
   );
 });

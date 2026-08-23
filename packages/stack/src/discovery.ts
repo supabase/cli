@@ -14,6 +14,13 @@ import { NoRunningStackError } from "./managed/model.ts";
 import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/model.ts";
 import { managedStackDocumentPathEffect } from "./managed/paths.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
+import type { ControlTransport } from "./managed/control.ts";
+import {
+  DaemonUpgradeRequired,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+} from "./errors.ts";
 import type { Stack } from "./Stack.ts";
 
 export interface StackSummary {
@@ -147,8 +154,8 @@ export const stopDaemon = (opts: {
   readonly projectDir?: string;
 }): Effect.Effect<
   void,
-  NoRunningStackError | ManagedStackManagerError,
-  ManagedStackManager | HttpTransportClient
+  NoRunningStackError | ManagedStackManagerError | StopTimeout,
+  ManagedStackManager | HttpTransportClient | ControlTransport
 > =>
   stopManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
@@ -161,7 +168,11 @@ export const deleteManagedStackPersistence = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
-}): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
+}): Effect.Effect<
+  void,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | ControlTransport
+> =>
   deleteManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
@@ -191,13 +202,18 @@ export const connectManagedLayer = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
+  readonly buildIdentity: import("./BuildIdentity.ts").BuildIdentityValue;
 }): Effect.Effect<
-  import("effect").Layer.Layer<Stack>,
-  NoRunningStackError | ManagedStackManagerError,
+  import("effect").Layer.Layer<
+    Stack,
+    DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError
+  >,
+  NoRunningStackError | ManagedStackManagerError | DaemonUpgradeRequired,
   ManagedStackManager | HttpTransportClient
 > =>
   connectManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
     cwd: opts.cwd,
+    buildIdentity: opts.buildIdentity,
   });

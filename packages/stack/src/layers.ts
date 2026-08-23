@@ -5,7 +5,11 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
-import { supervisorLayer, type SupervisorStartMessage } from "./supervisor.ts";
+import {
+  supervisorLayer,
+  type SupervisorReplacingMessage,
+  type SupervisorStartMessage,
+} from "./supervisor.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import { LocalStackLifecycle, localStackLayer } from "./LocalStack.ts";
@@ -19,6 +23,8 @@ import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
+import type { BuildIdentityValue } from "./BuildIdentity.ts";
+import { DaemonUpgradeRequired, StackRpcProtocolError, StackRpcTransportError } from "./errors.ts";
 
 /**
  * Inputs owned by the process that will boot the runtime. The lease is passed
@@ -106,8 +112,12 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
+  readonly buildIdentity: BuildIdentityValue;
+  readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
+  /** Parent-only notification before an incompatible owner is fenced. */
+  readonly onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>;
 };
 
 // ---------------------------------------------------------------------------
@@ -119,13 +129,13 @@ export const daemonLayer = (
   input: ManagedDaemonConfigInput,
   daemonEntryPoint: string,
 ): Effect.Effect<
-  Layer.Layer<Stack>,
-  DaemonStartError,
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  DaemonStartError | DaemonUpgradeRequired,
   FileSystem.FileSystem | Path.Path | HttpTransportClient
 > =>
   Effect.gen(function* () {
     // Keep managed coordination metadata out of the generic daemon config.
-    const { portIntents, launch, ...daemonConfigInput } = input;
+    const { portIntents, launch, onReplacing, ...daemonConfigInput } = input;
     const daemonInput = sanitizeDaemonConfigInput(daemonConfigInput);
     if (daemonInput.stackRoot !== undefined || daemonInput.runtimeRoot !== undefined) {
       return yield* new DaemonStartError({
@@ -145,10 +155,16 @@ export const daemonLayer = (
     const httpTransportClient = yield* HttpTransportClient;
     const discovery = yield* ensureEnvironment(projectDir).pipe(
       Effect.provide(gitConfigStoreLayer),
-      Effect.mapError((error) => new DaemonStartError({ message: error.message })),
+      Effect.mapError((error) =>
+        error instanceof DaemonUpgradeRequired
+          ? error
+          : new DaemonStartError({ message: error.message }),
+      ),
     );
     const startMsg: SupervisorStartMessage = {
       type: "start",
+      buildIdentity: input.buildIdentity,
+      incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
       stackId: deriveStackId(discovery.identity, name),
       workspacePath: projectDir,
       stackName: name,
@@ -157,7 +173,7 @@ export const daemonLayer = (
       portIntents,
       ...(launch === undefined ? {} : { launch }),
     };
-    return yield* supervisorLayer(startMsg, daemonEntryPoint).pipe(
+    return yield* supervisorLayer(startMsg, daemonEntryPoint, onReplacing).pipe(
       Effect.provideService(HttpTransportClient, httpTransportClient),
       Effect.mapError((error) => new DaemonStartError({ message: error.message })),
     );

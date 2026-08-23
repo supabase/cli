@@ -1,5 +1,7 @@
 import { $ } from "bun";
 import process from "node:process";
+import { Effect } from "effect";
+import { resolveCliBuildIdentity } from "../src/shared/cli/version.ts";
 
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 
@@ -17,8 +19,25 @@ if (shell !== "next" && shell !== "legacy") {
 
 const entrypoint = `src/${shell}/main.ts`;
 const outfile = `dist/supabase-${shell}`;
+const packageJson = JSON.parse(
+  await Bun.file(new URL("../package.json", import.meta.url)).text(),
+) as {
+  version?: string;
+};
+if (packageJson.version === undefined || packageJson.version.length === 0) {
+  throw new Error("CLI package version is required for a compiled build");
+}
+const buildIdentity = await Effect.runPromise(
+  resolveCliBuildIdentity({
+    cliVersion: packageJson.version,
+    release: process.env.SUPABASE_RELEASE_BUILD === "1",
+  }),
+);
+const buildId = buildIdentity.buildId;
+const versionDefine = `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
+const buildIdDefine = `--define=process.env.SUPABASE_CLI_BUILD_ID=${JSON.stringify(buildId)}`;
 const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
   await bundleServeMainTemplate(),
 )}`;
 
-await $`bun build ${entrypoint} --compile ${defineArg} --outfile ${outfile}`;
+await $`bun build ${entrypoint} --compile ${versionDefine} ${buildIdDefine} ${defineArg} --outfile ${outfile}`;

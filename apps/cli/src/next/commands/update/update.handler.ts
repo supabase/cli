@@ -17,6 +17,7 @@ import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { currentCliBuildIdentity } from "../../../shared/cli/version.ts";
 import type { UpdateFlags } from "./update.command.ts";
 
 function diffCachedLinkedVersions(
@@ -45,6 +46,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const projectHome = yield* ProjectHome;
   const projectLinkState = yield* ProjectLinkState;
   const runtimeInfo = yield* RuntimeInfo;
+  const buildIdentity = yield* currentCliBuildIdentity;
 
   yield* output.intro("Update local Supabase stack versions");
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
@@ -108,6 +110,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       cwd: runtimeInfo.cwd,
       workspacePath: projectHome.projectRoot,
       stackName: flags.stack,
+      buildIdentity,
       launch: {
         versions: serviceVersionContext.candidateBaseline,
         excludedServices: existingSummary.value.launch.excludedServices ?? [],

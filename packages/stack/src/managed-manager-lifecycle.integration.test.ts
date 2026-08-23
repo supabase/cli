@@ -1,17 +1,6 @@
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
-import {
-  Cause,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Layer,
-  ManagedRuntime,
-  Schedule,
-} from "effect";
-import { HttpServer } from "effect/unstable/http";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer } from "effect";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
@@ -23,7 +12,8 @@ import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
-import { DaemonServer } from "./DaemonServer.ts";
+import { SupervisorControlServer } from "./SupervisorControlServer.ts";
+import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { deleteManagedStack, stopManagedStack, updateManagedLaunch } from "./managed/lifecycle.ts";
 import {
   automaticDocument,
@@ -69,6 +59,7 @@ describe("managed stack lifecycle journeys", () => {
         const input = {
           workspacePath: workspace,
           stackName: "default",
+          buildIdentity: { cliVersion: "test", buildId: "test-build" },
           launch: {
             versions: { postgres: "17.6.1" },
             excludedServices: [],
@@ -117,6 +108,7 @@ describe("managed stack lifecycle journeys", () => {
         const updated = yield* updateManagedLaunch({
           workspacePath: workspace,
           stackName: "default",
+          buildIdentity: { cliVersion: "test", buildId: "test-build" },
           launch: {
             versions: { postgres: "17.6.1" },
             excludedServices: ["studio"],
@@ -148,8 +140,43 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
-        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const stopped = { value: false };
+        const localStack = {
+          ...controlStack(),
+          stop: () => Effect.sync(() => void (stopped.value = true)),
+        } satisfies Stack["Service"];
+        const ownerSessionId = crypto.randomUUID();
+        const lifecycle = yield* SupervisorLifecycle.make({
+          ownershipId: stackId,
+          ownerSessionId,
+          daemonCliVersion: "test",
+          daemonBuildId: "test-build",
+          close: Effect.void,
+        });
+        const application = {
+          app: yield* SupervisorControlServer.make(lifecycle),
+          middleware: SupervisorControlServer.middleware(lifecycle),
+        };
+        const owner = yield* acquireControl({
+          stackId,
+          initialStatus: {
+            controlProtocol: "supabase-stack-control",
+            controlProtocolVersion: 1,
+            ownershipId: stackId,
+            ownerSessionId,
+            state: "starting",
+            ready: false,
+            daemonCliVersion: "test",
+            daemonBuildId: "test-build",
+          },
+          application,
+        });
+        if (!isControlOwnership(owner)) throw new Error("expected static owner");
+        yield* lifecycle.setClose(
+          manager
+            .recordLifecycle(owner, { stackId, lifecycle: "stopped" })
+            .pipe(Effect.asVoid, Effect.andThen(owner.close)),
+        );
         const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: automaticDocument(),
@@ -157,43 +184,12 @@ describe("managed stack lifecycle journeys", () => {
           lifecycle: "starting",
         });
         yield* releaseLease(started);
-        const stopped = { value: false };
-        const localStack = {
-          ...controlStack(),
-          stop: () => Effect.sync(() => void (stopped.value = true)),
-        } satisfies Stack["Service"];
-        const daemonRuntime = ManagedRuntime.make(
-          DaemonServer.layerWithShutdown(
-            Effect.gen(function* () {
-              yield* localStack.stop();
-              yield* manager.recordLifecycle(owner, { stackId, lifecycle: "stopped" });
-            }).pipe(Effect.asVoid, Effect.orDie),
-            owner.ownerStatus,
-            { includeOwnerRoute: false },
-          ).pipe(
-            Layer.provide(Layer.succeed(Stack, localStack)),
-            Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.server)),
-          ),
-        );
-        yield* Effect.promise(() => daemonRuntime.runPromise(DaemonServer));
-        yield* owner.setState("running", true);
+        yield* lifecycle.publishStack(localStack);
 
         const stopFiber = yield* Effect.forkScoped(stopManagedStack({ workspacePath: workspace }));
-        yield* manager.inspectStack(stackId).pipe(
-          Effect.flatMap((current) =>
-            current?.lifecycle === "stopped"
-              ? Effect.succeed(current)
-              : Effect.fail(new Error("stop pending")),
-          ),
-          Effect.retry(
-            Schedule.spaced("10 millis").pipe(Schedule.upTo({ duration: "10 seconds" })),
-          ),
-        );
-        yield* owner.close;
         yield* Fiber.join(stopFiber);
         expect(stopped.value).toBe(true);
         expect((yield* manager.inspectStack(stackId))?.lifecycle).toBe("stopped");
-        yield* Effect.promise(() => daemonRuntime.dispose());
       }),
     ).pipe(
       Effect.provide(layer),

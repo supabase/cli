@@ -30,7 +30,7 @@ describe("CLI --version (text)", () => {
         logs.push(line);
       });
     try {
-      // `Command.runWith` keeps handler/global-flag services in its env type even when
+      // `Command.runWith` keeps handler/global-flag services in the effect type even when
       // `--version` exits early; only BunServices + CliOutput are needed at runtime here.
       await Effect.runPromise(
         Command.runWith(legacyRoot, { version: "2.99.0-beta.1" })(["--version"]).pipe(

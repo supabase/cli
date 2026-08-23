@@ -35,9 +35,10 @@ The managed document is stored under the global CLI home:
 
 It contains the stack identity, assigned ports and intents, lifecycle, runtime control endpoint,
 and launch metadata. There is no second state or metadata file. Start, status, logs, update,
-services, and stop all go through the managed lifecycle facade and its control protocol. A running
-document without an owned control endpoint is stale and can be reclaimed by the next lifecycle
-operation.
+services, and stop all go through the managed lifecycle facade. The stable cross-build control
+protocol is `GET /owner` plus session-fenced `POST /stop`; runtime operations use same-build
+Effect RPC over HTTP/NDJSON at `POST /rpc`. A running document without an owned control endpoint
+is stale and can be reclaimed by the next lifecycle operation.
 
 ## Built-in defaults and remote versions
 
@@ -90,17 +91,20 @@ project config before defaults are applied so automatic and exact values remain 
 
 ### `supabase stack status`
 
-Status reads the managed document and acquires its control ownership before reporting a running
-stack. This prevents a crashed process from being presented as live. It compares the persisted
-launch baseline with the current candidate versions and reports when `supabase stack update` can
-adopt newer linked or default versions.
+Status reads the managed document and probes `/owner` before reporting a running stack. When the
+owner build matches, it may use the runtime RPC projection for detailed service state. A mismatched
+owner is reported as a degraded owner/document summary with an instruction to run `supabase start`;
+status never restarts a live stack and does not attempt runtime RPC against the mismatched build. It
+compares the persisted launch baseline with the current candidate versions and reports when
+`supabase stack update` can adopt newer linked or default versions.
 
 ### `supabase stack update`
 
 Update refreshes the linked cache when the project is linked, computes the candidate baseline, and
-updates `launch.versions` through the managed control route when the stack is running. A stopped
-stack is updated directly through the manager. It does not maintain a project-level copy of pinned
-versions and does not restart the runtime.
+updates `launch.versions` through the same-build `UpdateLaunch` RPC when the stack is running. A
+stopped stack is updated directly through the manager. It does not maintain a project-level copy of
+pinned versions and does not restart the runtime. If the owner build differs, update fails with an
+upgrade-required diagnostic rather than restarting the stack.
 
 ### `supabase stop`
 
@@ -129,7 +133,11 @@ Values in `.supabase/local-versions.json` override the candidate baseline for th
 ### CLI upgrades
 
 New stacks can adopt newer catalog defaults immediately. Existing stacks remain pinned until update
-changes their managed launch metadata.
+changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
+it performs a lazy stop/start replacement after preflight. The replacement preserves durable stack
+identity and creation metadata, data roots, runtime mode, pinned service versions, exclusions, and
+sticky port assignments. It never invokes destructive deletion. Connect-only commands never replace
+the owner; they report the upgrade requirement instead.
 
 ### Team collaboration
 

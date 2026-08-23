@@ -2,20 +2,35 @@ import { BunServices } from "@effect/platform-bun";
 import {
   Stack,
   StackServiceState,
+  StackBuildError,
   type StackInfo,
   httpTransportClientLayer,
 } from "@supabase/stack/effect";
-import { DaemonServer } from "@supabase/stack/testing";
+import {
+  makeSupervisorControlApplication,
+  makeSupervisorControlMiddleware,
+  SupervisorLifecycle,
+} from "@supabase/stack/testing";
 import {
   ManagedStackManager,
+  acquireControl,
+  controlTransportLayer,
   deriveStackId,
   managedStackManagerLayer,
   type ControlOwnership,
-  type ManagedStackManagerShape,
   type ManagedPortIntentDocument,
 } from "@supabase/stack/managed";
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Option, Stream } from "effect";
-import { HttpServer } from "effect/unstable/http";
+import {
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Scope,
+  Stream,
+} from "effect";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +38,7 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import { CliConfig } from "../../src/next/config/cli-config.service.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
+import { currentCliBuildIdentity, type CliBuildIdentity } from "../../src/shared/cli/version.ts";
 
 const launch = {
   mode: "docker" as const,
@@ -51,36 +67,35 @@ const history = [
   { timestamp: 1_000, service: "postgres", stream: "stdout" as const, line: "ready" },
 ];
 
-const stackLayer = (info: StackInfo, onStop: Effect.Effect<void>): Layer.Layer<Stack> =>
-  Layer.succeed(Stack, {
-    getInfo: () => Effect.succeed(info),
-    start: () => Effect.void,
-    stop: () => onStop,
-    dispose: () => onStop,
-    startService: () => Effect.void,
-    stopService: () => Effect.void,
-    restartService: () => Effect.void,
-    reloadFunctions: () => Effect.void,
-    reloadEdgeRuntime: () => Effect.void,
-    getState: (name: string) => {
-      const state = stackStates.find((candidate) => candidate.name === name);
-      return state === undefined
-        ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.succeed(state);
-    },
-    getAllStates: () => Effect.succeed(stackStates),
-    stateChanges: (name: string) =>
-      Effect.succeed(Stream.fromIterable(stackStates.filter((state) => state.name === name))),
-    allStateChanges: () => Stream.fromIterable(stackStates),
-    waitReady: () => Effect.void,
-    waitAllReady: () => Effect.void,
-    subscribeLogs: (name: string) =>
-      Stream.fromIterable(history.filter((entry) => entry.service === name)),
-    subscribeAllLogs: () => Stream.fromIterable(history),
-    logHistory: (name: string, limit?: number) =>
-      Effect.succeed(history.filter((entry) => entry.service === name).slice(-(limit ?? 100))),
-    logHistoryAll: (limit?: number) => Effect.succeed(history.slice(-(limit ?? 100))),
-  });
+const stackService = (info: StackInfo, onStop: Effect.Effect<void>): Stack["Service"] => ({
+  getInfo: () => Effect.succeed(info),
+  start: () => Effect.void,
+  stop: () => onStop,
+  dispose: () => onStop,
+  startService: () => Effect.void,
+  stopService: () => Effect.void,
+  restartService: () => Effect.void,
+  reloadFunctions: () => Effect.void,
+  reloadEdgeRuntime: () => Effect.void,
+  getState: (name: string) => {
+    const state = stackStates.find((candidate) => candidate.name === name);
+    return state === undefined
+      ? Effect.fail(new ServiceNotFoundError({ name }))
+      : Effect.succeed(state);
+  },
+  getAllStates: () => Effect.succeed(stackStates),
+  stateChanges: (name: string) =>
+    Effect.succeed(Stream.fromIterable(stackStates.filter((state) => state.name === name))),
+  allStateChanges: () => Stream.fromIterable(stackStates),
+  waitReady: () => Effect.void,
+  waitAllReady: () => Effect.void,
+  subscribeLogs: (name: string) =>
+    Stream.fromIterable(history.filter((entry) => entry.service === name)),
+  subscribeAllLogs: () => Stream.fromIterable(history),
+  logHistory: (name: string, limit?: number) =>
+    Effect.succeed(history.filter((entry) => entry.service === name).slice(-(limit ?? 100))),
+  logHistoryAll: (limit?: number) => Effect.succeed(history.slice(-(limit ?? 100))),
+});
 
 function projectHome(projectRoot: string): ProjectHome["Service"] {
   const projectHomeDir = join(projectRoot, ".supabase");
@@ -95,7 +110,7 @@ function projectHome(projectRoot: string): ProjectHome["Service"] {
 }
 
 export async function makeManagedStackFixture(
-  options: { running?: boolean; stackName?: string } = {},
+  options: { running?: boolean; stackName?: string; buildIdentity?: CliBuildIdentity } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "supabase-cli-managed-stack-"));
   const projectRoot = join(root, "repo");
@@ -104,27 +119,46 @@ export async function makeManagedStackFixture(
   mkdirSync(projectRoot, { recursive: true });
   const stackName = options.stackName ?? "default";
   const running = options.running ?? true;
+  const buildIdentity = options.buildIdentity ?? (await Effect.runPromise(currentCliBuildIdentity));
   const project = projectHome(projectRoot);
-  const managerRuntime = ManagedRuntime.make(managedStackManagerLayer({ stateRoot }));
-  const ready = await managerRuntime.runPromise(Deferred.make<void>());
-  const ownerReady = await managerRuntime.runPromise(
-    Deferred.make<{
-      ownership: ControlOwnership;
-      info: StackInfo;
-      manager: ManagedStackManagerShape;
-    }>(),
+  const managerRuntime = ManagedRuntime.make(
+    Layer.mergeAll(managedStackManagerLayer({ stateRoot }), controlTransportLayer),
   );
+  const ready = await managerRuntime.runPromise(Deferred.make<void>());
   const daemonReady = await managerRuntime.runPromise(Deferred.make<void>());
   let stackId = "";
-  let daemonRuntime: ManagedRuntime.ManagedRuntime<DaemonServer, never> | undefined;
+  let lifecycleScope: Scope.Scope | undefined;
   const setup = managerRuntime.runFork(
     Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
         const environment = yield* manager.ensureWorkspace(projectRoot);
         stackId = deriveStackId(environment.identity, stackName);
-        const ownership = yield* manager.acquireControl(stackId);
+        lifecycleScope = Scope.makeUnsafe();
+        const supervisorLifecycle = yield* SupervisorLifecycle.make({
+          ownershipId: stackId,
+          ownerSessionId: crypto.randomUUID(),
+          daemonCliVersion: buildIdentity.cliVersion,
+          daemonBuildId: buildIdentity.buildId,
+          close: Effect.void,
+        }).pipe(Effect.provide(Layer.succeed(Scope.Scope, lifecycleScope)));
+        let owned: ControlOwnership | undefined;
+        const application = {
+          app: yield* makeSupervisorControlApplication(supervisorLifecycle, {
+            update: (id, next) =>
+              owned === undefined
+                ? Effect.fail(new StackBuildError({ detail: "fixture owner is not acquired" }))
+                : manager.updateLaunch(owned, { stackId: id, launch: next }).pipe(
+                    Effect.asVoid,
+                    Effect.mapError((error) => new StackBuildError({ detail: String(error) })),
+                  ),
+          }),
+          middleware: makeSupervisorControlMiddleware(supervisorLifecycle),
+        };
+        const ownership = yield* acquireControl({ stackId, application });
         if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");
+        owned = ownership;
+        yield* supervisorLifecycle.setClose(ownership.close);
         const started = yield* manager.startStack({
           workspacePath: projectRoot,
           stackName,
@@ -152,9 +186,15 @@ export async function makeManagedStackFixture(
           serviceEndpoints: {},
         };
         if (running) {
-          yield* Deferred.succeed(ownerReady, { ownership, info, manager });
+          const runtimeStack = stackService(
+            info,
+            manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" }).pipe(
+              Effect.asVoid,
+              Effect.catch(() => Effect.void),
+            ),
+          );
+          yield* supervisorLifecycle.publishStack(runtimeStack);
           yield* Deferred.await(daemonReady);
-          yield* ownership.setState("running", true);
         } else {
           yield* ownership.close;
         }
@@ -165,39 +205,13 @@ export async function makeManagedStackFixture(
     ),
   );
   if (running) {
-    const owner = await managerRuntime.runPromise(Deferred.await(ownerReady));
-    const daemonLayer = DaemonServer.layerWithShutdown(
-      Effect.forkDetach(Effect.sleep("50 millis").pipe(Effect.andThen(owner.ownership.close))).pipe(
-        Effect.asVoid,
-      ),
-      owner.ownership.ownerStatus,
-      {
-        includeOwnerRoute: false,
-        launchUpdate: (next) =>
-          owner.manager
-            .updateLaunch(owner.ownership, { stackId, launch: next })
-            .pipe(Effect.asVoid),
-      },
-    ).pipe(
-      Layer.provide(
-        stackLayer(
-          owner.info,
-          owner.manager.recordLifecycle(owner.ownership, { stackId, lifecycle: "stopped" }).pipe(
-            Effect.asVoid,
-            Effect.catch(() => Effect.void),
-          ),
-        ),
-      ),
-      Layer.provide(Layer.succeed(HttpServer.HttpServer, owner.ownership.server)),
-    );
-    daemonRuntime = ManagedRuntime.make(daemonLayer);
-    await daemonRuntime.runPromise(DaemonServer);
     await managerRuntime.runPromise(Deferred.succeed(daemonReady, void 0));
   }
   await managerRuntime.runPromise(Deferred.await(ready));
 
   const baseLayer = Layer.mergeAll(
     BunServices.layer,
+    controlTransportLayer,
     httpTransportClientLayer,
     Layer.succeed(ProjectHome, project),
     Layer.succeed(
@@ -264,17 +278,22 @@ export async function makeManagedStackFixture(
         }),
       ),
     launch,
+    buildIdentity,
     async dispose() {
-      await managerRuntime.runPromise(Fiber.interrupt(setup));
-      await daemonRuntime?.dispose();
+      await managerRuntime.runPromise(Fiber.interrupt(setup).pipe(Effect.exit));
+      await Effect.runPromise(Scope.close(lifecycleScope ?? Scope.makeUnsafe(), Exit.void)).catch(
+        () => undefined,
+      );
       await managerRuntime.dispose();
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
-export const makeRunningStackFixture = (options: { stackName?: string } = {}) =>
-  makeManagedStackFixture({ ...options, running: true });
+export const makeRunningStackFixture = (
+  options: { stackName?: string; buildIdentity?: CliBuildIdentity } = {},
+) => makeManagedStackFixture({ ...options, running: true });
 
-export const makeStoppedStackFixture = (options: { stackName?: string } = {}) =>
-  makeManagedStackFixture({ ...options, running: false });
+export const makeStoppedStackFixture = (
+  options: { stackName?: string; buildIdentity?: CliBuildIdentity } = {},
+) => makeManagedStackFixture({ ...options, running: false });

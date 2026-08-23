@@ -25,6 +25,7 @@ describe("start handler", () => {
       Effect.promise(() => makeRunningStackFixture()).pipe(
         Effect.flatMap((fixture) =>
           connectLayer({
+            buildIdentity: fixture.buildIdentity,
             cacheRoot: fixture.homeDir,
             cwd: fixture.projectRoot,
             projectDir: fixture.projectRoot,
@@ -49,6 +50,7 @@ describe("start handler", () => {
                   workspacePath: fixture.projectRoot,
                   stackName: fixture.stackName,
                   cwd: fixture.projectRoot,
+                  buildIdentity: fixture.buildIdentity,
                 },
                 drift: [
                   {
@@ -83,7 +85,7 @@ describe("start handler", () => {
                 mode: "docker",
                 exclude: [],
                 serviceVersion: [],
-                detach: false,
+                detach: true,
               }).pipe(
                 Effect.provide(layer),
                 Effect.tap(

@@ -1,6 +1,6 @@
 import { Data, Effect, Layer, Schedule } from "effect";
 import { NoRunningStackError } from "./model.ts";
-import { RemoteStack } from "../RemoteStack.ts";
+import { RemoteStack, updateRemoteLaunch } from "../RemoteStack.ts";
 import { Stack } from "../Stack.ts";
 import { dockerForceRemove } from "../cleanup.ts";
 import { dockerContainerName } from "../StackIdentity.ts";
@@ -15,13 +15,25 @@ import {
   type ManagedStackManagerError,
   type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
-import { ControlTransportError, isControlOwnership } from "./control.ts";
+import { acquireControl, ControlTransport, isControlOwnership } from "./control.ts";
+import {
+  makeSupervisorControlApplication,
+  makeSupervisorControlMiddleware,
+} from "../SupervisorControlServer.ts";
+import { SupervisorLifecycle } from "../SupervisorLifecycle.ts";
+import {
+  DaemonUpgradeRequired,
+  StackBuildError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+} from "../errors.ts";
 import {
   ManagedStackNotStoppedError,
   type ManagedPortIntentDocument,
   validateManagedStackName,
 } from "./model.ts";
 import { deriveStackId } from "./environment.ts";
+import type { BuildIdentityValue } from "../BuildIdentity.ts";
 
 /** Inputs shared by all managed lifecycle operations. */
 export interface ManagedLifecycleInput {
@@ -29,6 +41,7 @@ export interface ManagedLifecycleInput {
   readonly stackName?: string;
   readonly cwd?: string;
   readonly portDocument?: ManagedPortIntentDocument;
+  readonly buildIdentity?: BuildIdentityValue;
 }
 
 const emptyPortDocument = (): ManagedPortIntentDocument => ({
@@ -71,15 +84,14 @@ export const resolveManagedDocument = (
   });
 
 class ManagedStopPending extends Data.TaggedError("ManagedStopPending")<{}> {}
-class ManagedStopOwnerTerminal extends Data.TaggedError("ManagedStopOwnerTerminal")<{}> {}
 class ManagedDeletePending extends Data.TaggedError("ManagedDeletePending")<{}> {}
 
 /** Connect to the control endpoint the managed supervisor actually bound. */
 export const connectManagedStack = (
-  input: ManagedLifecycleInput,
+  input: ManagedLifecycleInput & { readonly buildIdentity: BuildIdentityValue },
 ): Effect.Effect<
-  Layer.Layer<Stack>,
-  NoRunningStackError | ManagedStackManagerError,
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  NoRunningStackError | ManagedStackManagerError | DaemonUpgradeRequired,
   ManagedStackManager | HttpTransportClient
 > =>
   Effect.gen(function* () {
@@ -96,9 +108,16 @@ export const connectManagedStack = (
       return yield* Effect.fail(noRunningStack(input));
     }
     const client = yield* HttpTransportClient;
-    return RemoteStack.layer(probe.endpoint).pipe(
-      Layer.provide(Layer.succeed(HttpTransportClient, client)),
-    );
+    return RemoteStack.layer(probe.endpoint, {
+      buildIdentity: input.buildIdentity,
+      owner: {
+        ownershipId: probe.status.ownershipId,
+        ownerSessionId: probe.status.ownerSessionId,
+        controlProtocolVersion: probe.status.controlProtocolVersion,
+        daemonCliVersion: probe.status.daemonCliVersion,
+        daemonBuildId: probe.status.daemonBuildId,
+      },
+    }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, client)));
   });
 
 /** Ask the owner to stop; the supervisor clears runtime state before exiting. */
@@ -106,7 +125,7 @@ export const stopManagedStack = (
   input: ManagedLifecycleInput,
 ): Effect.Effect<
   void,
-  NoRunningStackError | ManagedStackManagerError,
+  NoRunningStackError | ManagedStackManagerError | import("../errors.ts").StopTimeout,
   ManagedStackManager | HttpTransportClient
 > =>
   Effect.scoped(
@@ -114,9 +133,6 @@ export const stopManagedStack = (
       const manager = yield* ManagedStackManager;
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
-      const containerRuntime =
-        document.launch.mode === "docker" ? document.launch.containerRuntime : null;
-      const acquisition = yield* manager.acquireControl(stackId);
       const revalidatedStackId = yield* stackIdForInput(manager, input);
       if (revalidatedStackId !== stackId) {
         return yield* Effect.fail(
@@ -125,148 +141,97 @@ export const stopManagedStack = (
           }),
         );
       }
-      if (isControlOwnership(acquisition)) {
-        if (
-          document.lifecycle === "running" ||
-          document.lifecycle === "starting" ||
-          document.lifecycle === "failed"
-        ) {
-          if (containerRuntime !== null) {
-            yield* dockerForceRemove(
-              containerRuntime,
-              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-            );
-          }
-          yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
-        }
-        yield* acquisition.close;
-        return;
-      }
-      if (document.lifecycle !== "running" && document.lifecycle !== "starting") {
-        return yield* Effect.fail(new ManagedStackAttachedError({ stackId }));
-      }
-      const client = yield* HttpTransportClient;
       const cleanupOwned = (owned: import("./control.ts").ControlOwnership) =>
         Effect.ensuring(
           Effect.gen(function* () {
+            const current = yield* manager.inspectStack(stackId);
+            const containerRuntime =
+              current?.launch.mode === "docker" ? current.launch.containerRuntime : null;
             if (containerRuntime !== null) {
               yield* dockerForceRemove(
                 containerRuntime,
                 SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
               );
             }
-            yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
+            if (
+              current !== undefined &&
+              (current.lifecycle !== "stopped" || current.stopIntent !== "explicit")
+            ) {
+              yield* manager.recordLifecycle(owned, {
+                stackId,
+                lifecycle: "stopped",
+                stopIntent: "explicit",
+              });
+            }
           }),
           owned.close,
         );
-      let stopRequested = false;
-      const awaitOwnerReady: Effect.Effect<
-        "ready",
-        | ManagedStopPending
-        | ManagedStopOwnerTerminal
-        | ControlTransportError
-        | import("./control.ts").ControlProtocolError
-        | import("./control.ts").ControlProtocolMismatchError
-        | import("./control.ts").ControlAddressConflictError
-      > = acquisition.ownerStatus.pipe(
-        Effect.flatMap(
-          (
-            status,
-          ): Effect.Effect<
-            "ready",
-            | ManagedStopPending
-            | ManagedStopOwnerTerminal
-            | ControlTransportError
-            | import("./control.ts").ControlProtocolError
-            | import("./control.ts").ControlProtocolMismatchError
-            | import("./control.ts").ControlAddressConflictError
-          > => {
-            if (status.state === "running" && status.ready) return Effect.succeed<"ready">("ready");
-            if (status.state === "starting") {
-              return Effect.gen(function* () {
-                if (!stopRequested) {
-                  stopRequested = true;
-                  yield* acquisition.requestStop;
-                }
-                return yield* Effect.fail(new ManagedStopPending());
-              });
-            }
-            if (status.state === "stopping") {
-              return Effect.fail(new ManagedStopPending());
-            }
-            return Effect.fail(new ManagedStopOwnerTerminal());
-          },
-        ),
+
+      /**
+       * Stop the exact session currently observed, then probe again. A new
+       * supervisor can bind immediately after the old session disappears; a
+       * public identity-scoped stop must follow and fence that replacement
+       * rather than returning with a running document.
+       */
+      const stopCurrentOwner = Effect.gen(function* () {
+        const current = yield* manager.inspectStack(stackId);
+        if (current === undefined) return;
+        const acquisition = yield* manager.acquireControl(stackId);
+        const currentStackId = yield* stackIdForInput(manager, input);
+        if (currentStackId !== stackId) {
+          return yield* Effect.fail(
+            new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed while stopping",
+            }),
+          );
+        }
+        if (isControlOwnership(acquisition)) {
+          yield* cleanupOwned(acquisition);
+          return;
+        }
+        yield* acquisition.requestStop;
+        return yield* Effect.fail(new ManagedStopPending());
+      }).pipe(
         Effect.retry({
           schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
           while: (error) => error instanceof ManagedStopPending,
         }),
-      );
-      const ready = yield* awaitOwnerReady.pipe(
-        Effect.catchTag("ManagedStopOwnerTerminal", () =>
-          Effect.fail(new ManagedStackAttachedError({ stackId })),
+        Effect.catchTag("ManagedStopPending", () =>
+          Effect.fail(new ManagedStackNotStoppedError({ stackId })),
         ),
-        Effect.catch((error) =>
-          error instanceof ControlTransportError && error.reason === "unreachable"
-            ? Effect.succeed<"dead">("dead")
-            : Effect.fail(error),
-        ),
-        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
       );
-      if (ready === "dead") {
-        const released = yield* manager.acquireControl(stackId).pipe(
-          Effect.flatMap((candidate) =>
-            isControlOwnership(candidate)
-              ? Effect.succeed(candidate)
-              : Effect.fail(new ManagedStopPending()),
-          ),
-          Effect.retry(
-            Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
-          ),
-          Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
-        );
-        yield* cleanupOwned(released);
-        return;
-      }
-      const layer = RemoteStack.layer(acquisition.endpoint).pipe(
-        Layer.provide(Layer.succeed(HttpTransportClient, client)),
-      );
-      yield* Effect.gen(function* () {
-        const stack = yield* Stack;
-        yield* stack.stop();
-      }).pipe(Effect.provide(layer));
-      yield* manager.inspectStack(stackId).pipe(
-        Effect.flatMap((current) =>
-          current?.lifecycle === "stopped"
-            ? Effect.succeed(current)
-            : Effect.fail(new ManagedStopPending()),
-        ),
-        Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
-        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
-      );
-      const released = yield* manager.acquireControl(stackId).pipe(
-        Effect.flatMap((candidate) =>
-          isControlOwnership(candidate)
-            ? Effect.succeed(candidate)
-            : Effect.fail(new ManagedStopPending()),
-        ),
-        Effect.retry(Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" }))),
-        Effect.mapError(() => new ManagedStackNotStoppedError({ stackId })),
-      );
-      yield* released.close;
+      yield* stopCurrentOwner;
     }),
   );
 
 /** Remove a stopped document while holding its deterministic control owner. */
 export const deleteManagedStack = (
   input: ManagedLifecycleInput,
-): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
+): Effect.Effect<
+  void,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | ControlTransport
+> =>
   Effect.gen(function* () {
     const manager = yield* ManagedStackManager;
     const stackId = yield* stackIdForInput(manager, input);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const acquisition = yield* manager.acquireControl(stackId).pipe(
+        const lifecycle = yield* SupervisorLifecycle.make({
+          ownershipId: stackId,
+          ownerSessionId: crypto.randomUUID(),
+          daemonCliVersion: "managed",
+          daemonBuildId: "managed",
+        });
+        const application = {
+          app: yield* makeSupervisorControlApplication(lifecycle),
+          middleware: makeSupervisorControlMiddleware(lifecycle),
+        };
+        const acquisition = yield* acquireControl({
+          stackId,
+          initialStatus: yield* lifecycle.currentStatus,
+          application,
+        }).pipe(
           Effect.flatMap((candidate) =>
             isControlOwnership(candidate)
               ? Effect.succeed(candidate)
@@ -285,7 +250,11 @@ export const deleteManagedStack = (
             }),
           );
         }
-        const result = yield* manager.deleteStack(stackId, acquisition);
+        yield* lifecycle.setClose(acquisition.close);
+        yield* lifecycle.beginDeleting;
+        const result = yield* manager
+          .deleteStack(stackId, acquisition)
+          .pipe(Effect.ensuring(lifecycle.requestShutdown("dispose").pipe(Effect.ignore)));
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),
     );
@@ -293,10 +262,19 @@ export const deleteManagedStack = (
 
 /** Persist launch selections in the managed document, owner-gated. */
 export const updateManagedLaunch = (
-  input: ManagedLifecycleInput & { readonly launch: ManagedStackLaunchUpdate },
+  input: ManagedLifecycleInput & {
+    readonly launch: ManagedStackLaunchUpdate;
+    readonly buildIdentity: BuildIdentityValue;
+  },
 ): Effect.Effect<
   ManagedStackDocument,
-  NoRunningStackError | ManagedStackManagerError | HttpTransportClientError,
+  | NoRunningStackError
+  | ManagedStackManagerError
+  | HttpTransportClientError
+  | DaemonUpgradeRequired
+  | StackBuildError
+  | StackRpcProtocolError
+  | StackRpcTransportError,
   ManagedStackManager | HttpTransportClient
 > =>
   Effect.scoped(
@@ -308,15 +286,22 @@ export const updateManagedLaunch = (
         if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
           return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
         }
-        const client = yield* HttpTransportClient;
-        const response = yield* client.request(acquisition.endpoint, "/managed/launch", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(input.launch),
-        });
-        if (!response.ok) {
-          return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId: document.id }));
-        }
+        const status = yield* acquisition.ownerStatus;
+        yield* updateRemoteLaunch(
+          acquisition.endpoint,
+          {
+            buildIdentity: input.buildIdentity,
+            owner: {
+              ownershipId: status.ownershipId,
+              ownerSessionId: status.ownerSessionId,
+              controlProtocolVersion: status.controlProtocolVersion,
+              daemonCliVersion: status.daemonCliVersion,
+              daemonBuildId: status.daemonBuildId,
+            },
+          },
+          document.id,
+          input.launch,
+        );
         const next = yield* manager.inspectStack(document.id);
         if (next === undefined) return yield* Effect.fail(noRunningStack(input));
         return next;

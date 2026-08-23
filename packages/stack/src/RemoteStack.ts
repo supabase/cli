@@ -1,619 +1,680 @@
-import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Layer, Predicate, Schema, Stream } from "effect";
-import * as Sse from "effect/unstable/encoding/Sse";
-import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
-import { DaemonErrorResponseSchema } from "./DaemonProtocol.ts";
-import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
-import { Stack, StackInfoSchema } from "./Stack.ts";
+import { ServiceNotFoundError, ServiceReadyError } from "@supabase/process-compose";
+import { Effect, Layer, Match, Predicate, Schema, Stream } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import * as HttpBody from "effect/unstable/http/HttpBody";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
+import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
+import type { Scope as ScopeType } from "effect/Scope";
+import {
+  DaemonUpgradeRequired,
+  StackBuildError,
+  StackNotRunningError,
+  StackReadinessError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StackUnavailableError,
+} from "./errors.ts";
+import { HttpTransportClient } from "./HttpTransportClient.ts";
+import {
+  ControlProtocolError,
+  ControlTransportError,
+  waitForControlSessionEnd,
+  type ControlEndpoint,
+} from "./managed/control.ts";
+import { Stack } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
-import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
-import { HttpTransportClient, HttpTransportClientError } from "./HttpTransportClient.ts";
-import type { ControlEndpoint } from "./managed/control.ts";
-import { SERVICE_NAMES } from "./versions.ts";
+import { StackRpc, STACK_RPC_PATH, type StackLaunchUpdateRpc } from "./StackRpc.ts";
+import { StackServiceState } from "./StackServiceState.ts";
+import { ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
+import type { BuildIdentityValue } from "./BuildIdentity.ts";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-const LogEntrySchema = Schema.Struct({
-  timestamp: Schema.Number,
-  service: Schema.String,
-  stream: Schema.Union([Schema.Literal("stdout"), Schema.Literal("stderr")]),
-  line: Schema.String,
-});
-
-const StatusServiceSchema = Schema.Struct({
-  name: Schema.String,
-  status: StackServiceStatusSchema,
-  pid: Schema.NullOr(Schema.Number),
-  exitCode: Schema.NullOr(Schema.Number),
-  restartCount: Schema.Number,
-  startedAt: Schema.NullOr(Schema.Number),
-  error: Schema.NullOr(Schema.String),
-});
-
-const StatusResponseSchema = Schema.Struct({
-  info: StackInfoSchema,
-  services: Schema.Array(StatusServiceSchema),
-});
-
-const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
-const LogEntryEventSchema = Schema.fromJsonString(LogEntrySchema);
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function requestHeaders(init?: RequestInit) {
-  return Object.fromEntries(new Headers(init?.headers).entries());
+interface RemoteOwnerDescriptor {
+  readonly ownershipId: string;
+  readonly ownerSessionId: string;
+  readonly endpoint: ControlEndpoint;
+  readonly controlProtocolVersion: 1;
+  readonly daemonCliVersion: string;
+  readonly daemonBuildId: string;
 }
 
-const publicServicePath = (name: string): Effect.Effect<string, ServiceNotFoundError> => {
-  const service = SERVICE_NAMES.find((candidate) => candidate === name);
-  return service === undefined
-    ? Effect.fail(new ServiceNotFoundError({ name }))
-    : Effect.succeed(encodeURIComponent(service));
+export interface RemoteStackOptions {
+  readonly owner: Omit<RemoteOwnerDescriptor, "endpoint">;
+  readonly buildIdentity?: BuildIdentityValue;
+  readonly stackId?: string;
+}
+
+type RemoteDomainError =
+  | StackUnavailableError
+  | ServiceNotFoundError
+  | ServiceReadyError
+  | StackBuildError
+  | StackNotRunningError
+  | StackReadinessError;
+type RemoteRpcError = RemoteDomainError | StackRpcTransportError | StackRpcProtocolError;
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+const field = (value: unknown, key: string): unknown =>
+  isRecord(value) ? Reflect.get(value, key) : undefined;
+const stringField = (value: unknown, key: string): string | undefined => {
+  const candidate = field(value, key);
+  return typeof candidate === "string" ? candidate : undefined;
+};
+const taggedValue = (value: unknown, tag: string): unknown =>
+  Predicate.isTagged(value, tag) ? value : undefined;
+const knownErrorTag = (value: unknown): string | undefined => {
+  const tags = [
+    "StackUnavailableError",
+    "ServiceNotFoundError",
+    "ServiceReadyError",
+    "StackBuildError",
+    "StackNotRunningError",
+    "StackReadinessError",
+    "RpcClientError",
+    "RpcClientDefect",
+    "HttpClientError",
+    "TransportError",
+  ] as const;
+  return tags.find((tag) => Predicate.isTagged(value, tag));
+};
+const remoteErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  if (isRecord(error))
+    return (
+      stringField(error, "detail") ??
+      stringField(error, "reason") ??
+      stringField(error, "message") ??
+      String(error)
+    );
+  return String(error);
 };
 
-const decodeStatusServiceEvent = (
+/** RPC schema transformations decode domain errors into their shared classes. */
+const makeDomainError = (error: unknown): RemoteDomainError | undefined => {
+  if (error instanceof StackUnavailableError) return error;
+  if (error instanceof ServiceNotFoundError) return error;
+  if (error instanceof ServiceReadyError) return error;
+  if (error instanceof StackBuildError) return error;
+  if (error instanceof StackNotRunningError) return error;
+  if (error instanceof StackReadinessError) return error;
+  return undefined;
+};
+
+const isAllowed = (error: RemoteDomainError, allowed: ReadonlyArray<string>): boolean =>
+  allowed.some((tag) => Predicate.isTagged(error, tag));
+const protocolError = (
   endpoint: ControlEndpoint,
-  path: string,
-  data: string,
-): Effect.Effect<StackServiceState, HttpTransportClientError> =>
-  Schema.decodeUnknownEffect(StatusServiceEventSchema)(data).pipe(
-    Effect.map(toServiceState),
-    Effect.mapError(
-      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
-    ),
-  );
-
-const decodeLogEntryEvent = (
-  endpoint: ControlEndpoint,
-  path: string,
-  data: string,
-): Effect.Effect<LogEntry, HttpTransportClientError> =>
-  Schema.decodeUnknownEffect(LogEntryEventSchema)(data).pipe(
-    Effect.mapError(
-      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
-    ),
-  );
-
-function makeRequest(
-  endpoint: ControlEndpoint,
-  path: string,
-  init?: RequestInit,
-): Effect.Effect<HttpClientRequest.HttpClientRequest, HttpTransportClientError> {
-  const url = `http://localhost${path}`;
-  const method = init?.method?.toUpperCase() ?? "GET";
-  switch (method) {
-    case "GET":
-      return Effect.succeed(HttpClientRequest.get(url, { headers: requestHeaders(init) }));
-    case "POST":
-      return Effect.succeed(HttpClientRequest.post(url, { headers: requestHeaders(init) }));
-    case "PUT":
-      return Effect.succeed(HttpClientRequest.put(url, { headers: requestHeaders(init) }));
-    case "PATCH":
-      return Effect.succeed(HttpClientRequest.patch(url, { headers: requestHeaders(init) }));
-    case "DELETE":
-      return Effect.succeed(HttpClientRequest.delete(url, { headers: requestHeaders(init) }));
-    case "HEAD":
-      return Effect.succeed(HttpClientRequest.head(url, { headers: requestHeaders(init) }));
-    case "OPTIONS":
-      return Effect.succeed(HttpClientRequest.options(url, { headers: requestHeaders(init) }));
-    case "TRACE":
-      return Effect.succeed(HttpClientRequest.trace(url, { headers: requestHeaders(init) }));
-    default:
-      return Effect.fail(
-        new HttpTransportClientError({
-          endpoint,
-          path,
-          cause: `Unsupported HTTP method: ${method}`,
-          reason: "protocol",
-        }),
-      );
-  }
-}
-
-/** Make a fetch request to the daemon control endpoint. */
-function httpFetch(endpoint: ControlEndpoint, path: string, init?: RequestInit) {
-  return Effect.flatMap(HttpTransportClient, (client) => client.request(endpoint, path, init));
-}
-
-function httpResponse(endpoint: ControlEndpoint, path: string, init?: RequestInit) {
-  return Effect.gen(function* () {
-    const request = yield* makeRequest(endpoint, path, init);
-    const response = yield* httpFetch(endpoint, path, init);
-    return HttpClientResponse.fromWeb(request, response);
+  procedure: string,
+  detail: string,
+  cause?: unknown,
+) =>
+  new StackRpcProtocolError({
+    endpoint: endpoint.url,
+    procedure,
+    detail,
+    ...(cause === undefined ? {} : { cause }),
   });
-}
+const transportError = (endpoint: ControlEndpoint, procedure: string, cause: unknown) =>
+  new StackRpcTransportError({ endpoint: endpoint.url, procedure, cause });
 
-/** Preserve daemon RPC identity when an HTTP status or body cannot be decoded. */
-function dieOnNonOkStatus<A>(
+const mapRpcError = (
+  error: unknown,
   endpoint: ControlEndpoint,
-  path: string,
-  effect: Effect.Effect<A, HttpClientError.HttpClientError>,
-) {
-  return effect.pipe(
-    Effect.mapError(
-      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "status" }),
-    ),
-    Effect.orDie,
-  );
-}
+  procedure: string,
+  allowed: ReadonlyArray<string>,
+): RemoteRpcError => {
+  const domain = makeDomainError(error);
+  if (domain !== undefined)
+    return isAllowed(domain, allowed)
+      ? domain
+      : protocolError(
+          endpoint,
+          procedure,
+          `Unexpected error ${knownErrorTag(error) ?? "unknown"}`,
+          error,
+        );
+  if (Predicate.isTagged(error, "HttpTransportClientError"))
+    return transportError(endpoint, procedure, error);
+  const rpcError = taggedValue(error, "RpcClientError");
+  if (rpcError !== undefined) {
+    const reason = field(rpcError, "reason");
+    const defect = taggedValue(reason, "RpcClientDefect");
+    if (defect !== undefined)
+      return protocolError(
+        endpoint,
+        procedure,
+        stringField(defect, "message") ?? "RPC protocol defect",
+        field(defect, "cause"),
+      );
+    const httpError = taggedValue(reason, "HttpClientError");
+    if (httpError !== undefined) {
+      const nested = field(httpError, "reason");
+      const transport = taggedValue(nested, "TransportError");
+      if (transport !== undefined)
+        return transportError(endpoint, procedure, field(transport, "cause") ?? transport);
+      return protocolError(endpoint, procedure, remoteErrorMessage(httpError), httpError);
+    }
+    return transportError(endpoint, procedure, reason);
+  }
+  if (Predicate.isTagged(error, "HttpClientError"))
+    return transportError(endpoint, procedure, error);
+  return protocolError(endpoint, procedure, remoteErrorMessage(error), error);
+};
 
-function dieOnBodyDecodeError<A, E, R>(
+const bodyForRequest = (
+  body: HttpBody.HttpBody,
+): Effect.Effect<string | Uint8Array | undefined, unknown> => {
+  return Match.valueTags(body, {
+    Empty: () => Effect.succeed(undefined),
+    FormData: () => Effect.succeed(undefined),
+    Uint8Array: (value) => Effect.succeed(value.body),
+    Raw: (value) => Effect.succeed(typeof value.body === "string" ? value.body : undefined),
+    Stream: (value) =>
+      Stream.runCollect(value.stream).pipe(
+        Effect.map((chunks) => {
+          const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+          const result = new Uint8Array(size);
+          let offset = 0;
+          for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.byteLength;
+          }
+          return result;
+        }),
+      ),
+  });
+};
+
+const makeHttpClient = (
   endpoint: ControlEndpoint,
-  path: string,
-  effect: Effect.Effect<A, E, R>,
-) {
-  return effect.pipe(
-    Effect.mapError(
-      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
-    ),
-    Effect.orDie,
-  );
-}
+  transport: HttpTransportClient["Service"],
+): HttpClient.HttpClient =>
+  HttpClient.make((request, url, signal) => {
+    const rawPath = `${url.pathname}${url.search}`;
+    const path = rawPath === `${STACK_RPC_PATH}/` ? STACK_RPC_PATH : rawPath;
+    return bodyForRequest(request.body).pipe(
+      Effect.flatMap((body) =>
+        transport.request(endpoint, path, {
+          method: request.method,
+          headers: { ...request.headers },
+          signal,
+          ...(body === undefined ? {} : { body }),
+        }),
+      ),
+      Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+      Effect.mapError(
+        (cause) =>
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, cause }),
+          }),
+      ),
+    );
+  });
 
-function withAbortSignal<A, E, R>(
-  effect: (signal: AbortSignal) => Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  return Effect.acquireUseRelease(
-    Effect.sync(() => new AbortController()),
-    (controller) => effect(controller.signal),
-    (controller) => Effect.sync(() => controller.abort()),
-  );
-}
-
-const failDaemonResponse = (
+type GeneratedRpcClient = RpcClient.RpcClient<
+  RpcGroup.Rpcs<typeof StackRpc>,
+  RpcClientError.RpcClientError
+>;
+const makeRemoteRpcClient = (
   endpoint: ControlEndpoint,
-  path: string,
-  response: HttpClientResponse.HttpClientResponse,
-  fallbackName: string,
+  options: RemoteStackOptions,
 ): Effect.Effect<
-  never,
-  | ServiceNotFoundError
-  | ServiceReadyError
-  | StackBuildError
-  | StackNotRunningError
-  | StackReadinessError
+  { readonly client: GeneratedRpcClient; readonly owner: typeof ControlOwnerStatusSchema.Type },
+  DaemonUpgradeRequired | StackRpcTransportError | StackRpcProtocolError,
+  HttpTransportClient | ScopeType
 > =>
   Effect.gen(function* () {
-    const body = yield* dieOnBodyDecodeError(
-      endpoint,
-      path,
-      HttpClientResponse.schemaBodyJson(DaemonErrorResponseSchema)(response),
+    const transport = yield* HttpTransportClient;
+    const ownerResponse = yield* transport
+      .request(endpoint, "/owner", { method: "GET" })
+      .pipe(Effect.mapError((error) => transportError(endpoint, "owner", error)));
+    if (!ownerResponse.ok)
+      return yield* Effect.fail(
+        protocolError(endpoint, "owner", `Owner probe returned HTTP ${ownerResponse.status}`),
+      );
+    const ownerValue = yield* Effect.tryPromise({
+      try: () => ownerResponse.json(),
+      catch: (cause) => protocolError(endpoint, "owner", "Invalid owner response", cause),
+    });
+    const ownerStatus = yield* Schema.decodeUnknownEffect(ControlOwnerStatusSchema)(
+      ownerValue,
+    ).pipe(
+      Effect.mapError((cause) => protocolError(endpoint, "owner", "Invalid owner response", cause)),
     );
-    switch (body.code) {
-      case "SERVICE_NOT_FOUND":
-        return yield* new ServiceNotFoundError({ name: body.service ?? fallbackName });
-      case "SERVICE_NOT_READY":
-        return yield* new ServiceReadyError({
-          name: body.service ?? fallbackName,
-          reason: body.error,
-          ...(body.exitCode === undefined ? {} : { exitCode: body.exitCode }),
-        });
-      case "STACK_BUILD_ERROR":
-        return yield* new StackBuildError({
-          detail: body.error,
-          ...(body.reason === undefined ? {} : { reason: body.reason }),
-        });
-      case "STACK_READINESS_TIMEOUT":
-        return yield* new StackReadinessError({
-          target: body.service ?? fallbackName,
-          timeoutMs: body.timeoutMs ?? 0,
-          detail: body.error,
-        });
-      case "STACK_NOT_RUNNING":
-        return yield* new StackNotRunningError({ phase: body.phase ?? "unknown" });
-    }
+    const expectedOwner = options.owner;
+    if (
+      options.buildIdentity !== undefined &&
+      options.buildIdentity.buildId !== ownerStatus.daemonBuildId
+    )
+      return yield* Effect.fail(
+        new DaemonUpgradeRequired({
+          stackId: options.stackId ?? expectedOwner.ownershipId,
+          oldCliVersion: ownerStatus.daemonCliVersion,
+          oldBuildId: ownerStatus.daemonBuildId,
+          newCliVersion: options.buildIdentity.cliVersion,
+          newBuildId: options.buildIdentity.buildId,
+        }),
+      );
+    if (
+      ownerStatus.ownershipId !== expectedOwner.ownershipId ||
+      ownerStatus.ownerSessionId !== expectedOwner.ownerSessionId ||
+      ownerStatus.controlProtocolVersion !== expectedOwner.controlProtocolVersion ||
+      ownerStatus.daemonCliVersion !== expectedOwner.daemonCliVersion ||
+      ownerStatus.daemonBuildId !== expectedOwner.daemonBuildId
+    )
+      return yield* Effect.fail(
+        protocolError(
+          endpoint,
+          "owner",
+          "Remote supervisor owner descriptor changed before RPC construction",
+        ),
+      );
+    const rpcHttpClient = HttpClient.mapRequest(
+      makeHttpClient(endpoint, transport),
+      HttpClientRequest.prependUrl(`${endpoint.url}${STACK_RPC_PATH}`),
+    );
+    const protocol = yield* RpcClient.makeProtocolHttp(rpcHttpClient).pipe(
+      Effect.provide(RpcSerialization.layerNdjson),
+    );
+    const client = yield* RpcClient.make(StackRpc).pipe(
+      Effect.provideService(RpcClient.Protocol, protocol),
+    );
+    return { client, owner: ownerStatus };
   });
 
-const expectDaemonOk = (
-  endpoint: ControlEndpoint,
-  path: string,
-  response: HttpClientResponse.HttpClientResponse,
-  fallbackName: string,
-): Effect.Effect<
-  void,
-  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
-> =>
-  response.status >= 200 && response.status < 300
-    ? Effect.void
-    : failDaemonResponse(endpoint, path, response, fallbackName).pipe(
-        Effect.catchTag("StackNotRunningError", (error) => Effect.die(error)),
-      );
-
-const expectMutatingDaemonOk = (
-  endpoint: ControlEndpoint,
-  path: string,
-  response: HttpClientResponse.HttpClientResponse,
-  fallbackName: string,
-): Effect.Effect<
-  void,
+const allowedError =
+  <E extends RemoteDomainError>(
+    endpoint: ControlEndpoint,
+    procedure: string,
+    allowed: ReadonlyArray<string>,
+    guard: (error: RemoteDomainError) => error is E,
+  ) =>
+  (error: unknown): E | StackRpcTransportError | StackRpcProtocolError => {
+    const mapped = mapRpcError(error, endpoint, procedure, allowed);
+    if (mapped instanceof StackRpcTransportError || mapped instanceof StackRpcProtocolError)
+      return mapped;
+    return guard(mapped)
+      ? mapped
+      : protocolError(
+          endpoint,
+          procedure,
+          `Unexpected error ${knownErrorTag(error) ?? "unknown"}`,
+          error,
+        );
+  };
+const unavailable = (error: RemoteDomainError): error is StackUnavailableError =>
+  error instanceof StackUnavailableError;
+const notFound = (error: RemoteDomainError): error is ServiceNotFoundError =>
+  error instanceof ServiceNotFoundError;
+const ready = (error: RemoteDomainError): error is ServiceReadyError =>
+  error instanceof ServiceReadyError;
+const build = (error: RemoteDomainError): error is StackBuildError =>
+  error instanceof StackBuildError;
+const notRunning = (error: RemoteDomainError): error is StackNotRunningError =>
+  error instanceof StackNotRunningError;
+const readiness = (error: RemoteDomainError): error is StackReadinessError =>
+  error instanceof StackReadinessError;
+const mutating = (
+  error: RemoteDomainError,
+): error is
+  | StackUnavailableError
   | ServiceNotFoundError
   | ServiceReadyError
   | StackBuildError
   | StackNotRunningError
-  | StackReadinessError
-> =>
-  response.status >= 200 && response.status < 300
-    ? Effect.void
-    : failDaemonResponse(endpoint, path, response, fallbackName);
-
-/** Fetch JSON from the daemon, dying on HTTP errors. */
-function fetchStatus(endpoint: ControlEndpoint, path: string, method = "GET") {
-  return Effect.gen(function* () {
-    const response = yield* httpResponse(endpoint, path, { method });
-    const okResponse = yield* dieOnNonOkStatus(
-      endpoint,
-      path,
-      HttpClientResponse.filterStatusOk(response),
-    );
-    return yield* dieOnBodyDecodeError(
-      endpoint,
-      path,
-      HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse),
-    );
-  });
-}
-
-function fetchLogEntries(endpoint: ControlEndpoint, path: string) {
-  return Effect.gen(function* () {
-    const response = yield* httpResponse(endpoint, path);
-    const okResponse = yield* dieOnNonOkStatus(
-      endpoint,
-      path,
-      HttpClientResponse.filterStatusOk(response),
-    );
-    return yield* dieOnBodyDecodeError(
-      endpoint,
-      path,
-      HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse),
-    );
-  });
-}
-
-function encodeSearchParams(
-  params: Record<string, string | number | ReadonlyArray<string> | undefined>,
-): string {
-  const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined) continue;
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        searchParams.append(key, item);
-      }
-      continue;
-    }
-    searchParams.set(key, String(value));
-  }
-  const query = searchParams.toString();
-  return query.length > 0 ? `?${query}` : "";
-}
-
-/** Convert a ReadableStream SSE body into an Effect Stream of parsed events. */
-function sseStream<A>(
-  endpoint: ControlEndpoint,
-  path: string,
-  parse: (data: string) => Effect.Effect<A, HttpTransportClientError>,
-) {
-  return Stream.unwrap(
-    Effect.gen(function* () {
-      const controller = new AbortController();
-      const response = yield* httpFetch(endpoint, path, { signal: controller.signal });
-      if (!response.ok) {
-        return yield* new HttpTransportClientError({
-          endpoint,
-          path,
-          cause: new Error(`SSE request failed: ${response.status}`),
-          reason: "status",
-        });
-      }
-      const body = response.body;
-      if (body === null) {
-        return yield* new HttpTransportClientError({
-          endpoint,
-          path,
-          cause: new Error("SSE response body is missing"),
-          reason: "protocol",
-        });
-      }
-
-      // State shared across chunks — parser is stateful, accumulates partial events
-      const collected: string[] = [];
-      const parser = Sse.makeParser((event) => {
-        if (Predicate.isTagged(event, "Event")) {
-          collected.push(event.data);
-        }
-      });
-
-      return Stream.fromReadableStream({
-        evaluate: () => body,
-        onError: (cause) =>
-          new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
-      }).pipe(
-        Stream.mapEffect((chunk: Uint8Array) =>
-          Effect.sync(() => {
-            collected.length = 0;
-            parser.feed(new TextDecoder().decode(chunk, { stream: true }));
-            return Array.from(collected);
-          }).pipe(Effect.flatMap((events) => Effect.forEach(events, parse))),
-        ),
-        Stream.flatMap(Stream.fromIterable),
-        Stream.ensuring(Effect.sync(() => controller.abort())),
-      );
-    }),
-  );
-}
-
-/** Deserialize a plain JSON object into a ServiceState Data.Class instance. */
-function toServiceState(
-  raw: (typeof StatusResponseSchema.Type)["services"][number],
-): StackServiceState {
-  return new StackServiceState({
-    name: raw.name,
-    status: raw.status,
-    pid: raw.pid,
-    exitCode: raw.exitCode,
-    restartCount: raw.restartCount,
-    startedAt: raw.startedAt,
-    error: raw.error,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Service
-// ---------------------------------------------------------------------------
-
-/**
- * RemoteStack implements the Stack interface over HTTP to a daemon running
- * on a deterministic loopback control endpoint.
- * This allows the CLI to transparently switch between foreground
- * (in-process) and detached (daemon) modes.
- */
+  | StackReadinessError =>
+  unavailable(error) ||
+  notFound(error) ||
+  ready(error) ||
+  build(error) ||
+  notRunning(error) ||
+  readiness(error);
 export const RemoteStack = {
-  layer: (endpoint: ControlEndpoint): Layer.Layer<Stack, never, HttpTransportClient> =>
+  layer: (
+    endpoint: ControlEndpoint,
+    options: RemoteStackOptions,
+  ): Layer.Layer<
+    Stack,
+    DaemonUpgradeRequired | StackRpcTransportError | StackRpcProtocolError,
+    HttpTransportClient
+  > =>
     Layer.effect(
       Stack,
       Effect.gen(function* () {
-        const httpTransportClient = yield* HttpTransportClient;
-        const httpTransportClientLayer = Layer.succeed(HttpTransportClient, httpTransportClient);
-        const withHttpTransportClient = <A, E, R>(
-          effect: Effect.Effect<A, E | HttpTransportClientError, R | HttpTransportClient>,
-        ) =>
-          effect.pipe(
-            Effect.provide(httpTransportClientLayer),
-            Effect.catchTag("HttpTransportClientError", (error) => Effect.die(error)),
-          );
-        const withHttpTransportClientStream = <A, E, R>(
-          stream: Stream.Stream<A, E | HttpTransportClientError, R | HttpTransportClient>,
-        ) =>
-          stream.pipe(
-            Stream.provide(httpTransportClientLayer),
-            Stream.catchTag("HttpTransportClientError", (error) => Stream.die(error)),
-          );
-        const withLifecycleRequest = <A, E, R>(
-          request: (signal: AbortSignal) => Effect.Effect<A, E | HttpTransportClientError, R>,
-        ) => withHttpTransportClient(withAbortSignal(request));
-
+        const transport = yield* HttpTransportClient;
+        const { client } = yield* makeRemoteRpcClient(endpoint, options);
+        const call = <A, E extends RemoteDomainError>(
+          procedure: string,
+          effect: Effect.Effect<A, unknown>,
+          allowed: ReadonlyArray<string>,
+          guard: (error: RemoteDomainError) => error is E,
+        ): Effect.Effect<A, E | StackRpcTransportError | StackRpcProtocolError> =>
+          effect.pipe(Effect.mapError(allowedError(endpoint, procedure, allowed, guard)));
+        const requestStop = (signal?: AbortSignal) => {
+          const owner = options.owner;
+          const body = JSON.stringify({
+            ownershipId: owner.ownershipId,
+            ownerSessionId: owner.ownerSessionId,
+          });
+          const readOwnerAfterStop = transport
+            .request(endpoint, "/owner", {
+              method: "GET",
+              headers: { connection: "close" },
+              ...(signal === undefined ? {} : { signal }),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+              ),
+              Effect.flatMap((response) =>
+                response.ok
+                  ? Effect.tryPromise({ try: () => response.json(), catch: (cause) => cause })
+                  : Effect.fail(
+                      new ControlTransportError({
+                        endpoint,
+                        reason: "unreachable",
+                        cause: response.status,
+                      }),
+                    ),
+              ),
+              Effect.mapError((cause) =>
+                cause instanceof ControlTransportError
+                  ? cause
+                  : new ControlProtocolError({ endpoint, cause }),
+              ),
+              Effect.flatMap((value) =>
+                Schema.decodeUnknownEffect(ControlOwnerStatusSchema)(value).pipe(
+                  Effect.mapError(() => new ControlProtocolError({ endpoint, cause: value })),
+                ),
+              ),
+            );
+          return transport
+            .request(endpoint, "/stop", {
+              method: "POST",
+              body,
+              headers: { "content-type": "application/json", connection: "close" },
+              ...(signal === undefined ? {} : { signal }),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) => new ControlTransportError({ endpoint, reason: "unreachable", cause }),
+              ),
+              Effect.flatMap((response) =>
+                response.ok
+                  ? waitForControlSessionEnd(
+                      endpoint,
+                      owner.ownershipId,
+                      owner.ownerSessionId,
+                      readOwnerAfterStop,
+                    )
+                  : Effect.fail(new ControlProtocolError({ endpoint, cause: response.status })),
+              ),
+            );
+        };
         return {
           getInfo: () =>
-            withHttpTransportClient(
-              Effect.map(fetchStatus(endpoint, "/status"), (res) => res.info),
-            ),
-
+            call("GetInfo", client.GetInfo(undefined), ["StackUnavailableError"], unavailable),
           start: () =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const path = "/start";
-                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
-                yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
-                  Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
-                );
-              }),
+            call(
+              "StartStack",
+              client.StartStack(undefined),
+              [
+                "StackUnavailableError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackReadinessError",
+              ],
+              (
+                e,
+              ): e is
+                | StackUnavailableError
+                | ServiceReadyError
+                | StackBuildError
+                | StackReadinessError => unavailable(e) || ready(e) || build(e) || readiness(e),
             ),
-
-          stop: () =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
-                yield* dieOnNonOkStatus(
-                  endpoint,
-                  path,
-                  HttpClientResponse.filterStatusOk(response),
-                );
-              }),
-            ),
-
-          dispose: () =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
-                yield* dieOnNonOkStatus(
-                  endpoint,
-                  path,
-                  HttpClientResponse.filterStatusOk(response),
-                );
-              }),
-            ),
-
+          stop: () => requestStop(),
+          dispose: () => requestStop(),
           startService: (name: string) =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/start`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                  signal,
-                });
-                yield* expectMutatingDaemonOk(endpoint, path, response, name);
-              }),
+            call(
+              "StartService",
+              client.StartService({ name }),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackNotRunningError",
+                "StackReadinessError",
+              ],
+              mutating,
             ),
-
           stopService: (name: string) =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/stop`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                  signal,
-                });
-                yield* expectMutatingDaemonOk(endpoint, path, response, name).pipe(
-                  Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
-                  Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
-                );
-              }),
+            call(
+              "StopService",
+              client.StopService({ name }),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "StackBuildError",
+                "StackNotRunningError",
+              ],
+              (
+                e,
+              ): e is
+                | StackUnavailableError
+                | ServiceNotFoundError
+                | StackBuildError
+                | StackNotRunningError =>
+                unavailable(e) || notFound(e) || build(e) || notRunning(e),
             ),
-
           restartService: (name: string) =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const servicePath = yield* publicServicePath(name);
-                const path = `/services/${servicePath}/restart`;
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                  signal,
-                });
-                yield* expectMutatingDaemonOk(endpoint, path, response, name);
-              }),
+            call(
+              "RestartService",
+              client.RestartService({ name }),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackNotRunningError",
+                "StackReadinessError",
+              ],
+              mutating,
             ),
-
           reloadFunctions: (opts) =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const path = "/functions/reload";
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                  signal,
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify(opts ?? {}),
-                });
-                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
-              }),
+            call(
+              "ReloadFunctions",
+              client.ReloadFunctions(opts === undefined ? {} : { options: opts }),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackNotRunningError",
+                "StackReadinessError",
+              ],
+              mutating,
             ),
-
           reloadEdgeRuntime: (opts) =>
-            withLifecycleRequest((signal) =>
-              Effect.gen(function* () {
-                const path = "/edge-runtime/reload";
-                const response = yield* httpResponse(endpoint, path, {
-                  method: "POST",
-                  signal,
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify(opts),
-                });
-                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
-              }),
+            call(
+              "ReloadEdgeRuntime",
+              client.ReloadEdgeRuntime(opts),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackNotRunningError",
+                "StackReadinessError",
+              ],
+              mutating,
             ),
-
           getState: (name: string) =>
-            withHttpTransportClient(
-              Effect.gen(function* () {
-                const { services } = yield* fetchStatus(endpoint, "/status");
-                const match = services.find((s) => s.name === name);
-                if (!match) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                return toServiceState(match);
-              }),
-            ),
-
+            call(
+              "GetServiceState",
+              client.GetServiceState({ name }),
+              ["StackUnavailableError", "ServiceNotFoundError"],
+              (e): e is StackUnavailableError | ServiceNotFoundError =>
+                unavailable(e) || notFound(e),
+            ).pipe(Effect.map((state) => new StackServiceState(state))),
           getAllStates: () =>
-            withHttpTransportClient(
-              Effect.map(fetchStatus(endpoint, "/status"), (res) =>
-                res.services.map(toServiceState),
-              ),
-            ),
-
+            call(
+              "GetAllServiceStates",
+              client.GetAllServiceStates(undefined),
+              ["StackUnavailableError"],
+              unavailable,
+            ).pipe(Effect.map((states) => states.map((state) => new StackServiceState(state)))),
           stateChanges: (name: string) =>
-            withHttpTransportClient(
-              Effect.gen(function* () {
-                // Verify the service exists first
-                const { services } = yield* fetchStatus(endpoint, "/status");
-                if (!services.some((s) => s.name === name)) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                return withHttpTransportClientStream(
-                  sseStream(endpoint, "/status/stream", (data) =>
-                    decodeStatusServiceEvent(endpoint, "/status/stream", data),
-                  ).pipe(Stream.filter((s) => s.name === name)),
-                );
-              }),
+            Effect.succeed(
+              client.WatchServiceStates({ name }).pipe(
+                Stream.map((state) => new StackServiceState(state)),
+                Stream.mapError(
+                  allowedError(
+                    endpoint,
+                    "WatchServiceStates",
+                    ["StackUnavailableError", "ServiceNotFoundError"],
+                    (e): e is StackUnavailableError | ServiceNotFoundError =>
+                      unavailable(e) || notFound(e),
+                  ),
+                ),
+              ),
             ),
-
           allStateChanges: () =>
-            withHttpTransportClientStream(
-              sseStream(endpoint, "/status/stream", (data) =>
-                decodeStatusServiceEvent(endpoint, "/status/stream", data),
+            client.WatchServiceStates({}).pipe(
+              Stream.map((state) => new StackServiceState(state)),
+              Stream.mapError(
+                allowedError(
+                  endpoint,
+                  "WatchServiceStates",
+                  ["StackUnavailableError"],
+                  unavailable,
+                ),
               ),
             ),
-
-          waitReady: (name, opts) =>
-            withHttpTransportClient(
-              withAbortSignal((signal) =>
-                Effect.gen(function* () {
-                  const servicePath = yield* publicServicePath(name);
-                  const path = `/services/${servicePath}/ready`;
-                  const response = yield* httpResponse(endpoint, path, {
-                    method: "POST",
-                    signal,
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify(opts ?? inheritReadyOptions),
-                  });
-                  yield* expectDaemonOk(endpoint, path, response, name);
-                }),
-              ),
+          waitReady: (name: string, opts) =>
+            call(
+              "WaitServiceReady",
+              client.WaitServiceReady({ name, options: opts ?? inheritReadyOptions }),
+              [
+                "StackUnavailableError",
+                "ServiceNotFoundError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackReadinessError",
+              ],
+              (
+                e,
+              ): e is
+                | StackUnavailableError
+                | ServiceNotFoundError
+                | ServiceReadyError
+                | StackBuildError
+                | StackReadinessError =>
+                unavailable(e) || notFound(e) || ready(e) || build(e) || readiness(e),
             ),
-
           waitAllReady: (opts) =>
-            withHttpTransportClient(
-              withAbortSignal((signal) =>
-                Effect.gen(function* () {
-                  const path = "/ready";
-                  const response = yield* httpResponse(endpoint, path, {
-                    method: "POST",
-                    signal,
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify(opts ?? inheritReadyOptions),
-                  });
-                  yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
-                    Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
-                  );
-                }),
-              ),
+            call(
+              "WaitStackReady",
+              client.WaitStackReady({ options: opts ?? inheritReadyOptions }),
+              [
+                "StackUnavailableError",
+                "ServiceReadyError",
+                "StackBuildError",
+                "StackReadinessError",
+              ],
+              (
+                e,
+              ): e is
+                | StackUnavailableError
+                | ServiceReadyError
+                | StackBuildError
+                | StackReadinessError => unavailable(e) || ready(e) || build(e) || readiness(e),
             ),
-
           subscribeLogs: (name: string) =>
-            withHttpTransportClientStream(
-              sseStream<LogEntry>(endpoint, `/logs/${encodeURIComponent(name)}`, (data) =>
-                decodeLogEntryEvent(endpoint, `/logs/${encodeURIComponent(name)}`, data),
+            client
+              .WatchLogs({ name })
+              .pipe(
+                Stream.mapError(
+                  allowedError(
+                    endpoint,
+                    "WatchLogs",
+                    ["StackUnavailableError", "ServiceNotFoundError"],
+                    (e): e is StackUnavailableError | ServiceNotFoundError =>
+                      unavailable(e) || notFound(e),
+                  ),
+                ),
               ),
+          subscribeAllLogs: (services) =>
+            client
+              .WatchLogs(services === undefined ? {} : { services })
+              .pipe(
+                Stream.mapError(
+                  allowedError(
+                    endpoint,
+                    "WatchLogs",
+                    ["StackUnavailableError", "ServiceNotFoundError"],
+                    (e): e is StackUnavailableError | ServiceNotFoundError =>
+                      unavailable(e) || notFound(e),
+                  ),
+                ),
+              ),
+          logHistory: (name: string, limit?: number) =>
+            call(
+              "GetLogHistory",
+              client.GetLogHistory(limit === undefined ? { name } : { name, limit }),
+              ["StackUnavailableError", "ServiceNotFoundError"],
+              (e): e is StackUnavailableError | ServiceNotFoundError =>
+                unavailable(e) || notFound(e),
             ),
-
-          subscribeAllLogs: (services) => {
-            const query = encodeSearchParams({ service: services });
-            return withHttpTransportClientStream(
-              sseStream<LogEntry>(endpoint, `/logs${query}`, (data) =>
-                decodeLogEntryEvent(endpoint, `/logs${query}`, data),
-              ),
-            );
-          },
-
-          logHistory: (name: string, limit?: number) => {
-            const query = limit !== undefined ? `?limit=${limit}` : "";
-            return withHttpTransportClient(
-              fetchLogEntries(endpoint, `/logs/${encodeURIComponent(name)}/history${query}`),
-            );
-          },
-
-          logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) => {
-            const query = encodeSearchParams({ limit, service: services });
-            return withHttpTransportClient(fetchLogEntries(endpoint, `/logs/history${query}`));
-          },
+          logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
+            call(
+              "GetLogHistory",
+              client.GetLogHistory({
+                ...(limit === undefined ? {} : { limit }),
+                ...(services === undefined ? {} : { services }),
+              }),
+              ["StackUnavailableError", "ServiceNotFoundError"],
+              (e): e is StackUnavailableError | ServiceNotFoundError =>
+                unavailable(e) || notFound(e),
+            ),
         };
       }),
     ),
 };
+
+export const updateRemoteLaunch = (
+  endpoint: ControlEndpoint,
+  options: RemoteStackOptions,
+  stackId: string,
+  launch: StackLaunchUpdateRpc,
+): Effect.Effect<
+  void,
+  DaemonUpgradeRequired | StackBuildError | StackRpcTransportError | StackRpcProtocolError,
+  HttpTransportClient
+> =>
+  Effect.scoped(
+    makeRemoteRpcClient(endpoint, options).pipe(
+      Effect.flatMap(({ client }) => client.UpdateLaunch({ stackId, launch })),
+      Effect.mapError((error) => {
+        if (error instanceof DaemonUpgradeRequired) return error;
+        const mapped = mapRpcError(error, endpoint, "UpdateLaunch", ["StackBuildError"]);
+        if (
+          mapped instanceof StackBuildError ||
+          mapped instanceof StackRpcTransportError ||
+          mapped instanceof StackRpcProtocolError
+        )
+          return mapped;
+        return protocolError(
+          endpoint,
+          "UpdateLaunch",
+          `Unexpected error ${knownErrorTag(error) ?? "unknown"}`,
+          error,
+        );
+      }),
+    ),
+  );

@@ -3,17 +3,21 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { createServer } from "node:http";
 import * as Http from "node:http";
 import { fileURLToPath } from "node:url";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Scope, Schema } from "effect";
+import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
+  ControlStopRequestSchema,
+  type ControlStopRequest,
   ControlBindError,
   ControlProtocolError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
   type ControlEndpoint,
+  type ControlApplication,
 } from "./managed/control.ts";
 
 const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
@@ -59,24 +63,101 @@ const readError = (
 };
 
 const controlTransport: ControlTransport["Service"] = {
-  bind: (endpoint: ControlEndpoint, ownerStatus: () => ControlOwnerStatus, onStop: () => void) => {
-    const rawServer = createServer((request, response) => {
-      if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
-        if (rawServer.listenerCount("request") > 1) return;
-        onStop();
-        response.writeHead(202, { "content-type": "application/json" });
-        response.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") {
-        if (rawServer.listenerCount("request") > 1) return;
-        response.writeHead(503, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "Stack supervisor is starting" }));
-        return;
-      }
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(ownerStatus()));
-    });
+  bind: (
+    endpoint: ControlEndpoint,
+    ownerStatus: () => ControlOwnerStatus,
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    application?: ControlApplication,
+  ) => {
+    const rawServer = createServer(
+      application === undefined
+        ? (request, response) => {
+            if (request.url === CONTROL_STOP_PATH && request.method === "POST") {
+              const chunks: Buffer[] = [];
+              let size = 0;
+              request.on("data", (chunk: Buffer) => {
+                size += chunk.byteLength;
+                if (size <= 16 * 1024) chunks.push(chunk);
+              });
+              request.once("end", () => {
+                let decoded: ControlStopRequest | undefined;
+                try {
+                  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+                  decoded = Schema.decodeUnknownSync(ControlStopRequestSchema)(parsed);
+                } catch {
+                  response.writeHead(400, { "content-type": "application/json" });
+                  response.end(JSON.stringify({ error: "Invalid stop request" }));
+                  return;
+                }
+                const decision = onStop(decoded);
+                const status = decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
+                response.writeHead(status, { "content-type": "application/json" });
+                response.end(
+                  JSON.stringify(decision === "accepted" ? { ok: true } : { error: decision }),
+                );
+              });
+              return;
+            }
+            if (request.url !== CONTROL_STATUS_PATH || request.method !== "GET") {
+              response.writeHead(503, { "content-type": "application/json" });
+              response.end(JSON.stringify({ error: "Stack supervisor is starting" }));
+              return;
+            }
+            response.writeHead(200, { "content-type": "application/json" });
+            response.end(JSON.stringify(ownerStatus()));
+          }
+        : undefined,
+    );
+    if (application !== undefined) {
+      return Effect.gen(function* () {
+        const scope = yield* Effect.scope;
+        const handler = yield* NodeHttpServer.makeHandler(application.app, {
+          scope,
+          middleware: application.middleware,
+        });
+        rawServer.removeAllListeners("request");
+        rawServer.on("request", handler);
+        yield* Effect.callback<void, Error>((resume) => {
+          const onError = (cause: Error) => {
+            rawServer.off("error", onError);
+            resume(Effect.fail(cause));
+          };
+          rawServer.once("error", onError);
+          rawServer.listen({ host: endpoint.hostname, port: endpoint.port }, () => {
+            rawServer.off("error", onError);
+            resume(Effect.void);
+          });
+          return Effect.sync(() => {
+            rawServer.off("error", onError);
+            if (rawServer.listening) rawServer.close();
+            else rawServer.once("listening", () => rawServer.close());
+          });
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ControlBindError({
+                endpoint,
+                reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+                cause,
+              }),
+          ),
+        );
+        const boundAddress = rawServer.address();
+        const server = HttpServer.make({
+          address: {
+            _tag: "TcpAddress",
+            hostname: endpoint.hostname,
+            port:
+              typeof boundAddress === "object" && boundAddress !== null
+                ? boundAddress.port
+                : endpoint.port,
+          },
+          serve: () => Effect.void,
+        });
+        yield* Scope.addFinalizer(scope, closeControlServer(rawServer));
+        return { server, close: closeControlServer(rawServer) };
+      });
+    }
     return NodeHttpServer.make(() => rawServer, {
       host: endpoint.hostname,
       port: endpoint.port,
@@ -214,7 +295,7 @@ const controlTransport: ControlTransport["Service"] = {
       }),
       Effect.mapError((cause) => readError(endpoint, cause)),
     ),
-  requestStop: (endpoint: ControlEndpoint) =>
+  requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
     Effect.callback<void, unknown>((resume) => {
       let response: Http.IncomingMessage | undefined;
       let onEnd: (() => void) | undefined;
@@ -289,7 +370,10 @@ const controlTransport: ControlTransport["Service"] = {
         }
       };
       request.once("error", onRequestError);
-      request.end();
+      const body = JSON.stringify(stopRequest);
+      request.setHeader("content-type", "application/json");
+      request.setHeader("content-length", Buffer.byteLength(body));
+      request.end(body);
       return Effect.callback<void>((resumeCancellation) => {
         const onClose = () => {
           cleanup();

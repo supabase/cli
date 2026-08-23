@@ -106,4 +106,90 @@ describe("status handler", () => {
       }),
     ),
   );
+
+  it.live("renders a degraded owner/document summary when the daemon build differs", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(),
+          mockProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: "Local Supabase stack is running under an older CLI build.",
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "info",
+                  message: "Run `supabase start` to restart the stack with the current CLI.",
+                }),
+              );
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "info",
+                  message: expect.stringContaining("API URL:"),
+                }),
+              );
+            }),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.live("returns only the degraded owner/document fields in structured output", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput({ format: "json", interactive: false });
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(),
+          mockProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              const success = out.messages.find((message) => message.type === "success");
+              expect(success).toEqual(
+                expect.objectContaining({
+                  data: expect.objectContaining({
+                    degraded: true,
+                    reason: "daemon_upgrade_required",
+                    daemon_cli_version: "2.60.0",
+                    daemon_build_id: "release:2.60.0",
+                    instruction: "Run `supabase start` to restart the stack with the current CLI.",
+                  }),
+                }),
+              );
+              expect(success?.data).not.toHaveProperty("api_url");
+              expect(success?.data).not.toHaveProperty("services");
+            }),
+          ),
+        );
+      }),
+    ),
+  );
 });

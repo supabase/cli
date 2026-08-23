@@ -19,21 +19,36 @@ write a second StateManager metadata file.
 
 ## Detached owner cleanup
 
-The managed supervisor owns the port lease, service processes, and local control
-endpoint. It records `starting`, `running`, `failed`, and `stopped` in
-`stack.json`. Graceful stop calls the owner through `RemoteStack` and waits for
-the document to become `stopped` before a caller may delete it.
+The managed supervisor owns the port lease, service processes, and one complete
+loopback HTTP application. It records `starting`, `running`, `failed`, and
+`stopped` in `stack.json`. `SupervisorLifecycle` owns one atomic state and one
+cached shutdown transaction; stop requests from HTTP, signals, parent IPC,
+startup failure, and explicit disposal all join that transaction.
+
+The application is assembled before the deterministic listener binds and has
+only three routes:
+
+- `GET /owner` projects the lifecycle state, readiness, owner session, and
+  daemon build identity;
+- `POST /stop` accepts an ownership id and exact owner session id, returns a
+  flushed `202`, and lets the caller wait for that session to end; and
+- `POST /rpc` serves same-build Effect RPC over framed NDJSON when the runtime
+  is published by `RuntimeGate`.
+
+Graceful remote stop therefore uses the stable session-fenced control route,
+waits for the targeted owner session and document transition, then lets the
+owner dispose the runtime before releasing control. A stale delayed stop gets
+`409` from a replacement owner and cannot tear down the replacement.
 
 If the owner is gone, the next lifecycle operation acquires control for the
 stack id, force-removes deterministic Docker containers, reconciles persisted
 assignments, and records `stopped`. It does not probe PIDs or trust stale
-runtime artifacts.
-The control endpoint is deterministic from the stack id and is validated before
-an attached client connects.
+runtime artifacts. The control endpoint is deterministic from the stack id and
+is validated before an attached client connects.
 
-The child uses `DaemonServer` over the deterministic loopback TCP control
-transport. The endpoint is runtime coordination state, not the public API
-proxy URL.
+The endpoint is runtime coordination state, not the public API proxy URL. Node,
+Bun, and compiled-Bun children use the same static application and lifecycle
+composition; the same server owns every lifecycle phase.
 
 ## Process supervision
 
@@ -57,11 +72,12 @@ waits for disposal to begin before interrupting the main Effect. Direct
 ## Regression coverage
 
 Integration tests cover manager port/document cleanup, detached supervisor
-startup/reattach/launch-update/stop, stale-owner recovery, and delete. The
-process-compose and stack suites cover supervised child trees, Docker cleanup
-hooks, and one-shot exit observation. Leak helpers compare managed document and
-runtime roots, temporary Postgres paths, processes, and containers before and
-after each journey.
+startup/reattach/launch-update over RPC, stop during every startup phase,
+session-fenced stop, stale-owner recovery, upgrade replacement, cancellation,
+and delete. The process-compose and stack suites cover supervised child trees,
+Docker cleanup hooks, one-shot exit observation, and Node/Bun/compiled-Bun
+re-entry. Leak helpers compare managed document and runtime roots, temporary
+Postgres paths, processes, and containers before and after each journey.
 
 ## Platform notes
 

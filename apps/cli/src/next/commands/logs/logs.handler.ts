@@ -1,10 +1,11 @@
 import { connectLayer, Stack } from "@supabase/stack/effect";
-import { Effect, Stream } from "effect";
+import { Context, Effect, Layer, Stream } from "effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { currentCliBuildIdentity } from "../../../shared/cli/version.ts";
 import type { LogsFlags } from "./logs.command.ts";
 import { UnsupportedLogsOutputFormatError } from "./logs.errors.ts";
 
@@ -54,6 +55,7 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
       const projectHome = yield* ProjectHome;
       const processControl = yield* ProcessControl;
       const runtimeInfo = yield* RuntimeInfo;
+      const buildIdentity = yield* currentCliBuildIdentity;
 
       yield* output.intro("Show local Supabase logs");
 
@@ -65,12 +67,14 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
       }
 
       const layer = yield* connectLayer({
+        buildIdentity,
         cwd: runtimeInfo.cwd,
         cacheRoot: cliConfig.supabaseHome,
         projectDir: projectHome.projectRoot,
         name: flags.stack,
       });
-      const stack = yield* Effect.provide(Stack, layer);
+      const context = yield* Layer.build(layer);
+      const stack = Context.get(context, Stack);
       const services = flags.service.length === 0 ? undefined : flags.service;
       const history = flags.tail > 0 ? yield* stack.logHistoryAll(flags.tail, services) : [];
       const historyStream = Stream.fromIterable(history).pipe(

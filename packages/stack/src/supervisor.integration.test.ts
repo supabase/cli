@@ -1,5 +1,5 @@
-import { Cause, Context, Effect, Exit, Layer } from "effect";
-import { NodeFileSystem } from "@effect/platform-node";
+import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
@@ -20,16 +20,28 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { describe, expect, test } from "vitest";
 import { Stack } from "./Stack.ts";
-import { RemoteStack } from "./RemoteStack.ts";
+import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedDaemonLayer } from "./supervisor.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
+import { stopManagedStack } from "./managed/lifecycle.ts";
+import { gitConfigStoreLayer } from "./managed/git.ts";
+import { managedStackManagerLayer } from "./managed/manager.ts";
 import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
-import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
+import type {
+  SupervisorReplacingMessage,
+  SupervisorStartMessage,
+  SupervisorStartedMessage,
+} from "./supervisor.ts";
+import {
+  SupervisorEventSchema,
+  SupervisorReplacementAckCommandSchema,
+} from "./SupervisorProtocol.ts";
 import { git } from "../tests/helpers/git-workspace.ts";
 import { watchDirectoryWithRetry } from "../tests/helpers/file-watch.ts";
+import { controlTransportLayer } from "./platform-node.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -133,6 +145,8 @@ const messageFor = (
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
   type: "start",
+  buildIdentity: { cliVersion: "test", buildId: "test-build" },
+  incompatibleOwnerPolicy: "replace",
   stackId: roots.stackId,
   workspacePath: roots.root,
   stackName: "default",
@@ -166,6 +180,7 @@ const spawnChild = (
     readonly testMode?: TestMode;
     readonly platform?: "node" | "bun";
     readonly environment?: Readonly<Record<string, string>>;
+    readonly onReplacing?: (event: SupervisorReplacingMessage) => Promise<void> | void;
   } = {},
 ): ChildHandle => {
   const child = fork(childEntryPoint, [], {
@@ -194,16 +209,27 @@ const spawnChild = (
       child.off("exit", onExit);
     };
     const onMessage = (value: unknown) => {
-      if (typeof value !== "object" || value === null) return;
-      if ("type" in value && value.type === "started" && "endpoint" in value) {
+      let event: Schema.Schema.Type<typeof SupervisorEventSchema>;
+      try {
+        event = Schema.decodeUnknownSync(SupervisorEventSchema)(value);
+      } catch {
+        return;
+      }
+      if (event.type === "started") {
         cleanup();
-        resolve(value as SupervisorStartedMessage);
-      } else if ("type" in value && value.type === "error") {
+        resolve(event);
+      } else if (event.type === "error") {
         cleanup();
-        reject(
-          new Error(
-            `${"message" in value ? String(value.message) : "supervisor failed"}\n${stderr}`,
-          ),
+        reject(new Error(`${event.message}\n${stderr}`));
+      } else {
+        Promise.resolve(options.onReplacing?.(event)).then(
+          () =>
+            child.send(
+              Schema.encodeSync(SupervisorReplacementAckCommandSchema)({
+                type: "replacement-ack",
+              }),
+            ),
+          () => child.kill("SIGTERM"),
         );
       }
     };
@@ -285,43 +311,91 @@ const fetchOwner = async (endpoint: ControlEndpoint): Promise<Record<string, unk
   return (await response.json()) as Record<string, unknown>;
 };
 
-const remoteStop = (endpoint: ControlEndpoint): Promise<void> =>
-  Effect.runPromise(
+const ownerDescriptor = (owner: Record<string, unknown>) => ({
+  ownershipId: String(owner.ownershipId),
+  ownerSessionId: String(owner.ownerSessionId),
+  controlProtocolVersion: 1 as const,
+  daemonCliVersion: String(owner.daemonCliVersion),
+  daemonBuildId: String(owner.daemonBuildId),
+});
+
+const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
+  const owner = ownerDescriptor(await fetchOwner(endpoint));
+  await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint).pipe(Layer.provide(httpTransportClientLayer)),
+          RemoteStack.layer(endpoint, { owner }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         yield* Context.get(context, Stack).stop();
       }),
     ),
   );
+};
 
-const remoteInfo = (endpoint: ControlEndpoint): Promise<{ readonly url: string }> =>
-  Effect.runPromise(
+const requestOwnerStop = async (endpoint: ControlEndpoint): Promise<Response> => {
+  const owner = ownerDescriptor(await fetchOwner(endpoint));
+  return fetch(`${endpoint.url}/stop`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ownershipId: owner.ownershipId,
+      ownerSessionId: owner.ownerSessionId,
+    }),
+  });
+};
+
+const stopViaManagedFacade = async (roots: {
+  readonly root: string;
+  readonly stateRoot: string;
+}): Promise<void> => {
+  await Effect.runPromise(
+    stopManagedStack({ workspacePath: roots.root }).pipe(
+      Effect.scoped,
+      Effect.provide(managedStackManagerLayer({ stateRoot: roots.stateRoot })),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    ),
+  );
+};
+
+const remoteInfo = async (endpoint: ControlEndpoint): Promise<{ readonly url: string }> => {
+  const owner = ownerDescriptor(await fetchOwner(endpoint));
+  return await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const context = yield* Layer.build(
-          RemoteStack.layer(endpoint).pipe(Layer.provide(httpTransportClientLayer)),
+          RemoteStack.layer(endpoint, { owner }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         return yield* Context.get(context, Stack).getInfo();
       }),
     ),
   );
+};
 
 const updateLaunch = async (
   endpoint: ControlEndpoint,
+  stackId: string,
+  owner: SupervisorStartedMessage["owner"],
+  buildIdentity: SupervisorStartMessage["buildIdentity"],
   launch: {
     readonly versions: Record<string, string>;
   },
 ): Promise<void> => {
-  const response = await fetch(`${endpoint.url}/managed/launch`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(launch),
-  });
-  expect(response.status).toBe(200);
-  await response.json();
+  await Effect.runPromise(
+    updateRemoteLaunch(
+      endpoint,
+      {
+        owner,
+        buildIdentity,
+      },
+      stackId,
+      launch,
+    ).pipe(Effect.provide(httpTransportClientLayer)),
+  );
 };
 
 const canConnect = (port: number): Promise<boolean> =>
@@ -380,10 +454,14 @@ const listenStartingOwner = (
         response.writeHead(200, { "content-type": "application/json" });
         response.end(
           JSON.stringify({
-            protocolVersion: 1,
+            controlProtocol: "supabase-stack-control",
+            controlProtocolVersion: 1,
             ownershipId,
+            ownerSessionId: "fake-session",
             state: "starting",
             ready: false,
+            daemonCliVersion: "test",
+            daemonBuildId: "test-build",
           }),
         );
         return;
@@ -414,10 +492,14 @@ const listenOwnerSequence = (
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
-          protocolVersion: 1,
+          controlProtocol: "supabase-stack-control",
+          controlProtocolVersion: 1,
           ownershipId,
+          ownerSessionId: "fake-session",
           state,
           ready: false,
+          daemonCliVersion: "test",
+          daemonBuildId: "test-build",
         }),
         () => {
           if (closeAfterSequence && reads >= states.length) server.close();
@@ -625,8 +707,6 @@ describe("detached supervisor child journeys", () => {
       const started = await child.started;
       const owner = await fetchOwner(started.endpoint);
       expect(owner).toMatchObject({ state: "running", ready: true });
-      const status = await fetch(`${started.endpoint.url}/status`);
-      expect(status.status).toBe(200);
       const document = JSON.parse(
         readFileSync(
           join(roots.stateRoot, "stacks", `${String(owner.ownershipId)}`, "stack.json"),
@@ -641,6 +721,353 @@ describe("detached supervisor child journeys", () => {
       await waitForExit(child.child);
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("explicit replacement stops an incompatible owner before acquiring the same stack", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let replacement: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      const before = JSON.parse(readFileSync(documentPath, "utf8")) as {
+        id: string;
+        createdAt: string;
+        launch: {
+          mode: string;
+          containerRuntime?: string;
+          versions: Record<string, string>;
+          excludedServices?: ReadonlyArray<string>;
+        };
+        ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
+      };
+      const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, roots.stackId));
+      const sentinel = join(paths.root, "data", "upgrade-sentinel.txt");
+      mkdirSync(dirname(sentinel), { recursive: true });
+      writeFileSync(sentinel, "preserve-me");
+      let replacingStarted!: () => void;
+      let releaseReplacement!: () => void;
+      const replacingStartedPromise = new Promise<void>((resolve) => {
+        replacingStarted = resolve;
+      });
+      const replacementRelease = new Promise<void>((resolve) => {
+        releaseReplacement = resolve;
+      });
+      replacement = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+          launch: {
+            mode: "native",
+            versions: { postgres: "pinned-postgres" },
+            excludedServices: ["analytics"],
+          },
+        }),
+        {
+          onReplacing: async () => {
+            replacingStarted();
+            await replacementRelease;
+          },
+        },
+      );
+      await replacingStartedPromise;
+      // The parent callback is an explicit ownership handoff: the old owner
+      // must remain alive until the warning has been observed and acknowledged.
+      expect(oldOwner.child.exitCode).toBeNull();
+      releaseReplacement();
+      const newStarted = await replacement.started;
+      expect(newStarted.owner.daemonBuildId).toBe("release:new");
+      await waitForExit(oldOwner.child);
+      const staleStop = await fetch(`${newStarted.endpoint.url}/stop`, {
+        method: "POST",
+        headers: { "content-type": "application/json", connection: "close" },
+        body: JSON.stringify({
+          ownershipId: oldStarted.owner.ownershipId,
+          ownerSessionId: oldStarted.owner.ownerSessionId,
+        }),
+      });
+      expect(staleStop.status).toBe(409);
+      expect(await fetchOwner(newStarted.endpoint)).toMatchObject({
+        state: "running",
+        ready: true,
+      });
+      const after = JSON.parse(readFileSync(documentPath, "utf8")) as typeof before;
+      expect(after.id).toBe(before.id);
+      expect(after.createdAt).toBe(before.createdAt);
+      expect(after.launch).toEqual(before.launch);
+      expect(after.ports).toEqual(before.ports);
+      expect(readFileSync(sentinel, "utf8")).toBe("preserve-me");
+      await remoteStop(newStarted.endpoint);
+      await waitForExit(replacement.child);
+      expect(oldStarted.owner.ownerSessionId).not.toBe(newStarted.owner.ownerSessionId);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (replacement?.child.exitCode === null) await kill(replacement.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("explicit stop during the replacement gap prevents a later takeover", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let replacement: ChildHandle | undefined;
+    let replacingStarted!: () => void;
+    let releaseReplacement!: () => void;
+    const replacing = new Promise<void>((resolve) => {
+      replacingStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseReplacement = resolve;
+    });
+    try {
+      await oldOwner.started;
+      replacement = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+        }),
+        {
+          onReplacing: async () => {
+            replacingStarted();
+            await release;
+          },
+        },
+      );
+      await replacing;
+
+      // A public identity-scoped stop wins the post-fence/pre-reacquire gap.
+      // The replacement must observe the stopped document and never publish a
+      // second running owner after its old-session stop returns.
+      await stopViaManagedFacade(roots);
+      await waitForExit(oldOwner.child);
+      expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
+
+      releaseReplacement();
+      await expect(replacement.started).rejects.toThrow("stopped before takeover");
+      await waitForExit(replacement.child);
+      expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (replacement?.child.exitCode === null) await kill(replacement.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("connect-only policy rejects an incompatible owner without restarting it", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let contender: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      contender = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "fail",
+        }),
+      );
+      await expect(contender.started).rejects.toThrow("Daemon build mismatch");
+      expect(oldOwner.child.exitCode).toBeNull();
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("preserves retryable managed data when replacement startup fails", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let replacement: ChildHandle | undefined;
+    try {
+      await oldOwner.started;
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      const before = JSON.parse(readFileSync(documentPath, "utf8")) as {
+        readonly id: string;
+        readonly createdAt: string;
+        readonly launch: unknown;
+      };
+      const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, roots.stackId));
+      const sentinel = join(paths.root, "data", "replacement-start-failure.txt");
+      mkdirSync(dirname(sentinel), { recursive: true });
+      writeFileSync(sentinel, "retryable");
+      replacement = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+        }),
+        { testMode: "fail-after-bind" },
+      );
+      await expect(replacement.started).rejects.toThrow(
+        /UpgradeRestartError|runtime failed after binding/,
+      );
+      await waitForExit(oldOwner.child);
+      const after = JSON.parse(readFileSync(documentPath, "utf8")) as {
+        readonly id: string;
+        readonly createdAt: string;
+        readonly lifecycle: string;
+        readonly launch: unknown;
+      };
+      expect(after.lifecycle).toBe("failed");
+      expect(after.id).toBe(before.id);
+      expect(after.createdAt).toBe(before.createdAt);
+      expect(after.launch).toEqual(before.launch);
+      expect(readFileSync(sentinel, "utf8")).toBe("retryable");
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (replacement?.child.exitCode === null) await kill(replacement.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("concurrent incompatible starts converge on one replacement owner", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let first: ChildHandle | undefined;
+    let second: ChildHandle | undefined;
+    try {
+      await oldOwner.started;
+      first = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+        }),
+      );
+      second = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+        }),
+      );
+      const results = await Promise.allSettled([first.started, second.started]);
+      const started = results.filter(
+        (result): result is PromiseFulfilledResult<SupervisorStartedMessage> =>
+          result.status === "fulfilled",
+      );
+      const rejectionDetails = results.flatMap((result, index) => {
+        if (result.status === "fulfilled") return [];
+        const reason =
+          result.reason instanceof Error
+            ? (result.reason.stack ?? result.reason.message)
+            : String(result.reason);
+        return [`contender ${index + 1} rejected:\n${reason}`];
+      });
+      expect(rejectionDetails, rejectionDetails.join("\n\n")).toEqual([]);
+      expect(results).toHaveLength(2);
+      expect(started).toHaveLength(2);
+      expect(results.every((result) => result.status === "fulfilled")).toBe(true);
+      expect(started[1]!.value.owner.ownerSessionId).toBe(started[0]!.value.owner.ownerSessionId);
+      expect(started[0]!.value.owner.daemonBuildId).toBe("release:new");
+      expect(await fetchOwner(started[0]!.value.endpoint)).toMatchObject({
+        daemonBuildId: "release:new",
+        state: "running",
+        ready: true,
+      });
+      await remoteStop(started[0]!.value.endpoint);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (first?.child.exitCode === null) await kill(first.child);
+      if (second?.child.exitCode === null) await kill(second.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("upgrade preflight failure leaves the incompatible owner running", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let contender: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      contender = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+          config: { ...messageFor(roots).config, port: 65_536 },
+        }),
+      );
+      await expect(contender.started).rejects.toThrow();
+      expect(oldOwner.child.exitCode).toBeNull();
+      expect((await fetchOwner(oldStarted.endpoint)).state).toBe("running");
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("stop timeout leaves the old owner and starts no replacement", async () => {
+    const roots = await workspace();
+    const stopBegan = join(roots.root, "stop-began");
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        incompatibleOwnerPolicy: "replace",
+      }),
+      {
+        testMode: "hold-stop",
+        environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+      },
+    );
+    let replacement: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      replacement = spawnChild(
+        messageFor(roots, {
+          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          incompatibleOwnerPolicy: "replace",
+        }),
+        { environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" } },
+      );
+      await waitForFile(stopBegan);
+      await expect(replacement.started).rejects.toThrow(/StopTimeout|timed out/i);
+      expect(oldOwner.child.exitCode).toBeNull();
+      expect(await fetchOwner(oldStarted.endpoint)).toMatchObject({
+        state: "stopping",
+        ready: false,
+      });
+      expect(await canBind(oldStarted.endpoint.port)).toBe(false);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (replacement?.child.exitCode === null) await kill(replacement.child);
       cleanupRoots(roots);
     }
   });
@@ -920,7 +1347,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const started = await child.started;
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
-      void fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
+      void requestOwnerStop(started.endpoint).catch(() => undefined);
       await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
     } finally {
@@ -940,7 +1367,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const started = await child.started;
       let responseSettled = false;
-      const stopResult = fetch(`${started.endpoint.url}/stop`, { method: "POST" })
+      const stopResult = requestOwnerStop(started.endpoint)
         .then((response) => {
           responseSettled = true;
           return response.status;
@@ -951,7 +1378,9 @@ describe("detached supervisor child journeys", () => {
         });
       await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
-      expect(responseSettled).toBe(false);
+      // The static control application flushes the fenced 202 before the
+      // lifecycle transaction closes the listener.
+      expect(responseSettled).toBe(true);
       await kill(child.child);
       await stopResult;
     } finally {
@@ -975,7 +1404,7 @@ describe("detached supervisor child journeys", () => {
     let contender: ChildHandle | undefined;
     try {
       const started = await owner.started;
-      const stop = fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
+      const stop = requestOwnerStop(started.endpoint).catch(() => undefined);
       await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
 
@@ -1010,7 +1439,7 @@ describe("detached supervisor child journeys", () => {
       await waitForFile(ensureReady);
       expect(existsSync(ensureReady)).toBe(true);
       const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
-      const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      const response = await requestOwnerStop(endpoint);
       expect(response.status).toBe(202);
       writeFileSync(ensureRelease, "release");
       await expect(child.started).rejects.toThrow("Stack was stopped during startup");
@@ -1075,7 +1504,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const starting = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(starting.id));
-      const stop = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      const stop = await requestOwnerStop(endpoint);
       expect(stop.status).toBe(202);
       await waitForExit(owner.child);
       expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
@@ -1147,7 +1576,7 @@ describe("detached supervisor child journeys", () => {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
-      const response = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      const response = await requestOwnerStop(endpoint);
       expect(response.status).toBe(202);
       await Promise.race([
         waitForExit(child.child),
@@ -1178,10 +1607,11 @@ describe("detached supervisor child journeys", () => {
       const document = await waitForStackDocument(roots, "starting");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));
       expect(await fetchOwner(endpoint)).toMatchObject({ state: "starting", ready: false });
-      const stopResponse = await fetch(`${endpoint.url}/stop`, { method: "POST" });
+      const stopResponse = await requestOwnerStop(endpoint);
       expect(stopResponse.status).toBe(202);
       await waitForExit(owner.child);
       expect((await waitForStackDocument(roots, "stopped")).lifecycle).toBe("stopped");
+      await stopViaManagedFacade(roots);
 
       fakeOwner = await listenOwnerSequence(
         endpoint,
@@ -1424,7 +1854,9 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
-      await updateLaunch(attached.endpoint, { versions: { postgres: "17.6.1" } });
+      await updateLaunch(attached.endpoint, roots.stackId, attached.owner, input.buildIdentity, {
+        versions: { postgres: "17.6.1" },
+      });
       expect(readStackDocument(roots)?.launch).toEqual({
         mode: "native",
         versions: { postgres: "17.6.1" },

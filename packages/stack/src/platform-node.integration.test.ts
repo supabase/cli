@@ -63,10 +63,12 @@ const runRead = (endpoint: ControlEndpoint) =>
 
 const runStop = (endpoint: ControlEndpoint) =>
   Effect.runPromise(
-    Effect.flatMap(ControlTransport, (transport) => transport.requestStop(endpoint)).pipe(
-      Effect.provide(controlTransportLayer),
-      Effect.exit,
-    ),
+    Effect.flatMap(ControlTransport, (transport) =>
+      transport.requestStop(endpoint, {
+        ownershipId: "0".repeat(64),
+        ownerSessionId: "session",
+      }),
+    ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
   );
 
 const expectTypedFailure = <E extends object>(

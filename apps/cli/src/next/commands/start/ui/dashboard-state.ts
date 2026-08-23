@@ -1,4 +1,4 @@
-import { Effect, Layer, Context, Stream, SubscriptionRef } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Stream, SubscriptionRef } from "effect";
 import type { StackServiceState, StackInfo } from "@supabase/stack/effect";
 import { Stack } from "@supabase/stack/effect";
 
@@ -27,13 +27,21 @@ export class StartDashboardState extends Context.Service<
     Effect.gen(function* () {
       const stack = yield* Stack;
 
-      const info = yield* stack.getInfo();
-      const initialStates = yield* stack.getAllStates();
-      const stackInfoRef = yield* SubscriptionRef.make<StackInfo | null>(info);
-      const serviceStatesRef =
-        yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>(initialStates);
+      const initial = yield* Effect.all([stack.getInfo(), stack.getAllStates()]).pipe(Effect.exit);
+      const stackInfoRef = yield* SubscriptionRef.make<StackInfo | null>(
+        Exit.isSuccess(initial) ? initial.value[0] : null,
+      );
+      const serviceStatesRef = yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>(
+        Exit.isSuccess(initial) ? initial.value[1] : [],
+      );
       const phaseRef = yield* SubscriptionRef.make<StartPhase>("starting");
       const errorRef = yield* SubscriptionRef.make<string | null>(null);
+
+      if (Exit.isFailure(initial)) {
+        yield* SubscriptionRef.set(errorRef, Cause.pretty(initial.cause));
+        yield* SubscriptionRef.set(phaseRef, "failed");
+        return { stackInfoRef, serviceStatesRef, phaseRef, errorRef };
+      }
 
       yield* stack.allStateChanges().pipe(
         Stream.runForEach((state) =>
@@ -41,7 +49,12 @@ export class StartDashboardState extends Context.Service<
             updateServiceStates(current, state),
           ),
         ),
-        Effect.ignore,
+        Effect.catchCause((cause) =>
+          Effect.all([
+            SubscriptionRef.set(errorRef, Cause.pretty(cause)),
+            SubscriptionRef.set(phaseRef, "failed"),
+          ]).pipe(Effect.asVoid),
+        ),
         Effect.forkScoped({ startImmediately: true }),
       );
 

@@ -1,7 +1,8 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { loadProjectConfig } from "@supabase/config";
-import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
+import { Context, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
+import { currentCliBuildIdentity } from "../../../../shared/cli/version.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
@@ -48,6 +49,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
+  const buildIdentity = yield* currentCliBuildIdentity;
 
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
@@ -62,6 +64,8 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     servicePolicies: { "edge-runtime": "eager" as const },
   };
   const stackLayer = yield* daemonLayer({
+    buildIdentity,
+    incompatibleOwnerPolicy: "fail",
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,
@@ -74,8 +78,9 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     ...stackConfig,
     portIntents: managedPortIntents(stackConfig, loadedProjectConfig ?? undefined),
   });
-  yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
-  const stack = yield* Stack.pipe(Effect.provide(stackLayer));
+  const context = yield* Layer.build(stackLayer);
+  const stack = Context.get(context, Stack);
+  yield* startStackWithProgress().pipe(Effect.provide(context));
 
   return { stack, startedByCommand: true };
 });
@@ -86,8 +91,10 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
+  const buildIdentity = yield* currentCliBuildIdentity;
 
   const existingLayer = yield* connectLayer({
+    buildIdentity,
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
@@ -98,7 +105,8 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   );
 
   if (Option.isSome(existingLayer)) {
-    const stack = yield* Stack.pipe(Effect.provide(existingLayer.value));
+    const context = yield* Layer.build(existingLayer.value);
+    const stack = Context.get(context, Stack);
     return { stack, startedByCommand: false };
   }
 
