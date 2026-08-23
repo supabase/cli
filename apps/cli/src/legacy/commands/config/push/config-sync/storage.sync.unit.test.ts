@@ -99,6 +99,7 @@ describe("diffStorageWithRemote", () => {
           file_size_limit: 5242880,
           allowed_mime_types: ["image/png"],
           objects_path: "./avatars",
+          versioning_status: undefined,
         },
       },
       ...emptyCounts,

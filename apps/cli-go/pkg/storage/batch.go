@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/queue"
 )
@@ -37,17 +38,23 @@ OUTER:
 				Public:           bucket.Public,
 				FileSizeLimit:    int64(bucket.FileSizeLimit),
 				AllowedMimeTypes: bucket.AllowedMimeTypes,
+				VersioningStatus: string(cast.Val(bucket.VersioningStatus, config.VersioningStatus(""))),
 			}
 			if _, err := s.UpdateBucket(ctx, body); err != nil {
 				return err
 			}
 		} else {
+			versioningStatus := string(cast.Val(bucket.VersioningStatus, config.VersioningStatus("")))
+			if versioningStatus == string(config.VersioningSuspended) {
+				return errors.Errorf("bucket %q: cannot create with versioning_status = \"SUSPENDED\" - a new bucket has no version history to suspend. Use \"ENABLED\", or omit versioning_status and suspend it in a later push", name)
+			}
 			fmt.Fprintln(os.Stderr, "Creating Storage bucket:", name)
 			body := CreateBucketRequest{
 				Name:             name,
 				Public:           bucket.Public,
 				FileSizeLimit:    int64(bucket.FileSizeLimit),
 				AllowedMimeTypes: bucket.AllowedMimeTypes,
+				VersioningStatus: versioningStatus,
 			}
 			if _, err := s.CreateBucket(ctx, body); err != nil {
 				return err

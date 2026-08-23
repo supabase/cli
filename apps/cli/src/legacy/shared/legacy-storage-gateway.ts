@@ -46,6 +46,12 @@ export interface LegacyUpsertBucketProps {
   /** Byte count; omitted from the request body when 0 (Go `omitempty`). */
   readonly fileSizeLimit: number;
   readonly allowedMimeTypes: ReadonlyArray<string>;
+  /**
+   * Tri-state to match `VersioningStatus *VersioningStatus` with
+   * `json:"versioning_status,omitempty"`: `undefined` when `versioning_status`
+   * is absent from the bucket's TOML, otherwise the explicit value.
+   */
+  readonly versioningStatus: string | undefined;
 }
 
 /** Upload headers, mirroring `FileOptions`. */
@@ -360,6 +366,9 @@ export function legacyBucketBody(props: LegacyUpsertBucketProps): Record<string,
   }
   if (props.allowedMimeTypes.length > 0) {
     body["allowed_mime_types"] = props.allowedMimeTypes;
+  }
+  if (props.versioningStatus !== undefined) {
+    body["versioning_status"] = props.versioningStatus;
   }
   return body;
 }

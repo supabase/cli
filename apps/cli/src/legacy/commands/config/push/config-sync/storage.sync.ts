@@ -24,6 +24,7 @@ interface BucketSubset {
   readonly file_size_limit: number;
   readonly allowed_mime_types: ReadonlyArray<string>;
   readonly objects_path: string;
+  readonly versioning_status: string | undefined;
 }
 
 interface BucketsCountSubset {
@@ -54,6 +55,7 @@ const BUCKET_FIELDS: ReadonlyArray<TomlField> = [
   { key: "file_size_limit", node: { kind: "string" } },
   { key: "allowed_mime_types", node: { kind: "array", elem: { kind: "string" } } },
   { key: "objects_path", node: { kind: "string" } },
+  { key: "versioning_status", node: { kind: "string" } },
 ];
 
 const STORAGE_FIELDS: ReadonlyArray<TomlField> = [
@@ -147,6 +149,7 @@ export function storageSubsetFromConfig(
               file_size_limit: ramInBytes(b.file_size_limit),
               allowed_mime_types: b.allowed_mime_types,
               objects_path: b.objects_path,
+              versioning_status: b.versioning_status,
             } satisfies BucketSubset,
           ]),
         );
@@ -214,6 +217,7 @@ function bucketToTomlValue(b: BucketSubset): { readonly [k: string]: TomlValue |
     file_size_limit: bytesSize(b.file_size_limit),
     allowed_mime_types: b.allowed_mime_types,
     objects_path: b.objects_path,
+    versioning_status: b.versioning_status,
   };
 }
 

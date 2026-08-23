@@ -63,7 +63,12 @@ describe("legacyBucketHasKey", () => {
 });
 
 describe("legacyResolveBucketProps", () => {
-  const entry = { public: true, file_size_limit: "10MiB", allowed_mime_types: ["image/png"] };
+  const entry = {
+    public: true,
+    file_size_limit: "10MiB",
+    allowed_mime_types: ["image/png"],
+    versioning_status: undefined,
+  };
 
   it("uses the explicit public + parsed file_size_limit when declared", () => {
     const doc = {
@@ -80,6 +85,7 @@ describe("legacyResolveBucketProps", () => {
       public: true,
       fileSizeLimit: 10 * 1024 * 1024,
       allowedMimeTypes: ["image/png"],
+      versioningStatus: undefined,
     });
   });
 
@@ -88,10 +94,41 @@ describe("legacyResolveBucketProps", () => {
       legacyResolveBucketProps({
         document: { storage: { buckets: { media: {} } } },
         name: "media",
-        bucket: { public: false, file_size_limit: "50MiB", allowed_mime_types: [] },
+        bucket: {
+          public: false,
+          file_size_limit: "50MiB",
+          allowed_mime_types: [],
+          versioning_status: undefined,
+        },
         storageFileSizeLimitBytes: 5 * 1024 * 1024,
       }),
-    ).toEqual({ public: undefined, fileSizeLimit: 5 * 1024 * 1024, allowedMimeTypes: [] });
+    ).toEqual({
+      public: undefined,
+      fileSizeLimit: 5 * 1024 * 1024,
+      allowedMimeTypes: [],
+      versioningStatus: undefined,
+    });
+  });
+
+  it("passes the explicit versioning_status through when declared", () => {
+    expect(
+      legacyResolveBucketProps({
+        document: { storage: { buckets: { media: {} } } },
+        name: "media",
+        bucket: {
+          public: false,
+          file_size_limit: "50MiB",
+          allowed_mime_types: [],
+          versioning_status: "ENABLED",
+        },
+        storageFileSizeLimitBytes: 5 * 1024 * 1024,
+      }),
+    ).toEqual({
+      public: undefined,
+      fileSizeLimit: 5 * 1024 * 1024,
+      allowedMimeTypes: [],
+      versioningStatus: "ENABLED",
+    });
   });
 
   it("throws on an unparseable bucket file_size_limit", () => {
@@ -99,7 +136,12 @@ describe("legacyResolveBucketProps", () => {
       legacyResolveBucketProps({
         document: { storage: { buckets: { media: { file_size_limit: "bad" } } } },
         name: "media",
-        bucket: { public: false, file_size_limit: "bad", allowed_mime_types: [] },
+        bucket: {
+          public: false,
+          file_size_limit: "bad",
+          allowed_mime_types: [],
+          versioning_status: undefined,
+        },
         storageFileSizeLimitBytes: 0,
       }),
     ).toThrow("invalid size");

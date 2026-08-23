@@ -1,4 +1,5 @@
 import { Effect, Schema, SchemaGetter } from "effect";
+import { stringEnum } from "./lib/schema.ts";
 
 const links = [
   {
@@ -77,6 +78,12 @@ const bucketSchema = Schema.Struct({
     description: "The path to the objects in the bucket.",
     tags,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketObjectsPath))),
+  versioning_status: Schema.optionalKey(
+    stringEnum(["ENABLED", "SUSPENDED"], {
+      description: "The versioning status of the bucket.",
+      tags,
+    }),
+  ),
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const storage = Schema.Struct({

@@ -11,31 +11,75 @@ import { legacyBucketBody, legacyMakeStorageGateway } from "./legacy-storage-gat
 
 describe("legacyBucketBody", () => {
   it("omits public when undefined (Go *bool nil / omitempty)", () => {
-    expect(legacyBucketBody({ public: undefined, fileSizeLimit: 0, allowedMimeTypes: [] })).toEqual(
-      {},
-    );
+    expect(
+      legacyBucketBody({
+        public: undefined,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      }),
+    ).toEqual({});
   });
 
   it("includes public when explicitly set (true or false)", () => {
-    expect(legacyBucketBody({ public: true, fileSizeLimit: 0, allowedMimeTypes: [] })).toEqual({
+    expect(
+      legacyBucketBody({
+        public: true,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      }),
+    ).toEqual({
       public: true,
     });
-    expect(legacyBucketBody({ public: false, fileSizeLimit: 0, allowedMimeTypes: [] })).toEqual({
+    expect(
+      legacyBucketBody({
+        public: false,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      }),
+    ).toEqual({
       public: false,
     });
   });
 
   it("includes file_size_limit and allowed_mime_types only when non-empty", () => {
     expect(
-      legacyBucketBody({ public: undefined, fileSizeLimit: 0, allowedMimeTypes: [] }),
+      legacyBucketBody({
+        public: undefined,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      }),
     ).not.toHaveProperty("file_size_limit");
     expect(
       legacyBucketBody({
         public: false,
         fileSizeLimit: 52_428_800,
         allowedMimeTypes: ["image/png"],
+        versioningStatus: undefined,
       }),
     ).toEqual({ public: false, file_size_limit: 52_428_800, allowed_mime_types: ["image/png"] });
+  });
+
+  it("omits versioning_status when undefined, includes it when declared", () => {
+    expect(
+      legacyBucketBody({
+        public: undefined,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      }),
+    ).not.toHaveProperty("versioning_status");
+    expect(
+      legacyBucketBody({
+        public: undefined,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: "ENABLED",
+      }),
+    ).toEqual({ versioning_status: "ENABLED" });
   });
 });
 

@@ -426,7 +426,12 @@ const bucketAutoCreateProps = (ctx: UploadCtx, bucket: string) =>
   Effect.gen(function* () {
     const bucketConfig = ctx.config.storage.buckets?.[bucket];
     if (bucketConfig === undefined) {
-      return { public: undefined, fileSizeLimit: 0, allowedMimeTypes: [] };
+      return {
+        public: undefined,
+        fileSizeLimit: 0,
+        allowedMimeTypes: [],
+        versioningStatus: undefined,
+      };
     }
     return yield* Effect.try({
       try: () =>

@@ -29,6 +29,32 @@ describe("storage schema", () => {
     });
   });
 
+  describe("versioning_status", () => {
+    test("is undefined when omitted", () => {
+      const decoded = decodeStorage({ buckets: { images: { public: true } } });
+      expect(decoded.buckets?.["images"]?.versioning_status).toBeUndefined();
+    });
+
+    test("accepts ENABLED and SUSPENDED", () => {
+      for (const status of ["ENABLED", "SUSPENDED"]) {
+        const decoded = decodeStorage({ buckets: { images: { versioning_status: status } } });
+        expect(decoded.buckets?.["images"]?.versioning_status).toBe(status);
+      }
+    });
+
+    test("rejects an invalid value", () => {
+      expect(() =>
+        decodeStorage({ buckets: { images: { versioning_status: "enabled" } } }),
+      ).toThrow();
+    });
+
+    test("rejects DISABLED", () => {
+      expect(() =>
+        decodeStorage({ buckets: { images: { versioning_status: "DISABLED" } } }),
+      ).toThrow();
+    });
+  });
+
   describe("default-enabled values match Go's merged template", () => {
     test("vector.enabled defaults to true when omitted", () => {
       // Go merges templates/config.toml (enabled = true) as the base layer, so an

@@ -53,6 +53,7 @@ interface LegacyBucketConfigEntry {
   readonly public: boolean;
   readonly file_size_limit: string;
   readonly allowed_mime_types: ReadonlyArray<string>;
+  readonly versioning_status?: string;
 }
 
 /**
@@ -80,5 +81,6 @@ export function legacyResolveBucketProps(opts: {
     public: legacyBucketHasKey(opts.document, opts.name, "public") ? opts.bucket.public : undefined,
     fileSizeLimit,
     allowedMimeTypes: opts.bucket.allowed_mime_types,
+    versioningStatus: opts.bucket.versioning_status,
   };
 }

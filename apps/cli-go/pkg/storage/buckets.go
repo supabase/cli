@@ -16,6 +16,7 @@ type BucketResponse struct {
 	AllowedMimeTypes []string `json:"allowed_mime_types"` // null
 	CreatedAt        string   `json:"created_at"`         // "2023-10-13T17:48:58.491Z"
 	UpdatedAt        string   `json:"updated_at"`         // "2023-10-13T17:48:58.491Z"
+	VersioningStatus string   `json:"versioning_status"`  // "DISABLED"
 }
 
 func (s *StorageAPI) ListBuckets(ctx context.Context) ([]BucketResponse, error) {
@@ -32,6 +33,7 @@ type CreateBucketRequest struct {
 	Public           *bool    `json:"public,omitempty"`             // false,
 	FileSizeLimit    int64    `json:"file_size_limit,omitempty"`    // 0,
 	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
+	VersioningStatus string   `json:"versioning_status,omitempty"`  // "DISABLED"
 }
 
 type CreateBucketResponse struct {
@@ -51,6 +53,7 @@ type UpdateBucketRequest struct {
 	Public           *bool    `json:"public,omitempty"`             // false,
 	FileSizeLimit    int64    `json:"file_size_limit,omitempty"`    // 0,
 	AllowedMimeTypes []string `json:"allowed_mime_types,omitempty"` // ["string"]
+	VersioningStatus string   `json:"versioning_status,omitempty"`  // "DISABLED"
 }
 
 type UpdateBucketResponse struct {

@@ -318,6 +318,7 @@ type BucketsConfig = Readonly<
       readonly file_size_limit: string;
       readonly allowed_mime_types: ReadonlyArray<string>;
       readonly objects_path: string;
+      readonly versioning_status?: string;
     }
   >
 >;

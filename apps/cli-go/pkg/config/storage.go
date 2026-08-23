@@ -1,6 +1,9 @@
 package config
 
 import (
+	"slices"
+
+	"github.com/go-errors/errors"
 	v1API "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/diff"
@@ -53,12 +56,28 @@ type (
 	BucketConfig map[string]bucket
 
 	bucket struct {
-		Public           *bool       `toml:"public" json:"public"`
-		FileSizeLimit    sizeInBytes `toml:"file_size_limit" json:"file_size_limit"`
-		AllowedMimeTypes []string    `toml:"allowed_mime_types" json:"allowed_mime_types"`
-		ObjectsPath      string      `toml:"objects_path" json:"objects_path"`
+		Public           *bool             `toml:"public" json:"public"`
+		FileSizeLimit    sizeInBytes       `toml:"file_size_limit" json:"file_size_limit"`
+		AllowedMimeTypes []string          `toml:"allowed_mime_types" json:"allowed_mime_types"`
+		ObjectsPath      string            `toml:"objects_path" json:"objects_path"`
+		VersioningStatus *VersioningStatus `toml:"versioning_status" json:"versioning_status"`
 	}
 )
+
+type VersioningStatus string
+
+const (
+	VersioningEnabled   VersioningStatus = "ENABLED"
+	VersioningSuspended VersioningStatus = "SUSPENDED"
+)
+
+func (v *VersioningStatus) UnmarshalText(text []byte) error {
+	allowed := []VersioningStatus{VersioningEnabled, VersioningSuspended}
+	if *v = VersioningStatus(text); !slices.Contains(allowed, *v) {
+		return errors.Errorf("must be one of %v", allowed)
+	}
+	return nil
+}
 
 func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 	body := v1API.UpdateStorageConfigBody{
