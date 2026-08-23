@@ -21,6 +21,7 @@ import {
 } from "../../config/service-version-resolution.ts";
 import {
   excludedStackServices,
+  isExcludedStackService,
   type ExcludedStackService,
   startModes,
   type StartMode,
@@ -113,16 +114,14 @@ export class StartVersionState extends Context.Service<StartVersionState, StartV
  * state consumed by the start handler. The post-start summary is authoritative:
  * an incompatible-owner replacement may preserve selections from the existing
  * daemon even when this invocation supplied different flags or version defaults.
+ * @internal
  */
 export const startVersionStateLaunch = (
   summary: Pick<StackSummary, "launch">,
 ): StartVersionStateShape["launch"] => ({
   mode: summary.launch.mode,
   versions: summary.launch.versions,
-  excludedServices:
-    summary.launch.excludedServices?.filter((service): service is ExcludedStackService =>
-      excludedStackServices.some((candidate) => candidate === service),
-    ) ?? [],
+  excludedServices: summary.launch.excludedServices?.filter(isExcludedStackService) ?? [],
 });
 
 const flags = {
