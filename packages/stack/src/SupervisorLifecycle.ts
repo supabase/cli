@@ -91,19 +91,30 @@ export class SupervisorLifecycle extends Context.Service<
               phase: "stopping",
               ...(stack === undefined ? {} : { stack }),
             });
-            if (stack !== undefined) {
-              yield* stack.stop();
-              yield* stack.dispose();
-            }
-            if (input.close === undefined) {
-              yield* Deferred.await(closeReady);
-            }
+
+            // Each owned cleanup is evaluated independently so a failed stop
+            // cannot strand disposal, listener close, or the terminal state
+            // publication. The first failure is the shared shutdown result;
+            // in particular, a stop failure preserves its exact Cause.
+            const stopExit =
+              stack === undefined ? Exit.succeed(undefined) : yield* Effect.exit(stack.stop());
+            const disposeExit =
+              stack === undefined ? Exit.succeed(undefined) : yield* Effect.exit(stack.dispose());
+            if (input.close === undefined) yield* Deferred.await(closeReady);
             const close = yield* Ref.get(closeRef);
-            if (close !== undefined) yield* close;
+            const closeExit =
+              close === undefined ? Exit.succeed(undefined) : yield* Effect.exit(close);
+
             yield* Ref.set(stateRef, { phase: "closed" });
-            // state publication follows all owned cleanup and is observable by
-            // every waiter joining the same shutdown transaction.
-            void reason;
+
+            const failure = Exit.isFailure(stopExit)
+              ? stopExit.cause
+              : Exit.isFailure(disposeExit)
+                ? disposeExit.cause
+                : Exit.isFailure(closeExit)
+                  ? closeExit.cause
+                  : undefined;
+            if (failure !== undefined) yield* Effect.failCause(failure);
           }),
         );
       const completeShutdown = (exit: Exit.Exit<void, unknown>) =>
@@ -118,7 +129,7 @@ export class SupervisorLifecycle extends Context.Service<
       );
       const awaitShutdownExit = Deferred.await(shutdownExit).pipe(
         Effect.flatMap((exit) =>
-          Exit.match(exit, { onFailure: Effect.fail, onSuccess: Effect.succeed }),
+          Exit.match(exit, { onFailure: Effect.failCause, onSuccess: Effect.succeed }),
         ),
       );
       const submitShutdown = (reason: "stop" | "signal" | "startup-failure" | "dispose") =>

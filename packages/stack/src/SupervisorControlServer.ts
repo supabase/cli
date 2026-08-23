@@ -1,17 +1,15 @@
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
 import { ControlStopRequestSchema } from "./DaemonProtocol.ts";
-import { RuntimeGate } from "./RuntimeGate.ts";
 import { StackRpc } from "./StackRpc.ts";
 import {
   StackLaunchUpdater,
   StackRpcHandlers,
   type StackLaunchUpdater as StackLaunchUpdaterService,
 } from "./StackRpcHandlers.ts";
-import type { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 
 /** Builds the complete static supervisor application before listener binding. */
 export const makeSupervisorControlApplication = (
@@ -32,9 +30,7 @@ export const makeSupervisorControlApplication = (
         ? StackRpcHandlers
         : StackRpcHandlers.pipe(Layer.provide(Layer.succeed(StackLaunchUpdater, launchUpdater)));
     const rpc = yield* RpcServer.toHttpEffect(StackRpc).pipe(
-      Effect.provide(
-        handlers.pipe(Layer.provide(Layer.succeed(RuntimeGate, RuntimeGate.make(lifecycle)))),
-      ),
+      Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorLifecycle, lifecycle)))),
       Effect.provide(RpcSerialization.layerNdjson),
     );
     const routes = [
@@ -88,13 +84,29 @@ export const SupervisorControlServer = {
  * response open while server.close waits for that same response to finish.
  */
 export const makeSupervisorControlMiddleware =
-  (lifecycle: SupervisorLifecycle["Service"]): HttpMiddleware.HttpMiddleware =>
-  (self) =>
+  (lifecycle: SupervisorLifecycle["Service"]) =>
+  <E, R>(
+    self: Effect.Effect<
+      HttpServerResponse.HttpServerResponse,
+      E,
+      R | HttpServerRequest.HttpServerRequest
+    >,
+  ): Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    R | HttpServerRequest.HttpServerRequest
+  > =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const response = yield* self;
-      if (request.method === "POST" && request.url === "/stop" && response.status === 202) {
-        yield* lifecycle.releaseStopResponse;
-      }
-      return response;
+      const isStop = request.method === "POST" && request.url === "/stop";
+      const guarded = Effect.gen(function* () {
+        const response = yield* self;
+        if (isStop && response.status === 202) {
+          yield* lifecycle.releaseStopResponse;
+        }
+        return response;
+      });
+      return yield* Effect.onExit(guarded, (exit) =>
+        isStop && Exit.isFailure(exit) ? lifecycle.releaseStopResponse : Effect.void,
+      );
     });

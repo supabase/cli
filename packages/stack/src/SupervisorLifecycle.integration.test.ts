@@ -1,9 +1,10 @@
-import { Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import type { StackInfo } from "./Stack.ts";
 import type { Stack } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { StopTimeout } from "./errors.ts";
 
 const stackInfo: StackInfo = {
   url: "http://127.0.0.1",
@@ -23,11 +24,16 @@ const stackState = new StackServiceState({
   startedAt: null,
   error: null,
 });
-const makeStack = (stop: () => Effect.Effect<void>): Stack["Service"] => ({
+type StackCleanup = ReturnType<Stack["Service"]["stop"]>;
+
+const makeStack = (
+  stop: () => StackCleanup,
+  dispose: () => StackCleanup = () => Effect.void,
+): Stack["Service"] => ({
   getInfo: () => Effect.succeed(stackInfo),
   start: () => Effect.void,
   stop,
-  dispose: () => Effect.void,
+  dispose,
   startService: () => Effect.void,
   stopService: () => Effect.void,
   restartService: () => Effect.void,
@@ -45,7 +51,7 @@ const makeStack = (stop: () => Effect.Effect<void>): Stack["Service"] => ({
   logHistoryAll: () => Effect.succeed([]),
 });
 
-const makeLifecycle = async () => {
+const makeLifecycle = async (close: Effect.Effect<void, unknown> = Effect.void) => {
   const scope = Scope.makeUnsafe();
   const lifecycle = await Effect.runPromise(
     SupervisorLifecycle.make({
@@ -53,7 +59,7 @@ const makeLifecycle = async () => {
       ownerSessionId: "session",
       daemonCliVersion: "test",
       daemonBuildId: "build",
-      close: Effect.void,
+      close,
     }).pipe(Effect.provideService(Scope.Scope, scope)),
   );
   return {
@@ -154,6 +160,88 @@ describe("SupervisorLifecycle", () => {
       expect((await Effect.runPromise(lifecycle.currentState)).phase).toBe("stopping");
       await Effect.runPromise(Deferred.succeed(release, undefined));
       await Effect.runPromise(Fiber.join(shutdown));
+    } finally {
+      await close();
+    }
+  });
+
+  it("runs every cleanup and preserves a typed stop failure", async () => {
+    const stopError = new StopTimeout({ endpoint: "test", ownerSessionId: "session" });
+    const events: string[] = [];
+    const { lifecycle, close } = await makeLifecycle(
+      Effect.sync(() => {
+        events.push("close");
+      }),
+    );
+    try {
+      await Effect.runPromise(
+        lifecycle.publishStack(
+          makeStack(
+            () => Effect.fail(stopError),
+            () =>
+              Effect.sync(() => {
+                events.push("dispose");
+              }),
+          ),
+        ),
+      );
+      const exit = await Effect.runPromise(lifecycle.requestShutdown("signal").pipe(Effect.exit));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(stopError);
+      expect(events).toEqual(["dispose", "close"]);
+      expect((await Effect.runPromise(lifecycle.currentState)).phase).toBe("closed");
+    } finally {
+      await close();
+    }
+  });
+
+  it("runs every cleanup and preserves a stop defect", async () => {
+    const stopDefect = new Error("stop defect");
+    const events: string[] = [];
+    const { lifecycle, close } = await makeLifecycle(
+      Effect.sync(() => {
+        events.push("close");
+      }),
+    );
+    try {
+      await Effect.runPromise(
+        lifecycle.publishStack(
+          makeStack(
+            () => Effect.die(stopDefect),
+            () =>
+              Effect.sync(() => {
+                events.push("dispose");
+              }),
+          ),
+        ),
+      );
+      const exit = await Effect.runPromise(lifecycle.requestShutdown("signal").pipe(Effect.exit));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(stopDefect);
+      expect(events).toEqual(["dispose", "close"]);
+      expect((await Effect.runPromise(lifecycle.currentState)).phase).toBe("closed");
+    } finally {
+      await close();
+    }
+  });
+
+  it("uses the first cleanup failure when stop succeeds", async () => {
+    const disposeError = new StopTimeout({ endpoint: "dispose", ownerSessionId: "session" });
+    const closeError = new Error("close failed");
+    const { lifecycle, close } = await makeLifecycle(Effect.fail(closeError));
+    try {
+      await Effect.runPromise(
+        lifecycle.publishStack(
+          makeStack(
+            () => Effect.void,
+            () => Effect.fail(disposeError),
+          ),
+        ),
+      );
+      const exit = await Effect.runPromise(lifecycle.requestShutdown("signal").pipe(Effect.exit));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(disposeError);
+      expect((await Effect.runPromise(lifecycle.currentState)).phase).toBe("closed");
     } finally {
       await close();
     }

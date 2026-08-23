@@ -98,7 +98,6 @@ it.live("serves handler behavior over the RPC boundary", () =>
         daemonCliVersion: "test",
         daemonBuildId: "test-build",
       });
-      yield* lifecycle.publishStack(stack);
       const application = {
         app: yield* makeSupervisorControlApplication(lifecycle),
         middleware: makeSupervisorControlMiddleware(lifecycle),
@@ -124,6 +123,11 @@ it.live("serves handler behavior over the RPC boundary", () =>
       const remote = yield* Layer.build(layer).pipe(
         Effect.map((context) => Context.get(context, Stack)),
       );
+
+      const unavailable = yield* Effect.flip(remote.getInfo());
+      expect(unavailable).toMatchObject({ _tag: "StackUnavailableError", phase: "starting" });
+      yield* lifecycle.publishStack(stack);
+      expect((yield* remote.getInfo()).url).toBe("http://127.0.0.1:54321");
 
       const history = yield* remote.logHistoryAll(3, ["postgres", "auth"]);
       expect(history.map((entry) => entry.line)).toEqual([
