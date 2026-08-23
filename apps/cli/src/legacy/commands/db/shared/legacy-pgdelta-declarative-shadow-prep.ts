@@ -2,15 +2,8 @@ import { Effect } from "effect";
 
 import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 
-export type LegacyDeclarativeShadowConnection = {
-  readonly query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>;
-  readonly release: (error?: Error | boolean) => void;
-  readonly on?: (event: "error", listener: (error: Error) => void) => void;
-  readonly removeListener?: (event: "error", listener: (error: Error) => void) => void;
-};
-
 export type LegacyDeclarativeShadowClient = {
-  readonly connect: () => Promise<LegacyDeclarativeShadowConnection>;
+  readonly query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>;
 };
 
 export interface LegacyDeclarativeShadowPrepResult {
@@ -61,12 +54,12 @@ const declaredImageExtensions = (
   return declared;
 };
 
-export const legacyParsePostgresMajorVersion = (serverVersion: string): number => {
+const legacyParsePostgresMajorVersion = (serverVersion: string): number => {
   const major = Number.parseInt(serverVersion, 10);
   return Number.isInteger(major) ? major : 0;
 };
 
-export const legacyDeclarativeBaselinePrepStatements = (
+const legacyDeclarativeBaselinePrepStatements = (
   majorVersion: number,
   declared: ReadonlySet<string>,
 ): ReadonlyArray<string> => {
@@ -127,56 +120,11 @@ const rowHasPgjwt = (rows: ReadonlyArray<unknown>): boolean =>
   });
 
 const INSTALLED_PGJWT_SQL = "SELECT extname FROM pg_extension WHERE extname = 'pgjwt'";
-const SHADOW_PREP_INTERRUPTED = "shadow prep interrupted";
 
-/** Checkout so interrupt can discard a locked DROP instead of hanging the shared pool. */
 const queryShadow = (client: LegacyDeclarativeShadowClient, sql: string) =>
-  Effect.callback<{ readonly rows: ReadonlyArray<unknown> }, LegacyPgDeltaEngineError>((resume) => {
-    let settled = false;
-    let released = false;
-    let conn: LegacyDeclarativeShadowConnection | undefined;
-    const onError = (error: Error) => {
-      finish(Effect.fail(queryError(sql, error)), error);
-    };
-    const releaseConn = (error?: Error) => {
-      if (released || conn === undefined) return;
-      released = true;
-      conn.removeListener?.("error", onError);
-      conn.release(error);
-    };
-    const finish = (
-      effect: Effect.Effect<{ readonly rows: ReadonlyArray<unknown> }, LegacyPgDeltaEngineError>,
-      releaseError?: Error,
-    ) => {
-      if (settled) return;
-      settled = true;
-      releaseConn(releaseError);
-      resume(effect);
-    };
-    void client.connect().then(
-      (acquired) => {
-        conn = acquired;
-        acquired.on?.("error", onError);
-        if (settled) {
-          releaseConn(new Error(SHADOW_PREP_INTERRUPTED));
-          return;
-        }
-        void acquired.query(sql).then(
-          (result) => finish(Effect.succeed(result)),
-          (cause) =>
-            finish(
-              Effect.fail(queryError(sql, cause)),
-              cause instanceof Error ? cause : new Error(String(cause)),
-            ),
-        );
-      },
-      (cause) => finish(Effect.fail(queryError(sql, cause))),
-    );
-    return Effect.sync(() => {
-      if (settled) return;
-      settled = true;
-      releaseConn(new Error(SHADOW_PREP_INTERRUPTED));
-    });
+  Effect.tryPromise({
+    try: () => client.query(sql),
+    catch: (cause) => queryError(sql, cause),
   });
 
 export const legacyPrepareDeclarativeShadow = (

@@ -1,12 +1,9 @@
-import { EventEmitter } from "node:events";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
 
 import {
-  legacyDeclarativeBaselinePrepStatements,
   legacyDeclaredSqlExtensions,
   legacyFilesForDeclarativeShadowLoad,
-  legacyParsePostgresMajorVersion,
   legacyPrepareDeclarativeShadow,
   type LegacyDeclarativeShadowClient,
 } from "./legacy-pgdelta-declarative-shadow-prep.ts";
@@ -14,57 +11,13 @@ import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 
 const fakeShadowClient = (
   query: (sql: string) => Promise<{ readonly rows: ReadonlyArray<unknown> }>,
-  onRelease?: (error?: Error | boolean) => void,
-): LegacyDeclarativeShadowClient => ({
-  connect: () =>
-    Promise.resolve({
-      query,
-      release: (error?: Error | boolean) => {
-        onRelease?.(error);
-      },
-    }),
-});
+): LegacyDeclarativeShadowClient => ({ query });
 
 const allImageCreates = [
   { name: "_cluster/extensions/pgjwt.sql", sql: 'CREATE EXTENSION "pgjwt";' },
   { name: "_cluster/extensions/pgcrypto.sql", sql: 'CREATE EXTENSION "pgcrypto";' },
   { name: "_cluster/extensions/uuid-ossp.sql", sql: 'CREATE EXTENSION "uuid-ossp";' },
 ];
-
-describe("legacyDeclarativeBaselinePrepStatements", () => {
-  it("emits nothing when declarations do not recreate image defaults", () => {
-    expect(legacyDeclarativeBaselinePrepStatements(14, new Set())).toEqual([]);
-    expect(legacyDeclarativeBaselinePrepStatements(17, new Set())).toEqual([]);
-  });
-
-  it("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
-    expect(legacyDeclarativeBaselinePrepStatements(14, new Set(["uuid-ossp"]))).toEqual([
-      "ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT",
-      'DROP EXTENSION IF EXISTS "uuid-ossp"',
-    ]);
-  });
-
-  it("drops image pgjwt before a declared pgcrypto recreate", () => {
-    expect(legacyDeclarativeBaselinePrepStatements(14, new Set(["pgcrypto"]))).toEqual([
-      "DROP EXTENSION IF EXISTS pgjwt",
-      "DROP EXTENSION IF EXISTS pgcrypto",
-    ]);
-    expect(legacyDeclarativeBaselinePrepStatements(17, new Set(["pgcrypto"]))).toEqual([
-      "DROP EXTENSION IF EXISTS pgjwt",
-      "DROP EXTENSION IF EXISTS pgcrypto",
-    ]);
-  });
-
-  it("drops declared image defaults on PG15+, pgjwt before pgcrypto", () => {
-    expect(
-      legacyDeclarativeBaselinePrepStatements(17, new Set(["pgjwt", "pgcrypto", "uuid-ossp"])),
-    ).toEqual([
-      "DROP EXTENSION IF EXISTS pgjwt",
-      "DROP EXTENSION IF EXISTS pgcrypto",
-      'DROP EXTENSION IF EXISTS "uuid-ossp"',
-    ]);
-  });
-});
 
 describe("legacyDeclaredSqlExtensions", () => {
   it("ignores CREATE EXTENSION in comments and simple strings", () => {
@@ -98,14 +51,6 @@ describe("legacyFilesForDeclarativeShadowLoad", () => {
         sql: "CREATE EXTENSION IF NOT EXISTS pgjwt WITH SCHEMA extensions;\n",
       },
     ]);
-  });
-});
-
-describe("legacyParsePostgresMajorVersion", () => {
-  it("reads the leading major from SHOW server_version", () => {
-    expect(legacyParsePostgresMajorVersion("17.6")).toBe(17);
-    expect(legacyParsePostgresMajorVersion("14.15 (Debian)")).toBe(14);
-    expect(legacyParsePostgresMajorVersion("")).toBe(0);
   });
 });
 
@@ -170,102 +115,52 @@ describe("legacyPrepareDeclarativeShadow", () => {
     });
   });
 
-  it.live("restores pgjwt only when the image had it installed", () => {
+  it.live("detaches PG14 storage.objects before dropping declared uuid-ossp", () => {
     const queries: string[] = [];
     const client = fakeShadowClient((sql) => {
       queries.push(sql);
-      if (sql.startsWith("SELECT extname")) {
-        return Promise.resolve({ rows: [{ extname: "pgjwt" }] });
-      }
       return Promise.resolve({
         rows: sql === "SHOW server_version" ? [{ server_version: "14.15" }] : [],
       });
     });
     return Effect.gen(function* () {
-      const prep = yield* legacyPrepareDeclarativeShadow(client, [
-        { name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" },
+      yield* legacyPrepareDeclarativeShadow(client, [
+        { name: "uuid.sql", sql: 'CREATE EXTENSION "uuid-ossp";' },
       ]);
-      expect(prep.restorePgjwt).toBe(true);
-      expect(queries[0]).toContain("pg_extension");
+      expect(queries).toEqual([
+        "SHOW server_version",
+        "ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT",
+        'DROP EXTENSION IF EXISTS "uuid-ossp"',
+      ]);
     });
   });
 
-  it.live("does not restore pgjwt on images that never installed it", () => {
-    const client = fakeShadowClient((sql) =>
+  it.live("restores pgjwt only when the image had it installed", () => {
+    const queries: string[] = [];
+    const withPgjwt = fakeShadowClient((sql) => {
+      queries.push(sql);
+      if (sql.startsWith("SELECT extname")) {
+        return Promise.resolve({ rows: [{ extname: "pgjwt" }] });
+      }
+      return Promise.resolve({
+        rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
+      });
+    });
+    const withoutPgjwt = fakeShadowClient((sql) =>
       Promise.resolve({
         rows: sql === "SHOW server_version" ? [{ server_version: "17.6" }] : [],
       }),
     );
+    const files = [{ name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" }];
     return Effect.gen(function* () {
-      const prep = yield* legacyPrepareDeclarativeShadow(client, [
-        { name: "public/01.sql", sql: "CREATE EXTENSION pgcrypto;" },
+      expect((yield* legacyPrepareDeclarativeShadow(withPgjwt, files)).restorePgjwt).toBe(true);
+      expect(queries).toEqual([
+        "SELECT extname FROM pg_extension WHERE extname = 'pgjwt'",
+        "SHOW server_version",
+        "DROP EXTENSION IF EXISTS pgjwt",
+        "DROP EXTENSION IF EXISTS pgcrypto",
       ]);
-      expect(prep.restorePgjwt).toBe(false);
-    });
-  });
-
-  it.live("discards the in-flight shadow connection when prep is interrupted", () => {
-    return Effect.gen(function* () {
-      const started = Deferred.makeUnsafe<void>();
-      const released = Deferred.makeUnsafe<Error | undefined>();
-      const client: LegacyDeclarativeShadowClient = {
-        connect: () =>
-          Promise.resolve({
-            query: () => {
-              Deferred.doneUnsafe(started, Effect.void);
-              return new Promise<{ readonly rows: ReadonlyArray<unknown> }>(() => {});
-            },
-            release: (error?: Error | boolean) => {
-              Deferred.doneUnsafe(
-                released,
-                Effect.succeed(error instanceof Error ? error : undefined),
-              );
-            },
-          }),
-      };
-      const fiber = yield* legacyPrepareDeclarativeShadow(client, [
-        { name: "x.sql", sql: "CREATE EXTENSION pgcrypto;" },
-      ]).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(fiber);
-      const error = yield* Deferred.await(released);
-      expect(error?.message).toBe("shadow prep interrupted");
-    });
-  });
-
-  it.live("fails prep when the checked-out connection emits error", () => {
-    return Effect.gen(function* () {
-      const emitter = new EventEmitter();
-      const started = Deferred.makeUnsafe<void>();
-      const client: LegacyDeclarativeShadowClient = {
-        connect: () =>
-          Promise.resolve({
-            query: () => {
-              Deferred.doneUnsafe(started, Effect.void);
-              return new Promise<{ readonly rows: ReadonlyArray<unknown> }>(() => {});
-            },
-            release: () => {},
-            on: (event, listener) => {
-              emitter.on(event, listener);
-            },
-            removeListener: (event, listener) => {
-              emitter.removeListener(event, listener);
-            },
-          }),
-      };
-      const fiber = yield* legacyPrepareDeclarativeShadow(client, [
-        { name: "x.sql", sql: "CREATE EXTENSION pgcrypto;" },
-      ]).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(started);
-      emitter.emit("error", new Error("socket hang up"));
-      const exit = yield* Fiber.await(fiber);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = Exit.isFailure(exit)
-        ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
-        : undefined;
-      expect(error instanceof LegacyPgDeltaEngineError ? error.message : "").toContain(
-        "socket hang up",
-      );
+      expect((yield* legacyPrepareDeclarativeShadow(withoutPgjwt, files)).restorePgjwt).toBe(false);
     });
   });
 });
