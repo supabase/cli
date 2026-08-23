@@ -159,6 +159,37 @@ describe("CLI build identity", () => {
     }
   });
 
+  it("captures a staged diff larger than the child-process output buffer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "supabase-cli-source-identity-diff-"));
+    try {
+      await execFile("git", ["init", root]);
+      await execFile("git", ["-C", root, "config", "user.email", "test@example.com"]);
+      await execFile("git", ["-C", root, "config", "user.name", "Test"]);
+      const trackedPath = join(root, "tracked.ts");
+      await writeFile(trackedPath, "export const tracked = true;\n");
+      await execFile("git", ["-C", root, "add", "tracked.ts"]);
+      await execFile("git", ["-C", root, "commit", "-m", "initial"]);
+
+      await writeFile(
+        trackedPath,
+        `export const payload = ${JSON.stringify("x".repeat(2_000_000))};\n`,
+      );
+      await execFile("git", ["-C", root, "add", "tracked.ts"]);
+
+      const captured = captureCliSourceIdentityAt(root);
+      expect(captured.stagedDiff.length).toBeGreaterThan(1_048_576);
+      const identity = await Effect.runPromise(
+        resolveCliBuildIdentity({
+          cliVersion: "0.0.0-dev",
+          source: captured,
+        }),
+      );
+      expect(identity.buildId).toMatch(/^source:[0-9a-f]{64}$/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("uses path, size, and mtime metadata for large untracked files", async () => {
     const root = await mkdtemp(join(tmpdir(), "supabase-cli-source-identity-large-"));
     try {

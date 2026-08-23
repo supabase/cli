@@ -55,6 +55,10 @@ const MAX_UNTRACKED_FILE_BYTES = 1_048_576;
 const runGit = (repositoryRoot: string, args: ReadonlyArray<string>): string =>
   execFileSync("git", ["-C", repositoryRoot, ...args], {
     encoding: "utf8",
+    // Source-mode identity must include the complete patch. Git diffs can be
+    // arbitrarily large in a dirty checkout, so the child-process boundary
+    // cannot use Node's 1 MiB default and truncate or reject the identity.
+    maxBuffer: Number.POSITIVE_INFINITY,
     stdio: ["ignore", "pipe", "pipe"],
   });
 

@@ -175,6 +175,10 @@ export const daemonLayer = (
     };
     return yield* supervisorLayer(startMsg, daemonEntryPoint, onReplacing).pipe(
       Effect.provideService(HttpTransportClient, httpTransportClient),
-      Effect.mapError((error) => new DaemonStartError({ message: error.message })),
+      Effect.mapError((error) =>
+        error instanceof DaemonUpgradeRequired
+          ? error
+          : new DaemonStartError({ message: error.message }),
+      ),
     );
   });

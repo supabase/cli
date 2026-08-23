@@ -18,6 +18,7 @@ export {
   StackError,
   StackNotRunningError,
   StackReadinessError,
+  StackUnavailableError,
   toStackError,
 } from "./errors.ts";
 
