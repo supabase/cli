@@ -26,7 +26,13 @@ import {
 } from "./managed/control.ts";
 import { Stack } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
-import { StackRpc, STACK_RPC_PATH, type StackLaunchUpdateRpc } from "./StackRpc.ts";
+import {
+  StackRpc,
+  STACK_RPC_PATH,
+  stackRpcFenceHeaders,
+  type StackLaunchUpdateRpc,
+  type StackRpcFence,
+} from "./StackRpc.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { CONTROL_PROTOCOL_VERSION, ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
 import type { BuildIdentityValue } from "./BuildIdentity.ts";
@@ -122,6 +128,7 @@ const bodyForRequest = (
 const makeHttpClient = (
   endpoint: ControlEndpoint,
   transport: HttpTransportClient["Service"],
+  fence: StackRpcFence,
 ): HttpClient.HttpClient =>
   HttpClient.make((request, url, signal) => {
     const rawPath = `${url.pathname}${url.search}`;
@@ -130,7 +137,7 @@ const makeHttpClient = (
       Effect.flatMap((body) =>
         transport.request(endpoint, path, {
           method: request.method,
-          headers: { ...request.headers },
+          headers: { ...request.headers, ...stackRpcFenceHeaders(fence) },
           signal,
           ...(body === undefined ? {} : { body }),
         }),
@@ -189,7 +196,11 @@ const makeRemoteRpcClient = (
         ),
       );
     const rpcHttpClient = HttpClient.mapRequest(
-      makeHttpClient(endpoint, transport),
+      makeHttpClient(endpoint, transport, {
+        ownershipId: expectedOwner.ownershipId,
+        ownerSessionId: expectedOwner.ownerSessionId,
+        daemonBuildId: options.buildIdentity.buildId,
+      }),
       HttpClientRequest.prependUrl(`${endpoint.url}${STACK_RPC_PATH}`),
     );
     const protocol = yield* RpcClient.makeProtocolHttp(rpcHttpClient).pipe(

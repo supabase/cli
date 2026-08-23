@@ -11,6 +11,7 @@ import { controlTransportLayer } from "./platform-node.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import { StackServiceState } from "./StackServiceState.ts";
+import { stackRpcFenceHeaders } from "./StackRpc.ts";
 
 const OWNER_ID = "e".repeat(64);
 
@@ -135,7 +136,14 @@ it.live("serves handler behavior over the RPC boundary", () =>
       const rawReload = yield* Effect.promise(() =>
         fetch(`${owner.endpoint.url}/rpc`, {
           method: "POST",
-          headers: { "content-type": "application/ndjson" },
+          headers: {
+            "content-type": "application/ndjson",
+            ...stackRpcFenceHeaders({
+              ownershipId: status.ownershipId,
+              ownerSessionId: status.ownerSessionId,
+              daemonBuildId: status.daemonBuildId,
+            }),
+          },
           body: `${JSON.stringify({
             _tag: "Request",
             id: "redaction-test",

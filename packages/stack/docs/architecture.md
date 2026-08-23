@@ -269,7 +269,8 @@ boundary. The one static application exposes only:
   daemon build identity;
 - `POST /stop` for an idempotent shutdown request containing the ownership id
   and exact owner session id; and
-- `POST /rpc` for same-build Effect RPC over framed NDJSON.
+- `POST /rpc` for same-build Effect RPC over framed NDJSON, fenced to the
+  expected ownership id, owner session, and daemon build id before dispatch.
 
 `RemoteStack` is the thin typed RPC adapter. It never maintains a handwritten
 runtime route table or stream parser. Remote stop uses the stable `/stop` route
@@ -289,7 +290,9 @@ legacy runtime compatibility window or second-server handoff.
 The owner response includes a human-readable CLI version and an exact daemon
 build identity. A `RemoteStack` RPC client is constructed only when the client
 build id equals the owner build id. A mismatch is a typed
-`DaemonUpgradeRequired`; it never becomes an attempted RPC request.
+`DaemonUpgradeRequired`; it never becomes an attempted RPC request. Every RPC
+request repeats the same owner/session/build fence so a client that outlives a
+listener replacement is rejected before a handler runs.
 
 Only an explicit `supabase start` may use the `replace-incompatible` policy. It
 preflights the managed document and persisted launch selection while the old

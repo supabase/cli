@@ -33,8 +33,10 @@ only three routes:
 - `POST /stop` accepts an ownership id and exact owner session id, returns a
   flushed `202`, and lets the caller wait for that session to end; and
 - `POST /rpc` serves same-build Effect RPC over framed NDJSON when
-  `SupervisorLifecycle.runtimeStack` has published the runtime. Before that
-  publication, handlers fail fast with typed `StackUnavailableError`.
+  `SupervisorLifecycle.runtimeStack` has published the runtime. Requests carry
+  the expected ownership id, owner session, and daemon build fence; a stale
+  fence is rejected before a handler runs. Before runtime publication, handlers
+  fail fast with typed `StackUnavailableError`.
 
 Graceful remote stop therefore uses the stable session-fenced control route,
 waits for the targeted owner session and document transition, then lets the

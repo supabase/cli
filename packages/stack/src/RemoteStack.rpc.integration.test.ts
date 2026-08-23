@@ -1,6 +1,7 @@
 import { it } from "@effect/vitest";
 import {
   Cause,
+  Context,
   Deferred,
   Effect,
   Exit,
@@ -488,6 +489,105 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
           yield* Deferred.await(activeLogReleased);
           expect(Exit.isFailure(yield* Fiber.join(activeLogs).pipe(Effect.exit))).toBe(true);
         }).pipe(Effect.provide(remoteLayer));
+      }),
+    ),
+  ),
+);
+
+it.live("fences stale RPC clients after deterministic endpoint replacement", () =>
+  live(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const stackId = "d".repeat(64);
+        const sessionA = "rpc-fence-session-a";
+        const sessionB = "rpc-fence-session-b";
+        const info: StackInfo = {
+          url: "http://127.0.0.1:54321",
+          dbUrl: "postgresql://localhost/postgres",
+          publishableKey: "publishable",
+          secretKey: "secret",
+          anonJwt: "anon",
+          serviceRoleJwt: "role",
+          serviceEndpoints: {},
+        };
+        let handlerCalls = 0;
+        const makeOwner = (ownerSessionId: string, daemonBuildId: string) =>
+          Effect.gen(function* () {
+            const lifecycle = yield* SupervisorLifecycle.make({
+              ownershipId: stackId,
+              ownerSessionId,
+              daemonCliVersion: "test",
+              daemonBuildId,
+            });
+            yield* lifecycle.publishStack({
+              ...makeTestStack(),
+              getInfo: () =>
+                Effect.sync(() => {
+                  handlerCalls += 1;
+                  return info;
+                }),
+            });
+            const owner = yield* acquireControl({
+              stackId,
+              initialStatus: yield* lifecycle.currentStatus,
+              application: { app: yield* makeSupervisorControlApplication(lifecycle) },
+            });
+            if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+            yield* lifecycle.setClose(owner.close);
+            return { lifecycle, owner };
+          });
+
+        const first = yield* makeOwner(sessionA, "test-build");
+        const firstStatus = yield* first.owner.ownerStatus;
+        const staleLayer = RemoteStack.layer(first.owner.endpoint, {
+          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          owner: {
+            ownershipId: stackId,
+            ownerSessionId: firstStatus.ownerSessionId,
+            controlProtocolVersion: firstStatus.controlProtocolVersion,
+            daemonCliVersion: firstStatus.daemonCliVersion,
+            daemonBuildId: firstStatus.daemonBuildId,
+          },
+        }).pipe(Layer.provide(httpTransportClientLayer));
+        const staleContext = yield* Layer.build(staleLayer);
+        const staleRemote = Context.get(staleContext, Stack);
+        expect((yield* staleRemote.getInfo()).url).toBe(info.url);
+        expect(handlerCalls).toBe(1);
+
+        yield* first.owner.close;
+        const replacement = yield* makeOwner(sessionB, "test-build");
+        const staleResult = yield* staleRemote.getInfo().pipe(Effect.result);
+        expect(Result.isFailure(staleResult)).toBe(true);
+        if (Result.isFailure(staleResult)) {
+          expect(staleResult.failure).toBeInstanceOf(StackRpcProtocolError);
+        }
+        expect(handlerCalls).toBe(1);
+
+        const replacementStatus = yield* replacement.owner.ownerStatus;
+        const replacementLayer = RemoteStack.layer(replacement.owner.endpoint, {
+          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          owner: {
+            ownershipId: stackId,
+            ownerSessionId: replacementStatus.ownerSessionId,
+            controlProtocolVersion: replacementStatus.controlProtocolVersion,
+            daemonCliVersion: replacementStatus.daemonCliVersion,
+            daemonBuildId: replacementStatus.daemonBuildId,
+          },
+        }).pipe(Layer.provide(httpTransportClientLayer));
+        const replacementContext = yield* Layer.build(replacementLayer);
+        const replacementRemote = Context.get(replacementContext, Stack);
+        expect((yield* replacementRemote.getInfo()).url).toBe(info.url);
+        expect(handlerCalls).toBe(2);
+
+        yield* replacement.owner.close;
+        const buildReplacement = yield* makeOwner(sessionB, "replacement-build");
+        const staleBuildResult = yield* replacementRemote.getInfo().pipe(Effect.result);
+        expect(Result.isFailure(staleBuildResult)).toBe(true);
+        if (Result.isFailure(staleBuildResult)) {
+          expect(staleBuildResult.failure).toBeInstanceOf(StackRpcProtocolError);
+        }
+        expect(handlerCalls).toBe(2);
+        yield* buildReplacement.owner.close;
       }),
     ),
   ),

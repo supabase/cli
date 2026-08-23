@@ -3,7 +3,7 @@ import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { ControlStopRequestSchema } from "./DaemonProtocol.ts";
-import { StackRpc } from "./StackRpc.ts";
+import { matchesStackRpcFence, StackRpc } from "./StackRpc.ts";
 import {
   StackLaunchUpdater,
   StackRpcHandlers,
@@ -33,6 +33,22 @@ export const makeSupervisorControlApplication = (
       Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorLifecycle, lifecycle)))),
       Effect.provide(RpcSerialization.layerNdjson),
     );
+    const fencedRpc = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const status = yield* lifecycle.currentStatus;
+      if (
+        !matchesStackRpcFence(request.headers, {
+          ownershipId: status.ownershipId,
+          ownerSessionId: status.ownerSessionId,
+          daemonBuildId: status.daemonBuildId,
+        })
+      ) {
+        // These headers fence a client to the observed owner; they are not an
+        // authentication mechanism and carry no secret material.
+        return HttpServerResponse.jsonUnsafe({ error: "rpc-fence-mismatch" }, { status: 409 });
+      }
+      return yield* rpc;
+    });
     const routes = [
       HttpRouter.route(
         "GET",
@@ -64,7 +80,7 @@ export const makeSupervisorControlApplication = (
           }),
         ),
       ),
-      HttpRouter.route("POST", "/rpc", rpc),
+      HttpRouter.route("POST", "/rpc", fencedRpc),
     ];
     const application = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
     return application.pipe(Effect.orDie);
