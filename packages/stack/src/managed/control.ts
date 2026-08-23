@@ -474,9 +474,7 @@ const makeAttached = (
 ): ControlAttached => {
   const client = makeControlClient(transport);
   const ownerStatus = client.readOwner(endpoint, ownershipId);
-  const requestStop = ownerStatus.pipe(
-    Effect.flatMap((status) => client.stopSession(endpoint, ownershipId, status.ownerSessionId)),
-  );
+  const requestStop = client.stopSession(endpoint, ownershipId, observedStatus.ownerSessionId);
   return {
     _tag: "Attached",
     ownershipId,

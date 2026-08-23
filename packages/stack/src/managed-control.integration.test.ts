@@ -612,6 +612,46 @@ describe("managed control endpoint", () => {
     }),
   );
 
+  it.effect("stops only the owner session verified by the attach handshake", () =>
+    Effect.gen(function* () {
+      const attachedStatus: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId: "attached-session",
+        state: "running",
+        ready: true,
+        daemonCliVersion: "old",
+        daemonBuildId: "old-build",
+      };
+      const replacementStatus: ControlOwnerStatus = {
+        ...attachedStatus,
+        ownerSessionId: "replacement-session",
+        daemonCliVersion: "new",
+        daemonBuildId: "new-build",
+      };
+      let reads = 0;
+      let requestedSession: string | undefined;
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: () => Effect.sync(() => (reads++ === 0 ? attachedStatus : replacementStatus)),
+        requestStop: (_requestEndpoint, request) =>
+          Effect.sync(() => {
+            requestedSession = request.ownerSessionId;
+          }),
+      };
+      const attached = yield* acquireControl({ stackId: STACK_ID }).pipe(
+        Effect.provideService(ControlTransport, transport),
+      );
+      expect(isControlAttached(attached)).toBe(true);
+      if (!isControlAttached(attached)) return;
+
+      yield* attached.requestStop;
+
+      expect(requestedSession).toBe("attached-session");
+    }),
+  );
+
   it.live("preserves an explicit owner protocol mismatch", () =>
     live(
       Effect.scoped(
