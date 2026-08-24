@@ -37,37 +37,55 @@ API-sourced config values carry the raw response, governed by five rules:
    `WeakMap<ConfigValue, RawApiResponse>`) rather than an ordinary object
    field, so `JSON.stringify`, object spread, and any encoder outside this
    package — not just the package's own — cannot observe it by construction.
-   The metadata-key strip rule below is defense-in-depth for this package's
-   own structural walks, not the sole safeguard.
+   It is not a declared field of any decode schema: file decoding can never
+   produce it, and the API mapping attaches it only after decode. A
+   `_apiResponse` key found inside a config *file* is therefore ordinary
+   unknown input at struct positions and ordinary user data at dynamic
+   record positions — presence remains a reliable API-provenance signal.
+   Invisibility to serialization implies invisibility to generic copying:
+   `{ ...config }`, `structuredClone`, and serializing state stores yield a
+   valid config value *without* the raw response, by design. Safety outranks
+   propagation here, and absence is already a defined state under this rule;
+   the package exposes a read accessor and the mapping's attach step for
+   consumers that must carry the raw across a copy boundary explicitly.
 2. **Lenient decode, applied before the strict generated schema sees the
    body.** The CLI fetches the v2 config response via `@supabase/api`'s
    `executeRaw` (`packages/api/src/internal/client.ts`), not `execute`.
    `execute` decodes through the generated `V2GetProjectConfigOutput`
    `Schema.Struct`, which discards excess properties, so by the time
    `@supabase/config`'s lenient schema ran on that output any API-ahead field
-   would already be gone. `executeRaw` returns the response undecoded;
-   `@supabase/config`'s schema then decodes `data.attributes` and must pass
-   unknown keys through without failing. This lenient decode is the primary
-   protection against API-ahead-of-package skew; `_apiResponse` is only the
-   access mechanism for what it let through.
-3. **One metadata-key rule, scoped to fixed struct shapes.** `_apiResponse`
-   and `$schema` are metadata, not config, wherever they occur as a declared
-   field of a fixed `Schema.Struct` (the config document root, or the value
-   object an API-sourced section attaches `_apiResponse` to). The rule is a
-   position match on those two reserved names, not a `$`/`_` prefix match,
-   and it never reaches into a dynamic `Schema.Record` key space: function
-   slugs (`functions.<slug>`, e.g. `functions._health`), edge runtime secret
-   names (`edge_runtime.secrets.<name>`, e.g. `secrets._TOKEN`), env var
-   names, and other user-named keys keep whatever leading `_`/`$` character
-   they're given, because those keys are user data, not metadata, regardless
-   of spelling. Reserved-name matches are excluded from every structural walk
-   (sparse subtraction, default omission, value-origin tracking) and from
-   every encode/persist path. The `$schema` key preserved by `io.ts` is the
-   existing precedent; `_apiResponse` is the second member of the same rule,
-   implemented once in the shared walk core rather than per call site.
-4. **Never persisted.** Because encode strips metadata keys, `_apiResponse`
-   (and its HMAC'd secret digests) can never land in `config.toml` /
-   `config.json`, including via `config pull`-style flows.
+   would already be gone. `executeRaw` returns the response undecoded and
+   deliberately does not filter on HTTP status, so the caller checks the
+   status and maps non-2xx responses to API errors before any decode — as
+   existing `executeRaw` callers do — rather than feeding an error body into
+   the config schema. `@supabase/config`'s schema then decodes
+   `data.attributes` and must pass unknown keys through without failing.
+   This lenient decode is the primary protection against
+   API-ahead-of-package skew; `_apiResponse` is only the access mechanism
+   for what it let through.
+3. **Metadata is invisible to walks by construction, not filtered by key.**
+   Neither reserved name is excluded from the structural walks (sparse
+   subtraction, default omission, value-origin tracking) by a key check in
+   the walk core — the walks never see them at all. `$schema` lives entirely
+   at the io boundary: `io.ts` reads it off the raw parsed document before
+   schema decode and re-attaches it on write, so it never exists on a
+   decoded config value. `_apiResponse` is non-enumerable (rule 1), so
+   `Object.entries`-based walks — `sparse.ts`'s `subtractValue` included —
+   skip it without knowing it exists. No walk needs schema or path context,
+   and dynamic `Schema.Record` key spaces are safe automatically: an
+   enumerable, file-supplied key that merely spells a reserved name
+   (`functions._apiResponse` as a function slug,
+   `edge_runtime.secrets._TOKEN` as a secret name) is user data and flows
+   through every walk normally, because metadata status comes from *how the
+   property is attached*, never from how the key is spelled.
+4. **Divergent persistence policies.** The reserved names share walk
+   invisibility but not a persistence rule. `$schema` is document metadata
+   that must be written: `io.ts`'s `toConfigDocument` re-attaches it on
+   every persist so editor and schema tooling keep working. `_apiResponse`
+   must never be written — and cannot be: non-enumerable means no encoder,
+   this package's or a consumer's, can see it, so it (and its HMAC'd secret
+   digests) cannot land in `config.toml`/`config.json`, including via
+   `config pull`-style flows.
 5. **Fallback, not contract — with a secret carve-out.** When a raw key later
    graduates into the typed mapping, the typed field wins; the raw key
    remains readable but its naming, units, or polarity may differ from the
@@ -78,11 +96,16 @@ API-sourced config values carry the raw response, governed by five rules:
    returns an HMAC digest for these, never the underlying value, so letting
    the typed field win would hand the digest to the normal encoder and
    persist it despite rule 4. For `x-secret` fields the mapping omits the
-   API-sourced value entirely, leaving any locally configured value
-   untouched. Consumers needing "which API fields does this package version
-   not understand" use a registry-derived `unmappedApiFields()` helper (raw
-   attributes minus the keys the mapping consumed) rather than a second
-   stored field.
+   API-sourced value entirely. Omission alone only governs the mapping:
+   flows that rewrite a config file (a `config pull` that persists the
+   merged result) must source `x-secret` fields from the existing local
+   document, or the rewrite would drop the user's secret along with the
+   digest; and drift comparison must treat `x-secret` fields as not
+   comparable, since a local plaintext or `env(...)` reference can never
+   meaningfully equal a remote digest. Consumers needing "which API fields
+   does this package version not understand" use a registry-derived
+   `unmappedApiFields()` helper (raw attributes minus the keys the mapping
+   consumed) rather than a second stored field.
 
 ## Rationale
 
@@ -93,14 +116,16 @@ API-sourced config values carry the raw response, governed by five rules:
   generated client's strict `Schema.Struct` decode already drops excess
   properties, so a lenient decode layered on top of it would have nothing
   left to be lenient about.
-- Rule 3 is scoped to fixed struct positions, not a `$`/`_` prefix match,
-  because the config schema uses dynamic `Schema.Record` keys (function
-  slugs, edge runtime secret names, env var names) that legitimately start
-  with either character. A prefix match would make the metadata rule silently
-  drop user config through the same structural walks it's meant to protect.
-  Scoped to reserved names, it still exists because the ADR 0018 subtraction
-  core compares config values structurally: a remote config carrying
-  `_apiResponse` would otherwise diff as drifted against every baseline,
+- Rule 3 rejects both a `$`/`_` prefix match and schema-aware key filtering
+  in the walk core. A prefix match would silently drop user config: dynamic
+  `Schema.Record` keys (function slugs, edge runtime secret names, env var
+  names) legitimately start with either character. And threading schema/path
+  context through `subtractValue` just to recognize two reserved names is
+  complexity with no payoff once those names never occupy enumerable
+  positions in the first place — attachment mode, not key inspection, is
+  what makes a property metadata. Walk invisibility still matters because
+  the ADR 0018 subtraction core compares config values structurally: an
+  enumerable `_apiResponse` would diff as drifted against every baseline,
   producing exactly the phantom-drift false positives the drift feature is
   trying to eliminate.
 - Storing the whole raw response (rule 1) rather than only the unmapped
@@ -108,15 +133,20 @@ API-sourced config values carry the raw response, governed by five rules:
   the leftovers are derivable and shrink release-over-release, which is
   correct semantics for a helper but confusing semantics for stored data.
   Non-enumerable/out-of-band storage is required rather than a plain field
-  because the metadata-key rule only protects this package's own walks —
-  a shared npm contract also gets serialized by `JSON.stringify`, object
-  spread, and consumer-written encoders this package doesn't control.
-- The rule 5 secret carve-out exists because typed graduation and the
-  metadata-key rule solve different problems: metadata-key strips the raw
-  copy, but a graduated secret's *typed* value is not metadata-keyed and
-  remains eligible for the normal encoder. Without the carve-out, an HMAC
-  digest could reach `config.toml` through the typed field even though rule
-  4 successfully blocked the raw one.
+  because a shared npm contract gets serialized by `JSON.stringify`, object
+  spread, and consumer-written encoders this package doesn't control. The
+  same mechanism that hides the raw from serializers necessarily hides it
+  from generic copies — a property `JSON.stringify` skips is a property
+  `{ ...spread }` skips. The ADR resolves that tension in favor of safety:
+  a copy that silently kept secret digests would be a leak, while a copy
+  that drops the escape hatch is just a config value in the absence state
+  rule 1 already defines.
+- The rule 5 secret carve-out exists because typed graduation and rule 3
+  solve different problems: walk invisibility hides the raw copy, but a
+  graduated secret's *typed* value is an ordinary enumerable config field
+  and remains eligible for the normal encoder. Without the carve-out, an
+  HMAC digest could reach `config.toml` through the typed field even though
+  rule 4 successfully blocked the raw one.
 
 ## Consequences
 
@@ -124,8 +154,8 @@ API-sourced config values carry the raw response, governed by five rules:
 
 - Consumers are decoupled from the package's publish cadence for read access
   to new API fields.
-- One metadata-key rule covers `$schema` and `_apiResponse` together, in one
-  shared walk implementation.
+- Both reserved names stay out of the structural walks by construction —
+  zero key-checks in the walk core to maintain or get wrong.
 - `unmappedApiFields()` doubles as a mapping-completeness check: a
   nonempty result on a known API version is a to-do list for the registry.
 
@@ -137,13 +167,20 @@ API-sourced config values carry the raw response, governed by five rules:
 - Two representations of graduated fields coexist (raw and typed) and can
   disagree in naming/units/polarity; the documented typed-wins precedence,
   minus the secret carve-out, mitigates but cannot remove the confusion risk.
-- Every future structural walk must honor the metadata-key rule, and that
-  rule must stay position-scoped (reserved struct field, not string prefix)
-  as new dynamic `Schema.Record` sections are added; keeping the walks
-  funneled through the shared core is what makes this tractable.
+- The guardrail rests on attachment invariants: `_apiResponse` is safe only
+  while attached non-enumerably (or out-of-band), `$schema` only while it
+  stays at the io boundary. A refactor that reifies either as an ordinary
+  enumerable field silently reintroduces both phantom drift and the
+  persistence leak.
+- Generic copies (`{ ...spread }`, `structuredClone`, serializing state
+  stores) drop the raw metadata by design; a consumer that must carry it
+  across such a boundary re-attaches it explicitly via the package's
+  accessor/attach helpers.
 - The mapping layer must special-case every `x-secret`-annotated field to
   skip typed graduation, rather than treating all API-sourced fields
-  uniformly; missing one lets a digest reach the encoder.
+  uniformly; missing one lets a digest reach the encoder. Pull-style write
+  flows carry the matching obligation to source `x-secret` fields from the
+  local document, and drift comparison must skip them.
 - CLI callers must use `executeRaw` for this endpoint instead of the
   generated `execute`, forgoing the generated client's typed output for the
   v2 config response specifically.
@@ -153,11 +190,12 @@ API-sourced config values carry the raw response, governed by five rules:
 1. **Store only unmapped leftovers (`_unmapped`)**: contents change with
    every package release even when the API response is identical; unstable
    stored data. Derive leftovers via helper instead.
-2. **Return a `{ config, raw }` pair instead of embedding**: keeps config
-   values walk-clean by construction, but the raw half does not travel with
-   the value through application code and state stores; each consumer would
-   rebuild the pairing. Embedding plus the strip rule is more ergonomic for
-   the same safety.
+2. **Return a `{ config, raw }` pair instead of embedding**: equally
+   walk-clean, but the pair must be threaded through every signature and
+   store even for the dominant in-process case, where a non-enumerable
+   embedded property travels free with the object reference. Both designs
+   lose the raw across serializing boundaries (see Consequences), so the
+   pair's only advantage disappears while its ergonomic cost remains.
 3. **Strict decode of the v2 attributes**: rejected outright; see Rationale.
 4. **Inline passthrough of unknown keys per section** (zod
    `.passthrough()`-style): unknown API keys arrive in API naming/units,
@@ -167,8 +205,8 @@ API-sourced config values carry the raw response, governed by five rules:
 
 ## Related Decisions
 
-- ADR 0018: sparse config subtraction — defines the structural walks that the
-  metadata-key rule scopes out.
+- ADR 0018: sparse config subtraction — defines the structural walks that
+  rule 3 keeps the metadata invisible to.
 - ADR 0009: configuration schema & validation.
 
 ## See Also
