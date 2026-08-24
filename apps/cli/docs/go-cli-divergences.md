@@ -106,9 +106,8 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   per-invocation. OrioleDB clusters and PG <= 14 are cache-ineligible (external S3 state and mid-session
   role-default mutation respectively — see `shadow-cache.ts`). Known session-semantics caveat on
   the cached paths: migrations run on a session opened after the baseline, so role-level defaults
-  a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations, whereas Go's
-  single-connection flow ran migrations before those defaults took effect; opting out restores
-  Go's exact single-session behavior.
+  a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations; opting out restores
+  the previous single-session flow, where migrations ran before those defaults took effect.
 - Postgres container entrypoint (`postgres.service.ts`): the init script `exec`s
   `docker-entrypoint.sh` so Postgres is PID 1. Go leaves `sh` as PID 1, so SIGTERM is never
   forwarded and every `docker stop` burns the full 10s grace period. Applies to

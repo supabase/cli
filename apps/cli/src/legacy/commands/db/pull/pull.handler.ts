@@ -787,19 +787,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               pgDelta: toml.pgDelta,
               ctx,
             };
-            // `legacyWithShadowDatabase` (`shadow-cache.ts`) rather than a bare
-            // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc
-            // comment for both halves of the rationale: why the lifecycle is an
-            // `Effect.acquireUseRelease` (an interrupt must not be able to land between creation
-            // and the finalizer being attached) and why the cache seam sits here. Note each
-            // pooler-retry attempt still acquires and releases its own shadow — on the warm path
-            // each attempt restores its own fresh container from the same cached snapshot,
-            // sequentially.
-            // The key's webhooks policy mirrors the migrate `legacyPrepareShadowSource` will
-            // actually select for this mode: legacy's `legacyMigrateShadowDatabase` forces
-            // `pg_net` on, next's `legacyMigrateNextShadowDatabase` follows project config —
-            // a key that said "enabled" for a config-following baseline would let the two
-            // engines restore each other's tars (review: Codex on #6184).
+            // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
+            // and the cache seam. Each pooler-retry attempt still acquires and releases its own
+            // shadow — on the warm path every attempt restores a fresh container from the same
+            // cached snapshot. The key's webhooks policy must mirror what
+            // `legacyPrepareShadowSource` selects for this mode (legacy migrate forces `pg_net`
+            // on, next follows config), or the two engines could restore each other's tars.
             return yield* legacyWithShadowDatabase(
               spawner,
               shadowInput,

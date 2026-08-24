@@ -691,18 +691,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // `legacyWithShadowDatabase` (`shadow-cache.ts`) rather than a bare
-      // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment for
-      // both halves of the rationale: why the lifecycle is an `Effect.acquireUseRelease` (an
-      // interrupt must not be able to land between creation and the finalizer being attached) and
-      // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
-      // create/remove pair; otherwise a key-matching PGDATA snapshot is restored into the fresh
-      // container in a few seconds instead of cold-provisioning the baseline in ~15s).
-      // The key's webhooks policy mirrors the migrate `legacyPrepareShadowSource` will actually
-      // select for this mode: legacy's `legacyMigrateShadowDatabase` forces `pg_net` on, next's
-      // `legacyMigrateNextShadowDatabase` follows project config — a key that said "enabled" for
-      // a config-following baseline would let the two engines restore each other's tars
-      // (review: Codex on #6184).
+      // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
+      // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is unset. The key's
+      // webhooks policy must mirror what `legacyPrepareShadowSource` selects for this mode
+      // (legacy migrate forces `pg_net` on, next follows config), or the two engines could
+      // restore each other's tars.
       diffResult = yield* legacyWithShadowDatabase(
         spawner,
         shadowInput,
