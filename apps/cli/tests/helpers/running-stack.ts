@@ -106,7 +106,12 @@ function projectHome(projectRoot: string): ProjectHome["Service"] {
 }
 
 export async function makeManagedStackFixture(
-  options: { running?: boolean; stackName?: string; cliVersion?: string } = {},
+  options: {
+    running?: boolean;
+    stackName?: string;
+    cliVersion?: string;
+    ownerState?: "starting";
+  } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "supabase-cli-managed-stack-"));
   const projectRoot = join(root, "repo");
@@ -116,6 +121,7 @@ export async function makeManagedStackFixture(
   const stackName = options.stackName ?? "default";
   const running = options.running ?? true;
   const cliVersion = options.cliVersion ?? CLI_VERSION;
+  const ownerState = options.ownerState;
   const project = projectHome(projectRoot);
   const managerRuntime = ManagedRuntime.make(
     Layer.mergeAll(managedStackManagerLayer({ stateRoot }), controlTransportLayer),
@@ -160,7 +166,7 @@ export async function makeManagedStackFixture(
           stackName,
           portDocument,
           ownership,
-          lifecycle: running ? "running" : "stopped",
+          lifecycle: ownerState ?? (running ? "running" : "stopped"),
           runtime: running
             ? { pid: process.pid, controlEndpoint: ownership.endpoint.url, protocolVersion: 1 }
             : undefined,
@@ -181,7 +187,7 @@ export async function makeManagedStackFixture(
           serviceRoleJwt: "test-service-role-jwt",
           serviceEndpoints: {},
         };
-        if (running) {
+        if (running && ownerState === undefined) {
           const runtimeStack = stackService(
             info,
             manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" }).pipe(
@@ -191,7 +197,7 @@ export async function makeManagedStackFixture(
           );
           yield* supervisorLifecycle.publishStack(runtimeStack);
           yield* Deferred.await(daemonReady);
-        } else {
+        } else if (!running) {
           yield* ownership.close;
         }
         yield* Deferred.succeed(ready, void 0);
@@ -200,7 +206,7 @@ export async function makeManagedStackFixture(
       }),
     ),
   );
-  if (running) {
+  if (running && ownerState === undefined) {
     await managerRuntime.runPromise(Deferred.succeed(daemonReady, void 0));
   }
   await managerRuntime.runPromise(Deferred.await(ready));
@@ -288,7 +294,11 @@ export async function makeManagedStackFixture(
 }
 
 export const makeRunningStackFixture = (
-  options: { stackName?: string; cliVersion?: string } = {},
+  options: {
+    stackName?: string;
+    cliVersion?: string;
+    ownerState?: "starting";
+  } = {},
 ) => makeManagedStackFixture({ ...options, running: true });
 
 export const makeStoppedStackFixture = (

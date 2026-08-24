@@ -109,6 +109,8 @@ export const connectManagedStack = (
           stackId: document.id,
           oldCliVersion: probe.status.daemonCliVersion,
           newCliVersion: input.cliVersion,
+          state: probe.status.state,
+          ready: probe.status.ready,
         }),
       );
     }

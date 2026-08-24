@@ -1,4 +1,5 @@
 import { Data, Predicate } from "effect";
+import type { ControlOwnerState } from "./DaemonProtocol.ts";
 
 export class BinaryNotFoundError extends Data.TaggedError("BinaryNotFoundError")<{
   readonly service: string;
@@ -116,6 +117,8 @@ export class DaemonUpgradeRequired extends Data.TaggedError("DaemonUpgradeRequir
   readonly stackId: string;
   readonly oldCliVersion: string;
   readonly newCliVersion: string;
+  readonly state: ControlOwnerState;
+  readonly ready: boolean;
 }> {}
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{

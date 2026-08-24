@@ -270,6 +270,14 @@ const waitForControlSessionEnd = (
       // A valid owner for another identity can claim this candidate after the
       // captured session releases it. That proves the captured session ended.
       Effect.catchTag("ControlAddressConflictError", () => Effect.void),
+      // Once the captured listener has closed, an unrelated listener may bind
+      // the same endpoint before this observer runs. A malformed response or
+      // a different control protocol therefore proves that the old session is
+      // gone just like a foreign owner response does.
+      Effect.catchTags({
+        ControlProtocolError: () => Effect.void,
+        ControlProtocolMismatchError: () => Effect.void,
+      }),
     );
     return yield* observe.pipe(
       Effect.retry({

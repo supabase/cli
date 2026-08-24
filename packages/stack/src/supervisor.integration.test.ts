@@ -31,7 +31,7 @@ import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
-import { SupervisorEventSchema } from "./SupervisorProtocol.ts";
+import { SupervisorEventSchema, type SupervisorErrorMessage } from "./SupervisorProtocol.ts";
 import { git } from "../tests/helpers/git-workspace.ts";
 import { watchDirectoryWithRetry } from "../tests/helpers/file-watch.ts";
 import { controlTransportLayer } from "./platform-node.ts";
@@ -53,6 +53,7 @@ type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-sta
 interface ChildHandle {
   readonly child: ChildProcess;
   readonly started: Promise<SupervisorStartedMessage>;
+  readonly error: Promise<SupervisorErrorMessage>;
   readonly attachedBeforeReady: Promise<void>;
   readonly managedStarted: Promise<void>;
 }
@@ -237,14 +238,45 @@ const spawnChild = (
     child.once("error", onError);
     child.once("exit", onExit);
   });
+  const error = new Promise<SupervisorErrorMessage>((resolve, reject) => {
+    const cleanup = () => {
+      child.off("message", onMessage);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const onMessage = (value: unknown) => {
+      let event: Schema.Schema.Type<typeof SupervisorEventSchema>;
+      try {
+        event = Schema.decodeUnknownSync(SupervisorEventSchema)(value);
+      } catch {
+        return;
+      }
+      if (event.type === "error") {
+        cleanup();
+        resolve(event);
+      }
+    };
+    const onError = (cause: Error) => {
+      cleanup();
+      reject(cause);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      reject(new Error(`supervisor exited before error event (${String(code)})`));
+    };
+    child.on("message", onMessage);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
   const waitForStage = (path: string) => waitForFile(path);
   const attachedBeforeReady = waitForStage(attachedBeforeReadyFile);
   const managedStarted = waitForStage(managedStartedFile);
   void started.catch(() => undefined);
+  void error.catch(() => undefined);
   void attachedBeforeReady.catch(() => undefined);
   void managedStarted.catch(() => undefined);
   child.send(input);
-  return { child, started, attachedBeforeReady, managedStarted };
+  return { child, started, error, attachedBeforeReady, managedStarted };
 };
 
 const kill = (child: ChildProcess): Promise<void> =>
@@ -885,6 +917,11 @@ describe("detached supervisor child journeys", () => {
         }),
       );
       await expect(contender.started).rejects.toThrow("Daemon CLI version mismatch");
+      await expect(contender.error).resolves.toMatchObject({
+        errorCode: "DAEMON_UPGRADE_REQUIRED",
+        state: "running",
+        ready: true,
+      });
       expect(oldOwner.child.exitCode).toBeNull();
       await remoteStop(oldStarted.endpoint);
       await waitForExit(oldOwner.child);
@@ -983,6 +1020,7 @@ describe("detached supervisor child journeys", () => {
       expect(rejectionDetails, rejectionDetails.join("\n\n")).toHaveLength(2);
       expect(
         rejectionDetails.every((detail) => detail.includes("Daemon CLI version mismatch")),
+        rejectionDetails.join("\n\n"),
       ).toBe(true);
       expect(results).toHaveLength(2);
       expect(started).toHaveLength(0);

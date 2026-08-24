@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ControlOwnerDescriptorSchema } from "./DaemonProtocol.ts";
+import { ControlOwnerDescriptorSchema, ControlOwnerStateSchema } from "./DaemonProtocol.ts";
 import { managedStackLaunchInputSchema } from "./managed/document.ts";
 import { PORT_FIELDS } from "./PortCatalog.ts";
 
@@ -27,6 +27,8 @@ const SupervisorOwnerDescriptorSchema = Schema.Struct({
   ownerSessionId: ControlOwnerDescriptorSchema.fields.ownerSessionId,
   controlProtocolVersion: ControlOwnerDescriptorSchema.fields.controlProtocolVersion,
   daemonCliVersion: ControlOwnerDescriptorSchema.fields.daemonCliVersion,
+  state: ControlOwnerStateSchema,
+  ready: Schema.Boolean,
 });
 
 export const SupervisorStartedEventSchema = Schema.Struct({
@@ -55,6 +57,8 @@ export const SupervisorErrorEventSchema = Schema.Struct({
   stackId: Schema.optionalKey(Schema.String),
   oldCliVersion: Schema.optionalKey(Schema.String),
   newCliVersion: Schema.optionalKey(Schema.String),
+  state: Schema.optionalKey(ControlOwnerStateSchema),
+  ready: Schema.optionalKey(Schema.Boolean),
   detail: Schema.optionalKey(Schema.String),
   endpoint: Schema.optionalKey(Schema.String),
   ownerSessionId: Schema.optionalKey(Schema.String),

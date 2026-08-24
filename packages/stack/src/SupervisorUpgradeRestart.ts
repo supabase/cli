@@ -23,6 +23,7 @@ import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { expandExcludedServices } from "./ServiceExclusions.ts";
 import {
   portRequestsForConfig,
+  rawServiceEnabled,
   resolveConfig,
   type DaemonConfigInput,
 } from "./StackConfigResolver.ts";
@@ -200,7 +201,11 @@ const applyPersistedLaunch = (
   const persistedExclusions = expandExcludedServices(persisted.excludedServices ?? []);
   const servicesToEnable = new Set<(typeof SERVICE_NAMES)[number]>(requestedExclusions);
   for (const service of SERVICE_NAMES) {
-    if (!persistedExclusions.has(service) && persisted.versions[service] !== undefined) {
+    if (
+      !persistedExclusions.has(service) &&
+      persisted.versions[service] !== undefined &&
+      rawServiceEnabled(config, service)
+    ) {
       servicesToEnable.add(service);
     }
   }

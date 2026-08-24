@@ -175,6 +175,8 @@ const makeRemoteRpcClient = (
           stackId: options.stackId ?? expectedOwner.ownershipId,
           oldCliVersion: ownerStatus.daemonCliVersion,
           newCliVersion: options.cliVersion,
+          state: ownerStatus.state,
+          ready: ownerStatus.ready,
         }),
       );
     if (

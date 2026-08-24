@@ -23,15 +23,18 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
   readonly error: {
     readonly oldCliVersion: string;
     readonly newCliVersion: string;
+    readonly state: "starting" | "running" | "stopping" | "deleting" | "failed";
+    readonly ready: boolean;
   };
 }) {
   const output = yield* Output;
-  const message = "Local Supabase stack is running under a different CLI version.";
+  const message = "Local Supabase stack is managed by a different CLI version.";
+  const running = input.error.state === "running" && input.error.ready;
   const data = {
     stack: input.summary.name,
-    running: true,
-    state: "running",
-    ready: true,
+    running,
+    state: input.error.state,
+    ready: input.error.ready,
     degraded: true,
     reason: "daemon_upgrade_required" as const,
     daemon_cli_version: input.error.oldCliVersion,
@@ -51,6 +54,8 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
   yield* output.info(`Stack: ${input.summary.name}`);
   yield* output.info(`Daemon CLI: ${input.error.oldCliVersion}`);
   yield* output.info(`Current CLI: ${input.error.newCliVersion}`);
+  yield* output.info(`State: ${input.error.state}`);
+  yield* output.info(`Ready: ${String(input.error.ready)}`);
   yield* output.info(formatPortsLine(input.summary.ports));
   yield* output.info(`Runtime mode: ${input.summary.launch.mode}`);
   for (const [name, version] of Object.entries(input.summary.versions).sort(([a], [b]) =>

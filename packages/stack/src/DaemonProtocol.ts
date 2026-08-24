@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-const ControlOwnerStateSchema = Schema.Literals([
+export const ControlOwnerStateSchema = Schema.Literals([
   "starting",
   "running",
   "stopping",

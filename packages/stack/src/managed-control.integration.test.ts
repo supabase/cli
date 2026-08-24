@@ -633,6 +633,59 @@ describe("managed control endpoint", () => {
     }),
   );
 
+  it.live("treats a post-stop non-control response as proof that the captured session ended", () =>
+    Effect.forEach(["malformed", "protocol-mismatch"] as const, (replacementKind) =>
+      Effect.gen(function* () {
+        const endpoint = yield* controlEndpoint(STACK_ID);
+        const ownerSessionId = "owner-session";
+        const oldListenerClosed = yield* Deferred.make<void>();
+        const replacementBound = yield* Deferred.make<void>();
+        let stopRequests = 0;
+        let reads = 0;
+        const transport: ControlTransportShape = {
+          bind: () => Effect.die("unused"),
+          requestStop: () =>
+            Effect.sync(() => {
+              stopRequests += 1;
+            }).pipe(
+              // Model the supervisor's ordered teardown and the unrelated
+              // listener rebinding before the first post-stop read.
+              Effect.andThen(Deferred.succeed(oldListenerClosed, undefined)),
+              Effect.andThen(Deferred.succeed(replacementBound, undefined)),
+            ),
+          read: () =>
+            Effect.gen(function* () {
+              yield* Deferred.await(oldListenerClosed);
+              yield* Deferred.await(replacementBound);
+              reads += 1;
+              if (replacementKind === "malformed") {
+                return "not-supabase";
+              }
+              return {
+                controlProtocol: "supabase-stack-control",
+                controlProtocolVersion: 2,
+                ownershipId: STACK_ID,
+                ownerSessionId: "replacement-session",
+                state: "running",
+                ready: true,
+                daemonCliVersion: "foreign",
+              };
+            }),
+        };
+
+        const result = yield* requestControlStopForSession(
+          endpoint,
+          STACK_ID,
+          ownerSessionId,
+          transport,
+        ).pipe(Effect.result);
+        expect(Result.isSuccess(result)).toBe(true);
+        expect(stopRequests).toBe(1);
+        expect(reads).toBe(1);
+      }),
+    ).pipe(Effect.asVoid),
+  );
+
   it.effect("retains the verified attach status when a later live read is unreachable", () =>
     Effect.gen(function* () {
       const endpoint = yield* controlEndpoint(STACK_ID);

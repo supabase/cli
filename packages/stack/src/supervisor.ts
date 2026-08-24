@@ -127,6 +127,8 @@ const startedOwnerDescriptor = (status: ControlOwnerStatus): SupervisorStartedMe
   ownerSessionId: status.ownerSessionId,
   controlProtocolVersion: status.controlProtocolVersion,
   daemonCliVersion: status.daemonCliVersion,
+  state: status.state,
+  ready: status.ready,
 });
 
 const decodeSupervisorStartMessage = (
@@ -322,13 +324,17 @@ const decodeSupervisorStartedOrError = (
               event.errorCode === "DAEMON_UPGRADE_REQUIRED" &&
               event.stackId !== undefined &&
               event.oldCliVersion !== undefined &&
-              event.newCliVersion !== undefined
+              event.newCliVersion !== undefined &&
+              event.state !== undefined &&
+              event.ready !== undefined
             ) {
               return Effect.fail(
                 new DaemonUpgradeRequired({
                   stackId: event.stackId,
                   oldCliVersion: event.oldCliVersion,
                   newCliVersion: event.newCliVersion,
+                  state: event.state,
+                  ready: event.ready,
                 }),
               );
             }
@@ -420,6 +426,8 @@ const supervisorErrorMessage = (cause: Cause.Cause<unknown>): SupervisorErrorMes
       stackId: error.stackId,
       oldCliVersion: error.oldCliVersion,
       newCliVersion: error.newCliVersion,
+      state: error.state,
+      ready: error.ready,
     };
   }
   if (error instanceof UpgradeRestartError) {
@@ -676,6 +684,8 @@ const runManaged = (
               stackId,
               oldCliVersion: attachedStatus.daemonCliVersion,
               newCliVersion: input.cliVersion,
+              state: attachedStatus.state,
+              ready: attachedStatus.ready,
             }),
           );
         }
@@ -1172,6 +1182,8 @@ export const supervisorLayer = (
             stackId: input.stackId,
             oldCliVersion: response.owner.daemonCliVersion,
             newCliVersion: input.cliVersion,
+            state: response.owner.state,
+            ready: response.owner.ready,
           }),
         );
       }

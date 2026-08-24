@@ -25,7 +25,7 @@ const packageJson = JSON.parse(
 if (packageJson.version === undefined || packageJson.version.length === 0) {
   throw new Error("CLI package version is required for a compiled build");
 }
-const versionDefine = `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
+const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
 const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
   await bundleServeMainTemplate(),
 )}`;

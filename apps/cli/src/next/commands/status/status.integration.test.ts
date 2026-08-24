@@ -132,7 +132,7 @@ describe("status handler", () => {
               expect(out.messages).toContainEqual(
                 expect.objectContaining({
                   type: "warn",
-                  message: "Local Supabase stack is running under a different CLI version.",
+                  message: "Local Supabase stack is managed by a different CLI version.",
                 }),
               );
               expect(out.messages).toContainEqual(
@@ -140,6 +140,12 @@ describe("status handler", () => {
                   type: "info",
                   message: "Run `supabase start` to restart the stack with the current CLI.",
                 }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({ type: "info", message: "State: running" }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({ type: "info", message: "Ready: true" }),
               );
               expect(out.messages).not.toContainEqual(
                 expect.objectContaining({
@@ -189,6 +195,88 @@ describe("status handler", () => {
               );
               expect(success?.data).not.toHaveProperty("api_url");
               expect(success?.data).not.toHaveProperty("services");
+            }),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.live("reports an incompatible starting owner as not running in structured output", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        cliVersion: "2.60.0",
+        ownerState: "starting",
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        mkdirSync(join(fixture.projectRoot, "supabase"), { recursive: true });
+        writeFileSync(join(fixture.projectRoot, "supabase", "config.toml"), "[invalid\n");
+        const out = mockOutput({ format: "json", interactive: false });
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(),
+          mockProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              const success = out.messages.find((message) => message.type === "success");
+              expect(success?.data).toEqual(
+                expect.objectContaining({
+                  degraded: true,
+                  running: false,
+                  state: "starting",
+                  ready: false,
+                  daemon_cli_version: "2.60.0",
+                }),
+              );
+            }),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.live("renders an incompatible starting owner state in text output", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        cliVersion: "2.60.0",
+        ownerState: "starting",
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        mkdirSync(join(fixture.projectRoot, "supabase"), { recursive: true });
+        writeFileSync(join(fixture.projectRoot, "supabase", "config.toml"), "[invalid\n");
+        const out = mockOutput();
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(),
+          mockProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: "Local Supabase stack is managed by a different CLI version.",
+                }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({ type: "info", message: "State: starting" }),
+              );
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({ type: "info", message: "Ready: false" }),
+              );
             }),
           ),
         );

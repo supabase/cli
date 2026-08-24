@@ -237,7 +237,11 @@ describe("managed stack lifecycle journeys", () => {
         }).pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         if (Exit.isFailure(result)) {
-          expect(Cause.squash(result.cause)).toBeInstanceOf(DaemonUpgradeRequired);
+          const error = Cause.squash(result.cause);
+          expect(error).toBeInstanceOf(DaemonUpgradeRequired);
+          if (error instanceof DaemonUpgradeRequired) {
+            expect(error).toMatchObject({ state: "starting", ready: false });
+          }
         }
         yield* lifecycle.requestShutdown("dispose").pipe(Effect.ignore);
       }),

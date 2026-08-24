@@ -15,17 +15,22 @@ import {
 } from "./managed/control.ts";
 import type { ManagedStack, ManagedStackManagerShape } from "./managed/manager.ts";
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
+import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 import { restartIncompatibleOwner } from "./SupervisorUpgradeRestart.ts";
 import { UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 import type { DaemonConfigInput } from "./StackConfigResolver.ts";
+import { fillServiceVersionManifest } from "./versions.ts";
 
 const roots: Array<string> = [];
+
+const allPersistedVersions = fillServiceVersionManifest({});
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-const setup = () => {
+const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth: "v-old" }) => {
   const root = mkdtempSync(join(tmpdir(), "supervisor-upgrade-restart-"));
   roots.push(root);
   const workspacePath = join(root, "workspace");
@@ -76,7 +81,7 @@ const setup = () => {
     lifecycle: "running",
     launch: {
       mode: "native",
-      versions: { auth: "v-old" },
+      versions: persistedVersions,
       excludedServices: [],
     },
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -226,6 +231,32 @@ describe("incompatible supervisor upgrade restart", () => {
       Effect.tap((result) =>
         Effect.sync(() => {
           expect(result.effectiveConfigInput.auth).toEqual({ version: "v-old" });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("keeps native Docker-only services disabled with a complete persisted manifest", () => {
+    const context = setup(allPersistedVersions);
+    return restartIncompatibleOwner({
+      ...context,
+      configInput: context.configInput,
+      controlTransport: context.transport,
+      reacquire: () => Effect.succeed(context.oldOwner),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          for (const service of SERVICE_NAMES) {
+            if (SERVICE_CATALOG[service].runtimeSupport === "docker-only") {
+              const configKey = SERVICE_CATALOG[service].configKey;
+              expect(result.effectiveConfigInput[configKey]).toEqual(
+                context.configInput[configKey],
+              );
+            }
+          }
         }),
       ),
       Effect.asVoid,
