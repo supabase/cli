@@ -1,33 +1,25 @@
-import { expect, test } from "vitest";
+import { expect } from "vitest";
 
-import { describeLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
+import { test } from "../../../../../tests/helpers/live.ts";
 
-const LIVE_TIMEOUT_MS = 60_000;
-
-// Account-level read-only live scenario, alongside `orgs list`. Lists every
-// project the authenticated token can access — no project ref required, so it
-// runs against just the control plane (no provisioned project instance needed).
-// Safe to run repeatedly; creates nothing.
-describeLive("supabase projects list (live)", () => {
-  test("lists projects for the authenticated token", { timeout: LIVE_TIMEOUT_MS }, async () => {
-    const { exitCode, stdout, stderr } = await runSupabaseLive(["projects", "list"]);
-    expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
-    expect(exitCode).toBe(0);
+test("lists the live project for the authenticated token", async ({ cli, project }) => {
+  const result = await cli(["projects", "list", "--output-format", "json"]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const parsed: unknown = JSON.parse(result.stdout);
+  expect(parsed).toEqual(expect.objectContaining({ projects: expect.any(Array) }));
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    !("projects" in parsed) ||
+    !Array.isArray(parsed.projects)
+  ) {
+    throw new Error("projects list JSON response did not contain a projects array");
+  }
+  const refs = parsed.projects.flatMap((project) => {
+    if (project === null || typeof project !== "object") return [];
+    if ("ref" in project && typeof project.ref === "string") return [project.ref];
+    if ("id" in project && typeof project.id === "string") return [project.id];
+    return [];
   });
-
-  test(
-    "emits machine-readable JSON with --output-format json",
-    { timeout: LIVE_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabaseLive([
-        "projects",
-        "list",
-        "--output-format",
-        "json",
-      ]);
-      expect(exitCode).toBe(0);
-      // stdout must be payload-only valid JSON in json mode (no spinner/log noise).
-      expect(() => JSON.parse(stdout)).not.toThrow();
-    },
-  );
+  expect(refs).toContain(project.ref);
 });
