@@ -22,6 +22,7 @@ const VENDOR_TARGET_RELATIVE_SLASH = "../../_vendor/package/dist/index.mjs/";
 async function createFunctionProjectWithDenoJson(
   denoJson: Readonly<Record<string, unknown>>,
   indexTsContents: string,
+  options: { readonly nestedProject?: boolean } = {},
 ) {
   // realpath the temp dir up front: on macOS `TMPDIR` resolves through a
   // `/var` -> `/private/var` symlink, and `buildDockerBinds` compares
@@ -30,12 +31,17 @@ async function createFunctionProjectWithDenoJson(
   // make every path below "outside the source root" and mask the real
   // assertions this file is testing.
   const root = await realpath(await mkdtemp(join(tmpdir(), "deploy-import-scanner-")));
-  const functionsDir = join(root, "supabase", "functions");
+  const projectRoot = options.nestedProject ? join(root, "infra", "my-project") : root;
+  const functionsDir = join(projectRoot, "supabase", "functions");
   const functionDir = join(functionsDir, "hello");
-  const outputDir = join(root, "out");
+  const outputDir = join(projectRoot, "out");
 
   await mkdir(functionDir, { recursive: true });
   await mkdir(outputDir, { recursive: true });
+  if (options.nestedProject) {
+    await mkdir(join(root, ".git"), { recursive: true });
+    await writeFile(join(projectRoot, ".git"), "gitdir: ignored\n");
+  }
 
   const entrypoint = join(functionDir, "index.ts");
   const importMap = join(functionDir, "deno.json");
@@ -399,43 +405,23 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
   });
 
   it("mounts an out-of-root file-valued scope target itself, warns, and does not follow its imports", async () => {
-    const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "deploy-external-scope-")));
-    const libsDir = join(workspaceRoot, "libs", "thing");
-    const projectRoot = join(workspaceRoot, "infra", "my-project");
-    const functionsDir = join(projectRoot, "supabase", "functions");
-    const functionDir = join(functionsDir, "hello");
-    const outputDir = join(projectRoot, "out");
+    const { root, functionsDir, outputDir, config } = await createFunctionProjectWithDenoJson(
+      {
+        scopes: { __local: { __mod: "../../../../../libs/thing/mod.ts" } },
+      },
+      'Deno.serve(() => new Response("ok"));\n',
+      { nestedProject: true },
+    );
+    const libsDir = join(root, "libs", "thing");
     const scopeEntrypoint = join(libsDir, "mod.ts");
     const scopeDependency = join(libsDir, "util.ts");
     const warnings: Array<string> = [];
 
     try {
-      await mkdir(join(workspaceRoot, ".git"), { recursive: true });
       await mkdir(libsDir, { recursive: true });
-      await mkdir(functionDir, { recursive: true });
-      await mkdir(outputDir, { recursive: true });
-      await writeFile(join(projectRoot, ".git"), "gitdir: ignored\n");
       await writeFile(scopeEntrypoint, 'export { util } from "./util.ts";\n');
       await writeFile(scopeDependency, 'export const util = "thing";\n');
 
-      const entrypoint = join(functionDir, "index.ts");
-      const importMap = join(functionDir, "deno.json");
-      await writeFile(entrypoint, 'Deno.serve(() => new Response("ok"));\n');
-      await writeFile(
-        importMap,
-        JSON.stringify({
-          scopes: { __local: { __mod: "../../../../../libs/thing/mod.ts" } },
-        }),
-      );
-
-      const config: ResolvedDeployFunctionConfig = {
-        slug: "hello",
-        enabled: true,
-        entrypoint,
-        importMap,
-        staticFiles: [],
-        env: {},
-      };
       const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
         onWarning: async (message) => {
           warnings.push(message);
@@ -445,11 +431,14 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       expect(hostPaths).toContain(scopeEntrypoint);
       expect(hostPaths).not.toContain(scopeDependency);
+      expect(binds.filter((bind) => bind.externalScope).map((bind) => bind.hostPath)).toEqual([
+        scopeEntrypoint,
+      ]);
       expect(warnings).toContainEqual(
         `WARN: Mounting import map scope target outside the project root: ${scopeEntrypoint}\n`,
       );
     } finally {
-      await rm(workspaceRoot, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 
