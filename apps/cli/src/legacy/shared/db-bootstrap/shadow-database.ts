@@ -867,12 +867,12 @@ export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
  * the template database and the user migrations; a COLD cache-enabled provision passes the same
  * cold sequence plus a `snapshotBaseline` step between the baseline and the template database.
  *
- * The one structural divergence from Go is confined to the SNAPSHOTTING cold branch
- * (`baseline.snapshotRequired`): there the baseline runs in its own scope, its session is CLOSED
- * before {@link LegacyShadowBaselineState.snapshotBaseline} (the disk-level PGDATA snapshot stops
+ * Only the SNAPSHOTTING cold branch (`baseline.snapshotRequired`) splits sessions: there the
+ * baseline runs in its own scope, its session is CLOSED before
+ * {@link LegacyShadowBaselineState.snapshotBaseline} (the disk-level PGDATA snapshot stops
  * the container, which severs any live backend), and the template database + migrations run on a
  * second session. Every OTHER state — uncached (cache off / `--no-cache` / OrioleDB) and warm —
- * uses exactly one session, matching Go's single connection: see
+ * keeps the established single session: see
  * {@link LegacyShadowBaselineState.snapshotRequired} for why the split must not leak into the
  * uncached path. The SQL every path issues is unchanged.
  */
@@ -924,7 +924,7 @@ const migrateShadowDatabase = <E>(
       }
       const session = yield* legacyConnectShadowDatabase(input.connConfig);
       if (!baseline.baselinePresent && !baseline.snapshotRequired) {
-        // Go's single-connection flow, verbatim: baseline + template + migrations all on this
+        // The established single-session flow: baseline + template + migrations all on this
         // one session — see this function's own doc comment.
         const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
         yield* legacySetupDatabase(

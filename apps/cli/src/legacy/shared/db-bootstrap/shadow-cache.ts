@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Effect, Option, Predicate, Result, type FileSystem } from "effect";
+import { Clock, Effect, Match, Option, Predicate, Result, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyViperEnvBoolWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
@@ -783,16 +783,17 @@ const LEGACY_SHADOW_CACHE_KEY_PATTERN = /^[0-9a-f]{16}$/u;
  * capped at a KiB but otherwise arbitrary, and stderr is not the place to render them. Only a token
  * that is shaped like a cache key is shown.
  */
-const legacyDescribeShadowArchiveProblem = (problem: LegacyPgDataArchiveProblem): string => {
-  if (problem._tag === "missing-entries") {
-    return `snapshot has no ${problem.entries.join(" or ")} entry`;
-  }
-  const found =
-    problem.found !== undefined && LEGACY_SHADOW_CACHE_KEY_PATTERN.test(problem.found)
-      ? `key ${problem.found}`
-      : "an unreadable key";
-  return `snapshot is stamped with ${found}, not ${problem.expected}`;
-};
+const legacyDescribeShadowArchiveProblem = (problem: LegacyPgDataArchiveProblem): string =>
+  Match.valueTags(problem, {
+    "missing-entries": (missing) => `snapshot has no ${missing.entries.join(" or ")} entry`,
+    "wrong-key": (wrongKey) => {
+      const found =
+        wrongKey.found !== undefined && LEGACY_SHADOW_CACHE_KEY_PATTERN.test(wrongKey.found)
+          ? `key ${wrongKey.found}`
+          : "an unreadable key";
+      return `snapshot is stamped with ${found}, not ${wrongKey.expected}`;
+    },
+  });
 
 /**
  * The warm path proper: verify the snapshot tar really carries a baselined cluster, create the
