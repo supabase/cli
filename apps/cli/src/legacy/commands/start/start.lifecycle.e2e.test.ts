@@ -220,7 +220,6 @@ describe("supabase start (e2e)", () => {
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
-      await overrideStackPorts(projectDir);
 
       let proxyConnections = 0;
       const proxy = createServer((socket) => {
@@ -235,6 +234,7 @@ describe("supabase start (e2e)", () => {
         if (address === null || typeof address === "string") {
           throw new Error("Failed to allocate a proxy port");
         }
+        await overrideStackPorts(projectDir);
 
         const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
           entry.excludeKey === undefined ||
