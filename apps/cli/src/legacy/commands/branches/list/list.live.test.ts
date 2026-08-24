@@ -1,30 +1,50 @@
-import { expect, test } from "vitest";
+import { randomUUID } from "node:crypto";
+import { expect } from "vitest";
 
-import {
-  describeLiveProject,
-  requireLiveProjectRef,
-  runSupabaseLive,
-} from "../../../../../tests/helpers/live.ts";
+import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
-const LIVE_TIMEOUT_MS = 120_000;
+test("lists a preview branch for the project", async ({ cli, project }) => {
+  const name = `cli-e2e-list-${randomUUID().slice(0, 8)}`;
+  let targetError: unknown;
+  let cleanupError: unknown;
+  try {
+    const created = await cli(["branches", "create", name, "--project-ref", project.ref]);
+    requireLiveSuccess(created, "branches create setup");
 
-// Project-scoped read-only scenario. Skipped unless SUPABASE_LIVE_PROJECT_REF is
-// set — i.e. a project has been provisioned on the stack (the cli-e2e-ci runner
-// does this; a control-plane-only stack, like local macOS, skips it).
-//
-// Entry point for the branching lifecycle tracked in CLI-1834
-// (create / switch / delete) — extend here once a provisioned project is
-// available on the full stack.
-describeLiveProject("supabase branches list (live)", () => {
-  test("lists branches for the project", { timeout: LIVE_TIMEOUT_MS }, async () => {
-    const ref = requireLiveProjectRef();
-    const { exitCode, stdout, stderr } = await runSupabaseLive([
+    const result = await cli([
       "branches",
       "list",
+      "--output",
+      "json",
       "--project-ref",
-      ref,
+      project.ref,
     ]);
-    expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
-    expect(exitCode).toBe(0);
-  });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const branches = JSON.parse(result.stdout) as Array<{ name?: string }>;
+    expect(branches.map((branch) => branch.name)).toContain(name);
+  } catch (error) {
+    targetError = error;
+  } finally {
+    try {
+      const deleted = await cli([
+        "branches",
+        "delete",
+        name,
+        "--project-ref",
+        project.ref,
+        "--yes",
+      ]);
+      if (
+        deleted.exitCode !== 0 &&
+        !/not found|does not exist/i.test(`${deleted.stdout}\n${deleted.stderr}`)
+      ) {
+        cleanupError = new Error(
+          `branches delete cleanup failed:\n${deleted.stdout}\n${deleted.stderr}`,
+        );
+      }
+    } catch (error) {
+      cleanupError = error;
+    }
+  }
+  throwWithCleanup(targetError, cleanupError === undefined ? [] : [cleanupError]);
 });

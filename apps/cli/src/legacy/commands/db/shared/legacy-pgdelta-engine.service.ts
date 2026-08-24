@@ -43,6 +43,7 @@ export interface LegacyPgDeltaExportManifest {
   readonly baselineDigest?: string;
   readonly defaultOwner?: string | null;
   readonly files?: ReadonlyArray<string>;
+  readonly loadOrder?: ReadonlyArray<string>;
 }
 
 export interface LegacyPgDeltaRenderedFile {
@@ -75,7 +76,8 @@ export type LegacyPgDeltaHazardKind =
   | "access_exclusive_lock"
   | "unmodeled_kind"
   | "unmodeled_drift"
-  | "unresolved_security_label";
+  | "unresolved_security_label"
+  | "vault_presence";
 
 interface LegacyPgDeltaActionHazard {
   readonly actionIndex: number;

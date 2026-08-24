@@ -11,6 +11,10 @@ import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.error
 import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import {
+  legacyFilesForDeclarativeShadowLoad,
+  legacyPrepareDeclarativeShadow,
+} from "./legacy-pgdelta-declarative-shadow-prep.ts";
+import {
   LegacyPgDeltaEngine,
   LegacyPgDeltaEngineError,
   type LegacyPgDeltaDatabaseEndpoint,
@@ -27,11 +31,11 @@ import {
   legacySavePgDeltaNextDebugArtifacts,
   type LegacyPgDeltaNextDebugArtifacts,
 } from "./legacy-pgdelta-next-artifacts.ts";
-import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import {
   legacyPgDeltaNextDiagnosticReport,
   legacyReportPgDeltaNextDiagnostics,
 } from "./legacy-pgdelta-next-diagnostics.ts";
+import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 
 function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
   if (cause instanceof LegacyDbConnectError) return cause.suggestion;
@@ -331,6 +335,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               context: input.context,
               toml: input.toml,
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+              ...(input.noCache ? { bypassCache: true } : {}),
             });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
@@ -349,11 +354,13 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               ],
               { concurrency: 2 },
             );
+            const prep = yield* legacyPrepareDeclarativeShadow(declarativePool, input.files);
             const result = yield* adapter.planDeclarativeSchema({
               targetPool: migrationsPool,
               shadowPool: declarativePool,
-              files: input.files,
+              files: legacyFilesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
               allowDrops: true,
+              ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
               debug: input.debug,
               schema: input.schema,
               formatOptions: input.formatOptions,

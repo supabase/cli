@@ -175,9 +175,11 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
  * NOT a `//go:embed` file (unlike the three large SQL templates), so transcribed
- * directly here rather than as a sibling `templates/*.sql.ts` module.
+ * directly here rather than as a sibling `templates/*.sql.ts` module. Exported for the
+ * shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), which must re-key
+ * whenever this text changes across CLI releases.
  */
-const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
+export const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
 alter default privileges for role postgres in schema public
   revoke select, insert, update, delete on tables from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
@@ -186,7 +188,12 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
 
-const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+/**
+ * Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), same as
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}: a webhooks-enabled baseline bakes this
+ * statement into PGDATA, so the digest must re-key whenever this text changes across releases.
+ */
+export const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
 // The historical PG14 dump installs pg_net because later statements grant on
@@ -465,6 +472,15 @@ export interface LegacySetupDatabaseInput {
 /** Controls the extension side effects of {@link legacySetupDatabase}. */
 export interface LegacySetupDatabaseOptions {
   readonly webhooks?: "config" | "enabled" | "disabled";
+}
+
+/** `"enabled"` always installs `pg_net`, `"disabled"` always removes it, `"config"` follows the project flag. */
+export function legacyResolveSetupWebhooksEnabled(
+  policy: LegacySetupDatabaseOptions["webhooks"],
+  webhooksEnabled: boolean,
+): boolean {
+  const webhooks = policy ?? "config";
+  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
 }
 
 /** Input to {@link legacyStartSetupLocalDatabase}. */
@@ -1063,13 +1079,12 @@ export const legacySetupDatabase = (
         if (requiresPg14WebhooksCleanup) {
           yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }
-        const webhooks = options.webhooks ?? "config";
         yield* legacyApplyDatabaseWebhooks(
           session,
           fs,
           path,
           tmpDir,
-          webhooks === "enabled" || (webhooks === "config" && input.webhooksEnabled),
+          legacyResolveSetupWebhooksEnabled(options.webhooks, input.webhooksEnabled),
         );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
