@@ -82,6 +82,12 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 `--use-pgadmin --linked` performs every one of these calls natively (CLI-1968), as part
 of this command's own target resolve, ahead of the differ container.
 
+On a linked remote target (every engine, including `--use-pgadmin`), the handler also
+dials one short-lived Postgres connection to the resolved target and runs a single
+`SELECT EXISTS … pg_default_acl` probe — the auto-expose drift check. It is
+best-effort: a connect or query failure is swallowed and the diff proceeds without
+the warning.
+
 ## Environment Variables
 
 | Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
@@ -135,6 +141,16 @@ Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
 `--file` write warning). A configured `[db.migrations].schema_paths` also warns
 that it no longer changes the migrations baseline. The SQL diff prints to stdout
 when neither `--file` nor explicit `--output` is set.
+
+On a linked remote target, a `WARNING: auto_expose_new_tables …` block prints to
+stderr (before `Creating shadow database...`) when the remote's effective
+auto-expose state (probed from `pg_default_acl`) mismatches the local
+`api.auto_expose_new_tables` tri-state (unset counts as disabled). It suggests a
+migration closing the gap (`supabase migration new
+disable_auto_expose_new_tables` / `…enable_auto_expose_new_tables`, with the
+revoke/grant SQL inline) or changing `api.auto_expose_new_tables` in
+`supabase/config.toml`. Emitted in every output format (diagnostics stay
+stderr-only).
 
 Explicit `--from`/`--to` mode returns before normal `--file` handling, so `-f` is
 ignored. It joins the pg-delta plan files with blank lines and writes that same

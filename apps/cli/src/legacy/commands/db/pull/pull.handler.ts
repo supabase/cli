@@ -60,6 +60,7 @@ import {
   legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
 } from "../../../shared/legacy-diff-engine.ts";
+import { legacyWarnAutoExposeDrift } from "../shared/legacy-auto-expose-drift.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import {
@@ -496,6 +497,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           isLocal: resolved.isLocal,
           dnsResolver,
         });
+
+        // Best-effort auto-expose drift check against the linked project, over the
+        // session just opened — see `legacy-auto-expose-drift.ts` for the probe and
+        // the warning contract. Skipped on the delegated `--experimental` path,
+        // where the Go child owns all user-facing output.
+        if (connType === "linked" && !resolved.isLocal && !delegatesExperimentalPull) {
+          yield* legacyWarnAutoExposeDrift(session, toml.baseline.apiAutoExposeNewTables);
+        }
 
         // Declarative export path.
         if (useDeclarative) {

@@ -36,6 +36,7 @@ import {
 } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
@@ -128,6 +129,13 @@ interface SetupOpts {
   // host-gateway` (Linux-only). Defaults to `"linux"` (every other test's implicit
   // baseline); pass `"darwin"`/`"win32"` to exercise the no-add-host branch.
   readonly platform?: NodeJS.Platform;
+  // The remote target's answer to the linked auto-expose drift probe
+  // (`pg_default_acl`, only dialed when `isLocal: false`): a boolean serves one
+  // probe row, `undefined` serves no rows (the check skips), and
+  // `remoteTargetConnectFails` fails the probe's own connect instead — the check
+  // must swallow that and let the diff proceed.
+  readonly remoteAutoExpose?: boolean;
+  readonly remoteTargetConnectFails?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -138,28 +146,53 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 /** Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query` SQL run against it. */
-function fakeShadowDbConnection() {
+function fakeShadowDbConnection(opts: SetupOpts = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
+  let autoExposeProbeCalls = 0;
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: (cfg: LegacyPgConnInput) =>
-      Effect.sync(() => {
+    connect: (cfg: LegacyPgConnInput) => {
+      // The resolver mock's remote target always dials 54322; the native shadow
+      // dials its own schema-default port — so failing 54322 fails exactly the
+      // auto-expose drift probe's short-lived connection and nothing else.
+      if (cfg.port === 54322 && opts.remoteTargetConnectFails === true) {
+        return Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+      }
+      return Effect.sync(() => {
         connectedDatabases.push(cfg.database);
         const session: LegacyDbSession = {
           exec: (sql) =>
             Effect.sync(() => {
               execCalls.push(sql);
             }),
-          query: () => Effect.succeed([]),
+          query: (sql) => {
+            if (/pg_default_acl/u.test(sql)) {
+              autoExposeProbeCalls += 1;
+              return Effect.succeed(
+                opts.remoteAutoExpose === undefined
+                  ? ([] as ReadonlyArray<Record<string, unknown>>)
+                  : [{ auto_expose: opts.remoteAutoExpose }],
+              );
+            }
+            return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
+          },
           execBatch: (statements) => legacySequentialExecBatch(session)(statements),
           extensionExists: () => Effect.succeed(false),
           copyToCsv: () => Effect.succeed(new Uint8Array()),
           queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         };
         return session;
-      }),
+      });
+    },
   });
-  return { layer, connectedDatabases, execCalls };
+  return {
+    layer,
+    connectedDatabases,
+    execCalls,
+    get autoExposeProbeCalls() {
+      return autoExposeProbeCalls;
+    },
+  };
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -175,7 +208,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  const shadowDbConnection = fakeShadowDbConnection();
+  const shadowDbConnection = fakeShadowDbConnection(opts);
 
   const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
   const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
@@ -456,6 +489,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     shadowSpawned: shadowSpawner.spawned,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
+    get autoExposeProbeCalls() {
+      return shadowDbConnection.autoExposeProbeCalls;
+    },
   };
 }
 
@@ -556,6 +592,51 @@ describe("legacy db diff", () => {
         }
       }
       expect(sawHost).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a linked diff warns when the remote project still auto-exposes new tables", () => {
+    const s = setup(tmp.current, {
+      isLocal: false,
+      diffSql: "create table players ();\n",
+      remoteAutoExpose: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      expect(s.autoExposeProbeCalls).toBe(1);
+      const err = stderr(s.out);
+      expect(err).toContain(
+        "WARNING: auto_expose_new_tables is enabled on the linked project but unset (treated as disabled) in your local config.",
+      );
+      expect(err).toContain("supabase migration new disable_auto_expose_new_tables");
+      // The warning lands before shadow provisioning, ahead of the diff output.
+      expect(err.indexOf("WARNING: auto_expose_new_tables")).toBeLessThan(
+        err.indexOf("Creating shadow database..."),
+      );
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a failed auto-expose drift probe connection never fails a linked diff", () => {
+    const s = setup(tmp.current, {
+      isLocal: false,
+      diffSql: "create table players ();\n",
+      remoteTargetConnectFails: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      expect(s.autoExposeProbeCalls).toBe(0);
+      expect(stderr(s.out)).not.toContain("WARNING: auto_expose_new_tables");
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a local diff never dials the auto-expose drift probe", () => {
+    const s = setup(tmp.current, { diffSql: "", remoteAutoExpose: true });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags());
+      expect(s.autoExposeProbeCalls).toBe(0);
+      expect(stderr(s.out)).not.toContain("WARNING: auto_expose_new_tables");
     }).pipe(Effect.provide(s.layer));
   });
 

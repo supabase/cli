@@ -37,6 +37,7 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   type LegacyDbSession,
   LegacyDbConnection,
@@ -131,6 +132,12 @@ interface SetupOpts {
   // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
   // instead of silently falling back to `opts.resolvedRef ?? LEGACY_VALID_REF`.
   readonly linkedFails?: boolean;
+  // The remote target's answer to the auto-expose drift probe (`pg_default_acl`):
+  // a boolean serves one probe row, `undefined` serves no rows (the check skips),
+  // and `autoExposeProbeFails` fails the probe query instead — the check must
+  // swallow that and let the pull proceed.
+  readonly remoteAutoExpose?: boolean;
+  readonly autoExposeProbeFails?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -330,11 +337,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // ALSO issues a parameterized `INSERT_MIGRATION_VERSION` query, into its own
   // separate in-shadow history table).
   const TARGET_PORT = 5432;
+  let autoExposeProbeCalls = 0;
   const makeSession = (isShadow: boolean): LegacyDbSession => {
     const exec = (sql: string) => Effect.sync(() => void execLog.push(sql));
     const query = (sql: string, params?: ReadonlyArray<unknown>) => {
       if (/SELECT version/u.test(sql)) {
         return Effect.succeed((opts.remoteVersions ?? []).map((v) => ({ version: v })));
+      }
+      if (/pg_default_acl/u.test(sql)) {
+        autoExposeProbeCalls += 1;
+        if (opts.autoExposeProbeFails === true) {
+          return Effect.fail(new LegacyDbExecError({ message: "permission denied" }));
+        }
+        return Effect.succeed(
+          opts.remoteAutoExpose === undefined
+            ? ([] as ReadonlyArray<Record<string, unknown>>)
+            : [{ auto_expose: opts.remoteAutoExpose }],
+        );
       }
       if (!isShadow && params !== undefined) historyUpserts.push(params);
       return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
@@ -486,6 +505,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dumpCalls,
     engineCalls,
     shadowSpawned: shadowSpawner.spawned,
+    get autoExposeProbeCalls() {
+      return autoExposeProbeCalls;
+    },
     get edgeRunCount() {
       return edgeRunCount;
     },
@@ -563,6 +585,120 @@ describe("legacy db pull", () => {
       // `db reset`/`db push` use.
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "warns when the linked project auto-exposes new tables but the local config does not",
+    () => {
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
+        yes: true,
+        remoteAutoExpose: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        const err = streamText(s.out, "stderr");
+        expect(err).toContain(
+          "WARNING: auto_expose_new_tables is enabled on the linked project but unset (treated as disabled) in your local config.",
+        );
+        // The durable fix (a revoke migration) leads; the deprecated config opt-out follows.
+        expect(err).toContain("supabase migration new disable_auto_expose_new_tables");
+        expect(err).toContain(
+          "revoke select, insert, update, delete on tables from anon, authenticated, service_role;",
+        );
+        expect(err).toContain("set api.auto_expose_new_tables = true in supabase/config.toml");
+        // The warning never blocks the pull itself.
+        expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "does not warn when the local config matches the linked project's auto-expose state",
+    () => {
+      seedMigration(tmp.current, "20240101000000");
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[api]\nauto_expose_new_tables = true\n",
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
+        yes: true,
+        remoteAutoExpose: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        expect(s.autoExposeProbeCalls).toBe(1);
+        expect(streamText(s.out, "stderr")).not.toContain("WARNING: auto_expose_new_tables");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "warns when the local config auto-exposes new tables but the linked project does not",
+    () => {
+      seedMigration(tmp.current, "20240101000000");
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[api]\nauto_expose_new_tables = true\n",
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: pgDeltaDiffEnvelope([
+          { name: "schema_changes", sql: "create table remote ();" },
+        ]),
+        yes: true,
+        remoteAutoExpose: false,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        const err = streamText(s.out, "stderr");
+        expect(err).toContain(
+          "WARNING: auto_expose_new_tables is disabled on the linked project but enabled in your local config.",
+        );
+        expect(err).toContain("supabase migration new enable_auto_expose_new_tables");
+        expect(err).toContain(
+          "grant select, insert, update, delete on tables to anon, authenticated, service_role;",
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("keeps pulling when the auto-expose drift probe fails", () => {
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+      autoExposeProbeFails: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+      expect(s.autoExposeProbeCalls).toBe(1);
+      expect(streamText(s.out, "stderr")).not.toContain("WARNING: auto_expose_new_tables");
+      expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("never probes auto-expose drift on the delegated --experimental pull", () => {
+    const s = setup(tmp.current, { experimental: true, remoteAutoExpose: true });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      // The Go child owns the whole delegated pull's output — the parent must not
+      // interleave its own drift warning (or probe query) around it.
+      expect(s.proxyCalls.length).toBeGreaterThan(0);
+      expect(s.autoExposeProbeCalls).toBe(0);
+      expect(streamText(s.out, "stderr")).not.toContain("WARNING: auto_expose_new_tables");
     }).pipe(Effect.provide(s.layer));
   });
 

@@ -81,6 +81,12 @@ disables formatting without disabling safe compaction.
 | GET    | `/v1/projects/{ref}`                                | Bearer | Linked-project cache (post-run)  |
 | SQL    | `SELECT version FROM …schema_migrations`            | —      | history reconciliation (remote)  |
 | SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation) |
+| SQL    | `SELECT EXISTS … pg_default_acl` (probe)            | —      | auto-expose drift check (linked) |
+
+The auto-expose probe runs only on the linked native path (never `--local`,
+`--db-url`, or the delegated `--experimental` pull), over the same session the
+pull already opened. It is best-effort: a probe failure is swallowed and the
+pull proceeds without the warning.
 
 ## Environment Variables
 
@@ -127,6 +133,15 @@ stdout.
 
 A configured `[db.migrations].schema_paths` also warns on the migration path
 that it no longer replaces the migrations baseline.
+
+On the linked native path, a `WARNING: auto_expose_new_tables …` block prints to
+stderr when the remote's effective auto-expose state (probed from
+`pg_default_acl`) mismatches the local `api.auto_expose_new_tables` tri-state
+(unset counts as disabled). It suggests a migration closing the gap
+(`supabase migration new disable_auto_expose_new_tables` /
+`…enable_auto_expose_new_tables`, with the revoke/grant SQL inline) or changing
+`api.auto_expose_new_tables` in `supabase/config.toml`. Emitted in every output
+format (diagnostics stay stderr-only).
 
 ### `--output-format json` / `stream-json`
 

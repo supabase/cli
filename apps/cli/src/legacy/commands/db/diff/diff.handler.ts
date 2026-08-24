@@ -48,6 +48,7 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
+import { legacyWarnAutoExposeDriftOverConnection } from "../shared/legacy-auto-expose-drift.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import {
   LegacyPgDeltaEngine,
@@ -536,6 +537,19 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
+
+    // Best-effort auto-expose drift check against the linked project. Runs before
+    // shadow provisioning so the warning lands ahead of the diff output, and dials
+    // its own short-lived connection because this command hands `resolved.conn` to
+    // the diff engine without ever opening a session of its own — see
+    // `legacy-auto-expose-drift.ts` for the probe and the warning contract.
+    if (connType === "linked" && !resolved.isLocal) {
+      yield* legacyWarnAutoExposeDriftOverConnection(
+        resolved.conn,
+        { isLocal: false, dnsResolver },
+        cfg.baseline.apiAutoExposeNewTables,
+      );
+    }
     const targetUrl = legacyToPostgresURL(resolved.conn);
     const ctx: LegacyPgDeltaContext = {
       // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then

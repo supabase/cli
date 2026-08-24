@@ -175,9 +175,12 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
  * NOT a `//go:embed` file (unlike the three large SQL templates), so transcribed
- * directly here rather than as a sibling `templates/*.sql.ts` module.
+ * directly here rather than as a sibling `templates/*.sql.ts` module. Exported for
+ * the auto-expose drift check (`commands/db/shared/legacy-auto-expose-drift.ts`),
+ * which suggests this exact SQL as the migration that disables auto-expose on a
+ * linked remote project.
  */
-const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
+export const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
 alter default privileges for role postgres in schema public
   revoke select, insert, update, delete on tables from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
