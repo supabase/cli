@@ -313,23 +313,15 @@ function toBundledFileUrl(hostPath: string) {
   return url.toString();
 }
 
-const DOCKER_BIND_MODE_PATTERN = /:(?:ro|rw)(?:,[zZ])?$/;
-
-export function dockerBindHostPath(bind: string) {
-  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
-  const separatorIndex = withoutMode.lastIndexOf(":");
-  return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
+export interface DockerBind {
+  readonly hostPath: string;
+  readonly containerPath: string;
+  readonly mode: "ro" | "rw";
+  readonly externalScope: boolean;
 }
 
-/**
- * Container side of a `host:container[:mode]` bind. Unlike {@link dockerBindHostPath},
- * a bind with no separator yields `""` rather than the whole string, so a malformed
- * entry can never prefix-match a real container path.
- */
-export function dockerBindContainerPath(bind: string) {
-  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
-  const separatorIndex = withoutMode.lastIndexOf(":");
-  return separatorIndex === -1 ? "" : withoutMode.slice(separatorIndex + 1);
+export function formatDockerBind(bind: DockerBind) {
+  return `${bind.hostPath}:${bind.containerPath}:${bind.mode}`;
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
@@ -1172,26 +1164,26 @@ function createBundledMetadata(
 }
 
 function sanitizeDockerBinds(
-  binds: ReadonlyArray<string>,
+  binds: ReadonlyArray<DockerBind>,
   functionsDir: string,
   outputDir: string,
 ) {
   const normalizedFunctionsDir = `${toSlash(resolve(functionsDir))}/`;
   const normalizedOutputDir = `${toSlash(resolve(outputDir))}/`;
   const seen = new Set<string>();
-  const result: string[] = [];
+  const result: DockerBind[] = [];
 
   for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
-    const normalizedHostPath = `${toSlash(resolve(hostPath))}${bind.endsWith(":rw") || bind.endsWith(":ro") ? "" : "/"}`;
+    const normalizedHostPath = toSlash(resolve(bind.hostPath));
     if (
       normalizedHostPath.startsWith(normalizedFunctionsDir) ||
       normalizedHostPath.startsWith(normalizedOutputDir)
     ) {
       continue;
     }
-    if (!seen.has(bind)) {
-      seen.add(bind);
+    const key = formatDockerBind(bind);
+    if (!seen.has(key)) {
+      seen.add(key);
       result.push(bind);
     }
   }
@@ -1207,10 +1199,9 @@ export async function buildDockerBinds(
   options: {
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
-    readonly onScopeBindOutsideRoots?: (bind: string) => void;
     readonly skipMissingImportMapTargets?: boolean;
   } = {},
-) {
+): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
   const projectRoot = resolve(functionsDir, "..", "..");
@@ -1231,31 +1222,57 @@ export async function buildDockerBinds(
     ).flatMap((root) => (root === undefined ? [] : [root])),
   ];
   const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
-  const binds = [`${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`];
+  const binds: DockerBind[] = [
+    {
+      hostPath: hostFunctionsDir,
+      containerPath: toDockerPath(hostFunctionsDir),
+      mode: "ro",
+      externalScope: false,
+    },
+  ];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
-    binds.unshift(`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`);
+    binds.unshift({
+      hostPath: localDockerId("edge_runtime", projectId),
+      containerPath: "/root/.cache/deno",
+      mode: "rw",
+      externalScope: false,
+    });
   }
 
   if (!hostOutputDir.startsWith(hostFunctionsDir)) {
-    binds.push(`${hostOutputDir}:${toDockerPath(hostOutputDir)}:rw`);
+    binds.push({
+      hostPath: hostOutputDir,
+      containerPath: toDockerPath(hostOutputDir),
+      mode: "rw",
+      externalScope: false,
+    });
   }
 
   const warn = options.onWarning ?? (async () => {});
-  const extraBinds: string[] = [];
-  const explicitScopeBinds = new Set<string>();
+  const extraBinds: DockerBind[] = [];
+  const explicitScopeBinds = new Map<string, DockerBind>();
   const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
     const hostPath = await realpath(pathname);
-    if (!isContainedInAnyPath(roots, hostPath)) {
-      return;
+    const contained = isContainedInAnyPath(roots, hostPath);
+    if (contained) {
+      extraBinds.push({
+        hostPath,
+        containerPath: toDockerPath(hostPath),
+        mode: "ro",
+        externalScope: false,
+      });
     }
-    extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
+    return { hostPath, contained };
   };
-  const appendProjectBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots([realSourceRoot], pathname);
-  const appendModuleBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(moduleRoots, pathname);
-  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(importMapAllowedRoots, pathname);
+  const appendProjectBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots([realSourceRoot], pathname);
+  };
+  const appendModuleBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(moduleRoots, pathname);
+  };
+  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(importMapAllowedRoots, pathname);
+  };
   const importMap =
     config.importMap.length > 0
       ? await loadImportMapFile(config.importMap, appendImportMapBind)
@@ -1270,14 +1287,16 @@ export async function buildDockerBinds(
   );
   await forEachLocalImportMapTarget(importMap, async (target, kind) => {
     try {
-      const hostPath = await realpath(target);
-      const contained = isContainedInAnyPath(importMapAllowedRoots, hostPath);
-      if (contained) {
-        extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
-      }
+      const { hostPath, contained } = await appendBindWithinRoots(importMapAllowedRoots, target);
       const isDirectory = (await stat(target)).isDirectory();
       if (!contained && kind === "scope") {
-        explicitScopeBinds.add(`${hostPath}:${toDockerPath(target)}:ro`);
+        const scopeBind: DockerBind = {
+          hostPath,
+          containerPath: toDockerPath(target),
+          mode: "ro",
+          externalScope: true,
+        };
+        explicitScopeBinds.set(formatDockerBind(scopeBind), scopeBind);
       }
       if (isDirectory) {
         return;
@@ -1325,19 +1344,17 @@ export async function buildDockerBinds(
 
   const sanitizedExtraBinds = sanitizeDockerBinds(extraBinds, hostFunctionsDir, hostOutputDir);
   const occupiedContainerPaths = new Set(
-    [...binds, ...sanitizedExtraBinds].map(dockerBindContainerPath),
+    [...binds, ...sanitizedExtraBinds].map((bind) => bind.containerPath),
   );
-  const uniqueScopeBinds: string[] = [];
-  for (const bind of explicitScopeBinds) {
-    const containerPath = dockerBindContainerPath(bind);
-    if (occupiedContainerPaths.has(containerPath)) {
+  const uniqueScopeBinds: DockerBind[] = [];
+  for (const bind of explicitScopeBinds.values()) {
+    if (occupiedContainerPaths.has(bind.containerPath)) {
       continue;
     }
-    occupiedContainerPaths.add(containerPath);
+    occupiedContainerPaths.add(bind.containerPath);
     uniqueScopeBinds.push(bind);
-    options.onScopeBindOutsideRoots?.(bind);
     await warn(
-      `WARN: Mounting import map scope target outside the project root: ${dockerBindHostPath(bind)}\n`,
+      `WARN: Mounting import map scope target outside the project root: ${bind.hostPath}\n`,
     );
   }
 
@@ -1462,7 +1479,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       image,
       projectId,
       networkMode,
-      binds,
+      binds: binds.map(formatDockerBind),
       env,
       // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
       // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is

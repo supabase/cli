@@ -4,12 +4,7 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  buildDockerBinds,
-  dockerBindContainerPath,
-  dockerBindHostPath,
-  type ResolvedDeployFunctionConfig,
-} from "./deploy.ts";
+import { buildDockerBinds, formatDockerBind, type ResolvedDeployFunctionConfig } from "./deploy.ts";
 import { FunctionImportNotDirectoryError } from "./deploy.errors.ts";
 
 /**
@@ -122,8 +117,8 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
       // The vendor file is still bound via the import-map target walk
       // (independent of whether the entrypoint's own specifier matched).
-      expect(binds.some((bind) => dockerBindHostPath(bind) === vendorIndexPath)).toBe(true);
-      expect(binds.some((bind) => bind.includes("index.mjs/core"))).toBe(false);
+      expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs/core"))).toBe(false);
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -178,7 +173,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      expect(binds.some((bind) => bind.includes("extra.ts"))).toBe(false);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("extra.ts"))).toBe(false);
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -203,7 +198,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      expect(binds.some((bind) => dockerBindHostPath(bind) === vendorIndexPath)).toBe(true);
+      expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -257,7 +252,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      expect(binds.some((bind) => bind.includes("index.mjs/core"))).toBe(false);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs/core"))).toBe(false);
       expect(warnings.some((warning) => warning.includes("index.mjs/core"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -305,7 +300,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      expect(binds.some((bind) => bind.includes("index.mjs"))).toBe(false);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("index.mjs"))).toBe(false);
       expect(
         warnings.some((warning) =>
           warning.includes("Skipping import map target that is not a directory"),
@@ -339,7 +334,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         skipMissingImportMapTargets: true,
       });
 
-      expect(binds.some((bind) => bind.includes("does-not-exist"))).toBe(false);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("does-not-exist"))).toBe(false);
       expect(
         warnings.some((warning) => warning.includes("Skipping missing import map target")),
       ).toBe(true);
@@ -367,7 +362,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         skipMissingImportMapTargets: true,
       });
 
-      expect(binds.some((bind) => bind.includes("does-not-exist"))).toBe(false);
+      expect(binds.some((bind) => formatDockerBind(bind).includes("does-not-exist"))).toBe(false);
       expect(
         warnings.some((warning) => warning.includes("Skipping missing import map target")),
       ).toBe(true);
@@ -394,7 +389,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
 
     try {
       const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
-      const hostPaths = binds.map(dockerBindHostPath);
+      const hostPaths = binds.map((bind) => bind.hostPath);
 
       expect(hostPaths).toContain(scopeEntrypoint);
       expect(hostPaths).toContain(scopeDependency);
@@ -446,7 +441,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
           warnings.push(message);
         },
       });
-      const hostPaths = binds.map(dockerBindHostPath);
+      const hostPaths = binds.map((bind) => bind.hostPath);
 
       expect(hostPaths).toContain(scopeEntrypoint);
       expect(hostPaths).not.toContain(scopeDependency);
@@ -476,25 +471,19 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       await rename(functionsDir, externalFunctionsDir);
       await symlink(externalFunctionsDir, functionsDir, "dir");
 
-      const reportedScopeBinds: Array<string> = [];
       const warnings: Array<string> = [];
 
       try {
         const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
-          onScopeBindOutsideRoots: (bind) => {
-            reportedScopeBinds.push(bind);
-          },
           onWarning: async (message) => {
             warnings.push(message);
           },
         });
-        const functionsBinds = binds.filter(
-          (bind) => dockerBindContainerPath(bind) === resolve(functionsDir),
-        );
+        const functionsBinds = binds.filter((bind) => bind.containerPath === resolve(functionsDir));
 
         expect(functionsBinds).toHaveLength(1);
-        expect(dockerBindHostPath(functionsBinds[0] ?? "")).toBe(resolve(functionsDir));
-        expect(reportedScopeBinds).toHaveLength(0);
+        expect(functionsBinds[0]?.hostPath).toBe(resolve(functionsDir));
+        expect(binds.filter((bind) => bind.externalScope)).toHaveLength(0);
         expect(
           warnings.filter((warning) => warning.includes("Mounting import map scope target")),
         ).toHaveLength(0);
@@ -554,7 +543,7 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
         },
       });
 
-      expect(binds.some((bind) => dockerBindHostPath(bind) === vendorIndexPath)).toBe(true);
+      expect(binds.some((bind) => bind.hostPath === vendorIndexPath)).toBe(true);
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -588,8 +577,10 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       // "@v/deep/mod.ts" through dirB and bound the resolved FILE. Had the
       // shorter key incorrectly won, the walker would have tried
       // "<dirA>/deep/mod.ts" instead (which does not exist).
-      expect(binds.some((bind) => dockerBindHostPath(bind) === modPath)).toBe(true);
-      expect(binds.some((bind) => bind.includes(join("dirA", "deep")))).toBe(false);
+      expect(binds.some((bind) => bind.hostPath === modPath)).toBe(true);
+      expect(binds.some((bind) => formatDockerBind(bind).includes(join("dirA", "deep")))).toBe(
+        false,
+      );
       expect(warnings).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
