@@ -11,7 +11,7 @@ import {
 import {
   inferFunctionsManifest,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";

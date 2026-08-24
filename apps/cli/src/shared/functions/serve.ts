@@ -9,7 +9,7 @@ import {
   type ProjectEnvironment,
   type ResolvedProjectValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import {
   defaultJwtSecret,
   defaultPublishableKey,

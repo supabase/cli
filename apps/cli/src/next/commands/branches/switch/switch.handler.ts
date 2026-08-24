@@ -1,5 +1,5 @@
 import { daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";

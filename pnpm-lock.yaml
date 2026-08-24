@@ -422,22 +422,19 @@ importers:
 
   packages/config:
     dependencies:
+      dedent:
+        specifier: ^1.7.2
+        version: 1.7.2
+      smol-toml:
+        specifier: ^1.8.0
+        version: 1.8.0
+    devDependencies:
       '@effect/platform-bun':
         specifier: 'catalog:'
         version: 4.0.0-rc.111(effect@4.0.0-rc.111)
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-rc.111(effect@4.0.0-rc.111)(redis@6.2.1)
-      dedent:
-        specifier: ^1.7.2
-        version: 1.7.2
-      effect:
-        specifier: 'catalog:'
-        version: 4.0.0-rc.111
-      smol-toml:
-        specifier: ^1.8.0
-        version: 1.8.0
-    devDependencies:
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -447,6 +444,9 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.0-rc.111
       knip:
         specifier: 'catalog:'
         version: 6.32.2

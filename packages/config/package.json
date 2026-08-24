@@ -5,8 +5,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./bun": "./src/bun.ts",
-    "./node": "./src/node.ts",
+    "./io": {
+      "bun": "./src/bun.ts",
+      "node": "./src/node.ts",
+      "browser": "./src/io-browser.ts",
+      "default": "./src/node.ts"
+    },
+    "./effect": "./src/effect.ts",
     "./schema.json": "./dist/schema.json"
   },
   "scripts": {
@@ -17,22 +22,35 @@
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
     "dedent": "^1.7.2",
-    "effect": "catalog:",
     "smol-toml": "^1.8.0"
   },
   "devDependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
+    "effect": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-bun": {
+      "optional": true
+    },
+    "@effect/platform-node": {
+      "optional": true
+    }
   },
   "knip": {
     "ignoreDependencies": [
