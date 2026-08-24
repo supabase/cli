@@ -6,9 +6,16 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import * as TestClock from "effect/testing/TestClock";
 
+import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
+import {
+  LegacyDbConnection,
+  type LegacyDbSession,
+  type LegacyPgConnInput,
+} from "../legacy-db-connection.service.ts";
 import {
   LegacyHealthCheckTimeoutError,
   legacyWaitForHealthyServices,
+  legacyWaitForShadowReady,
   type LegacyHealthCheckPostgrestGateway,
 } from "./health-check.ts";
 
@@ -771,6 +778,331 @@ describe("legacyWaitForHealthyServices", () => {
             ),
           ).toBe(false);
         }),
+    );
+  });
+});
+
+const SHADOW_CONTAINER_ID = "abc123456789shadow";
+
+const shadowConnConfig: LegacyPgConnInput = {
+  host: "127.0.0.1",
+  port: 54320,
+  user: "postgres",
+  password: "postgres",
+  database: "postgres",
+};
+
+/**
+ * A `LegacyDbConnection` whose `connect` fails the first `failTimes` calls
+ * (`Number.POSITIVE_INFINITY` never succeeds), recording every dialled config
+ * and how many probe sessions were released. `closedSessions` is what proves
+ * the readiness probe hands nothing back to the caller: the downstream code
+ * opens its own connection through `legacyConnectShadowDatabase` afterwards.
+ */
+function mockShadowDbConnection(
+  opts: { readonly failTimes?: number; readonly connectMillis?: number } = {},
+) {
+  const failTimes = opts.failTimes ?? 0;
+  const session: LegacyDbSession = {
+    exec: () => Effect.void,
+    query: () => Effect.succeed([]),
+    execBatch: () => Effect.void,
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+  };
+  const attempts: Array<LegacyPgConnInput> = [];
+  let closedSessions = 0;
+  const layer = Layer.succeed(LegacyDbConnection, {
+    connect: (cfg) =>
+      Effect.gen(function* () {
+        attempts.push(cfg);
+        // A dial that hangs before answering — how a real attempt burns its own connect timeout.
+        if (opts.connectMillis !== undefined) yield* Effect.sleep(opts.connectMillis);
+        if (attempts.length <= failTimes) {
+          return yield* Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        }
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            closedSessions += 1;
+          }),
+        );
+        return session;
+      }),
+  });
+  return {
+    layer,
+    attempts,
+    get closedSessions() {
+      return closedSessions;
+    },
+  };
+}
+
+/** The timeout path tees the container's logs to the real stderr — swallow them. */
+function withSilencedStderr<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+  return Effect.suspend(() => {
+    const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+    globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+    return effect.pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          globalThis.process.stderr.write = originalWrite;
+        }),
+      ),
+    );
+  });
+}
+
+const inspectCalls = (mock: ReturnType<typeof mockHealthSpawner>) =>
+  mock.spawned.filter((args) => args[0] === "container" && args[1] === "inspect");
+
+describe("legacyWaitForShadowReady", () => {
+  it.effect(
+    "resolves on the first successful connect, while Docker still reports the healthcheck as starting",
+    () =>
+      Effect.gen(function* () {
+        // The shadow container's healthcheck runs on a 10s interval with no
+        // start period, so Docker cannot report `healthy` before t+10s even
+        // though Postgres accepts connections at ~3.5s — the whole point of
+        // this wait is that the health status is never consulted at all.
+        const mock = mockHealthSpawner(() => runningStarting);
+        const db = mockShadowDbConnection();
+
+        const exit = yield* legacyWaitForShadowReady(
+          mock.spawner,
+          SHADOW_CONTAINER_ID,
+          shadowConnConfig,
+          { timeoutSeconds: 30 },
+        ).pipe(Effect.provide(db.layer), Effect.exit);
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(inspectCalls(mock)).toHaveLength(1);
+        expect(db.attempts).toHaveLength(1);
+        // Bounded, so a hung dial cannot eat a whole poll round's budget.
+        expect(db.attempts[0]?.connectTimeoutSeconds).toBe(2);
+        // Released immediately: the caller opens its own connection afterwards.
+        expect(db.closedSessions).toBe(1);
+      }),
+  );
+
+  it.effect("keeps polling a refused connect on a 500ms backoff until it succeeds", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+      const db = mockShadowDbConnection({ failTimes: 2 });
+
+      const fiber = yield* legacyWaitForShadowReady(
+        mock.spawner,
+        SHADOW_CONTAINER_ID,
+        shadowConnConfig,
+        { timeoutSeconds: 30 },
+      ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust("1 seconds");
+      yield* TestClock.adjust("1 seconds");
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // 2 refused attempts, then the 3rd that connects — a refused connect is
+      // "not ready yet", never an error in its own right.
+      expect(db.attempts).toHaveLength(3);
+      expect(inspectCalls(mock)).toHaveLength(3);
+      expect(db.closedSessions).toBe(1);
+    }),
+  );
+
+  it.effect(
+    "fails with LegacyHealthCheckTimeoutError and dumps the container's logs when it never becomes connectable",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting);
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 2 },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.unhealthy).toEqual([
+          { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
+        ]);
+        expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
+        // 1 initial attempt + `timeoutSeconds * 2` retries at 500ms (same wall
+        // time as the old 1s poll).
+        expect(db.attempts).toHaveLength(5);
+        expect(
+          mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect("stops on elapsed time, not on the retry count, when every attempt hangs", () =>
+    Effect.gen(function* () {
+      const mock = mockHealthSpawner(() => runningStarting);
+      // 1.2s per dial plus 500ms spacing — the retry count alone would keep polling past the wall cap.
+      const db = mockShadowDbConnection({
+        failTimes: Number.POSITIVE_INFINITY,
+        connectMillis: 1200,
+      });
+
+      const error = yield* withSilencedStderr(
+        Effect.gen(function* () {
+          const fiber = yield* legacyWaitForShadowReady(
+            mock.spawner,
+            SHADOW_CONTAINER_ID,
+            shadowConnConfig,
+            { timeoutSeconds: 3 },
+          ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+          // The whole wait's wall-clock cap: `timeoutSeconds` of backoff plus one dial's
+          // 2-second connect allowance. Joining here would hang if the wait were still counting
+          // rounds instead of seconds.
+          yield* TestClock.adjust("5 seconds");
+          return yield* Fiber.join(fiber).pipe(Effect.flip);
+        }),
+      );
+
+      // Cut off mid-way through the third dial — the 4-attempt retry budget never ran out.
+      expect(db.attempts).toHaveLength(3);
+      // Same failure the exhausted path produces: the last completed attempt's own reason,
+      // the same `<id> <reason>` message, and the same log dump.
+      expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+      expect(error.message).toBe(`${SHADOW_CONTAINER_ID} connection refused`);
+      expect(error.unhealthy).toEqual([
+        { containerId: SHADOW_CONTAINER_ID, reason: "connection refused" },
+      ]);
+      expect(
+        mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("fails fast, well inside the budget, once the container has exited", () =>
+    Effect.gen(function* () {
+      // Running on the first round, gone on every round after it.
+      const mock = mockHealthSpawner((_id, callIndex) =>
+        callIndex === 0 ? runningStarting : notRunning,
+      );
+      const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+      const error = yield* withSilencedStderr(
+        Effect.gen(function* () {
+          const fiber = yield* legacyWaitForShadowReady(
+            mock.spawner,
+            SHADOW_CONTAINER_ID,
+            shadowConnConfig,
+            { timeoutSeconds: 30 },
+          ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+          yield* TestClock.adjust("1 seconds");
+          return yield* Fiber.join(fiber).pipe(Effect.flip);
+        }),
+      );
+
+      expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+      expect(error.unhealthy).toEqual([
+        { containerId: SHADOW_CONTAINER_ID, reason: "container is not running: exited" },
+      ]);
+      // A dead container can never become connectable — fails on the next poll, not at 30s.
+      expect(inspectCalls(mock)).toHaveLength(2);
+      expect(db.attempts).toHaveLength(1);
+      expect(
+        mock.spawned.some((args) => args[0] === "logs" && args[1] === SHADOW_CONTAINER_ID),
+      ).toBe(true);
+    }),
+  );
+
+  describe("exec format error recovery advice", () => {
+    it.effect("names the shadow's image when its dumped logs show exec format error", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting, {
+          [SHADOW_CONTAINER_ID]: ["exec /docker-entrypoint.sh: exec format error\n"],
+        });
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1, image: "public.ecr.aws/supabase/postgres:15.1.0.147" },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toContain(
+          `${SHADOW_CONTAINER_ID}'s image public.ecr.aws/supabase/postgres:15.1.0.147`,
+        );
+        expect(error.suggestion).toContain(
+          "supabase stop\n  docker image rm -f public.ecr.aws/supabase/postgres:15.1.0.147\n  supabase start",
+        );
+      }),
+    );
+
+    it.effect("stays silent when no image is named, even if the logs show exec format error", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting, {
+          [SHADOW_CONTAINER_ID]: ["exec /docker-entrypoint.sh: exec format error\n"],
+        });
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1 },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toBeUndefined();
+      }),
+    );
+
+    it.effect("stays silent for a plain not-ready timeout even when an image is named", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting);
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1, image: "public.ecr.aws/supabase/postgres:15.1.0.147" },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toBeUndefined();
+      }),
     );
   });
 });

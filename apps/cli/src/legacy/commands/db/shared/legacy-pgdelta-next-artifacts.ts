@@ -1,6 +1,6 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
-import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.paths.ts";
 import type {
   LegacyPgDeltaNextDiagnostic,
   LegacyPgDeltaNextOperation,
