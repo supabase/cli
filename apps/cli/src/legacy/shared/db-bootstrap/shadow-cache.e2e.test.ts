@@ -21,7 +21,6 @@
  */
 
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -123,35 +122,35 @@ describe("shadow baseline cache (e2e, local Docker stack)", () => {
       });
       expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
 
-      // Same declarative setup as `db/diff/diff.declarative.e2e.test.ts`: point `[db.migrations]
-      // schema_paths` at a schema directory so `db diff --local` has real, deterministic SQL to
-      // produce — the payload whose byte-identity across the cold and warm runs is the actual
-      // user-visible contract here. Paths are relative to `supabase/`.
-      const configPath = path.join(projectDir, "supabase", "config.toml");
-      const config = readFileSync(configPath, "utf8");
-      expect(config).toContain("schema_paths = []");
-      writeFileSync(
-        configPath,
-        config.replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]'),
-      );
-      const schemasDir = path.join(projectDir, "supabase", "schemas");
-      mkdirSync(schemasDir, { recursive: true });
-      writeFileSync(
-        path.join(schemasDir, "01_probe_fn.sql"),
-        `create function public.probe_fn()
-returns void
-language sql
-as $$ select 1; $$;
-`,
-      );
-
       // Exclude the heaviest, least relevant services — `db diff` only needs the local Postgres
       // container reachable, same rationale as stop/status/diff.
       const start = await runSupabase(
-        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
+        ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
         { entrypoint: "legacy", cwd: projectDir, home: home.dir, exitTimeoutMs: START_TIMEOUT_MS },
       );
       expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+      // Same drift setup as `db/diff/diff.declarative.e2e.test.ts`: create a fresh function
+      // directly in the local database so `db diff --local` has real, deterministic SQL to
+      // produce — the payload whose byte-identity across the cold and warm runs is the actual
+      // user-visible contract here. (The next engine ignores `schema_paths` when building its
+      // migrations baseline, so declared schema files cannot supply the drift.)
+      const createFunction = await runSupabase(
+        [
+          "db",
+          "query",
+          `create function public.probe_fn()
+returns void
+language sql
+as $$ select 1; $$;`,
+          "--local",
+        ],
+        { entrypoint: "legacy", cwd: projectDir, home: home.dir },
+      );
+      expect(
+        createFunction.exitCode,
+        `stdout:\n${createFunction.stdout}\nstderr:\n${createFunction.stderr}`,
+      ).toBe(0);
 
       let cold: Awaited<ReturnType<typeof runSupabase>> | undefined;
       let warm: Awaited<ReturnType<typeof runSupabase>> | undefined;
@@ -219,8 +218,11 @@ as $$ select 1; $$;
 
       // The user-visible contract is unchanged by which path ran: stdout carries the migration SQL
       // (no `-f`, so `db diff` prints it), and a restored cluster must diff to exactly the same
-      // statements as a freshly baselined one.
-      expect(cold.stdout).toContain("CREATE FUNCTION public.probe_fn()");
+      // statements as a freshly baselined one. The regex tolerates pretty-print variations
+      // (quoting/whitespace), same anchor as `diff.declarative.e2e.test.ts`.
+      expect(cold.stdout).toMatch(
+        /CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+"?public"?\s*\.\s*"?probe_fn"?\s*\(\)/i,
+      );
       expect(warm.stdout).toBe(cold.stdout);
     },
   );
