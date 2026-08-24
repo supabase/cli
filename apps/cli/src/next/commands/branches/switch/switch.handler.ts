@@ -104,24 +104,6 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     return;
   }
 
-  yield* projectLinkState.setActiveBranch({
-    ref: target.project_ref,
-    name: target.name,
-    is_default: target.is_default,
-  });
-
-  if (output.format !== "text") {
-    yield* output.success("Switched", {
-      branch: {
-        ref: target.project_ref,
-        name: target.name,
-        is_default: target.is_default,
-      },
-    });
-  } else {
-    yield* output.outro(`Switched to branch '${target.name}'.`);
-  }
-
   // If a local stack is running, stop and restart it against the new branch.
   const stackCheck = yield* resolveManagedStack({
     cacheRoot: cliConfig.supabaseHome,
@@ -141,8 +123,8 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const stackName = stackCheck.value.identity.name;
 
     // Branch switching restarts a running stack, but it is not authorized to
-    // replace an incompatible daemon. Probe the same-version RPC boundary before
-    // stopping the existing owner so a mismatch leaves the old stack intact.
+    // replace an incompatible daemon. Capture the same-version RPC owner/session
+    // before stopping it so a mismatch leaves the old stack intact.
     const existingLayer = yield* connectLayer({
       cliVersion: CLI_VERSION,
       cwd: runtimeInfo.cwd,
@@ -155,18 +137,26 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       // normal stop path, which acquires ownership and records it stopped.
       Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
     );
-    if (Option.isSome(existingLayer)) {
-      yield* Effect.scoped(Effect.provide(Stack, existingLayer.value).pipe(Effect.asVoid));
-    }
 
-    const stopping = yield* output.task("Stopping local stack...");
-    yield* stopDaemon({
-      cwd: runtimeInfo.cwd,
-      cacheRoot: cliConfig.supabaseHome,
-      projectDir: projectHome.projectRoot,
-      name: stackName,
-    }).pipe(Effect.tapError(() => stopping.fail()));
-    yield* stopping.clear();
+    if (Option.isSome(existingLayer)) {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const stack = yield* Stack;
+          const stopping = yield* output.task("Stopping local stack...");
+          yield* stack.stop().pipe(Effect.tapError(() => stopping.fail()));
+          yield* stopping.clear();
+        }).pipe(Effect.provide(existingLayer.value)),
+      );
+    } else {
+      const stopping = yield* output.task("Stopping local stack...");
+      yield* stopDaemon({
+        cwd: runtimeInfo.cwd,
+        cacheRoot: cliConfig.supabaseHome,
+        projectDir: projectHome.projectRoot,
+        name: stackName,
+      }).pipe(Effect.tapError(() => stopping.fail()));
+      yield* stopping.clear();
+    }
 
     // TODO: run `supabase pull` against the new branch before restarting the stack
     // so the local config reflects the branch's migrations and seed state.
@@ -208,5 +198,23 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
           "Run `supabase stop` to stop it or `supabase status` to check its status.",
       );
     }
+  }
+
+  yield* projectLinkState.setActiveBranch({
+    ref: target.project_ref,
+    name: target.name,
+    is_default: target.is_default,
+  });
+
+  if (output.format !== "text") {
+    yield* output.success("Switched", {
+      branch: {
+        ref: target.project_ref,
+        name: target.name,
+        is_default: target.is_default,
+      },
+    });
+  } else {
+    yield* output.outro(`Switched to branch '${target.name}'.`);
   }
 });

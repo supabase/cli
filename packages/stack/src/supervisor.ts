@@ -46,6 +46,11 @@ import {
   type ControlOwnership,
   type ControlOwnerStatus,
   type ControlApplication,
+  type ControlAddressConflictError,
+  type ControlBindError,
+  type ControlProtocolError,
+  type ControlProtocolMismatchError,
+  type InvalidControlOwnershipIdError,
 } from "./managed/control.ts";
 import {
   ManagedStackManager,
@@ -583,7 +588,28 @@ const runManaged = (
     }
     let attachedOwnerWasStopping = false;
     const initiallyAttached = isControlAttached(initialAcquisition);
-    const reacquireAfterDeath = () =>
+    const awaitAttachedOwnerReady = (acquisition: ControlAttached) =>
+      awaitOwnerReady(acquisition, platform.onAttachedBeforeReady?.() ?? Effect.void).pipe(
+        Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.fail(
+            new SupervisorStartError({
+              message: "Timed out resolving attached supervisor owner",
+            }),
+          ),
+        ),
+      );
+    const reacquireAfterDeath = (): Effect.Effect<
+      ControlAcquisition,
+      | SupervisorOwnerReacquirePending
+      | ControlAddressConflictError
+      | ControlBindError
+      | ControlTransportError
+      | ControlProtocolError
+      | ControlProtocolMismatchError
+      | InvalidControlOwnershipIdError,
+      Scope.Scope
+    > =>
       Effect.gen(function* () {
         const status = yield* supervisorLifecycle.currentStatus;
         return yield* acquireControl({
@@ -592,14 +618,22 @@ const runManaged = (
           application: controlApplication,
         }).pipe(
           Effect.provideService(ControlTransport, controlTransport),
-          Effect.flatMap(
-            (candidate): Effect.Effect<ControlAcquisition, SupervisorOwnerReacquirePending> => {
-              if (isControlOwnership(candidate)) return Effect.succeed(candidate);
-              return candidate.observedStatus.daemonCliVersion === input.cliVersion
-                ? Effect.succeed(candidate)
-                : Effect.fail(new SupervisorOwnerReacquirePending());
-            },
-          ),
+          Effect.flatMap((candidate) => {
+            if (isControlOwnership(candidate)) return Effect.succeed<ControlAcquisition>(candidate);
+            if (candidate.observedStatus.daemonCliVersion !== input.cliVersion) {
+              return Effect.fail(new SupervisorOwnerReacquirePending());
+            }
+            return awaitAttachedOwnerReady(candidate).pipe(
+              Effect.mapError((error) =>
+                Predicate.isTagged(error, "SupervisorStartError") ||
+                (Predicate.isTagged(error, "ControlTransportError") &&
+                  error.reason === "unreachable")
+                  ? new SupervisorOwnerReacquirePending()
+                  : error,
+              ),
+              Effect.as<ControlAcquisition>(candidate),
+            );
+          }),
           Effect.retry({
             schedule: Schedule.spaced("25 millis"),
             while: (error) => error instanceof SupervisorOwnerReacquirePending,
@@ -636,21 +670,8 @@ const runManaged = (
         attachedOwnerWasStopping = replacement.attachedOwnerWasStopping;
         replacementConfigInput = replacement.effectiveConfigInput;
         initialAcquisition = replacement.acquisition;
-      } else if (!(attachedStatus.state === "running" && attachedStatus.ready)) {
-        yield* awaitOwnerReady(
-          initialAcquisition,
-          platform.onAttachedBeforeReady?.() ?? Effect.void,
-        ).pipe(
-          Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
-          Effect.catch((error) =>
-            Predicate.isTagged(error, "TimeoutError")
-              ? Effect.fail(
-                  new SupervisorStartError({
-                    message: "Timed out resolving attached supervisor owner",
-                  }),
-                )
-              : Effect.fail(error),
-          ),
+      } else {
+        yield* awaitAttachedOwnerReady(initialAcquisition).pipe(
           Effect.catchTag("ControlTransportError", (error) =>
             error.reason === "unreachable"
               ? reacquireAfterDeath().pipe(
@@ -789,6 +810,7 @@ const runManaged = (
         ownership,
         lifecycle: "starting",
         launch,
+        preservePersistedPorts: replacingIncompatibleOwner,
       });
       claimedStack = true;
       const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);

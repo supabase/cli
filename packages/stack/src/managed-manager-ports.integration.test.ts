@@ -72,6 +72,41 @@ describe("managed stack ports journeys", () => {
     );
   });
 
+  it.live("can preserve sticky ports while a replacement request changes its exact intent", () => {
+    const { layer, workspace: base } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const { workspace, ownership } = yield* acquireWorkspaceControl(base);
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
+        const first = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        const api = first.stack.ports.find((assignment) => assignment.key === "api.port");
+        if (api === undefined) throw new Error("expected API assignment");
+        yield* releaseLease(first);
+        const second = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: exactDocument("apiPort", api.port === 65_000 ? 65_001 : 65_000),
+          ownership,
+          lifecycle: "stopped",
+          preservePersistedPorts: true,
+        });
+        expect(second.stack.ports).toContainEqual(api);
+        yield* releaseLease(second);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("reserves exact durable and automatic runtime ports through one lease", () => {
     const { layer, workspace: base } = setup();
     return Effect.scoped(

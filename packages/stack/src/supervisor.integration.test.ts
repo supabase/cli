@@ -1079,6 +1079,67 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("waits for a same-version replacement owner to become ready before attaching", async () => {
+    const roots = await workspace();
+    const startRelease = join(roots.root, "replacement-start-release");
+    const attachedReady = join(roots.root, "attached-before-ready");
+    const attachedRelease = join(roots.root, "attached-before-ready-release");
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        cliVersion: "old",
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let first: ChildHandle | undefined;
+    let second: ChildHandle | undefined;
+    try {
+      await oldOwner.started;
+      const holdStart = {
+        SUPABASE_STACK_TEST_RUNTIME_MODE: "hold-start",
+        SUPABASE_STACK_TEST_START_RELEASE_FILE: startRelease,
+        SUPABASE_STACK_TEST_ATTACHED_READY_FILE: attachedReady,
+        SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE: attachedRelease,
+      };
+      first = spawnChild(messageFor(roots, { cliVersion: "new" }), {
+        environment: holdStart,
+      });
+      second = spawnChild(messageFor(roots, { cliVersion: "new" }), {
+        environment: holdStart,
+      });
+
+      const winner = await Promise.race([
+        first.managedStarted.then(() => first),
+        second.managedStarted.then(() => second),
+      ]);
+      const loser = winner === first ? second : first;
+      let loserStarted = false;
+      void loser.started.then(
+        () => {
+          loserStarted = true;
+        },
+        () => undefined,
+      );
+      await loser.attachedBeforeReady;
+      expect(loserStarted).toBe(false);
+
+      writeFileSync(attachedRelease, "release");
+      writeFileSync(startRelease, "release");
+      const started = await Promise.all([first.started, second.started]);
+      expect(started[0]?.owner.ownerSessionId).toBe(started[1]?.owner.ownerSessionId);
+      expect(await fetchOwner(started[0]!.endpoint)).toMatchObject({
+        daemonCliVersion: "new",
+        state: "running",
+        ready: true,
+      });
+      await remoteStop(started[0]!.endpoint);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (first?.child.exitCode === null) await kill(first.child);
+      if (second?.child.exitCode === null) await kill(second.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("upgrade preflight failure leaves the incompatible owner running", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
@@ -1101,6 +1162,81 @@ describe("detached supervisor child journeys", () => {
       expect(oldOwner.child.exitCode).toBeNull();
       expect((await fetchOwner(oldStarted.endpoint)).state).toBe("running");
       await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("replacement preserves the target sticky port when the request names a stopped sibling reservation", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        cliVersion: "old",
+        incompatibleOwnerPolicy: "replace",
+      }),
+    );
+    let contender: ChildHandle | undefined;
+    try {
+      await oldOwner.started;
+      const targetPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      const target = JSON.parse(readFileSync(targetPath, "utf8")) as {
+        readonly identity: Readonly<Record<string, unknown>>;
+        readonly ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
+      };
+      const api = target.ports.find((assignment) => assignment.key === "api.port");
+      if (api === undefined) throw new Error("expected target API assignment");
+      const siblingPort = api.port === 65_000 ? 65_001 : 65_000;
+      const siblingId = "b".repeat(64);
+      const siblingPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, siblingId),
+      );
+      mkdirSync(dirname(siblingPath), { recursive: true });
+      writeFileSync(
+        siblingPath,
+        `${JSON.stringify(
+          {
+            ...target,
+            id: siblingId,
+            identity: { ...target.identity, workspaceId: "sibling-workspace" },
+            ports: [{ key: "api.port", port: siblingPort, intent: "exact" }],
+            lifecycle: "stopped",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      contender = spawnChild(
+        messageFor(roots, {
+          cliVersion: "new",
+          incompatibleOwnerPolicy: "replace",
+          config: { ...messageFor(roots).config, port: siblingPort },
+          portIntents: {
+            ...messageFor(roots).portIntents,
+            document: { api: { port: siblingPort } },
+          },
+        }),
+      );
+      const replacement = await contender.started;
+      expect(replacement.owner.daemonCliVersion).toBe("new");
+      expect(await fetchOwner(replacement.endpoint)).toMatchObject({
+        daemonCliVersion: "new",
+        state: "running",
+        ready: true,
+      });
+      const after = JSON.parse(readFileSync(targetPath, "utf8")) as {
+        readonly ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
+      };
+      expect(after?.ports).toContainEqual({ key: "api.port", port: api.port, intent: api.intent });
+      expect(after?.ports).not.toContainEqual(
+        expect.objectContaining({ key: "api.port", port: siblingPort }),
+      );
+      await remoteStop(replacement.endpoint);
+      await waitForExit(contender.child);
       await waitForExit(oldOwner.child);
     } finally {
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);

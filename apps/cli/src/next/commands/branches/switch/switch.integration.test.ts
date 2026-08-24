@@ -392,23 +392,42 @@ describe("branches switch handler", () => {
       Effect.flatMap((fixture) => {
         const out = mockOutput();
         const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
-        const layer = Layer.mergeAll(
-          fixture.baseLayer,
-          out.layer,
-          mockProjectLinkState(DEFAULT_LINK_STATE),
-          api.layer,
+        let linkState = DEFAULT_LINK_STATE;
+        const linkStateLayer = Layer.succeed(
+          ProjectLinkState,
+          ProjectLinkState.of({
+            load: Effect.sync(() => Option.some(linkState)),
+            save: (next) => Effect.sync(() => void (linkState = next)),
+            clear: Effect.void,
+            getActiveBranch: Effect.sync(() => Option.some(linkState.active_branch)),
+            setActiveBranch: (branch) =>
+              Effect.sync(() => {
+                linkState = { ...linkState, active_branch: branch };
+              }),
+          }),
         );
+        const layer = Layer.mergeAll(fixture.baseLayer, out.layer, linkStateLayer, api.layer);
         return switchBranch({ name: Option.some("dev") }).pipe(
           Effect.provide(layer),
           Effect.exit,
           Effect.andThen((exit) =>
-            Effect.promise(async () => {
+            Effect.gen(function* () {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
                 expect(JSON.stringify(exit.cause)).toContain("DaemonUpgradeRequired");
               }
               expect(api.requests).toHaveLength(1);
-              expect((await fixture.readDocument())?.lifecycle).toBe("running");
+              expect(linkState.active_branch.ref).toBe(MAIN_BRANCH.project_ref);
+              expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "outro",
+                  message: expect.stringContaining("Switched to branch"),
+                }),
+              );
+              expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe(
+                "running",
+              );
             }),
           ),
           Effect.ensuring(Effect.promise(() => fixture.dispose())),

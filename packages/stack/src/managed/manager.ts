@@ -88,12 +88,16 @@ export interface StartStackRequest {
   readonly lifecycle?: ManagedStackDocument["lifecycle"];
   readonly runtime?: ManagedStackDocument["runtime"];
   readonly launch: ManagedStackDocument["launch"];
+  /** Incompatible replacement must retain the target's sticky assignments. */
+  readonly preservePersistedPorts?: boolean;
 }
 
 export interface AllocateManagedPortsRequest {
   readonly stackId: string;
   readonly portDocument: ManagedPortIntentDocument;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
+  /** During an incompatible replacement, keep the target's sticky assignments. */
+  readonly preservePersisted?: boolean;
 }
 
 export interface ManagedPortAllocation {
@@ -511,6 +515,7 @@ const makeManager = (
             intents: resolvePortIntents(request.portDocument),
             persisted,
             preferCatalogDefaults,
+            preservePersisted: request.preservePersisted,
           });
           const invalidPersistedAutomatic = plan.durable.find(
             (entry) =>
@@ -763,6 +768,7 @@ const makeManager = (
             stackId: refreshedStackId,
             portDocument: request.portDocument,
             persisted: current?.ports,
+            preservePersisted: request.preservePersistedPorts,
           });
           const timestamp = now();
           const document: ManagedStackDocument = {

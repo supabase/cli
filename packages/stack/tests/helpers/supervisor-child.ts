@@ -188,7 +188,10 @@ const testRuntime = ({
   return Effect.gen(function* () {
     const disposed = Deferred.makeUnsafe<void>();
     yield* validateResolvedConfig(config);
-    if (mode === "hold-start") yield* Effect.never;
+    if (mode === "hold-start") {
+      const releaseFile = process.env["SUPABASE_STACK_TEST_START_RELEASE_FILE"];
+      yield* releaseFile === undefined ? Effect.never : waitForFile(releaseFile);
+    }
     const servers: Array<Server> = [];
     if (mode !== "hold-reservations") {
       for (const field of PORT_FIELDS) {
