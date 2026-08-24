@@ -10,13 +10,16 @@ const config = {
   interactive: Flag.boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode to configure IDE settings."),
     Flag.withAlias("i"),
+    Flag.withDefault(false),
   ),
-  experimental: Flag.boolean("experimental").pipe(Flag.withHidden),
+  experimental: Flag.boolean("experimental").pipe(Flag.withHidden, Flag.withDefault(false)),
   useOrioledb: Flag.boolean("use-orioledb").pipe(
     Flag.withDescription("Use OrioleDB storage engine for Postgres."),
+    Flag.withDefault(false),
   ),
   force: Flag.boolean("force").pipe(
     Flag.withDescription("Overwrite existing supabase/config.toml."),
+    Flag.withDefault(false),
   ),
 } as const;
 

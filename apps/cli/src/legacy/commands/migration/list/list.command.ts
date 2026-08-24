@@ -19,6 +19,7 @@ const config = {
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Lists migrations applied to the local database."),
+    Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).
   projectRef: Flag.string("project-ref").pipe(

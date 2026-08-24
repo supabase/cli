@@ -15,9 +15,11 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Lints the linked project for schema errors."),
+    Flag.withDefault(false),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Lints the local database for schema errors."),
+    Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(

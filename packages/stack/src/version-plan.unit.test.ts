@@ -16,14 +16,14 @@ describe("planStackVersions", () => {
       candidateBaseline: {
         ...DEFAULT_VERSIONS,
         postgres: "17.6.1.090",
-        postgrest: "14.5",
-        auth: "2.187.0",
+        postgrest: "v14.5",
+        auth: "v2.187.0",
       },
       pinnedBaseline: {
         ...DEFAULT_VERSIONS,
         postgres: "17.6.1.090",
-        postgrest: "14.5",
-        auth: "2.187.0",
+        postgrest: "v14.5",
+        auth: "v2.187.0",
       },
     });
   });
@@ -49,14 +49,14 @@ describe("planStackVersions", () => {
       runtimeVersions: {
         ...DEFAULT_VERSIONS,
         postgres: "17.4.1.045",
-        postgrest: "14.5",
-        auth: "2.170.0",
-        storage: "1.40.0",
+        postgrest: "v14.5",
+        auth: "v2.170.0",
+        storage: "v1.40.0",
       },
       activeOverrides: [
         { service: "postgres", version: "17.4.1.045", source: "flag" },
-        { service: "auth", version: "2.170.0", source: "flag" },
-        { service: "storage", version: "1.40.0", source: "local" },
+        { service: "auth", version: "v2.170.0", source: "flag" },
+        { service: "storage", version: "v1.40.0", source: "local" },
       ],
     });
   });
@@ -79,15 +79,15 @@ describe("planStackVersions", () => {
         {
           service: "auth",
           pinnedVersion: "2.188.0-rc.15",
-          availableVersion: "2.188.1",
+          availableVersion: "v2.188.1",
         },
         {
           service: "storage",
           pinnedVersion: "1.41.8",
-          availableVersion: "1.43.3",
+          availableVersion: "v1.43.3",
         },
       ],
-      updateFingerprint: "auth:2.188.0-rc.15->2.188.1|storage:1.41.8->1.43.3",
+      updateFingerprint: "auth:2.188.0-rc.15->v2.188.1|storage:1.41.8->v1.43.3",
     });
   });
 });

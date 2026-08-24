@@ -8,9 +8,11 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 
 import { makeApiClient, operationDefinitions } from "./effect.ts";
 import {
+  V1CreateASsoProviderInput,
   V1CreateASsoProviderOutput,
   V1DeleteASsoProviderOutput,
   V1GetASsoProviderOutput,
+  V1GetDatabaseOpenapiOutput,
   V1ListAllSsoProviderOutput,
   V1UpdateASsoProviderOutput,
 } from "./generated/contracts.ts";
@@ -57,7 +59,7 @@ const config = {
   userAgent: "supabase-api/test",
 } as const;
 
-describe("SSO provider response contracts", () => {
+describe("SSO provider contracts", () => {
   // The provider payload the Management API actually returns: no `saml.id` and
   // no `domains[].id` — neither field exists in the spec (or in the Go CLI's
   // `api.ListProvidersResponse`). Every SSO subcommand decodes one of these
@@ -111,6 +113,38 @@ describe("SSO provider response contracts", () => {
       expect(decoded.saml).not.toHaveProperty("id");
       expect(decoded.domains?.[0]).not.toHaveProperty("id");
     }
+  });
+
+  test("accepts object-valued SSO attribute mapping defaults", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(V1CreateASsoProviderInput)({
+        ref: "abcdefghijklmnopqrst",
+        type: "saml",
+        attribute_mapping: {
+          keys: {
+            role: { default: { department: "engineering" } },
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+});
+
+describe("database OpenAPI response contract", () => {
+  test("accepts a normal non-empty OpenAPI document", () => {
+    expect(() =>
+      Schema.decodeUnknownSync(V1GetDatabaseOpenapiOutput)({
+        openapi: "3.0.0",
+        info: { title: "Example", version: "1.0.0" },
+        paths: {
+          "/users": {
+            get: {
+              responses: { "200": { description: "ok" } },
+            },
+          },
+        },
+      }),
+    ).not.toThrow();
   });
 });
 

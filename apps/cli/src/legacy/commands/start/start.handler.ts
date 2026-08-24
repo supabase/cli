@@ -47,6 +47,7 @@ import {
   legacyIsEncryptedSecret,
 } from "../../shared/legacy-vault-decrypt.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
+import { legacyConfigureLoopbackProxyBypass } from "../../shared/legacy-hostname.ts";
 import {
   legacyCliProjectFilterValue,
   legacyServiceContainerIds,
@@ -1756,8 +1757,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // `edge-runtime.service.ts`'s header for why. Unlike every other
           // service built here (`legacyCreateContainer`'s `restartPolicy:
           // "unless-stopped"`), Edge Runtime's own bring-up sets no Docker
-          // restart policy at all, so this container's `docker run` matches
-          // that — but its bind-mounted host temp files must still exist for
+          // restart policy at all — but its bind-mounted host temp files
+          // (env-file/multiline-env-script staging) must still exist for
           // as long as the container can be reattached to; `legacyStart
           // EdgeRuntimeContainer` already runs `cleanup` on a failed or
           // interrupted bring-up internally, so only the success path must
@@ -1979,6 +1980,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           projectRef: "",
           config: effectiveLocalStorageConfig,
         });
+        // Keep the synthetic value out of project dotenv resolution and container environments.
+        legacyConfigureLoopbackProxyBypass();
         const healthResult = yield* legacyWaitForHealthyServices(spawner, [...started.keys()], {
           postgrest: postgrestGateway,
           edgeRuntime: edgeRuntimeGateway,

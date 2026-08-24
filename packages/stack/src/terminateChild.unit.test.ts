@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { Effect, Fiber } from "effect";
 import { terminateChildProcess } from "./terminateChild.ts";
 
 interface ChildLike {
@@ -13,6 +14,10 @@ class FakeChild implements ChildLike {
   exitCode: number | null = null;
   readonly signals: Array<NodeJS.Signals> = [];
   #listeners = new Set<() => void>();
+
+  get listenerCount(): number {
+    return this.#listeners.size;
+  }
 
   constructor(
     private readonly onKill: (signal: NodeJS.Signals, child: FakeChild) => void = () => {},
@@ -47,7 +52,7 @@ describe("terminateChildProcess", () => {
       }
     });
 
-    await terminateChildProcess(child, { timeoutMs: 100 });
+    await Effect.runPromise(terminateChildProcess(child, { timeoutMs: 100 }));
 
     expect(child.signals).toEqual(["SIGTERM"]);
   });
@@ -59,7 +64,7 @@ describe("terminateChildProcess", () => {
       }
     });
 
-    await terminateChildProcess(child, { timeoutMs: 10 });
+    await Effect.runPromise(terminateChildProcess(child, { timeoutMs: 10 }));
 
     expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
@@ -73,7 +78,7 @@ describe("terminateChildProcess on an already-exited child", () => {
     // the sweep exists to prevent.
     const child = new FakeChild();
     child.exitCode = 0;
-    await terminateChildProcess(child, { timeoutMs: 5_000 });
+    await Effect.runPromise(terminateChildProcess(child, { timeoutMs: 5_000 }));
     expect(child.signals).toEqual([]);
   });
 
@@ -85,12 +90,22 @@ describe("terminateChildProcess on an already-exited child", () => {
     });
     vi.useFakeTimers();
     try {
-      const termination = terminateChildProcess(child, { timeoutMs: 300 });
+      const termination = Effect.runPromise(terminateChildProcess(child, { timeoutMs: 300 }));
       await vi.runAllTimersAsync();
       await termination;
       expect(child.signals).toEqual(["SIGTERM"]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("removes the exit listener when termination is interrupted", async () => {
+    const child = new FakeChild();
+    const fiber = Effect.runFork(terminateChildProcess(child, { timeoutMs: 1_000 }));
+    await Effect.runPromise(Effect.yieldNow);
+
+    expect(child.listenerCount).toBe(1);
+    await Effect.runPromise(Fiber.interrupt(fiber));
+    expect(child.listenerCount).toBe(0);
   });
 });

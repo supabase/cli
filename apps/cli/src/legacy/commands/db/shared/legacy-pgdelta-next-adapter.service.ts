@@ -28,6 +28,7 @@ export type LegacyPgDeltaNextDiagnosticOrigin =
   | "declarativeLoad"
   | "declarativeTarget"
   | "declarativeDrift"
+  | "plan"
   | "snapshot";
 
 export interface LegacyPgDeltaNextDiagnostic {

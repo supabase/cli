@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import { edgeRuntimeNofileUlimit } from "@supabase/stack/effect";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -16,32 +17,44 @@ import {
 /**
  * A spawner that answers every `docker` invocation
  * `legacyStartEdgeRuntimeContainer`'s call chain makes
- * (`ensureDockerNamedVolume`/`ensureDockerNetwork`/the `docker run -d` bring-up
- * itself) with success, recording every invocation's argv for assertions —
- * same shape as `health-check.unit.test.ts`'s `mockHealthSpawner`. Secret
- * values are delivered to the `run -d` call via `--env-file`/a bind-mounted
+ * (`ensureDockerNamedVolume`/`ensureDockerNetwork`/the create → cp → start
+ * bring-up itself) with success, recording every invocation's argv (plus its
+ * `stdin` option, for the `docker cp` archive) for assertions — same shape as
+ * `health-check.unit.test.ts`'s `mockHealthSpawner`. Secret
+ * values are delivered to the `create` call via `--env-file`/a bind-mounted
  * script, not this spawned process's own environment (see
  * `edge-runtime.service.ts`'s header for why), so there is nothing to capture
- * beyond argv. Note `legacyStartEdgeRuntimeContainer` never issues a
+ * beyond argv and stdin. Note `legacyStartEdgeRuntimeContainer` never issues a
  * `docker exec ... kong reload` — that only happens in `functions serve`'s own
  * `restartEdgeRuntime`-equivalent wrapper (`shared/functions/serve.ts`'s
  * `startEdgeRuntime`), not in the shared bring-up core this module calls
  * directly — see the "does not reload Kong" test below.
  */
-function mockDockerSpawner() {
-  const calls: Array<{ args: ReadonlyArray<string> }> = [];
+function mockDockerSpawner(
+  handler?: (args: ReadonlyArray<string>) => { exitCode: number; stderr?: string },
+) {
+  const calls: Array<{
+    args: ReadonlyArray<string>;
+    stdin: ChildProcess.CommandInput | ChildProcess.StdinConfig | undefined;
+  }> = [];
+  const encoder = new TextEncoder();
 
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       const args = command._tag === "StandardCommand" ? command.args : [];
-      calls.push({ args });
+      calls.push({
+        args,
+        stdin: command._tag === "StandardCommand" ? command.options.stdin : undefined,
+      });
+      const result = handler?.(args) ?? { exitCode: 0 };
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: Stream.empty,
-        stderr: Stream.empty,
+        stderr:
+          result.stderr === undefined ? Stream.empty : Stream.make(encoder.encode(result.stderr)),
         all: Stream.empty,
         exitCode: Deferred.await(exitDeferred),
         isRunning: Effect.succeed(false),
@@ -60,7 +73,8 @@ function mockDockerSpawner() {
       return calls;
     },
     get runCall() {
-      return calls.find((call) => call.args[0] === "run" && call.args[1] === "-d");
+      // The container-level `docker create` (`docker volume create` starts with "volume").
+      return calls.find((call) => call.args[0] === "create");
     },
   };
 }
@@ -176,20 +190,24 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       }),
   );
 
-  it.effect("sets --ulimit nofile=65536:65536, matching Go's Ulimits container.Config", () =>
-    Effect.gen(function* () {
-      const mock = mockDockerSpawner();
-      const out = mockOutput();
+  it.effect(
+    "sets --ulimit nofile, capped at Go's 65536 and clamped to the host hard limit (CLI-2220)",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
 
-      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-        Effect.provide(out.layer),
-      );
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
 
-      const runCall = mock.runCall!;
-      const ulimitIndex = runCall.args.indexOf("--ulimit");
-      expect(runCall.args[ulimitIndex + 1]).toBe("nofile=65536:65536");
-    }),
+        const runCall = mock.runCall!;
+        const ulimitIndex = runCall.args.indexOf("--ulimit");
+        expect(runCall.args[ulimitIndex + 1]).toBe(edgeRuntimeNofileUlimit("darwin").arg);
+        // Off Linux the raise is never clamped, so no clamp warning is emitted.
+        expect(out.messages.filter((message) => message.type === "warn")).toEqual([]);
+      }),
   );
 
   it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
@@ -282,6 +300,108 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   );
 
   it.effect(
+    "delivers the bundled main service via docker cp into the created container — never a single-file host bind (#6254)",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+
+        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+        );
+
+        const containerSteps = mock.calls
+          .map((call) => call.args[0])
+          .filter((step) => step === "create" || step === "cp" || step === "start");
+        expect(containerSteps).toEqual(["create", "cp", "start"]);
+
+        // No bind delivers /root/index.ts — the single-file host bind is what broke #6254.
+        const createArgs = mock.runCall!.args;
+        const bindValues = createArgs.flatMap((arg, index) =>
+          createArgs[index - 1] === "-v" ? [arg] : [],
+        );
+        expect(bindValues.some((bind) => bind.includes(":/root/index.ts"))).toBe(false);
+
+        const cp = mock.calls.find((call) => call.args[0] === "cp");
+        expect(cp?.args).toEqual(["cp", "-", "supabase_edge_runtime_proj:/"]);
+        const stdin = cp?.stdin;
+        expect(Stream.isStream(stdin)).toBe(true);
+        if (!Stream.isStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
+        const chunks = yield* Stream.runCollect(stdin);
+        expect(chunks).toHaveLength(1);
+        const archiveBytes = chunks[0];
+        if (!(archiveBytes instanceof Uint8Array)) {
+          return yield* Effect.die("docker cp stdin did not contain archive bytes");
+        }
+        const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+        expect([...files.keys()]).toEqual(["root/index.ts"]);
+        const mainService = files.get("root/index.ts");
+        if (mainService === undefined) {
+          return yield* Effect.die("docker cp archive did not contain the main service");
+        }
+        expect(yield* Effect.promise(() => mainService.text())).toContain(
+          "SUPABASE_INTERNAL_FUNCTIONS_CONFIG",
+        );
+      }),
+  );
+
+  it.effect(
+    "surfaces docker's own stderr verbatim and never reaches cp/start when docker create fails",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner((args) =>
+          args[0] === "create"
+            ? { exitCode: 125, stderr: "Conflict. The container name is already in use" }
+            : { exitCode: 0 },
+        );
+        const out = mockOutput();
+
+        const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        expect(String(error)).toContain("Conflict. The container name is already in use");
+        expect(mock.calls.some((call) => call.args[0] === "cp")).toBe(false);
+        expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
+        expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "prefixes docker cp's uninterpretable stderr, never reaches docker start, and leaves container removal to the caller when the copy fails",
+    () =>
+      Effect.gen(function* () {
+        const mock = mockDockerSpawner((args) =>
+          args[0] === "cp"
+            ? {
+                exitCode: 1,
+                stderr: 'destination "supabase_edge_runtime_proj:/" must be a directory',
+              }
+            : { exitCode: 0 },
+        );
+        const out = mockOutput();
+
+        const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        expect(String(error)).toContain(
+          'failed to copy edge runtime main service into container: destination "supabase_edge_runtime_proj:/" must be a directory',
+        );
+        expect(mock.calls.some((call) => call.args[0] === "start")).toBe(false);
+        // Removal stays with the callers, matching `docker run -d` behavior.
+        expect(mock.calls.some((call) => call.args[0] === "container")).toBe(false);
+      }),
+  );
+
+  it.effect(
     "resolves with the started container's id and a cleanup effect left for the caller to run",
     () =>
       Effect.gen(function* () {
@@ -299,7 +419,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   );
 
   it.effect(
-    "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker run",
+    "cleans up a stale staging directory from a previous invocation even when this invocation fails before ever reaching docker create",
     () =>
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
@@ -322,7 +442,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
           // A multiline secret with a name that fails `validateDockerMultilineEnvNames` (must
           // match a shell variable name) — this throws before any of THIS invocation's staging
           // writes happen, proving cleanup covers the whole staging-write window, not just a
-          // failure at (or after) the `docker run` step.
+          // failure at (or after) the docker create/cp/start steps.
           edgeRuntimeSecrets: { "1BAD_NAME": "line one\nline two" },
         };
 

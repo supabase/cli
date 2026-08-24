@@ -21,6 +21,7 @@ const flags = {
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
     Flag.withDescription("Do not open browser automatically"),
+    Flag.withDefault(false),
   ),
 } as const;
 

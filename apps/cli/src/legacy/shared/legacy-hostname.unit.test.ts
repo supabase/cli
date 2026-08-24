@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { legacyGetHostname } from "./legacy-hostname.ts";
+import { legacyConfigureLoopbackProxyBypass, legacyGetHostname } from "./legacy-hostname.ts";
+
+const LOOPBACK_NO_PROXY = "localhost,127.0.0.1,[::1]";
 
 function withEnv<T>(entries: Record<string, string | undefined>, run: () => T): T {
   const previous: Record<string, string | undefined> = {};
@@ -184,5 +186,33 @@ describe("legacyGetHostname", () => {
       );
       expect(result).toBe("direct-host");
     });
+  });
+});
+
+describe("legacyConfigureLoopbackProxyBypass", () => {
+  it.each([
+    ["sets NO_PROXY when neither spelling is configured", {}, { NO_PROXY: LOOPBACK_NO_PROXY }],
+    [
+      "preserves an existing NO_PROXY value",
+      { NO_PROXY: "example.com" },
+      { NO_PROXY: `example.com,${LOOPBACK_NO_PROXY}` },
+    ],
+    [
+      "updates the non-empty lowercase value preferred by Bun",
+      { NO_PROXY: "uppercase.example", no_proxy: "lowercase.example" },
+      {
+        NO_PROXY: "uppercase.example",
+        no_proxy: `lowercase.example,${LOOPBACK_NO_PROXY}`,
+      },
+    ],
+    [
+      "falls back to NO_PROXY when lowercase no_proxy is empty",
+      { NO_PROXY: "example.com", no_proxy: "" },
+      { NO_PROXY: `example.com,${LOOPBACK_NO_PROXY}`, no_proxy: "" },
+    ],
+  ])("%s", (_name, env, expected) => {
+    legacyConfigureLoopbackProxyBypass(env);
+
+    expect(env).toEqual(expected);
   });
 });

@@ -8,6 +8,7 @@ import { openBugIssue, openDocsIssue, openFeatureIssue } from "./issue.handler.t
 
 const noBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser"),
+  Flag.withDefault(false),
 );
 
 const optionalTextFlag = (name: string, description: string) =>
@@ -33,6 +34,7 @@ const bugFlags = {
 const featureFlags = {
   existingIssues: Flag.boolean("existing-issues").pipe(
     Flag.withDescription("Prefill the existing issues checklist"),
+    Flag.withDefault(false),
   ),
   area: optionalTextFlag("area", "Affected CLI area"),
   problem: optionalTextFlag("problem", "Problem the feature should solve"),

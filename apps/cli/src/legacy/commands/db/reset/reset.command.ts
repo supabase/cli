@@ -17,9 +17,11 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Resets the linked project with local migrations."),
+    Flag.withDefault(false),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Resets the local database with local migrations."),
+    Flag.withDefault(false),
   ),
   // TS-only override of the linked project ref — see push.command.ts.
   projectRef: Flag.string("project-ref").pipe(
@@ -28,6 +30,7 @@ const config = {
   ),
   noSeed: Flag.boolean("no-seed").pipe(
     Flag.withDescription("Skip running the seed script after reset."),
+    Flag.withDefault(false),
   ),
   sqlPaths: Flag.string("sql-paths").pipe(
     Flag.atLeast(0),

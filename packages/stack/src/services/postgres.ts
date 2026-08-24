@@ -1,4 +1,3 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
@@ -7,6 +6,8 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
+  hostUserForLinuxDocker,
+  type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
 
@@ -19,15 +20,11 @@ interface PostgresServiceOptions {
 
 interface NativePostgresOptions extends PostgresServiceOptions {
   readonly binPath: string;
-  /** When true, patches postgres to listen on all interfaces so Docker containers can connect. */
-  readonly dockerAccessible?: boolean;
 }
 
-interface DockerPostgresOptions extends PostgresServiceOptions {
+interface DockerPostgresOptions extends PostgresServiceOptions, ContainerRuntimeOptions {
   readonly image: string;
   readonly platformOs: string;
-  readonly jwtSecret: string;
-  readonly jwtExpiry: number;
   readonly identity: StackIdentity;
   readonly cleanupDataDirOnExit?: boolean;
 }
@@ -40,13 +37,9 @@ const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
   TZDIR: "/var/db/timezone/zoneinfo",
 });
 
-const postgresDockerEnv = (opts: DockerPostgresOptions): Record<string, string> => ({
-  POSTGRES_PASSWORD: "postgres",
-  JWT_SECRET: opts.jwtSecret,
-  JWT_EXP: String(opts.jwtExpiry),
-});
-
 const NATIVE_POSTGRES_RUNTIME_ARGS = [
+  "-c",
+  "listen_addresses=127.0.0.1",
   "-c",
   "wal_level=logical",
   "-c",
@@ -58,31 +51,8 @@ const NATIVE_POSTGRES_RUNTIME_ARGS = [
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
 
-const DOCKER_POSTGRES_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
-\\set jwt_secret \`echo "$JWT_SECRET"\`
-\\set jwt_exp \`echo "$JWT_EXP"\`
-ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
-ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
-ALTER USER postgres WITH PASSWORD :'pgpass';
-ALTER USER authenticator WITH PASSWORD :'pgpass';
-ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_read_only_user WITH PASSWORD :'pgpass';
-create schema if not exists _realtime;
-alter schema _realtime owner to postgres;
-SELECT 'CREATE DATABASE _supabase WITH OWNER postgres'
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = '_supabase')\\gexec
-\\connect _supabase
-create schema if not exists _analytics;
-alter schema _analytics owner to postgres;
-create schema if not exists _supavisor;
-alter schema _supavisor owner to postgres;`;
-
-const dockerPostgresEntrypoint = (port: number) =>
-  `cat <<'EOF' > /etc/postgresql.schema.sql && exec docker-entrypoint.sh postgres -D /etc/postgresql -p ${port}
-${DOCKER_POSTGRES_SCHEMA_SQL}
-EOF`;
+const postgresGetKeyScript = (binPath: string): string =>
+  `${binPath}/share/supabase-cli/config/pgsodium_getkey.sh`;
 
 const postgresHealthCheck = (binPath: string, port: number) => ({
   probe: {
@@ -98,71 +68,54 @@ const postgresHealthCheck = (binPath: string, port: number) => ({
 });
 
 /**
- * Docker postgres health check using pg_isready inside the container.
+ * Docker postgres health check using the final postgres process and pg_isready
+ * inside the container.
  *
- * TCP alone is insufficient because the supabase/postgres image accepts TCP
- * connections during its init phase (running init scripts) but drops real
- * queries with "unexpected EOF". We use `docker exec` to run pg_isready
- * inside the container, which verifies postgres is accepting commands.
+ * The supabase/postgres image briefly accepts connections while its entrypoint
+ * runs initialization. During that phase PID 1 is still the shell and the
+ * temporary server is stopped before the final postgres process starts. Gate
+ * readiness on the final Postgres process name and pg_isready so dependents
+ * never race that handoff. `/proc/1/exe` is intentionally avoided because
+ * Linux container hardening can make that symlink unreadable across users.
  */
-const postgresDockerHealthCheck = (containerName: string, port: number) =>
-  dockerExecHealthCheck(containerName, "pg_isready", ["-p", String(port), "-U", "postgres"], {
-    ...stackHealthBudgets.postgresDocker,
-  });
+const postgresDockerHealthCheck = (
+  runtime: DockerPostgresOptions["runtime"],
+  containerName: string,
+  port: number,
+) =>
+  dockerExecHealthCheck(
+    runtime,
+    containerName,
+    "sh",
+    [
+      "-ec",
+      // Linux /proc/1/comm truncates `.postgres-wrapped` to 15 characters.
+      `case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -h 127.0.0.1 -p ${port} -U postgres ;; *) exit 1 ;; esac`,
+    ],
+    {
+      ...stackHealthBudgets.postgresDocker,
+    },
+  );
 
 export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => {
+  // The bundle path is a private, scope-owned alias prepared by StackBuilder.
+  // It intentionally does not persist between handles: the initializer only
+  // needs a no-space path while this service definition is active.
   const initScript = `${opts.binPath}/share/supabase-cli/bin/supabase-postgres-init.sh`;
-
-  if (opts.dockerAccessible) {
-    // Docker containers connect via host.docker.internal, which resolves to a gateway IP
-    // rather than 127.0.0.1. We create a per-run pg_hba.conf that allows those
-    // connections, and use postgres -c flags to override listen_addresses and hba_file.
-    // This avoids mutating the shared binary cache.
-    const customHbaPath = `${opts.dataDir}_pg_hba_docker.conf`;
-    mkdirSync(opts.dataDir, { recursive: true });
-    writeFileSync(
-      customHbaPath,
-      [
-        "local   all             all                                     scram-sha-256",
-        "host    all             all             127.0.0.1/32            scram-sha-256",
-        "host    all             all             ::1/128                 scram-sha-256",
-        "host    all             all             0.0.0.0/0               scram-sha-256",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    return {
-      name: "postgres",
-      command: "bash",
-      args: [
-        initScript,
-        "-p",
-        String(opts.port),
-        ...NATIVE_POSTGRES_RUNTIME_ARGS,
-        "-c",
-        "listen_addresses=*",
-        "-c",
-        `hba_file=${customHbaPath}`,
-      ],
-      env: postgresEnv(opts),
-      dependencies: opts.dependencies,
-      healthCheck: postgresHealthCheck(opts.binPath, opts.port),
-      shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
-      supervision: {
-        orphanCleanup: [
-          ...orphanCleanup(opts),
-          ...removePathOnOrphanCleanup(customHbaPath, { recursive: false }),
-        ],
-      },
-      restart: "unless-stopped",
-    };
-  }
+  const getKeyScript = postgresGetKeyScript(opts.binPath);
 
   return {
     name: "postgres",
-    command: "bash",
-    args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
+    command: initScript,
+    args: [
+      "-p",
+      String(opts.port),
+      ...NATIVE_POSTGRES_RUNTIME_ARGS,
+      "-c",
+      `pgsodium.getkey_script=${getKeyScript}`,
+      "-c",
+      `vault.getkey_script=${getKeyScript}`,
+    ],
     env: postgresEnv(opts),
     dependencies: opts.dependencies,
     healthCheck: postgresHealthCheck(opts.binPath, opts.port),
@@ -173,19 +126,59 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 };
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
-  const env = postgresDockerEnv(opts);
   const containerName = dockerContainerName("postgres", opts.identity.key);
+  const hostUser = hostUserForLinuxDocker(opts.runtime, opts.platformOs);
+  const [hostUid, hostGid] = hostUser?.split(":") ?? [];
+  const runtimeArgs = [
+    "-p",
+    String(opts.port),
+    "-c",
+    "listen_addresses=*",
+    "-c",
+    "pgsodium.getkey_script=/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh",
+    "-c",
+    "vault.getkey_script=/opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh",
+  ] as const;
+
+  // Native initialization permits only loopback clients. When reusing that
+  // data directory in Docker, route through a temporary HBA copy that adds the
+  // container network rule without mutating the persisted native config.
+  const runEntrypoint = (args: string): string =>
+    hostUser === undefined
+      ? `exec /usr/local/bin/entry.sh ${args}`
+      : `exec busybox su -s /usr/bin/sh supabase_cli -c "exec /usr/local/bin/entry.sh ${args}"`;
+  // initdb requires the effective uid to resolve through /etc/passwd, while
+  // the image init script chmods its key helper. Perform only that image setup
+  // as root, then drop to the host uid before touching the bind-mounted data.
+  const hostUserSetup =
+    hostUser === undefined
+      ? ""
+      : `printf 'supabase_cli:x:${hostUid}:${hostGid}:Supabase CLI:/tmp:/usr/bin/sh\\n' >> /etc/passwd
+busybox chown ${hostUid}:${hostGid} /var/lib/postgresql/data
+busybox chown ${hostUid}:${hostGid} /opt/postgres/share/supabase-cli/config/pgsodium_getkey.sh
+`;
+  const command = `${hostUserSetup}if [ -s /var/lib/postgresql/data/PG_VERSION ]; then
+  cp /var/lib/postgresql/data/pg_hba.conf /tmp/supabase-cli-pg_hba.conf
+  printf '\\nhost all all all scram-sha-256\\n' >> /tmp/supabase-cli-pg_hba.conf
+  ${hostUser === undefined ? "" : `busybox chown ${hostUid}:${hostGid} /tmp/supabase-cli-pg_hba.conf`}
+  ${runEntrypoint(`-c hba_file=/tmp/supabase-cli-pg_hba.conf ${runtimeArgs.join(" ")}`)}
+else
+  ${runEntrypoint(runtimeArgs.join(" "))}
+fi`;
+
   return dockerRunService({
+    runtime: opts.runtime,
     name: "postgres",
     identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],
-    env,
-    entrypoint: "sh",
-    cmd: ["-c", dockerPostgresEntrypoint(opts.port)],
+    env: { POSTGRES_PASSWORD: "postgres" },
+    user: hostUser === undefined ? undefined : "0",
+    entrypoint: "/usr/bin/sh",
+    cmd: ["-c", command],
     dependencies: opts.dependencies,
-    healthCheck: postgresDockerHealthCheck(containerName, opts.port),
+    healthCheck: postgresDockerHealthCheck(opts.runtime, containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     orphanCleanup: orphanCleanup(opts),
   });

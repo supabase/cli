@@ -1,5 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Duration, Effect, Exit, Fiber, Layer, Option, Sink, Stream } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Predicate,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
@@ -82,8 +93,7 @@ interface SpawnOpts {
 function createWaitList() {
   interface Waiter {
     readonly ready: () => boolean;
-    readonly resolve: () => void;
-    readonly timeout: ReturnType<typeof setTimeout>;
+    readonly signal: Deferred.Deferred<void>;
   }
 
   const waiters = new Set<Waiter>();
@@ -91,33 +101,26 @@ function createWaitList() {
   const notify = () => {
     for (const waiter of waiters) {
       if (waiter.ready()) {
-        clearTimeout(waiter.timeout);
         waiters.delete(waiter);
-        waiter.resolve();
+        Effect.runSync(Deferred.succeed(waiter.signal, void 0));
       }
     }
   };
 
   const waitUntil = (ready: () => boolean, description: string, timeoutMs = 2_000) =>
-    Effect.promise(
-      () =>
-        new Promise<void>((resolve, reject) => {
-          if (ready()) {
-            resolve();
-            return;
-          }
-
-          const waiter: Waiter = {
-            ready,
-            resolve,
-            timeout: setTimeout(() => {
-              waiters.delete(waiter);
-              reject(new Error(`Timed out waiting for ${description}`));
-            }, timeoutMs),
-          };
-          waiters.add(waiter);
-        }),
-    );
+    Effect.gen(function* () {
+      if (ready()) return;
+      const signal = yield* Deferred.make<void>();
+      const waiter: Waiter = { ready, signal };
+      waiters.add(waiter);
+      const result = yield* Deferred.await(signal).pipe(
+        Effect.timeoutOption(Duration.millis(timeoutMs)),
+        Effect.ensuring(Effect.sync(() => waiters.delete(waiter))),
+      );
+      if (Option.isNone(result)) {
+        return yield* Effect.fail(new Error(`Timed out waiting for ${description}`));
+      }
+    });
 
   return { notify, waitUntil };
 }
@@ -169,8 +172,9 @@ function mockChildProcessSpawner(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const cmd = standardCommand ? command.command : "";
+          const args = standardCommand ? command.args : [];
           const record: SpawnRecord = { command: cmd, args };
           spawned.push(record);
           opts.onSpawn?.(record);
@@ -261,8 +265,9 @@ function mockStuckChildProcessSpawner() {
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const cmd = standardCommand ? command.command : "";
+          const args = standardCommand ? command.args : [];
           spawned.push({ command: cmd, args });
 
           // exitCode Deferred that is NEVER resolved — simulates stuck process
@@ -407,7 +412,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       const exit = yield* orc.getState("nonexistent").pipe(Effect.exit);
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -2037,8 +2042,8 @@ describe("Orchestrator", () => {
       });
 
       const error = yield* orc.waitReady("api").pipe(Effect.flip);
-      expect(error._tag).toBe("ServiceReadyError");
-      if (error._tag === "ServiceReadyError") {
+      expect(Predicate.isTagged(error, "ServiceReadyError")).toBe(true);
+      if (Predicate.isTagged(error, "ServiceReadyError")) {
         expect(error.reason).toContain("port reservation failed");
       }
       expect((yield* orc.getState("api")).status).toBe("Failed");
@@ -2133,8 +2138,8 @@ describe("Orchestrator", () => {
 
         yield* waitForState(orc, "a", (state) => state.status === "Failed", "Failed");
         const error = yield* orc.waitReady("a").pipe(Effect.flip);
-        expect(error._tag).toBe("ServiceReadyError");
-        if (error._tag === "ServiceReadyError") {
+        expect(Predicate.isTagged(error, "ServiceReadyError")).toBe(true);
+        if (Predicate.isTagged(error, "ServiceReadyError")) {
           expect(error.reason).toContain("port reservation failed");
         }
       }).pipe(Effect.provide(layer), Effect.scoped);
@@ -2222,8 +2227,8 @@ describe("Orchestrator", () => {
         expect(state.error).toBe("Health check failed and restart budget was exhausted");
 
         const readyError = yield* orc.waitReady("a").pipe(Effect.flip);
-        expect(readyError._tag).toBe("ServiceReadyError");
-        if (readyError._tag === "ServiceReadyError") {
+        expect(Predicate.isTagged(readyError, "ServiceReadyError")).toBe(true);
+        if (Predicate.isTagged(readyError, "ServiceReadyError")) {
           expect(readyError.reason).toBe("Health check failed and restart budget was exhausted");
         }
       }).pipe(Effect.provide(layer), Effect.scoped);

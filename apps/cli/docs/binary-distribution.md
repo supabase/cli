@@ -22,7 +22,7 @@ The legacy shell was built as a gradual TypeScript port of the Go CLI, moving ea
 - **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
 - **Phase 1+** — The command is implemented natively in TypeScript.
 
-That port is complete (CLI-1970). `supabase-go` is no longer a shrinking, transitional Phase 0 artifact — it is a permanent residual proxy target for a fixed, small command surface: `db diff` (for `--use-pg-schema`), `db pull` (for `--experimental`), the Go-deprecated `db branch`/`db remote` command families, `gen keys`, and `functions download` (for the hidden `--legacy-bundle` path). See "Go binary command surface" under Release Workflow below for the full list and why each command stays. The TS binary (`supabase`) still needs `supabase-go` available on the same system for those invocations. Every other Go command from the original CLI has been deleted outright from `apps/cli-go/`, not merely excluded from the build — see the same section for how.
+That port is complete (CLI-1970). `supabase-go` is the residual proxy target for a fixed, small command surface: `db diff` (for `--use-pg-schema`), `db pull` (for `--experimental`), the Go-deprecated `db branch`/`db remote` command families, `gen keys`, and `functions download` (for the hidden `--legacy-bundle` path). See "Go binary command surface" under Release Workflow below for the full list and why each command stays. Two lifecycles apply here and must not be conflated: the **public commands** in that surface are retained (dropping them was ruled a breaking change — CLI-1964), while their **Go implementations** are slated for eventual native TS replacement, after which `supabase-go` stops shipping. Until the proxied surface is empty, the TS binary (`supabase`) still needs `supabase-go` available on the same system for those invocations. Every other Go command from the original CLI has been deleted outright from `apps/cli-go/`, not merely excluded from the build — see the same section for how.
 
 ## Package Layout
 
@@ -103,7 +103,7 @@ This:
 - `db pull` — kept for `--experimental`, which needs the multigres Postgres DDL parser for structured dumps (CLI-1957)
 - `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
 - `db remote changes`, `db remote commit`
-- `gen keys` — kept indefinitely; its planned removal (CLI-1964) was cancelled
+- `gen keys` — the public command is kept (its planned removal, CLI-1964, was cancelled as a breaking change); the Go implementation stays only until a native TS replacement lands
 - `functions download` — kept for the hidden `--legacy-bundle` path (CLI-1963)
 
 That list is exhaustive: `LegacyGoProxy` is the only code path in the TypeScript CLI that spawns `supabase-go`. The one historical exception — the hidden pg-delta seam (`db schema declarative __catalog` + `db start`), spawned directly by the native `db schema declarative generate|sync` commands to provision shadow databases and export pg-delta catalogs — was ported to native TypeScript as part of CLI-1970 (`legacy-pgdelta.seam.layer.ts` now composes `legacySetupShadowDatabase`/`legacyExportCatalogPgDelta`/`legacyStartLocalDatabase` in-process), and those two Go commands were deleted with it.

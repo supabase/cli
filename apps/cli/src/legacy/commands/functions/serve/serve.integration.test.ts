@@ -422,7 +422,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -464,11 +464,11 @@ describe("legacy functions serve integration", () => {
       yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -509,7 +509,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -550,11 +550,11 @@ describe("legacy functions serve integration", () => {
       );
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -605,7 +605,7 @@ describe("legacy functions serve integration", () => {
       }
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
@@ -626,7 +626,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -704,11 +704,11 @@ describe("legacy functions serve integration", () => {
         expect(out.stderrText).toContain("Skipped serving Function: disabled\n");
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         expect(dockerRun.args).toContain("--network");
@@ -719,11 +719,21 @@ describe("legacy functions serve integration", () => {
         // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare pin stays
         // bare, no `v` synthesized.
         expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:1.73.13");
+        // The main service is `docker cp`-streamed in, never a single-file host bind (#6254).
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/index.ts:ro,Z"),
+            value.includes(":/root/index.ts"),
           ),
-        ).toBe(true);
+        ).toBe(false);
+        const bringUpSteps = deployMockState.runCalls
+          .map((call) => call.args[0])
+          .filter((step) => step === "create" || step === "cp" || step === "start");
+        expect(bringUpSteps).toEqual(["create", "cp", "start"]);
+        expect(deployMockState.runCalls.map((call) => call.args.slice(0, 3))).toContainEqual([
+          "cp",
+          "-",
+          "supabase_edge_runtime_test-project:/",
+        ]);
         expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
           toDockerPath(tempRoot.current),
         ]);
@@ -790,7 +800,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -807,10 +817,10 @@ describe("legacy functions serve integration", () => {
         stderr: "error running container: exit 1",
         onSpawn: () => {
           const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           );
           if (dockerRun === undefined) {
-            throw new Error("expected docker run call before docker logs spawn");
+            throw new Error("expected docker create call before docker logs spawn");
           }
           multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
             .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
@@ -849,11 +859,11 @@ describe("legacy functions serve integration", () => {
       expect(error).toBeInstanceOf(Error);
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       expect(dockerRun.args).toContain(
@@ -914,7 +924,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -967,11 +977,11 @@ describe("legacy functions serve integration", () => {
         expect(existsSync(staleMultilineEnvDir)).toBe(false);
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
@@ -1010,7 +1020,7 @@ describe("legacy functions serve integration", () => {
       }
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
     });
@@ -1055,7 +1065,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1110,7 +1120,7 @@ describe("legacy functions serve integration", () => {
       }
       expect(
         deployMockState.runCalls.some(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toBe(true);
     });
@@ -1127,7 +1137,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1185,11 +1195,11 @@ describe("legacy functions serve integration", () => {
       }
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run invocation");
+        throw new Error("expected docker create invocation");
       }
       // `buildDockerBinds` realpath-resolves host paths, so compare against the
       // resolved path (on macOS the temp dir lives under /var -> /private/var).
@@ -1215,7 +1225,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1284,11 +1294,11 @@ describe("legacy functions serve integration", () => {
       }
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run invocation");
+        throw new Error("expected docker create invocation");
       }
       const resolvedSharedPath = realpathSync(sharedPath);
       expect(
@@ -1312,7 +1322,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1345,9 +1355,9 @@ describe("legacy functions serve integration", () => {
       yield* waitFor(
         () =>
           deployMockState.runCalls.filter(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           ).length === 1,
-        "timed out waiting for first docker run",
+        "timed out waiting for first docker create",
       );
 
       fileWatcher.emit([
@@ -1369,7 +1379,7 @@ describe("legacy functions serve integration", () => {
 
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(2);
       // The file-change line prints the fsnotify op token Go prints
@@ -1408,7 +1418,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1438,9 +1448,9 @@ describe("legacy functions serve integration", () => {
       yield* waitFor(
         () =>
           deployMockState.runCalls.some(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           ),
-        "timed out waiting for docker run",
+        "timed out waiting for docker create",
       );
       processControl.signal("SIGINT");
 
@@ -1554,7 +1564,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -1629,7 +1639,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1668,11 +1678,11 @@ describe("legacy functions serve integration", () => {
       }
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       expect(dockerRun.args).toContain("--network");
@@ -1699,7 +1709,7 @@ describe("legacy functions serve integration", () => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -1719,25 +1729,51 @@ describe("legacy functions serve integration", () => {
       yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
       expect(commandScript).toBe(
         "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
       );
-      expect(
-        extractFlagValues(dockerRun.args, "-v").some((value) =>
-          value.endsWith(":/root/index.ts:ro,Z"),
-        ),
-      ).toBe(true);
+
+      const cp = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "cp",
+      );
+      expect(cp).toBeDefined();
+      if (cp === undefined) {
+        throw new Error("expected docker cp call");
+      }
+      const cpOptions: unknown = cp.options;
+      const stdin =
+        typeof cpOptions === "object" && cpOptions !== null && "stdin" in cpOptions
+          ? cpOptions.stdin
+          : undefined;
+      // Narrows the mock-recorded `unknown`; the `instanceof Uint8Array` check still guards.
+      const isCpArchiveStream = (value: unknown): value is Stream.Stream<Uint8Array> =>
+        Stream.isStream(value);
+      expect(isCpArchiveStream(stdin)).toBe(true);
+      if (!isCpArchiveStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
+      const chunks = yield* Stream.runCollect(stdin);
+      const archiveBytes = chunks[0];
+      if (!(archiveBytes instanceof Uint8Array)) {
+        return yield* Effect.die("docker cp stdin did not contain archive bytes");
+      }
+      const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+      const mainService = files.get("root/index.ts");
+      if (mainService === undefined) {
+        return yield* Effect.die("docker cp archive did not contain root/index.ts");
+      }
+      const template = yield* Effect.promise(() => mainService.text());
+      expect(template.length).toBeGreaterThan(0);
+      expect(template).not.toContain("@ts-nocheck");
+      expect(template).not.toContain("declare const Deno");
+      expect(template).not.toContain("declare const EdgeRuntime");
       expect(commandScript).not.toContain("@ts-nocheck");
-      expect(commandScript).not.toContain("declare const Deno");
-      expect(commandScript).not.toContain("declare const EdgeRuntime");
     });
   });
 
@@ -1746,7 +1782,7 @@ describe("legacy functions serve integration", () => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -1780,11 +1816,11 @@ describe("legacy functions serve integration", () => {
       );
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       expect(dockerRun.args).toContain("-p");
@@ -1804,7 +1840,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -1882,11 +1918,11 @@ describe("legacy functions serve integration", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -1920,7 +1956,7 @@ describe("legacy functions serve integration", () => {
           if (args[0] === "container" && args[1] === "rm") {
             return { exitCode: 0, stdout: "", stderr: "" };
           }
-          if (args[0] === "run") {
+          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
             return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
           }
           if (args[0] === "exec") {
@@ -1970,11 +2006,11 @@ describe("legacy functions serve integration", () => {
         }
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2010,7 +2046,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -2062,11 +2098,11 @@ describe("legacy functions serve integration", () => {
         expect(fetchMock).not.toHaveBeenCalled();
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2096,7 +2132,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -2140,11 +2176,11 @@ describe("legacy functions serve integration", () => {
       }
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2168,7 +2204,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -2210,11 +2246,11 @@ describe("legacy functions serve integration", () => {
       }
 
       const dockerRun = deployMockState.runCalls.find(
-        (call) => call.command === "docker" && call.args[0] === "run",
+        (call) => call.command === "docker" && call.args[0] === "create",
       );
       expect(dockerRun).toBeDefined();
       if (dockerRun === undefined) {
-        throw new Error("expected docker run call");
+        throw new Error("expected docker create call");
       }
 
       const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2236,7 +2272,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -2314,7 +2350,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -2382,11 +2418,11 @@ describe("legacy functions serve integration", () => {
         );
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2730,7 +2766,7 @@ describe("legacy functions serve integration", () => {
       if (args[0] === "container" && args[1] === "rm") {
         return { exitCode: 0, stdout: "", stderr: "" };
       }
-      if (args[0] === "run") {
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
         return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
       }
       if (args[0] === "exec") {
@@ -2805,7 +2841,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -2845,11 +2881,11 @@ describe("legacy functions serve integration", () => {
         }
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2881,7 +2917,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -2925,11 +2961,11 @@ describe("legacy functions serve integration", () => {
         }
 
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun).toBeDefined();
         if (dockerRun === undefined) {
-          throw new Error("expected docker run call");
+          throw new Error("expected docker create call");
         }
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -2974,7 +3010,7 @@ describe("legacy functions serve integration", () => {
       }
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
     });
@@ -3026,7 +3062,7 @@ describe("legacy functions serve integration", () => {
       ]);
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
       expect(deployMockState.networkCalls).toHaveLength(0);
@@ -3095,7 +3131,7 @@ describe("legacy functions serve integration", () => {
         type: "warn",
         message: expect.stringContaining("An error occurred in Effect.tryPromise"),
       });
-      expect(deployMockState.runCalls.filter((call) => call.args[0] === "run")).toHaveLength(0);
+      expect(deployMockState.runCalls.filter((call) => call.args[0] === "create")).toHaveLength(0);
     });
   });
 
@@ -3174,7 +3210,7 @@ describe("legacy functions serve integration", () => {
           if (args[0] === "container" && args[1] === "rm") {
             return { exitCode: 0, stdout: "", stderr: "" };
           }
-          if (args[0] === "run") {
+          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
             return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
           }
           if (args[0] === "exec") {
@@ -3209,11 +3245,11 @@ describe("legacy functions serve integration", () => {
           yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
 
           const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           );
           expect(dockerRun).toBeDefined();
           if (dockerRun === undefined) {
-            throw new Error("expected docker run call");
+            throw new Error("expected docker create call");
           }
           expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
         });
@@ -3233,7 +3269,7 @@ describe("legacy functions serve integration", () => {
           if (args[0] === "container" && args[1] === "rm") {
             return { exitCode: 0, stdout: "", stderr: "" };
           }
-          if (args[0] === "run") {
+          if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
             return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
           }
           if (args[0] === "exec") {
@@ -3271,7 +3307,7 @@ describe("legacy functions serve integration", () => {
             { networkMode: "env-network", projectId: "test-project" },
           ]);
           const dockerRun = deployMockState.runCalls.find(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           );
           expect(dockerRun?.args).toContain("env-network");
         });
@@ -3289,7 +3325,7 @@ describe("legacy functions serve integration", () => {
         if (args[0] === "container" && args[1] === "rm") {
           return { exitCode: 0, stdout: "", stderr: "" };
         }
-        if (args[0] === "run") {
+        if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
           return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
         }
         if (args[0] === "exec") {
@@ -3327,7 +3363,7 @@ describe("legacy functions serve integration", () => {
           { networkMode: "flag-network", projectId: "test-project" },
         ]);
         const dockerRun = deployMockState.runCalls.find(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         );
         expect(dockerRun?.args).toContain("flag-network");
         expect(dockerRun?.args).not.toContain("env-network");
@@ -3361,7 +3397,7 @@ describe("legacy functions serve integration", () => {
       }
       expect(
         deployMockState.runCalls.filter(
-          (call) => call.command === "docker" && call.args[0] === "run",
+          (call) => call.command === "docker" && call.args[0] === "create",
         ),
       ).toHaveLength(0);
     });
@@ -3396,7 +3432,7 @@ describe("legacy functions serve integration", () => {
         }
         expect(
           deployMockState.runCalls.filter(
-            (call) => call.command === "docker" && call.args[0] === "run",
+            (call) => call.command === "docker" && call.args[0] === "create",
           ),
         ).toHaveLength(0);
       });

@@ -1,9 +1,10 @@
 {
   "name": "@supabase/nx-plugins",
   "private": true,
+  "type": "module",
   "dependencies": {
     "@nx/devkit": "catalog:",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript": "catalog:",
     "vitest": "catalog:"
   }
 }

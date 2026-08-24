@@ -10,7 +10,12 @@ import {
   type ResolvedProjectValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
-import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+import {
+  defaultJwtSecret,
+  defaultPublishableKey,
+  defaultSecretKey,
+  edgeRuntimeNofileUlimit,
+} from "@supabase/stack/effect";
 import {
   createHmac,
   createPrivateKey,
@@ -57,6 +62,7 @@ import {
   type ResolvedDeployFunctionConfig,
 } from "./deploy.ts";
 import {
+  containerArchiveBytes,
   dockerProjectLabels,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
@@ -1409,6 +1415,30 @@ const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: stri
   }).pipe(Effect.ignore);
 });
 
+// One step of Edge Runtime's create → cp → start bring-up. Only the cp step passes a
+// `messagePrefix` — its raw stderr is uninterpretable alone — while create/start keep the
+// `docker run -d` era stderr surface byte-identical.
+const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
+  args: ReadonlyArray<string>,
+  opts: { readonly messagePrefix?: string; readonly stdin?: Stream.Stream<Uint8Array> } = {},
+) {
+  const result = yield* runChildProcess("docker", args, {
+    stdin: opts.stdin,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim();
+    const message =
+      opts.messagePrefix === undefined
+        ? detail || "failed to start edge runtime"
+        : detail.length > 0
+          ? `${opts.messagePrefix}: ${detail}`
+          : opts.messagePrefix;
+    return yield* Effect.fail(new Error(message));
+  }
+});
+
 const reloadKong = Effect.fnUntraced(function* (projectId: string) {
   const output = yield* Output;
   const kongId = localDockerId("kong", projectId);
@@ -1443,18 +1473,6 @@ export function buildServeEntrypointCommand(
 ) {
   return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
 `;
-}
-
-async function writeServeMainTemplateFile(template: string, dir: string) {
-  // Mount the bundled runtime template instead of embedding it in `sh -c` so
-  // Windows does not hit `uv_spawn` ENAMETOOLONG on path-heavy projects.
-  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
-  await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const pathname = join(dir, "index.ts");
-  await writeFile(pathname, template);
-  // `Z` — same SELinux relabel rationale as `writeDockerMultilineEnvScript`'s bind.
-  return { bind: `${pathname}:${serveMainContainerPath}:ro,Z` } as const;
 }
 
 const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
@@ -1592,11 +1610,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // <containerId>` tree keyed by container name, so these JWT/service-role-key/secret env
     // artifacts no longer leak on host disk indefinitely after the container is torn down.
     const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
-    // A single directory-wide `rm` rather than three per-file `.cleanup()` closures (the JWT
-    // secrets/env file, the multiline-env script, the serve-main template all live under
-    // `stagingDir`): this is what lets the cleanup cover the whole staging-write window below,
-    // including a mid-write failure between the first and second `writeDocker*` call, not just
-    // the final `docker run` step.
+    // A single directory-wide `rm` rather than per-file `.cleanup()` closures (the JWT
+    // secrets/env file and the multiline-env script both live under `stagingDir`): this is
+    // what lets the cleanup cover the whole staging-write window below, including a mid-write
+    // failure between the first and second `writeDocker*` call, not just the final docker
+    // create/cp/start steps.
     const removeRuntimeArtifacts = Effect.tryPromise({
       try: () => rm(stagingDir, { recursive: true, force: true }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -1690,7 +1708,8 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       partitionDockerEnvEntries(dockerEnv);
     // Everything from here on writes into `stagingDir` (or starts the container that reads from
     // it), so the whole window — including a mid-write failure between two `writeDocker*` calls,
-    // not just the final `docker run` step — is wrapped in `Effect.onError` below.
+    // not just the final docker create/cp/start steps — is wrapped in `Effect.onError` below.
+    // Container removal on failure stays with the callers, matching `docker run -d` behavior.
     return yield* Effect.gen(function* () {
       yield* Effect.try({
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
@@ -1722,14 +1741,20 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...(input.debug ? ["--verbose"] : []),
       ];
       const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
-      const serveMainTemplateFile = yield* Effect.tryPromise({
-        try: () => writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
+      // Streamed in via `docker cp` between create and start: embedding the template in the
+      // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
+      // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
+      const serveMainArchive = yield* Effect.tryPromise({
+        try: () => containerArchiveBytes({ [serveMainContainerPath]: serveMainTemplate }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);
+      const nofile = edgeRuntimeNofileUlimit(input.platform);
+      if (nofile.clampWarning !== undefined) {
+        yield* output.warn(nofile.clampWarning);
+      }
       const command = [
-        "run",
-        "-d",
+        "create",
         "--name",
         containerId,
         "--network",
@@ -1738,15 +1763,13 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "edge_runtime",
         ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
         "--ulimit",
-        "nofile=65536:65536",
+        nofile.arg,
         "--label",
         `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
         "--label",
         `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
         "--label",
         `${dockerWorkdirLabel}=${input.projectRoot}`,
-        "-v",
-        serveMainTemplateFile.bind,
         ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
         ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
         ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
@@ -1761,15 +1784,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
       ];
 
-      const result = yield* runChildProcess("docker", command, {
-        stdout: "pipe",
-        stderr: "pipe",
+      // The container must exist for `docker cp` to have a target, and must not be running
+      // yet so edge-runtime never races the copy.
+      yield* runEdgeRuntimeDockerStep(command);
+      yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
+        messagePrefix: "failed to copy edge runtime main service into container",
+        stdin: Stream.make(serveMainArchive),
       });
-      if (result.exitCode !== 0) {
-        const message =
-          result.stderr.trim() || result.stdout.trim() || "failed to start edge runtime";
-        return yield* Effect.fail(new Error(message));
-      }
+      yield* runEdgeRuntimeDockerStep(["start", containerId]);
 
       return {
         containerId,

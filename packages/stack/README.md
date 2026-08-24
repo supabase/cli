@@ -15,7 +15,9 @@ console.log((await stack.getInfo()).url);
 
 `createStack` resolves configuration, reserves ports, and builds a scoped
 handle. `stack.start()` starts services; disposing the handle stops them and
-releases its lease.
+releases its lease. When `mode` is omitted, creation uses Docker mode with a
+usable Docker or Podman service and otherwise selects native mode. An explicit
+mode never falls back to the other one.
 
 ## Managed stack
 
@@ -47,7 +49,7 @@ const runtime =
     projectDir: projectRoot,
     name: "default",
     portIntents,
-    launch: { mode: "auto", versions: {}, excludedServices: [] },
+    launch: { mode: "docker", versions: {}, excludedServices: [] },
   });
 ```
 
@@ -55,6 +57,11 @@ const runtime =
 `connectLayer` reattaches through the deterministic control endpoint;
 `stopDaemon` and the discovery helpers delegate to the managed lifecycle
 facade. No CLI metadata file or PID polling is involved.
+
+After a managed supervisor claims a stack, its persisted Docker, Podman, or
+native selection remains pinned even if startup later fails. Retry after
+restoring or starting that runtime; delete and recreate the stack to choose a
+different execution mode. Deletion removes the stack's managed data.
 
 For the end-to-end lifecycle, identity, ports, service execution, transport,
 compiled-Bun re-entry, and testing boundary, see [How `@supabase/stack` works](docs/architecture.md).

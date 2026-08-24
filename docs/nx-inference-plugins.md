@@ -63,21 +63,21 @@ Infers `lint:check` and `lint:fix` targets for any workspace package that has `o
 
 Currently `packages/api` is the only project with `"oxlint": { "typeAware": true }`.
 
-### `tsgo.plugin.ts`
+### `typescript.plugin.ts`
 
-**Source:** `tools/nx-plugins/src/tsgo.plugin.ts`
+**Source:** `tools/nx-plugins/src/typescript.plugin.ts`
 
-Infers a `types:check` target for any workspace package that has `@typescript/native-preview` in its `devDependencies` (the package that provides the `tsgo` binary).
+Infers a `types:check` target for any workspace package that has `typescript` in its `devDependencies`.
 
-**Detection signal:** `package.json` must have `"@typescript/native-preview"` under `devDependencies`.
+**Detection signal:** `package.json` must have `"typescript"` under `devDependencies`.
 
-**No per-project config** — the command is always `tsgo --noEmit`.
+**No per-project config** — the command is always `tsc --noEmit`.
 
 **Inferred targets:**
 
 | Target | Command | Cached | Inputs |
 |--------|---------|--------|--------|
-| `types:check` | `tsgo --noEmit` | Yes | `default`, `@typescript/native-preview` package version |
+| `types:check` | `tsc --noEmit` | Yes | `default`, `typescript` package version |
 
 ## How to discover inferred targets
 
@@ -164,6 +164,6 @@ export const createNodesV2: CreateNodesV2 = [
 
 ## How TypeScript plugins are loaded
 
-Nx loads `.ts` plugin files by registering `@swc-node/register` as a CommonJS transpiler before calling `require()` on the plugin path. This workspace has `@swc-node/register` and `@swc/core` installed at the root, along with a minimal `tsconfig.json` at the workspace root — both are required for Nx to find and activate the transpiler. Without either, Nx falls back to Node.js's native TypeScript type-stripping, which returns a non-extensible ES module namespace that Nx cannot annotate.
+With Node 24 and Nx 23.1, Nx loads ESM `.ts` plugins using Node's native TypeScript type-stripping. This is the sole supported plugin loader path. Keep plugins strip-safe (no syntax that requires a transform) and use explicit `.ts` extensions on relative imports.
 
-TypeScript 7 does not yet expose the programmatic compiler API that the Nx transpiler uses. Following the [Nx TypeScript 7 guide](https://nx.dev/docs/technologies/typescript/guides/typescript-7), the root package aliases `typescript` to `@typescript/typescript6` for API consumers and installs TypeScript 7 as `@typescript/native`, which provides the `tsc` executable.
+TypeScript 7 is the workspace's sole TypeScript dependency. Inferred type checks invoke its `tsc` executable directly.

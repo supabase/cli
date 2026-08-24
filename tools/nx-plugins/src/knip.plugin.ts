@@ -1,6 +1,6 @@
 import type { CreateNodesV2 } from "@nx/devkit";
 import { dirname } from "node:path";
-import { readPkgJson } from "./parse-pkg-json";
+import { readPkgJson } from "./parse-pkg-json.ts";
 
 export interface KnipPluginOptions {}
 
