@@ -179,8 +179,9 @@ export interface LegacyBaselineTomlConfig {
   readonly realtimeEnabled: boolean;
   /**
    * `[api] auto_expose_new_tables` (tri-state `*bool`). `None` when unset. Drives
-   * `ApplyApiPrivileges`; the cache key folds in the *effective* bool (unset and
-   * `false` both mean revoke-by-default since the 2026-05-30 flip).
+   * `legacyApplyApiPrivileges`; the cache key folds in the *effective* bool (unset
+   * and `true` both mean grants kept, matching the platform's current default for
+   * new projects — only an explicit `false` revokes).
    */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `[db.vault]` secret names (sorted), created during setup by `UpsertVaultSecrets`. */

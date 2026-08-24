@@ -145,7 +145,8 @@ when neither `--file` nor explicit `--output` is set.
 On a linked remote target, a `WARNING: auto_expose_new_tables …` block prints to
 stderr (before `Creating shadow database...`) when the remote's effective
 auto-expose state (probed from `pg_default_acl`) mismatches the local
-`api.auto_expose_new_tables` tri-state (unset counts as disabled). It suggests a
+`api.auto_expose_new_tables` tri-state (unset counts as enabled, matching the
+platform's current default for new projects). It suggests a
 migration closing the gap (`supabase migration new
 disable_auto_expose_new_tables` / `…enable_auto_expose_new_tables`, with the
 revoke/grant SQL inline) or changing `api.auto_expose_new_tables` in

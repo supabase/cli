@@ -595,7 +595,12 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("a linked diff warns when the remote project still auto-exposes new tables", () => {
+  it.effect("a linked diff warns when only the local config disabled auto-expose", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[api]\nauto_expose_new_tables = false\n",
+    );
     const s = setup(tmp.current, {
       isLocal: false,
       diffSql: "create table players ();\n",
@@ -606,7 +611,7 @@ describe("legacy db diff", () => {
       expect(s.autoExposeProbeCalls).toBe(1);
       const err = stderr(s.out);
       expect(err).toContain(
-        "WARNING: auto_expose_new_tables is enabled on the linked project but unset (treated as disabled) in your local config.",
+        "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
       );
       expect(err).toContain("supabase migration new disable_auto_expose_new_tables");
       // The warning lands before shadow provisioning, ahead of the diff output.
@@ -614,6 +619,19 @@ describe("legacy db diff", () => {
         err.indexOf("Creating shadow database..."),
       );
       expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a linked diff stays silent when a fresh project matches the untouched config", () => {
+    const s = setup(tmp.current, {
+      isLocal: false,
+      diffSql: "create table players ();\n",
+      remoteAutoExpose: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      expect(s.autoExposeProbeCalls).toBe(1);
+      expect(stderr(s.out)).not.toContain("WARNING: auto_expose_new_tables");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -2550,12 +2568,13 @@ describe("legacy db diff", () => {
     it.effect(
       "fails with LegacyDbDiffWriteError when writing the pgAdmin --file migration fails",
       () => {
-        // Shadow setup writes the branch marker and `revoke-api-privileges.sql`
-        // before the command writes the pgAdmin migration, so call #3 is the
-        // diff-file write exercised here.
+        // Shadow setup writes the branch marker before the command writes the
+        // pgAdmin migration (no `revoke-api-privileges.sql` write — the unset
+        // auto-expose default keeps the grants), so call #2 is the diff-file
+        // write exercised here.
         const s = setup(tmp.current, {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
-          failWriteOnCall: 3,
+          failWriteOnCall: 2,
         });
         return Effect.gen(function* () {
           const error = yield* legacyDbDiff(

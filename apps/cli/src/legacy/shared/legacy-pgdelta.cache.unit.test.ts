@@ -649,7 +649,8 @@ describe("legacyResolveSetupInputs", () => {
             authEnabled: true,
             storageEnabled: false,
             realtimeEnabled: true,
-            autoExpose: false,
+            // Unset defaults to grants kept, matching the platform's current default.
+            autoExpose: true,
             vaultNames: ["a_secret"],
             rolesSql: "",
           });
@@ -669,14 +670,15 @@ describe("legacyResolveSetupInputs", () => {
         authEnabled: true,
         storageEnabled: true,
         realtimeEnabled: true,
-        apiAutoExposeNewTables: Option.some(true),
+        apiAutoExposeNewTables: Option.some(false),
         vaultNames: [],
       }),
     ).pipe(
       Effect.tap((inputs) =>
         Effect.sync(() => {
           expect(inputs.rolesSql).toBe("create role app;");
-          expect(inputs.autoExpose).toBe(true);
+          // Only an explicit false flips the effective bool to revoke.
+          expect(inputs.autoExpose).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

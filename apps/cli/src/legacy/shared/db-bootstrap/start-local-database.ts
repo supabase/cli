@@ -148,7 +148,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // before the already-running check.
   if (Option.getOrElse(dbTomlValues.baseline.apiAutoExposeNewTables, () => false)) {
     yield* output.raw(
-      "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.\n",
+      "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Set it to false to adopt the upcoming default of revoking Data API privileges on new entities in the public schema.\n",
       "stderr",
     );
   }

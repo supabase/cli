@@ -43,31 +43,14 @@ describe("legacyAutoExposeDriftWarning", () => {
         remoteAutoExpose: false,
       }),
     ).toBeUndefined();
-    // Unset means revoke since the 2026-05-30 flip, so it matches a revoked remote.
+    // Unset means grants kept, matching the platform's current default — so a fresh
+    // project with an untouched config never warns.
     expect(
-      legacyAutoExposeDriftWarning({ localAutoExpose: Option.none(), remoteAutoExpose: false }),
+      legacyAutoExposeDriftWarning({ localAutoExpose: Option.none(), remoteAutoExpose: true }),
     ).toBeUndefined();
   });
 
-  it("suggests a revoke migration first when the remote auto-exposes and local is unset", () => {
-    const warning = legacyAutoExposeDriftWarning({
-      localAutoExpose: Option.none(),
-      remoteAutoExpose: true,
-    });
-    expect(warning).toContain(
-      "WARNING: auto_expose_new_tables is enabled on the linked project but unset (treated as disabled) in your local config.",
-    );
-    expect(warning).toContain("supabase migration new disable_auto_expose_new_tables");
-    expect(warning).toContain(LEGACY_START_REVOKE_API_PRIVILEGES_SQL);
-    // The deprecated config opt-out is offered second, as the temporary alternative.
-    expect(warning).toContain("set api.auto_expose_new_tables = true in supabase/config.toml");
-    const migrationIndex = warning?.indexOf("supabase migration new") ?? -1;
-    const configIndex = warning?.indexOf("api.auto_expose_new_tables = true") ?? -1;
-    expect(migrationIndex).toBeGreaterThanOrEqual(0);
-    expect(migrationIndex).toBeLessThan(configIndex);
-  });
-
-  it("names an explicit false instead of the unset wording", () => {
+  it("suggests a revoke migration first when only the local config disabled auto-expose", () => {
     const warning = legacyAutoExposeDriftWarning({
       localAutoExpose: Option.some(false),
       remoteAutoExpose: true,
@@ -75,10 +58,39 @@ describe("legacyAutoExposeDriftWarning", () => {
     expect(warning).toContain(
       "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
     );
-    expect(warning).not.toContain("unset");
+    // The explicit false says the user wants the revoked behaviour — the remote
+    // should follow, so the migration leads and the config rollback is the fallback.
+    expect(warning).toContain("supabase migration new disable_auto_expose_new_tables");
+    expect(warning).toContain(LEGACY_START_REVOKE_API_PRIVILEGES_SQL);
+    expect(warning).toContain(
+      "remove api.auto_expose_new_tables = false from supabase/config.toml",
+    );
+    const migrationIndex = warning?.indexOf("supabase migration new") ?? -1;
+    const configIndex = warning?.indexOf("api.auto_expose_new_tables = false") ?? -1;
+    expect(migrationIndex).toBeGreaterThanOrEqual(0);
+    expect(migrationIndex).toBeLessThan(configIndex);
   });
 
-  it("suggests removing the config value or a grant migration when only local auto-exposes", () => {
+  it("suggests the config change first when only the remote disabled auto-expose", () => {
+    const warning = legacyAutoExposeDriftWarning({
+      localAutoExpose: Option.none(),
+      remoteAutoExpose: false,
+    });
+    expect(warning).toContain(
+      "WARNING: auto_expose_new_tables is disabled on the linked project but unset (treated as enabled) in your local config.",
+    );
+    // The remote already adopted the upcoming revoked default — the config should
+    // follow, so setting false leads and the grant migration is the fallback.
+    expect(warning).toContain("set api.auto_expose_new_tables = false in supabase/config.toml");
+    expect(warning).toContain("supabase migration new enable_auto_expose_new_tables");
+    expect(warning).toContain(LEGACY_GRANT_DEFAULT_API_PRIVILEGES_SQL);
+    const configIndex = warning?.indexOf("api.auto_expose_new_tables = false") ?? -1;
+    const migrationIndex = warning?.indexOf("supabase migration new") ?? -1;
+    expect(configIndex).toBeGreaterThanOrEqual(0);
+    expect(configIndex).toBeLessThan(migrationIndex);
+  });
+
+  it("names an explicit true instead of the unset wording", () => {
     const warning = legacyAutoExposeDriftWarning({
       localAutoExpose: Option.some(true),
       remoteAutoExpose: false,
@@ -86,9 +98,7 @@ describe("legacyAutoExposeDriftWarning", () => {
     expect(warning).toContain(
       "WARNING: auto_expose_new_tables is disabled on the linked project but enabled in your local config.",
     );
-    expect(warning).toContain("remove api.auto_expose_new_tables = true from supabase/config.toml");
-    expect(warning).toContain("supabase migration new enable_auto_expose_new_tables");
-    expect(warning).toContain(LEGACY_GRANT_DEFAULT_API_PRIVILEGES_SQL);
+    expect(warning).not.toContain("unset");
   });
 
   it("keeps the grant migration the exact inverse of the revoke migration", () => {

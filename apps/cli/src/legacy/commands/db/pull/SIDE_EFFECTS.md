@@ -137,7 +137,8 @@ that it no longer replaces the migrations baseline.
 On the linked native path, a `WARNING: auto_expose_new_tables …` block prints to
 stderr when the remote's effective auto-expose state (probed from
 `pg_default_acl`) mismatches the local `api.auto_expose_new_tables` tri-state
-(unset counts as disabled). It suggests a migration closing the gap
+(unset counts as enabled, matching the platform's current default for new
+projects). It suggests a migration closing the gap
 (`supabase migration new disable_auto_expose_new_tables` /
 `…enable_auto_expose_new_tables`, with the revoke/grant SQL inline) or changing
 `api.auto_expose_new_tables` in `supabase/config.toml`. Emitted in every output

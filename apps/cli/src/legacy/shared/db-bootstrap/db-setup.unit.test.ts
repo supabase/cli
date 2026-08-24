@@ -584,7 +584,7 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
-      "unset (no config.toml at all) matches the false behavior — execs the revoke SQL",
+      "unset (no config.toml at all) matches the true behavior — keeps the grants (no revoke SQL)",
       () => {
         const workdir = makeWorkdir();
         const { session, calls } = fakeSession();
@@ -593,7 +593,7 @@ describe("legacyStartSetupLocalDatabase", () => {
         return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker).pipe(
           Effect.map(() => {
             const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-            expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
+            expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

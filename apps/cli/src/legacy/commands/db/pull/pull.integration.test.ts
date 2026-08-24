@@ -589,9 +589,14 @@ describe("legacy db pull", () => {
   });
 
   it.effect(
-    "warns when the linked project auto-exposes new tables but the local config does not",
+    "warns when the local config disables auto-expose but the linked project still has it",
     () => {
       seedMigration(tmp.current, "20240101000000");
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[api]\nauto_expose_new_tables = false\n",
+      );
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
@@ -604,14 +609,16 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
         const err = streamText(s.out, "stderr");
         expect(err).toContain(
-          "WARNING: auto_expose_new_tables is enabled on the linked project but unset (treated as disabled) in your local config.",
+          "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
         );
-        // The durable fix (a revoke migration) leads; the deprecated config opt-out follows.
+        // The explicit false wants the revoked behaviour, so the revoke migration leads.
         expect(err).toContain("supabase migration new disable_auto_expose_new_tables");
         expect(err).toContain(
           "revoke select, insert, update, delete on tables from anon, authenticated, service_role;",
         );
-        expect(err).toContain("set api.auto_expose_new_tables = true in supabase/config.toml");
+        expect(err).toContain(
+          "remove api.auto_expose_new_tables = false from supabase/config.toml",
+        );
         // The warning never blocks the pull itself.
         expect(streamText(s.out, "stdout")).toContain("Finished supabase db pull.");
       }).pipe(Effect.provide(s.layer));
@@ -619,14 +626,9 @@ describe("legacy db pull", () => {
   );
 
   it.effect(
-    "does not warn when the local config matches the linked project's auto-expose state",
+    "does not warn when a fresh linked project matches the untouched default config",
     () => {
       seedMigration(tmp.current, "20240101000000");
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        "[api]\nauto_expose_new_tables = true\n",
-      );
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
@@ -644,14 +646,9 @@ describe("legacy db pull", () => {
   );
 
   it.effect(
-    "warns when the local config auto-exposes new tables but the linked project does not",
+    "warns when the linked project revoked auto-expose but the local config still has it",
     () => {
       seedMigration(tmp.current, "20240101000000");
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        "[api]\nauto_expose_new_tables = true\n",
-      );
       const s = setup(tmp.current, {
         remoteVersions: ["20240101000000"],
         edgeStdout: pgDeltaDiffEnvelope([
@@ -664,8 +661,10 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
         const err = streamText(s.out, "stderr");
         expect(err).toContain(
-          "WARNING: auto_expose_new_tables is disabled on the linked project but enabled in your local config.",
+          "WARNING: auto_expose_new_tables is disabled on the linked project but unset (treated as enabled) in your local config.",
         );
+        // The remote already adopted the revoked default, so the config change leads.
+        expect(err).toContain("set api.auto_expose_new_tables = false in supabase/config.toml");
         expect(err).toContain("supabase migration new enable_auto_expose_new_tables");
         expect(err).toContain(
           "grant select, insert, update, delete on tables to anon, authenticated, service_role;",

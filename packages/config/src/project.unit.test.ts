@@ -288,8 +288,9 @@ describe("project discovery and lazy env resolution", () => {
       await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
 
       const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
-      // Field is intentionally optional today so the implicit default can flip on 2026-05-30
-      // without losing track of users who explicitly opted in either direction.
+      // Field is intentionally optional so the implicit default can flip alongside the
+      // platform's own default without losing track of users who explicitly opted in
+      // either direction.
       expect(defaultLoaded!.config.api.auto_expose_new_tables).toBeUndefined();
 
       await writeFile(

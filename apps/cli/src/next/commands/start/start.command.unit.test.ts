@@ -51,14 +51,14 @@ describe("start command exclude flag", () => {
 });
 
 describe("resolveAutoExposeNewTables", () => {
-  test("defaults to false (revoke) when the flag is unset", () => {
+  test("defaults to true (grants kept) when the flag is unset", () => {
     expect(resolveAutoExposeNewTables(undefined)).toEqual({
-      autoExposeNewTables: false,
+      autoExposeNewTables: true,
       deprecationWarning: undefined,
     });
   });
 
-  test("keeps legacy auto-expose behaviour and warns when explicitly true", () => {
+  test("keeps auto-expose behaviour and warns when explicitly true", () => {
     expect(resolveAutoExposeNewTables(true)).toEqual({
       autoExposeNewTables: true,
       deprecationWarning: AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING,

@@ -81,7 +81,7 @@ export interface LegacySetupInputs {
   readonly authEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly realtimeEnabled: boolean;
-  /** Effective `api.auto_expose_new_tables` (unset and false both → false). */
+  /** Effective `api.auto_expose_new_tables` (unset and true both → true, the platform's current default). */
   readonly autoExpose: boolean;
   /** `[db.vault]` secret names (sorted before hashing). */
   readonly vaultNames: ReadonlyArray<string>;
@@ -184,8 +184,11 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
     authEnabled: baseline.authEnabled,
     storageEnabled: baseline.storageEnabled,
     realtimeEnabled: baseline.realtimeEnabled,
-    autoExpose:
-      Option.isSome(baseline.apiAutoExposeNewTables) && baseline.apiAutoExposeNewTables.value,
+    // Unset defaults to true (grants kept), matching `legacyApplyApiPrivileges` — the
+    // key must encode the same effective value the baseline setup actually applies.
+    // Flipping the default moves the key for unset configs, which is correct: those
+    // baselines genuinely change, so a stale pre-flip snapshot must miss, not over-hit.
+    autoExpose: Option.getOrElse(baseline.apiAutoExposeNewTables, () => true),
     vaultNames: baseline.vaultNames,
     rolesSql,
   } satisfies LegacySetupInputs;

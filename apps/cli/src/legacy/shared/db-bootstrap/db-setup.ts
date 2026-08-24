@@ -36,9 +36,9 @@
  *    activation. Legacy callers may explicitly request the historical `pg_net`
  *    baseline independently of that user config.
  * 3. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
- *    `api.auto_expose_new_tables`: `true` is a no-op (keep the bundled initial-schema
- *    grants); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
- *    (Go's inline `RevokeDefaultDataApiPrivilegesSql` constant, `start.go:405-412`)
+ *    `api.auto_expose_new_tables`: unset/`true` is a no-op (keep the bundled
+ *    initial-schema grants, matching the platform's current default for new
+ *    projects); an explicit `false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
  *    via a temp file, same as the schema SQL above.
  * 4. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
  *    the custom-roles seed "so roles.sql can reference them" (Go's own comment).
@@ -899,9 +899,14 @@ const legacyStartInitSchema = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `ApplyApiPrivileges` (`start.go:414-435`): tri-state on
- * `api.auto_expose_new_tables` — `true` keeps the bundled initial-schema grants
- * (no-op); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Runs
+ * Applies the `api.auto_expose_new_tables` tri-state — unset/`true` keeps the
+ * bundled initial-schema grants (no-op, matching the platform's current default
+ * for new projects); an explicit `false` execs
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}, adopting the upcoming
+ * revoked-by-default behaviour ahead of the platform-wide flip. The implicit
+ * default deliberately tracks what the platform provisions today so a freshly
+ * linked project with an untouched config produces no shadow-db privilege drift
+ * in `db diff`/`db pull`; the local and platform defaults must flip together. Runs
  * regardless of PG major version (unlike `initSchema`, this always execs SQL over
  * `session` directly — it is never part of the PG15+ one-shot Docker jobs). Exported
  * (and taking `session`/`fs`/`path` directly, not the whole
@@ -918,7 +923,7 @@ export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   tmpDir: string,
   autoExposeNewTables: Option.Option<boolean>,
 ) {
-  if (Option.isSome(autoExposeNewTables) && autoExposeNewTables.value) return;
+  if (Option.getOrElse(autoExposeNewTables, () => true)) return;
   yield* legacyExecSqlConstant(
     session,
     fs,
