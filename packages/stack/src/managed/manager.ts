@@ -8,23 +8,20 @@ import {
   Layer,
   Path,
   PlatformError,
+  Predicate,
   Schedule,
   Semaphore,
   Scope,
 } from "effect";
 import { isAbsolute, relative, resolve } from "node:path";
-import { PORT_CATALOG, type PortField, type PortSet } from "../PortCatalog.ts";
-import {
-  reservePortSet,
-  type PortAllocationError,
-  type PortLease,
-  type PortReservationRequest,
-} from "../PortAllocator.ts";
+import { PORT_CATALOG, type PortSet } from "../PortCatalog.ts";
+import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
 import {
   acquireControl,
   CONTROL_PORT_RANGE,
   controlEndpointCandidates,
   ControlTransport,
+  isControlOwnership,
   probeControl,
   type ControlAcquisition,
   type ControlOwnership,
@@ -53,6 +50,7 @@ import {
   ManagedPortAllocationError,
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
+  UnsafeManagedStackPathError,
   type ManagedPortAssignment,
   type ManagedPortDrift,
   type ManagedPortIntentDocument,
@@ -65,7 +63,7 @@ import {
 } from "./port-plan.ts";
 import { resolvePortIntents } from "./port-intent.ts";
 import { makeStackStore, type ManagedStackListing } from "./store.ts";
-import type { ManagedStackDocument } from "./document.ts";
+import type { ManagedStackDocument, ManagedStackLaunchUpdate } from "./document.ts";
 import { dockerForceRemove } from "../cleanup.ts";
 import { SERVICE_NAMES } from "../ServiceCatalog.ts";
 import { dockerContainerName } from "../StackIdentity.ts";
@@ -89,7 +87,7 @@ export interface StartStackRequest {
   readonly ownership: ControlOwnership;
   readonly lifecycle?: ManagedStackDocument["lifecycle"];
   readonly runtime?: ManagedStackDocument["runtime"];
-  readonly launch?: ManagedStackDocument["launch"];
+  readonly launch: ManagedStackDocument["launch"];
 }
 
 export interface AllocateManagedPortsRequest {
@@ -100,7 +98,7 @@ export interface AllocateManagedPortsRequest {
 
 export interface ManagedPortAllocation {
   readonly assignments: ReadonlyArray<ManagedPortAssignment>;
-  readonly lease: ManagedPortLease;
+  readonly lease: PortLease;
 }
 
 interface ManagedStackStartResultBase {
@@ -109,7 +107,7 @@ interface ManagedStackStartResultBase {
 
 export type ManagedStackStartResult = ManagedStackStartResultBase & {
   /** The lease remains live until the caller's Effect scope closes. */
-  readonly lease: ManagedPortLease;
+  readonly lease: PortLease;
 };
 
 export interface ManagedStackLifecycleUpdate {
@@ -119,17 +117,12 @@ export interface ManagedStackLifecycleUpdate {
   readonly runtime?: ManagedStackDocument["runtime"] | null;
 }
 
-export interface ManagedStackLaunchUpdate {
+export interface ManagedStackLaunchUpdateRequest {
   readonly stackId: string;
-  readonly launch: NonNullable<ManagedStackDocument["launch"]>;
+  readonly launch: ManagedStackLaunchUpdate;
 }
 
-export interface ManagedPortLease {
-  readonly ports: PortSet;
-  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
-  readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
-  readonly releaseAll: Effect.Effect<void>;
-}
+export type ManagedPortLease = PortLease;
 
 export type ManagedDeleteResult =
   | { readonly outcome: "removed"; readonly stackId: string }
@@ -187,6 +180,7 @@ export type ManagedStackManagerError =
   | PlatformError.PlatformError
   | import("./document.ts").InvalidManagedStackDocumentError
   | import("./model.ts").InvalidManagedIdentityError
+  | UnsafeManagedStackPathError
   | InvalidManagedStackNameError
   | import("./model.ts").UnsupportedGitWorkspaceError
   | import("./control.ts").InvalidControlOwnershipIdError
@@ -240,7 +234,7 @@ export interface ManagedStackManagerShape {
   /** Persist launch selections under the stack's control ownership. */
   readonly updateLaunch: (
     ownership: ControlOwnership,
-    update: ManagedStackLaunchUpdate,
+    update: ManagedStackLaunchUpdateRequest,
   ) => Effect.Effect<ManagedStack, ManagedStackManagerError>;
   readonly repairWorkspace: (
     request: RepairRequest,
@@ -252,6 +246,9 @@ export interface ManagedStackManagerShape {
 }
 
 type ManagerRequirements = FileSystem.FileSystem | Path.Path | GitConfigStore | ControlTransport;
+export type ManagedStackManagerConstructionError =
+  | InvalidManagedIdentityError
+  | UnsafeManagedStackPathError;
 
 export class ManagedStackManager extends Context.Service<
   ManagedStackManager,
@@ -279,7 +276,7 @@ export const deriveRepairOwnershipId = (identity: EnvironmentIdentity): string =
 };
 
 const isOwned = (acquisition: ControlAcquisition): acquisition is ControlOwnership =>
-  acquisition._tag === "Owned";
+  isControlOwnership(acquisition);
 
 const isHealthyDocument = (
   listing: ManagedStackListing,
@@ -318,11 +315,29 @@ const stackDrift = (
   });
 };
 
-const portRequests = (plan: ManagedPortPlan): ReadonlyArray<PortReservationRequest> =>
+const portRequests = (
+  plan: ManagedPortPlan,
+  automaticExcluded: ReadonlySet<number> = new Set(),
+): ReadonlyArray<PortReservationRequest> =>
   [...plan.durable]
-    .sort((left, right) => Number(right.intent === "exact") - Number(left.intent === "exact"))
-    .map(({ field, selection }) => ({ field, selection }))
-    .concat(plan.runtimeOnly);
+    .sort(
+      (left, right) =>
+        Number(right.selection.kind === "exact") - Number(left.selection.kind === "exact"),
+    )
+    .map(({ field, selection }) => ({
+      field,
+      selection:
+        selection.kind === "automatic" ? { ...selection, excluded: automaticExcluded } : selection,
+    }))
+    .concat(
+      plan.runtimeOnly.map(({ field, selection }) => ({
+        field,
+        selection:
+          selection.kind === "automatic"
+            ? { ...selection, excluded: automaticExcluded }
+            : selection,
+      })),
+    );
 
 const managedAssignments = (
   plan: ManagedPortPlan,
@@ -343,6 +358,30 @@ const managedAssignments = (
     });
     return [...durable, ...plan.inactiveAssignments].sort((left, right) =>
       left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
+    );
+  });
+
+/**
+ * Acquires a managed port lease, owns it before using it, and releases it on
+ * every non-successful exit. The scope finalizer is registered immediately
+ * after acquisition so a successful lease remains owned until its caller's
+ * scope closes.
+ */
+export const withManagedPortLease = <A, E, R>(
+  acquire: Effect.Effect<PortLease, E, R>,
+  use: (lease: PortLease) => Effect.Effect<A, E, R>,
+): Effect.Effect<{ readonly value: A; readonly lease: PortLease }, E, R | Scope.Scope> =>
+  Effect.gen(function* () {
+    const parentScope = yield* Effect.scope;
+    const leaseScope = yield* Scope.fork(parentScope);
+    const attempt = Effect.acquireRelease(acquire, (lease) => lease.releaseAll).pipe(
+      Scope.provide(leaseScope),
+      Effect.flatMap((lease) => use(lease).pipe(Effect.map((value) => ({ value, lease })))),
+    );
+    return yield* attempt.pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) ? Effect.void : Effect.uninterruptible(Scope.close(leaseScope, exit)),
+      ),
     );
   });
 
@@ -376,7 +415,11 @@ interface ManagedStackManagerOptions {
 
 const makeManager = (
   options: ManagedStackManagerOptions,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
+): Effect.Effect<
+  ManagedStackManagerShape,
+  ManagedStackManagerConstructionError,
+  ManagerRequirements
+> =>
   Effect.gen(function* () {
     const { stateRoot, preferCatalogDefaults = true } = options;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -415,7 +458,9 @@ const makeManager = (
             .stat(persistedPath)
             .pipe(
               Effect.catchTag("PlatformError", (error) =>
-                error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+                Predicate.isTagged(error.reason, "NotFound")
+                  ? Effect.succeed(undefined)
+                  : Effect.fail(error),
               ),
             );
           if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
@@ -457,7 +502,6 @@ const makeManager = (
       Effect.gen(function* () {
         yield* requireOwnedForStack(ownership, request.stackId);
         const persisted = request.persisted ?? [];
-        const partialLeases: Array<PortLease> = [];
         const attempt = Effect.gen(function* () {
           const listings = yield* store.list();
           const plan = planManagedPorts({
@@ -467,9 +511,6 @@ const makeManager = (
             persisted,
             preferCatalogDefaults,
           });
-          const requests = portRequests(plan);
-          const exactRequests = requests.filter((item) => item.selection.kind === "exact");
-          const automaticRequests = requests.filter((item) => item.selection.kind === "automatic");
           const invalidPersistedAutomatic = plan.durable.find(
             (entry) =>
               entry.intent === "automatic" &&
@@ -533,6 +574,19 @@ const makeManager = (
           for (const assignment of plan.inactiveAssignments) {
             strictReserved.add(assignment.port);
           }
+          const automaticExcluded = new Set<number>();
+          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
+            automaticExcluded.add(port);
+          }
+          for (const port of strictReserved) automaticExcluded.add(port);
+          for (const [port] of owners) automaticExcluded.add(port);
+          for (const assignment of plan.inactiveAssignments) {
+            automaticExcluded.add(assignment.port);
+          }
+          for (const port of exactReserved) automaticExcluded.add(port);
+
+          const requests = portRequests(plan, automaticExcluded);
+          const exactRequests = requests.filter((item) => item.selection.kind === "exact");
           const requestedAssignments = exactRequests.flatMap((item) => {
             const entry = plan.durable.find((candidate) => candidate.field === item.field);
             if (entry?.selection.kind !== "exact") return [];
@@ -544,6 +598,16 @@ const makeManager = (
               } satisfies ManagedPortAssignment,
             ];
           });
+          for (const assignment of requestedAssignments) {
+            if (!exactReserved.has(assignment.port)) continue;
+            return yield* Effect.fail(
+              new ManagedExactPortOccupiedError({
+                key: assignment.key,
+                port: assignment.port,
+                stackId: request.stackId,
+              }),
+            );
+          }
           for (const assignment of requestedAssignments) {
             const owner = (owners.get(assignment.port) ?? []).find((candidate) => {
               const lifecycle =
@@ -575,107 +639,38 @@ const makeManager = (
               );
             }
           }
-          const exactLease =
-            exactRequests.length === 0
-              ? undefined
-              : yield* reservePortSet(exactRequests, { reserved: exactReserved }).pipe(
-                  Effect.mapError((cause) => {
-                    const entry =
-                      cause.field === undefined
-                        ? undefined
-                        : plan.durable.find((candidate) => candidate.field === cause.field);
-                    const key =
-                      entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
-                    return key !== undefined && cause.port !== undefined
-                      ? new ManagedExactPortOccupiedError({
-                          key,
-                          port: cause.port,
-                          stackId: request.stackId,
-                        })
-                      : new ManagedPortAllocationError({
-                          fields: exactRequests.map((item) => item.field),
-                          cause,
-                        });
-                  }),
-                );
-          if (exactLease !== undefined) partialLeases.push(exactLease);
-          const automaticReserved = new Set<number>();
-          for (let port = CONTROL_PORT_RANGE.min; port <= CONTROL_PORT_RANGE.max; port += 1) {
-            automaticReserved.add(port);
-          }
-          for (const port of strictReserved) automaticReserved.add(port);
-          for (const [port] of owners) {
-            automaticReserved.add(port);
-          }
-          if (exactLease !== undefined) {
-            for (const port of Object.values(exactLease.ports)) {
-              if (port !== undefined) automaticReserved.add(port);
-            }
-          }
-          const automaticLease =
-            automaticRequests.length === 0
-              ? undefined
-              : yield* reservePortSet(automaticRequests, { reserved: automaticReserved }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ManagedPortAllocationError({
-                        fields: automaticRequests.map((item) => item.field),
-                        cause,
-                      }),
-                  ),
-                );
-          if (automaticLease !== undefined) partialLeases.push(automaticLease);
-          const ports: PortSet = {
-            ...exactLease?.ports,
-            ...automaticLease?.ports,
-          };
-          const assignments = yield* managedAssignments(plan, ports);
-          const lease: ManagedPortLease = {
-            ports,
-            reserve: (fields) =>
-              Effect.all(
-                [
-                  exactLease?.reserve(
-                    fields.filter((field) => exactLease.ports[field] !== undefined),
-                  ) ?? Effect.void,
-                  automaticLease?.reserve(
-                    fields.filter((field) => automaticLease.ports[field] !== undefined),
-                  ) ?? Effect.void,
-                ],
-                { discard: true },
-              ),
-            release: (fields) =>
-              Effect.all(
-                [
-                  exactLease?.release(fields) ?? Effect.void,
-                  automaticLease?.release(fields) ?? Effect.void,
-                ],
-                { discard: true },
-              ),
-            releaseAll: Effect.all(
-              [exactLease?.releaseAll ?? Effect.void, automaticLease?.releaseAll ?? Effect.void],
-              { discard: true },
+          const allocation = yield* withManagedPortLease(
+            reservePortSet(requests, { reserved: exactReserved }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.mapError((cause) => {
+                const entry =
+                  cause.field === undefined
+                    ? undefined
+                    : plan.durable.find((candidate) => candidate.field === cause.field);
+                const key =
+                  entry?.intent === "exact" ? PORT_CATALOG[entry.field].configKey : undefined;
+                return key !== undefined && cause.port !== undefined
+                  ? new ManagedExactPortOccupiedError({
+                      key,
+                      port: cause.port,
+                      stackId: request.stackId,
+                    })
+                  : new ManagedPortAllocationError({
+                      fields: requests.map((item) => item.field),
+                      cause,
+                    });
+              }),
             ),
-          };
-          return { assignments, lease };
+            (lease) => managedAssignments(plan, lease.ports),
+          );
+          return { assignments: allocation.value, lease: allocation.lease };
         });
-        const guardedAttempt = Effect.exit(attempt).pipe(
-          Effect.flatMap((exit) =>
-            Exit.isSuccess(exit)
-              ? Effect.succeed(exit.value)
-              : Effect.all(
-                  partialLeases.map((lease) => lease.releaseAll),
-                  { discard: true },
-                ).pipe(Effect.andThen(Effect.failCause(exit.cause))),
-          ),
-        );
-        const allocation = yield* guardedAttempt.pipe(
+        const allocation = yield* attempt.pipe(
           Effect.retry({
             schedule: Schedule.spaced("5 millis").pipe(Schedule.upTo({ times: 2 })),
-            while: (error) => error._tag === "ManagedPortAllocationError",
+            while: (error) => Predicate.isTagged(error, "ManagedPortAllocationError"),
           }),
         );
-        yield* Effect.addFinalizer(() => allocation.lease.releaseAll);
         return allocation;
       });
 
@@ -778,9 +773,7 @@ const makeManager = (
             ports: allocation.assignments,
             lifecycle: request.lifecycle ?? "stopped",
             ...(request.runtime && { runtime: request.runtime }),
-            ...((request.launch ?? current?.launch) && {
-              launch: request.launch ?? current?.launch,
-            }),
+            launch: request.launch,
             createdAt: current?.createdAt ?? timestamp,
             updatedAt: timestamp,
           };
@@ -843,7 +836,7 @@ const makeManager = (
 
     const updateLaunch = (
       ownership: ControlOwnership,
-      update: ManagedStackLaunchUpdate,
+      update: ManagedStackLaunchUpdateRequest,
     ): Effect.Effect<ManagedStack, ManagedStackManagerError> =>
       lifecycleLock.withPermit(
         Effect.gen(function* () {
@@ -852,9 +845,28 @@ const makeManager = (
           if (current === undefined) {
             return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
           }
+          const metadata = {
+            versions: update.launch.versions,
+            ...(update.launch.excludedServices === undefined
+              ? {}
+              : { excludedServices: update.launch.excludedServices }),
+            ...(update.launch.lastNotifiedUpdateFingerprint === undefined
+              ? {}
+              : {
+                  lastNotifiedUpdateFingerprint: update.launch.lastNotifiedUpdateFingerprint,
+                }),
+          };
+          const launch: ManagedStackDocument["launch"] =
+            current.launch.mode === "native"
+              ? { ...metadata, mode: "native" }
+              : {
+                  ...metadata,
+                  mode: "docker",
+                  containerRuntime: current.launch.containerRuntime,
+                };
           const next: ManagedStackDocument = {
             ...current,
-            launch: update.launch,
+            launch,
             updatedAt: now(),
           };
           yield* store.write(next);
@@ -945,11 +957,13 @@ const makeManager = (
               updatedAt,
             });
           }
-          yield* updateGitCheckoutLocationOwned(
-            inspection.gitDirectory,
-            revalidated.expectedPath,
-            revalidated.path,
-            repairAcquisition,
+          yield* provideDependencies(
+            updateGitCheckoutLocationOwned(
+              inspection.gitDirectory,
+              revalidated.expectedPath,
+              revalidated.path,
+              repairAcquisition,
+            ),
           );
           return yield* provideDependencies(discoverEnvironment(revalidated.path));
         }),
@@ -968,7 +982,7 @@ const makeManager = (
               store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
             Effect.catchTag("PlatformError", (error) =>
-              error.reason._tag === "NotFound"
+              Predicate.isTagged(error.reason, "NotFound")
                 ? Effect.succeed(undefined)
                 : store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
@@ -976,9 +990,12 @@ const makeManager = (
           if (current === undefined) return { outcome: "already-absent", stackId };
           if ("outcome" in current) return current;
           yield* acquisition.setState("deleting", false);
-          yield* dockerForceRemove(
-            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-          );
+          if (current.launch.mode === "docker") {
+            yield* dockerForceRemove(
+              current.launch.containerRuntime,
+              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+            );
+          }
           const { runtime: _runtime, ...withoutRuntime } = current;
           const deleting = { ...withoutRuntime, lifecycle: "deleting" as const, updatedAt: now() };
           yield* store.write(deleting);
@@ -1018,10 +1035,13 @@ const makeManager = (
 /** Internal manager layer. Platform layers provide filesystem, Git, and control transport. */
 export const managedStackManagerLayer = (
   options: ManagedStackManagerOptions,
-): Layer.Layer<ManagedStackManager, never, ManagerRequirements> =>
+): Layer.Layer<ManagedStackManager, ManagedStackManagerConstructionError, ManagerRequirements> =>
   Layer.effect(ManagedStackManager, makeManager(options));
 
 export const makeManagedStackManager = (
   stateRoot: string,
-): Effect.Effect<ManagedStackManagerShape, never, ManagerRequirements> =>
-  makeManager({ stateRoot });
+): Effect.Effect<
+  ManagedStackManagerShape,
+  ManagedStackManagerConstructionError,
+  ManagerRequirements
+> => makeManager({ stateRoot });

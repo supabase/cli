@@ -35,6 +35,7 @@ const config = {
   recursive: Flag.boolean("recursive").pipe(
     Flag.withAlias("r"),
     Flag.withDescription("Recursively copy a directory."),
+    Flag.withDefault(false),
   ),
   cacheControl: Flag.string("cache-control").pipe(
     Flag.withDescription('Custom Cache-Control header for HTTP upload. (default "max-age=3600")'),

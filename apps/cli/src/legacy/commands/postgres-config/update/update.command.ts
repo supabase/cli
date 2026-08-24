@@ -32,9 +32,11 @@ const config = {
     Flag.withDescription(
       "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",
     ),
+    Flag.withDefault(false),
   ),
   noRestart: Flag.boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after updating config."),
+    Flag.withDefault(false),
   ),
 } as const;
 

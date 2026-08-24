@@ -1,6 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Stream } from "effect";
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Predicate, Stream } from "effect";
+import { HttpServer } from "effect/unstable/http";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
@@ -188,16 +189,12 @@ function buildDaemonLayer(
   ) as Layer.Layer<DaemonServer, never, never>;
 }
 
-function getUrl(address: {
-  readonly _tag: string;
-  readonly hostname?: string;
-  readonly port?: number;
-}): string {
-  if (address._tag === "TcpAddress") {
+function getUrl(address: HttpServer.Address): string {
+  if (Predicate.isTagged(address, "TcpAddress")) {
     const host = address.hostname === "0.0.0.0" ? "127.0.0.1" : address.hostname;
     return `http://${host}:${address.port}`;
   }
-  throw new Error(`Unexpected address type: ${address._tag}`);
+  throw new Error("Unexpected address type");
 }
 
 // ---------------------------------------------------------------------------

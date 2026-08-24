@@ -1,26 +1,36 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Queue,
+  Result,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
-import { BinaryResolver } from "./BinaryResolver.ts";
-import { DockerPullError } from "./errors.ts";
+import { BinaryNotFoundError, DockerPullError } from "./errors.ts";
 import { prefetch } from "./prefetch.ts";
 import {
   ServiceDownloadFinished,
   ServiceDownloadStarted,
+  PreparationCompleted,
   StackPreparation,
 } from "./StackPreparation.ts";
-import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
 import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 const encoder = new TextEncoder();
-const defaultAuthEcrImage = `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
-const defaultAuthDockerHubImage = `supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
-const defaultAuthGhcrImage = `ghcr.io/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
+const defaultAuthGhcrImage = `ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}`;
 
 interface SpawnResult {
   readonly exitCode: number;
   readonly stderr?: ReadonlyArray<string>;
+  readonly defect?: unknown;
 }
 
 function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
@@ -32,20 +42,19 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
         Effect.gen(function* () {
-          const cmd = command._tag === "StandardCommand" ? command.command : "";
-          const args = command._tag === "StandardCommand" ? command.args : [];
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const cmd = standardCommand ? command.command : "";
+          const args = standardCommand ? command.args : [];
           spawned.push({ command: cmd, args });
 
           const result = results[index] ?? { exitCode: 0 };
           index += 1;
+          if (result.defect !== undefined) {
+            return yield* Effect.die(result.defect);
+          }
 
           const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-          yield* Effect.forkDetach(
-            Effect.andThen(
-              Effect.sleep("1 millis"),
-              Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode)),
-            ),
-          );
+          yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(result.exitCode));
 
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(2000 + index),
@@ -72,7 +81,7 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 }
 
 describe("prefetch", () => {
-  test("prefetches all services by default", async () => {
+  test("prefetches every native-capable service by default in native mode", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner(
       Array.from({ length: SERVICE_NAMES.length }, () => ({
@@ -87,93 +96,85 @@ describe("prefetch", () => {
 
     const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
 
-    expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(Object.keys(result).sort()).toEqual(["auth", "postgres", "postgrest"]);
   });
 
-  test("falls back to Docker Hub after ECR rate limiting", async () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
-    const spawner = mockSequenceSpawner([
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1, stderr: ["toomanyrequests: Rate exceeded"] },
-      { exitCode: 1, stderr: ["toomanyrequests: Rate exceeded"] },
-      { exitCode: 0 },
-    ]);
+  test("limits concurrent image preparation to four services", async () => {
+    const started = await Effect.runPromise(Queue.unbounded<string>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const services = ["postgres", "mailpit", "edge-runtime", "realtime", "pooler"] as const;
+    let pullStarts = 0;
+    const spawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const standardCommand = Predicate.isTagged(command, "StandardCommand");
+          const args = standardCommand ? command.args : [];
+          const image = args[1] ?? "unknown";
+          if (args[0] === "pull") {
+            pullStarts += 1;
+            yield* Queue.offer(started, image);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(3000 + pullStarts),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }
 
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(2000),
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      ),
+    );
     const layer = StackPreparation.layer.pipe(
-      Layer.provide(resolver.layer),
-      Layer.provide(spawner.layer),
+      Layer.provide(mockBinaryResolver().layer),
+      Layer.provide(spawner),
     );
 
-    const result = await Effect.runPromise(
-      prefetch({
-        mode: "docker",
-        services: ["auth"],
-      }).pipe(Effect.provide(layer)),
+    const preparation = Effect.runFork(
+      prefetch({ mode: "docker", containerRuntime: "docker", services }).pipe(
+        Effect.provide(layer),
+      ),
     );
+    await Effect.runPromise(
+      Effect.all(
+        Array.from({ length: 4 }, () => Queue.take(started)),
+        { discard: true },
+      ),
+    );
+    expect(pullStarts).toBe(4);
 
-    expect(result.auth).toEqual({
-      type: "docker",
-      image: defaultAuthDockerHubImage,
-    });
-    expect(
-      spawner.spawned.filter((record) => record.args[0] === "pull").map((record) => record.args[1]),
-    ).toEqual([defaultAuthEcrImage, defaultAuthEcrImage, defaultAuthDockerHubImage]);
+    await Effect.runPromise(Deferred.succeed(release, undefined));
+    await Effect.runPromise(Fiber.join(preparation));
+    expect(pullStarts).toBe(5);
   });
 
-  test("falls back to GHCR after ECR and Docker Hub fail", async () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
+  test("marks a Podman daemon disconnect on DockerPullError", async () => {
+    const resolver = mockBinaryResolver();
+    // One image inspect followed by one canonical pull. Preparation must fail
+    // rather than defer the pull to startup.
     const spawner = mockSequenceSpawner([
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["toomanyrequests: Rate exceeded"] },
-      { exitCode: 1, stderr: ["toomanyrequests: Rate exceeded"] },
-      { exitCode: 0 },
-    ]);
-
-    const layer = StackPreparation.layer.pipe(
-      Layer.provide(resolver.layer),
-      Layer.provide(spawner.layer),
-    );
-
-    const result = await Effect.runPromise(
-      prefetch({
-        mode: "docker",
-        services: ["auth"],
-      }).pipe(Effect.provide(layer)),
-    );
-
-    expect(result.auth).toEqual({
-      type: "docker",
-      image: defaultAuthGhcrImage,
-    });
-    expect(
-      spawner.spawned.filter((record) => record.args[0] === "pull").map((record) => record.args[1]),
-    ).toEqual([
-      defaultAuthEcrImage,
-      defaultAuthDockerHubImage,
-      defaultAuthDockerHubImage,
-      defaultAuthGhcrImage,
-    ]);
-  });
-
-  test("preparation fails with DockerPullError when all registry candidates fail", async () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
-    // 3 image inspects (not cached locally) followed by a non-retryable pull for
-    // each registry candidate (ECR, Docker Hub, GHCR). "manifest unknown" is not a
-    // retryable pattern, so each candidate gets exactly one pull attempt: 3 + 3 = 6
-    // spawns. With the whole fallback chain failing, preparation must fail rather
-    // than defer the pull to startup.
-    const spawner = mockSequenceSpawner([
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1 },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 1, stderr: ["manifest unknown"] },
+      { exitCode: 1, stderr: ["not found"] },
+      { exitCode: 1, stderr: ["Cannot connect to Podman"] },
     ]);
 
     const layer = StackPreparation.layer.pipe(
@@ -182,123 +183,332 @@ describe("prefetch", () => {
     );
 
     const error = await Effect.runPromise(
-      prefetch({ mode: "docker", services: ["auth"] }).pipe(Effect.provide(layer), Effect.flip),
+      prefetch({ mode: "docker", containerRuntime: "podman", services: ["auth"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
     );
 
     expect(error).toBeInstanceOf(DockerPullError);
-    // Guard the spawn-count assumption above: if the retry/candidate logic changes
-    // so more spawns occur, the mock would default the extras to success and mask
-    // the failure. Assert the exact count so that regresses loudly instead.
-    expect(spawner.spawned).toHaveLength(6);
+    if (!(error instanceof DockerPullError)) throw error;
+    expect(error.daemonDown).toBe(true);
+  });
+
+  test("preserves unexpected image pull defects", async () => {
+    const defect = new Error("container runtime callback defect");
+    const spawner = mockSequenceSpawner([
+      { exitCode: 1, stderr: ["not found"] },
+      { exitCode: 0, defect },
+    ]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(mockBinaryResolver().layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const exit = await Effect.runPromiseExit(
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["auth"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const found = Cause.findDefect(exit.cause);
+      expect(Result.isSuccess(found)).toBe(true);
+      if (Result.isSuccess(found)) {
+        expect(found.success).toBe(defect);
+      }
+    }
+  });
+
+  test("prefetching one service includes its required preparation dependencies", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(Object.keys(result).sort()).toEqual(["postgres", "postgrest"]);
+  });
+
+  test.each([
+    ["storage", "docker", ["imgproxy", "postgres", "storage"]],
+    ["imgproxy", "podman", ["imgproxy", "postgres", "storage"]],
+    ["vector", "docker", ["analytics", "postgres", "vector"]],
+  ] as const)(
+    "prefetching %s includes every service it can start through the graph",
+    async (service, containerRuntime, expected) => {
+      const resolver = mockBinaryResolver();
+      const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
+      const layer = StackPreparation.layer.pipe(
+        Layer.provide(resolver.layer),
+        Layer.provide(spawner.layer),
+      );
+
+      const result = await Effect.runPromise(
+        prefetch({ mode: "docker", containerRuntime, services: [service] }).pipe(
+          Effect.provide(layer),
+        ),
+      );
+
+      expect(Object.keys(result).sort()).toEqual(expected);
+      expect(spawner.spawned).toHaveLength(expected.length);
+      expect(spawner.spawned.every(({ command }) => command === containerRuntime)).toBe(true);
+      expect(spawner.spawned).toContainEqual({
+        command: containerRuntime,
+        args: ["image", "inspect", `ghcr.io/supabase/cli/${service}:${DEFAULT_VERSIONS[service]}`],
+      });
+    },
+  );
+
+  test("does not prepare dependencies that are disabled in the stack", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }, { exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const preparation = yield* StackPreparation;
+        return yield* preparation.prepare({
+          mode: "docker",
+          containerRuntime: "docker",
+          services: ["studio"],
+          enabledServices: ["postgres", "pgmeta", "studio"],
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Object.keys(result.resolutions).sort()).toEqual(["pgmeta", "postgres", "studio"]);
+  });
+
+  test("Docker mode uses Docker when a native artifact is unavailable", async () => {
+    const resolver = mockBinaryResolver({
+      binaries: { postgres: "/cache/postgres/native" },
+    });
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(result.postgrest).toEqual({
+      type: "docker",
+      image: `ghcr.io/supabase/cli/postgrest:${DEFAULT_VERSIONS.postgrest}`,
+    });
+  });
+
+  test("Docker preparation applies the catalog v prefix to bare versions", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({
+        mode: "docker",
+        containerRuntime: "docker",
+        services: ["postgrest"],
+        versions: { postgrest: "16.1" },
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.postgrest).toEqual({
+      type: "docker",
+      image: "ghcr.io/supabase/cli/postgrest:v16.1",
+    });
+  });
+
+  test("native preparation applies the catalog v prefix before binary resolution", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    await Effect.runPromise(
+      prefetch({
+        mode: "native",
+        services: ["postgrest"],
+        versions: { postgrest: "16.1" },
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(resolver.resolved).toContainEqual({ service: "postgrest", version: "v16.1" });
+  });
+
+  test("native mode rejects services that have no native runtime", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["edge-runtime"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(BinaryNotFoundError);
+  });
+
+  test("native mode does not fall back when a native artifact is unavailable", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["postgrest"] });
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["postgrest"] }).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(BinaryNotFoundError);
+    expect(spawner.spawned).toEqual([]);
+  });
+
+  test("prefetches pgmeta using its published container tag", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([{ exitCode: 0 }, { exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "docker", containerRuntime: "docker", services: ["pgmeta"] }).pipe(
+        Effect.provide(layer),
+      ),
+    );
+
+    expect(result.pgmeta).toEqual({
+      type: "docker",
+      image: "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    });
   });
 
   test("does not report downloading when the docker image is already cached locally", async () => {
     const resolver = mockBinaryResolver({ failServices: ["auth"] });
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
-    const events: string[] = [];
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const resolverService = yield* BinaryResolver;
-        const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const artifacts = yield* prepareAssetsWithDependencies(
-          resolverService,
-          spawnerService,
-          {
-            mode: "docker",
-            services: ["auth"],
-          },
-          (event) =>
-            Effect.sync(() => {
-              if (
-                event instanceof ServiceDownloadStarted ||
-                event instanceof ServiceDownloadFinished
-              ) {
-                events.push(event._tag);
-              }
-            }),
+        const preparation = yield* StackPreparation;
+        const streamEvents = yield* preparation
+          .prepareEvents({ mode: "docker", containerRuntime: "docker", services: ["auth"] })
+          .pipe(Stream.runCollect);
+        const downloadEvents = streamEvents.flatMap((event) =>
+          event instanceof ServiceDownloadStarted || event instanceof ServiceDownloadFinished
+            ? [
+                Predicate.isTagged(event, "ServiceDownloadStarted")
+                  ? "ServiceDownloadStarted"
+                  : "ServiceDownloadFinished",
+              ]
+            : [],
         );
-        return artifacts.resolutions;
-      }).pipe(Effect.provide(resolver.layer), Effect.provide(spawner.layer)),
+        const completed = streamEvents.find((event) => event instanceof PreparationCompleted);
+        expect(downloadEvents).toEqual([]);
+        return completed instanceof PreparationCompleted ? completed.artifacts.resolutions : {};
+      }).pipe(Effect.provide(layer)),
     );
 
     expect(result.auth).toEqual({
       type: "docker",
-      image: defaultAuthEcrImage,
+      image: defaultAuthGhcrImage,
     });
-    expect(events).toEqual([]);
   });
 
-  test("reports per-service download finished events as each service completes", async () => {
-    const resolver = mockBinaryResolver({
-      downloadedServices: ["postgres", "postgrest", "auth"],
-      downloadDelaysMs: {
-        postgres: 10,
-        auth: 30,
-        postgrest: 50,
-      },
-    });
-    const events: string[] = [];
-
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const resolverService = yield* BinaryResolver;
-        const artifacts = yield* prepareAssetsWithDependencies(
-          resolverService,
-          {} as ChildProcessSpawner.ChildProcessSpawner["Service"],
-          {
-            mode: "native",
-            services: ["postgres", "postgrest", "auth"],
-          },
-          (event) =>
-            Effect.sync(() => {
-              switch (event._tag) {
-                case "ServiceDownloadStarted":
-                case "ServiceDownloadFinished":
-                  events.push(`${event._tag}:${event.service}`);
-                  break;
-                case "PreparationCompleted":
-                  events.push("PreparationCompleted");
-                  break;
-              }
-            }),
-        );
-        expect(Object.keys(artifacts.resolutions)).toEqual(["postgres", "postgrest", "auth"]);
-      }).pipe(Effect.provide(resolver.layer)),
-    );
-
-    expect(events.slice(0, 3)).toEqual([
-      "ServiceDownloadStarted:postgres",
-      "ServiceDownloadStarted:postgrest",
-      "ServiceDownloadStarted:auth",
-    ]);
-    expect(events.slice(3, 6).sort()).toEqual([
-      "ServiceDownloadFinished:auth",
-      "ServiceDownloadFinished:postgres",
-      "ServiceDownloadFinished:postgrest",
-    ]);
-    expect(events.at(-1)).toBe("PreparationCompleted");
-  });
-
-  test("uses docker for edge-runtime in auto mode even when a native binary exists", async () => {
+  test("uses Docker for every service in Docker mode", async () => {
     const resolver = mockBinaryResolver();
     const spawner = mockSequenceSpawner([{ exitCode: 0 }]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
-        const resolverService = yield* BinaryResolver;
-        const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const artifacts = yield* prepareAssetsWithDependencies(resolverService, spawnerService, {
-          mode: "auto",
+        const preparation = yield* StackPreparation;
+        const artifacts = yield* preparation.prepare({
+          mode: "docker",
+          containerRuntime: "docker",
           services: ["edge-runtime"],
         });
         return artifacts.resolutions;
-      }).pipe(Effect.provide(resolver.layer), Effect.provide(spawner.layer)),
+      }).pipe(Effect.provide(layer)),
     );
 
     expect(result["edge-runtime"]).toEqual({
       type: "docker",
-      image: `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+      image: `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`,
     });
     expect(resolver.resolved).toEqual([]);
+  });
+
+  test("concurrent prefetches share one materialization and return the same result", async () => {
+    const [result, resolved] = await Effect.runPromise(
+      Effect.gen(function* () {
+        const preparationStarted = yield* Deferred.make<void>();
+        const releasePreparation = yield* Deferred.make<void>();
+        const resolver = mockBinaryResolver({
+          downloadedServices: ["auth"],
+          beforeResolve: ({ service }) =>
+            service === "auth"
+              ? Deferred.succeed(preparationStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releasePreparation)),
+                )
+              : Effect.void,
+        });
+        const layer = StackPreparation.layer.pipe(
+          Layer.provide(resolver.layer),
+          Layer.provide(mockSequenceSpawner([]).layer),
+        );
+        return yield* Effect.gen(function* () {
+          const first = yield* prefetch({ mode: "native", services: ["auth"] }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(preparationStarted);
+          const second = yield* prefetch({ mode: "native", services: ["auth"] }).pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.succeed(releasePreparation, undefined);
+          return [
+            yield* Effect.all([Fiber.join(first), Fiber.join(second)]),
+            resolver.resolved,
+          ] as const;
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+
+    expect(result[0]).toEqual(result[1]);
+    expect(resolved.filter(({ service }) => service === "auth")).toHaveLength(1);
   });
 });

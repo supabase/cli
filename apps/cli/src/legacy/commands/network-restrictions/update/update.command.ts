@@ -35,9 +35,11 @@ const config = {
   dbAllowCidr: legacyNetworkRestrictionsUpdateDbAllowCidrFlag,
   bypassCidrChecks: Flag.boolean("bypass-cidr-checks").pipe(
     Flag.withDescription("Bypass some of the CIDR validation checks."),
+    Flag.withDefault(false),
   ),
   append: Flag.boolean("append").pipe(
     Flag.withDescription("Append to existing restrictions instead of replacing them."),
+    Flag.withDefault(false),
   ),
 } as const;
 

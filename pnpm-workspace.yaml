@@ -6,26 +6,23 @@ packages:
 allowBuilds:
   '@parcel/watcher': true
   '@launchql/protobufjs': true
-  "@swc/core": true
   esbuild: true
   msgpackr-extract: true
   nx: true
   sharp: true
 
 catalog:
-  "@effect/atom-react": "4.0.0-beta.107"
-  "@effect/platform-bun": "4.0.0-beta.107"
-  "@effect/platform-node": "4.0.0-beta.107"
-  "@effect/sql-pg": "4.0.0-beta.107"
-  "@effect/vitest": "4.0.0-beta.107"
+  "@effect/atom-react": "4.0.0-rc.111"
+  "@effect/platform-bun": "4.0.0-rc.111"
+  "@effect/platform-node": "4.0.0-rc.111"
+  "@effect/sql-pg": "4.0.0-rc.111"
+  "@effect/vitest": "4.0.0-rc.111"
   "@nx/devkit": "^23.1.1"
-  "@swc-node/register": "^1.12.1"
-  "@swc/core": "^1.15.47"
-  "@tsconfig/bun": "^1.0.10"
-  "@types/bun": "^1.3.14"
-  "@typescript/native-preview": "7.0.0-dev.20260707.2"
+  "@tsconfig/bun": "^1.0.11"
+  "@types/bun": "^1.4.0"
+  "typescript": "^7.0.2"
   "@vitest/coverage-istanbul": "^4.1.10"
-  "effect": "4.0.0-beta.107"
+  "effect": "4.0.0-rc.111"
   "knip": "^6.32.2"
   "nx": "^23.1.1"
   "oxfmt": "^0.63.0"
@@ -37,21 +34,22 @@ catalog:
 blockExoticSubdeps: true
 
 overrides:
-  "@effect/platform-node-shared": "4.0.0-beta.107"
   # pg-topo's parser chain otherwise resolves bleeding-edge Node globals that conflict with Bun's web types.
   "@launchql/protobufjs>@types/node": "24.10.4"
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
-  - "@effect/atom-react@4.0.0-beta.107"
-  - "@effect/platform-bun@4.0.0-beta.107"
-  - "@effect/platform-node@4.0.0-beta.107"
-  - "@effect/platform-node-shared@4.0.0-beta.107"
-  - "@effect/sql-pg@4.0.0-beta.107"
-  - "@effect/vitest@4.0.0-beta.107"
-  - "@supabase/pg-delta@1.0.0-alpha.42"
+  - "@effect/atom-react@4.0.0-rc.111"
+  - "@effect/platform-bun@4.0.0-rc.111"
+  - "@effect/platform-node@4.0.0-rc.111"
+  - "@effect/platform-node-shared@4.0.0-rc.111"
+  - "@effect/sql-pg@4.0.0-rc.111"
+  - "@effect/vitest@4.0.0-rc.111"
+  - "@supabase/pg-delta@1.0.0-alpha.46"
   - "@supabase/pg-topo@1.0.0-alpha.5"
-  - "effect@4.0.0-beta.107"
+  - "@types/bun@1.4.0"
+  - "bun-types@1.4.0"
+  - "effect@4.0.0-rc.111"
 
 supportedArchitectures:
   cpu:

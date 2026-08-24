@@ -9,10 +9,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-} from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import {
@@ -26,7 +23,6 @@ import {
   type LegacyShadowCacheOpts,
 } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
-  legacyConnectShadowDatabase,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacyShadowConnConfig,
@@ -104,23 +100,6 @@ export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
 }): boolean {
   return opts.declarativeRestoredFromPgDataSnapshot && opts.sameSnapshotKey;
 }
-
-/**
- * Strip implicit platform extensions so the declarative shadow only keeps what
- * schema files declare. `pgjwt` still ships in the PG15+ image and DEPENDS ON
- * `pgcrypto`; PG14 also needs `storage.objects.id` detached from `uuid-ossp`.
- */
-export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(function* (
-  session: Pick<LegacyDbSession, "exec">,
-  majorVersion: number,
-) {
-  if (majorVersion === 14) {
-    yield* session.exec("ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT");
-  }
-  yield* session.exec("DROP EXTENSION IF EXISTS pgjwt");
-  yield* session.exec("DROP EXTENSION IF EXISTS pgcrypto");
-  yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
-});
 
 const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) => ({
   fs: input.base.fs,
@@ -259,15 +238,6 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
         yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" }, handle);
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const session = yield* legacyConnectShadowDatabase(setup.connConfig);
-            yield* legacyPreparePgDeltaNextDeclarativeBaseline(
-              session,
-              input.base.setup.majorVersion,
-            );
-          }),
-        );
         return {
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle.baselinePresent,

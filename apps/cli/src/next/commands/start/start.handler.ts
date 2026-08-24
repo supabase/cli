@@ -50,7 +50,6 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
         yield* updateManagedLaunch({
           ...lifecycleInput,
           launch: {
-            mode: launch.mode,
             versions: launch.versions,
             excludedServices: launch.excludedServices,
             lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
@@ -68,7 +67,7 @@ export const start = Effect.fnUntraced(function* (flags: StartFlags) {
       }
 
       yield* analytics.capture("cli_stack_started", {
-        mode: flags.mode,
+        mode: launch.mode,
         detach: flags.detach,
         stack: flags.stack,
       });

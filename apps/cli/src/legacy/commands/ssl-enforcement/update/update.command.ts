@@ -21,11 +21,13 @@ const config = {
     Flag.withDescription(
       "Whether the DB should enable SSL enforcement for all external connections.",
     ),
+    Flag.withDefault(false),
   ),
   disableDbSslEnforcement: Flag.boolean("disable-db-ssl-enforcement").pipe(
     Flag.withDescription(
       "Whether the DB should disable SSL enforcement for all external connections.",
     ),
+    Flag.withDefault(false),
   ),
 } as const;
 

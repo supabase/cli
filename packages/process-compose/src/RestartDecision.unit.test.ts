@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Predicate } from "effect";
 import { decideRestart, type LifecycleCause } from "./RestartDecision.ts";
 import type { RestartPolicy } from "./ServiceDef.ts";
 
@@ -20,15 +21,14 @@ describe("decideRestart", () => {
     ["unless-stopped", exit(1), "Restart"],
     ["unless-stopped", unhealthy, "Restart"],
   ] as const)("applies %s to %o", (policy, cause, expected) => {
-    expect(
-      decideRestart({
-        policy,
-        cause,
-        restartCount: 0,
-        maxRestarts: 1,
-        desired: "running",
-      })._tag,
-    ).toBe(expected);
+    const decision = decideRestart({
+      policy,
+      cause,
+      restartCount: 0,
+      maxRestarts: 1,
+      desired: "running",
+    });
+    expect(Predicate.isTagged(decision, expected)).toBe(true);
   });
 
   it.each(["no", "on-failure", "always", "unless-stopped"] as const)(

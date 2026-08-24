@@ -16,7 +16,10 @@ import { Flag, GlobalFlag } from "effect/unstable/cli";
  * telemetry flags map.
  */
 export const LegacySeedLinkedFlag = GlobalFlag.setting("linked")({
-  flag: Flag.boolean("linked").pipe(Flag.withDescription("Seeds the linked project.")),
+  flag: Flag.boolean("linked").pipe(
+    Flag.withDescription("Seeds the linked project."),
+    Flag.withDefault(false),
+  ),
 });
 
 export const LegacySeedLocalFlag = GlobalFlag.setting("local")({

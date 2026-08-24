@@ -47,6 +47,7 @@ import {
   legacyIsEncryptedSecret,
 } from "../../shared/legacy-vault-decrypt.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
+import { legacyConfigureLoopbackProxyBypass } from "../../shared/legacy-hostname.ts";
 import {
   legacyCliProjectFilterValue,
   legacyServiceContainerIds,
@@ -1979,6 +1980,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           projectRef: "",
           config: effectiveLocalStorageConfig,
         });
+        // Keep the synthetic value out of project dotenv resolution and container environments.
+        legacyConfigureLoopbackProxyBypass();
         const healthResult = yield* legacyWaitForHealthyServices(spawner, [...started.keys()], {
           postgrest: postgrestGateway,
           edgeRuntime: edgeRuntimeGateway,

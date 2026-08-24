@@ -125,7 +125,14 @@ export const legacyPgDeltaSslProbeLayer = Layer.effect(
             );
             socket.once("error", (err: Error) =>
               settle(
-                Effect.fail(new LegacyPgDeltaSslProbeError({ message: err.message, cause: err })),
+                Effect.fail(
+                  err.message.includes("ECONNRESET") || ("code" in err && err.code === "ECONNRESET")
+                    ? new LegacyPgDeltaSslProbeError({
+                        message: `SSL probe connection to ${target.host}:${target.port} closed before the server responded`,
+                        cause: err,
+                      })
+                    : new LegacyPgDeltaSslProbeError({ message: err.message, cause: err }),
+                ),
               ),
             );
             return Effect.sync(() => socket.destroy());

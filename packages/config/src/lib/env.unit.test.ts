@@ -8,7 +8,7 @@ describe("env()", () => {
     const normalized = JSON.parse(JSON.stringify(json));
 
     expect(normalized.type).toBe("string");
-    expect(normalized.allOf?.[0]?.pattern).toBe(ENV_PATTERN);
+    expect(normalized.pattern).toBe(ENV_PATTERN);
   });
 
   test("does not fail when secret metadata is omitted", () => {
@@ -22,6 +22,6 @@ describe("env()", () => {
     const json = Schema.toJsonSchemaDocument(env({ secret: true })).schema;
     const normalized = JSON.parse(JSON.stringify(json));
 
-    expect(normalized.allOf?.[0]?.pattern).toBe(ENV_PATTERN);
+    expect(normalized.pattern).toBe(ENV_PATTERN);
   });
 });

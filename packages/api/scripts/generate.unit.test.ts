@@ -169,7 +169,7 @@ describe("generate", () => {
         type: "object",
         properties: {
           default: {
-            oneOf: [
+            anyOf: [
               { type: "object", properties: {} },
               { type: "number" },
               { type: "string" },

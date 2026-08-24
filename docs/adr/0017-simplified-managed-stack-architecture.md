@@ -23,15 +23,24 @@ Launch updates use the existing owner control route (`POST /managed/launch`).
 An attached caller asks the owner to update launch metadata; a caller with
 owned control updates the document directly. Stop acquires control first,
 waits for the persisted `stopped` lifecycle, and handles a stale owner with
-deterministic cleanup keyed by stack id. Delete requires owned control and a
-stopped document.
+deterministic cleanup keyed by stack id. Delete also requires owned control;
+stale running or failed documents are reconciled and cleaned before removal,
+while a live owner is never deleted underneath.
 
-Read-only discovery never acquires control ownership. It probes `/owner` and
-treats an unreachable, incompatible, or colliding listener as non-live;
-mutations still bind the endpoint and fail on a conflict. The endpoint maps 14
-bits of the stack id into `127.0.0.1:49152..65535`, so collisions are possible
-and deliberately fail closed for start/stop/delete. This is pragmatic
-single-user localhost coordination, not a hostile multi-user security
+Every managed document records one concrete launch selection. Native launch
+state has `mode: "native"`; container launch state has `mode: "docker"` and
+the selected Docker or Podman executable. The document never stores an
+unresolved or mode-less launch. Runtime configuration uses the same correlated
+union, so impossible mode/runtime combinations are not representable after
+selection.
+
+Read-only discovery never acquires control ownership. It scans the stack id's
+deterministic endpoint candidates through `/owner` and treats an unreachable,
+incompatible, or colliding listener as non-live. Mutations scan the same
+sequence for an existing matching owner, then bind the first available
+candidate; exhaustion fails closed. Each candidate maps digest bytes from the
+stack id into the reserved loopback range `127.0.0.1:10000..32767`. This is
+pragmatic single-user localhost coordination, not a hostile multi-user security
 boundary. We are not adding control tokens until the threat model or a real
 collision rate justifies more protocol and persistence machinery.
 
@@ -68,4 +77,7 @@ The architecture is smaller and has one source of truth for managed lifecycle
 state. Refactors update the manager/facade and its real consumers together;
 there is no fixture adapter or compatibility layer to keep in sync. The private
 document format may change with the current build, while destructive cleanup
-and control ownership remain explicit safeguards.
+and control ownership remain explicit safeguards. A supervisor that attaches
+and later takes ownership re-reads this source of truth before choosing the
+runtime or cleaning stale resources; it does not act on a pre-takeover
+snapshot.

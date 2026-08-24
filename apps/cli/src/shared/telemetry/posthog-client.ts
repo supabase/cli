@@ -40,17 +40,12 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
       return { client, shutdown };
     }),
     ({ client, shutdown }) =>
-      Effect.promise(async () => {
-        try {
-          await client._shutdown(EXIT_DELAY_CAP_MS);
-        } catch {
-          // The deadline rejection must be swallowed: Effect.promise turns
-          // rejections into defects, which would fail the command.
-        } finally {
-          // The shutdown deadline only stops the wait; the SDK's drain keeps
-          // in-flight requests running and starts queued ones after release.
-          // Aborting cancels them so nothing outlives the scope.
-          shutdown.abort();
-        }
-      }),
+      Effect.promise(() => client.shutdown(30_000).catch(() => undefined)).pipe(
+        // Our Effect deadline precedes the SDK's noisy 30-second deadline.
+        Effect.timeoutOption(EXIT_DELAY_CAP_MS),
+        Effect.asVoid,
+        // The SDK drain can continue after the Effect deadline; aborting its
+        // fetches lets that background drain settle without active requests.
+        Effect.ensuring(Effect.sync(() => shutdown.abort())),
+      ),
   ).pipe(Effect.map(({ client }) => client));

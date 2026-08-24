@@ -7,8 +7,10 @@ import {
   Fiber,
   FiberMap,
   Layer,
+  Match,
   Context,
   Option,
+  Predicate,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -18,11 +20,7 @@ import { buildGraph, type ResolvedGraph } from "./DependencyGraph.ts";
 import { type HealthProbeCallbacks, runHealthProbe } from "./HealthProbe.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { restartClosureFor } from "./RestartClosure.ts";
-import {
-  decideRestart,
-  type LifecycleCause,
-  UNHEALTHY_RESTART_EXHAUSTED_ERROR,
-} from "./RestartDecision.ts";
+import { decideRestart, UNHEALTHY_RESTART_EXHAUSTED_ERROR } from "./RestartDecision.ts";
 import type {
   HookTrigger,
   OrchestratorConfig,
@@ -45,14 +43,15 @@ const DIAGNOSTIC_LOG_LINES = 20;
 
 const willRestartAfterExit = (def: ServiceDef, state: ServiceState): boolean => {
   if (state.exitCode === null) return false;
-  return (
+  return Predicate.isTagged(
     decideRestart({
       cause: { _tag: "ProcessExit", exitCode: state.exitCode },
       policy: def.restart ?? defaults.restart,
       restartCount: state.restartCount,
       maxRestarts: def.maxRestarts ?? defaults.maxRestarts,
       desired: state.desired,
-    })._tag === "Restart"
+    }),
+    "Restart",
   );
 };
 
@@ -62,9 +61,17 @@ const waitForProcessToStop = (handle: {
   readonly isRunning: Effect.Effect<boolean, unknown, never>;
 }): Effect.Effect<void> =>
   Effect.gen(function* () {
-    while (yield* handle.isRunning.pipe(Effect.catch(() => Effect.succeed(false)))) {
-      yield* Effect.sleep(Duration.millis(100));
-    }
+    let running = true;
+    yield* Effect.whileLoop({
+      while: () => running,
+      body: () =>
+        handle.isRunning.pipe(
+          Effect.catch(() => Effect.succeed(false)),
+          Effect.tap((next) => Effect.sync(() => (running = next))),
+          Effect.andThen(Effect.sleep(Duration.millis(100))),
+        ),
+      step: () => undefined,
+    });
   });
 
 export class Orchestrator extends Context.Service<
@@ -146,7 +153,9 @@ export class Orchestrator extends Context.Service<
         // FiberMap to track running service fibers — auto-interrupted on scope close
         const fibers = yield* FiberMap.make<string>();
         const forceStops = new Map<string, Effect.Effect<void>>();
-        const startServiceLock = Semaphore.makeUnsafe(1);
+        // Serialize every public lifecycle mutation so graph, desired state, and FiberMap
+        // updates form one command boundary. Read-only state queries remain concurrent.
+        const lifecycleLock = Semaphore.makeUnsafe(1);
 
         // Helper: send a validated FSM event — only does the state transition
         const sendEvent = (
@@ -516,23 +525,24 @@ export class Orchestrator extends Context.Service<
 
             // Handle spawn result
             const handleResult = (r: SpawnResult) =>
-              Effect.gen(function* () {
-                if (r._tag === "ProcessExit") {
-                  if (r.exitCode !== 0 && r.exitCode !== 143) {
-                    yield* appendRecentServiceLogs(
-                      def.name,
-                      `[process-exited] Service "${def.name}" exited with code ${r.exitCode}. Recent output:`,
-                      `[process-exited] Service "${def.name}" exited with code ${r.exitCode} (no recent log output).`,
-                    );
-                  }
-                  yield* sendEvent(def.name, { _tag: "ProcessExited", exitCode: r.exitCode });
-                } else if (r._tag === "HookFailed") {
-                  yield* sendEvent(def.name, { _tag: "HookFailed", error: r.error });
-                } else {
-                  yield* sendEvent(def.name, { _tag: "ProcessTerminated" });
-                }
-                // Unhealthy is already recorded by the probe. Scope finalization
-                // terminates its process without inventing a process exit code.
+              Match.valueTags(r, {
+                ProcessExit: (result) =>
+                  Effect.gen(function* () {
+                    if (result.exitCode !== 0 && result.exitCode !== 143) {
+                      yield* appendRecentServiceLogs(
+                        def.name,
+                        `[process-exited] Service "${def.name}" exited with code ${result.exitCode}. Recent output:`,
+                        `[process-exited] Service "${def.name}" exited with code ${result.exitCode} (no recent log output).`,
+                      );
+                    }
+                    yield* sendEvent(def.name, {
+                      _tag: "ProcessExited",
+                      exitCode: result.exitCode,
+                    });
+                  }),
+                HookFailed: (result) =>
+                  sendEvent(def.name, { _tag: "HookFailed", error: result.error }),
+                Unhealthy: () => Effect.void,
               });
             yield* handleResult(result);
 
@@ -540,24 +550,29 @@ export class Orchestrator extends Context.Service<
               const svc = services.get(def.name);
               const desired =
                 svc === undefined ? "inactive" : SubscriptionRef.getUnsafe(svc.state).desired;
-              if (r._tag === "HookFailed") {
-                return { _tag: "Terminate", reason: "PolicyDisabled" } as const;
-              }
-              const cause: LifecycleCause =
-                r._tag === "ProcessExit"
-                  ? { _tag: "ProcessExit", exitCode: r.exitCode }
-                  : { _tag: "Unhealthy" };
-              return decideRestart({
-                cause,
-                policy: restartPolicy,
-                restartCount,
-                maxRestarts,
-                desired,
+              return Match.valueTags(r, {
+                HookFailed: () => ({ _tag: "Terminate", reason: "PolicyDisabled" }) as const,
+                ProcessExit: (result) =>
+                  decideRestart({
+                    cause: { _tag: "ProcessExit", exitCode: result.exitCode },
+                    policy: restartPolicy,
+                    restartCount,
+                    maxRestarts,
+                    desired,
+                  }),
+                Unhealthy: () =>
+                  decideRestart({
+                    cause: { _tag: "Unhealthy" },
+                    policy: restartPolicy,
+                    restartCount,
+                    maxRestarts,
+                    desired,
+                  }),
               });
             };
 
             let decision = restartDecision(result);
-            while (decision._tag === "Restart") {
+            while (Predicate.isTagged(decision, "Restart")) {
               restartCount = decision.restartCount;
 
               yield* sendEvent(def.name, { _tag: "RestartTriggered", restartCount });
@@ -566,7 +581,7 @@ export class Orchestrator extends Context.Service<
               // be reserved safely for the duration of this restart's backoff.
               yield* prepareStart();
 
-              if (result._tag === "Unhealthy") {
+              if (Predicate.isTagged(result, "Unhealthy")) {
                 yield* appendRecentServiceLogs(
                   def.name,
                   `[restart] Service "${def.name}" is restarting after an unhealthy health check. Recent output:`,
@@ -588,8 +603,8 @@ export class Orchestrator extends Context.Service<
             }
 
             if (
-              result._tag === "Unhealthy" &&
-              decision._tag === "Terminate" &&
+              Predicate.isTagged(result, "Unhealthy") &&
+              Predicate.isTagged(decision, "Terminate") &&
               decision.reason === "BudgetExhausted"
             ) {
               yield* sendEvent(def.name, {
@@ -740,7 +755,7 @@ export class Orchestrator extends Context.Service<
                 yield* setDesired(def.name, "running");
                 yield* FiberMap.run(fibers, def.name, runServiceSafe(def, options));
               }
-            }),
+            }).pipe(lifecycleLock.withPermit),
 
           startService: (name: string, options) =>
             Effect.gen(function* () {
@@ -784,7 +799,7 @@ export class Orchestrator extends Context.Service<
                   onlyIfMissing: true,
                 });
               }
-            }).pipe(startServiceLock.withPermit),
+            }).pipe(lifecycleLock.withPermit),
 
           stop: () =>
             Effect.gen(function* () {
@@ -857,7 +872,7 @@ export class Orchestrator extends Context.Service<
                 yield* Effect.all(forceStops.values(), { concurrency: "unbounded" });
                 yield* Fiber.await(stopFiber);
               }
-            }),
+            }).pipe(lifecycleLock.withPermit),
 
           stopService: (name: string) =>
             Effect.gen(function* () {
@@ -871,7 +886,7 @@ export class Orchestrator extends Context.Service<
                 yield* FiberMap.remove(fibers, affectedDef.name);
                 yield* sendEvent(affectedDef.name, { _tag: "ProcessExited", exitCode: 143 });
               }
-            }),
+            }).pipe(lifecycleLock.withPermit),
 
           restartService: (name: string, options) =>
             Effect.gen(function* () {
@@ -891,7 +906,7 @@ export class Orchestrator extends Context.Service<
               for (const affectedDef of affected) {
                 yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef, options));
               }
-            }),
+            }).pipe(lifecycleLock.withPermit),
 
           updateServiceDefinition: (name: string, def: ServiceDef) =>
             Effect.gen(function* () {
@@ -905,7 +920,7 @@ export class Orchestrator extends Context.Service<
                 graph.startOrder.map((current) => (current.name === name ? replacement : current)),
               );
               graph = nextGraph;
-            }),
+            }).pipe(lifecycleLock.withPermit),
 
           getState: (name: string) =>
             Effect.gen(function* () {

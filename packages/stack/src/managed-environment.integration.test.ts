@@ -1,6 +1,6 @@
 import { NodeFileSystem } from "@effect/platform-node";
 import { it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { afterEach, describe, expect } from "vitest";
 import { cpSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -154,7 +154,7 @@ describe("managed environment identity", () => {
           updates: [{ ...update, to: update.from }],
         };
         const result = yield* validateEnvironmentRepair(forged).pipe(Effect.exit);
-        expect(result._tag).toBe("Failure");
+        expect(Exit.isFailure(result)).toBe(true);
       }),
     ).pipe(Effect.provide(gitLayer)),
   );
@@ -170,7 +170,7 @@ describe("managed environment identity", () => {
         if (report.state !== "needsRepair") throw new Error("expected duplicate checkout");
         expect(report.reason).toBe("duplicate");
         const repair = yield* validateEnvironmentRepair(report.repair).pipe(Effect.exit);
-        expect(repair._tag).toBe("Failure");
+        expect(Exit.isFailure(repair)).toBe(true);
         const after = yield* discoverEnvironment(duplicatePath);
         expect(after.state).toBe("needsRepair");
       }),

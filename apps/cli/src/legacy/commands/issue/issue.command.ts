@@ -8,6 +8,7 @@ import { legacyIssueBug, legacyIssueDocs, legacyIssueFeature } from "./issue.han
 
 const legacyIssueNoBrowserFlag = Flag.boolean("no-browser").pipe(
   Flag.withDescription("Print the issue form URL without opening a browser."),
+  Flag.withDefault(false),
 );
 
 const legacyIssueOptionalTextFlag = (name: string, description: string) =>
@@ -39,6 +40,7 @@ const legacyIssueBugConfig = {
 const legacyIssueFeatureConfig = {
   existingIssues: Flag.boolean("existing-issues").pipe(
     Flag.withDescription("Prefill the existing issues checklist."),
+    Flag.withDefault(false),
   ),
   area: legacyIssueOptionalTextFlag("area", "Affected CLI area."),
   problem: legacyIssueOptionalTextFlag("problem", "Problem the feature should solve."),

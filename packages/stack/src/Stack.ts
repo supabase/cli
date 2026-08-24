@@ -1,7 +1,7 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
 import { Context, Effect, Schema, Stream } from "effect";
-import { StackBuildError, StackReadinessError } from "./errors.ts";
+import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
 import {
   ResolvedFunctionsBundleSchema,
   type FunctionsReloadConfig,
@@ -61,28 +61,44 @@ export class Stack extends Context.Service<
       name: string,
     ) => Effect.Effect<
       void,
-      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+      | ServiceNotFoundError
+      | ServiceReadyError
+      | StackBuildError
+      | StackNotRunningError
+      | StackReadinessError
     >;
     readonly stopService: (
       name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError | StackNotRunningError>;
     readonly restartService: (
       name: string,
     ) => Effect.Effect<
       void,
-      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+      | ServiceNotFoundError
+      | ServiceReadyError
+      | StackBuildError
+      | StackNotRunningError
+      | StackReadinessError
     >;
     readonly reloadFunctions: (
       opts?: FunctionsReloadConfig,
     ) => Effect.Effect<
       void,
-      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+      | ServiceNotFoundError
+      | ServiceReadyError
+      | StackBuildError
+      | StackNotRunningError
+      | StackReadinessError
     >;
     readonly reloadEdgeRuntime: (
       opts: EdgeRuntimeReloadConfig,
     ) => Effect.Effect<
       void,
-      ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+      | ServiceNotFoundError
+      | ServiceReadyError
+      | StackBuildError
+      | StackNotRunningError
+      | StackReadinessError
     >;
     readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
     readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;

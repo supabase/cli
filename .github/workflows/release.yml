@@ -228,6 +228,61 @@ jobs:
       LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
       LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
 
+  # Republishes the supabase.com CLI reference, restoring the job the Go
+  # `tools/bumpdoc` ran before the monorepo merge (71b543255) deleted it — the
+  # published spec has been frozen at 2.98.2 since. Stable only: the reference
+  # documents the CLI users actually install, so pre-releases are skipped.
+  # Nothing depends on this job, so a docs-site failure cannot affect the
+  # already-completed release.
+  docs:
+    name: Publish reference docs
+    needs: [plan, release]
+    if: needs.plan.outputs.channel == 'stable'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      # Scoped to supabase/supabase: this job pushes a branch and opens a PR
+      # there, and needs nothing beyond a plain read-only checkout here.
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            supabase
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
+        with:
+          persist-credentials: false
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+      - name: Authenticate git for the docs push
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh auth setup-git
+      - name: Publish the CLI reference
+        working-directory: apps/cli
+        # `shell: bash` for `-o pipefail`: the default `run:` shell would take
+        # the exit status of the publisher alone, so a generator that died
+        # part-way would look like a successful run of a truncated spec.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+        run: |
+          args=()
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          bun scripts/generate-docs-spec.ts "$VERSION" \
+            | bun scripts/publish-docs-spec.ts --version "$VERSION" "${args[@]}"
+
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit
   # success() gate, so this only runs when both plan and release succeeded.
