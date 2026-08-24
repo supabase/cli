@@ -1,100 +1,157 @@
-import { execSync } from "node:child_process";
-import { describe } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
-import { runSupabase } from "./cli.ts";
-import {
-  isLiveConfigured,
-  LIVE_DEFAULT_PROFILE,
-  LIVE_EXIT_TIMEOUT_MS,
-  liveProjectDataPlaneReady,
-  liveProjectRef,
-} from "./live-env.ts";
+import { inject, test as vitestTest } from "vitest";
 
-/**
- * Test-facing helpers for the `live` Vitest project (`*.live.test.ts`):
- * black-box CLI subprocess tests that run against a *real* Supabase platform —
- * in CI a local supabox stack (see the `supabase/cli-e2e-ci` harness).
- *
- * This module imports Vitest test APIs (`describe`), so it must NOT be imported
- * from `globalSetup` (Vitest evaluates that in a different context). The
- * env-only helpers live in `./live-env.ts`; `globalSetup` imports from there.
- * They are re-exported below so test files have a single import site.
- */
+import { makeTempHome, runSupabase } from "./cli.ts";
+import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
+import type { LiveProjectEnvironment } from "./live-project.ts";
 
-// Re-export the env-only helpers so `*.live.test.ts` files import everything
-// from `helpers/live.ts`.
-export {
-  isLiveConfigured,
-  LIVE_DEFAULT_PROFILE,
-  LIVE_EXIT_TIMEOUT_MS,
-  liveApiBaseUrl,
-  liveProjectDataPlaneReady,
-  liveProjectRef,
-  requireLiveProjectRef,
-} from "./live-env.ts";
+export type LiveProject = LiveProjectEnvironment["project"];
+type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
+type RunResult = Awaited<ReturnType<typeof runSupabase>>;
 
-/**
- * `describe` that runs only when the live environment is configured. Use this
- * for every live suite so the file is inert (skipped, not failed) outside the
- * cli-e2e-ci runner.
- */
-export const describeLive = describe.skipIf(!isLiveConfigured());
+export interface LiveWorkspace {
+  readonly path: string;
+}
 
-function hasDockerDaemon(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+export interface InvokeResult {
+  readonly status: number;
+  readonly body: unknown;
+  readonly text: string;
+}
+
+export interface LiveFixtures {
+  readonly project: LiveProject;
+  readonly workspace: LiveWorkspace;
+  readonly home: ReturnType<typeof makeTempHome>;
+  readonly cli: (args: string[], options?: RunOptions) => Promise<RunResult>;
+  readonly invoke: (
+    slug: string,
+    options?: { readonly anonKey?: string; readonly payload?: unknown },
+  ) => Promise<InvokeResult>;
+}
+
+const base = vitestTest.extend<LiveFixtures>({
+  // eslint-disable-next-line no-empty-pattern
+  project: async ({}, use) => use(inject("liveProject")),
+
+  home: async ({ task: _task }, use) => {
+    const home = makeTempHome();
+    try {
+      await use(home);
+    } finally {
+      home[Symbol.dispose]();
+    }
+  },
+
+  workspace: async ({ task, home }, use) => {
+    const suffix = task.name.replace(/[^a-z0-9-]+/giu, "-").slice(0, 40);
+    const directory = mkdtempSync(path.join(tmpdir(), `supabase-live-${suffix || "test"}-`));
+    try {
+      const initialized = await runSupabase(["init"], {
+        entrypoint: "legacy",
+        cwd: directory,
+        home: home.dir,
+        env: { SUPABASE_PROFILE: inject("liveProfilePath") },
+      });
+      if (initialized.exitCode !== 0) {
+        throw new Error(
+          `supabase init failed (exit ${initialized.exitCode})\n${initialized.stderr || initialized.stdout}`,
+        );
+      }
+      await use({ path: directory });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+
+  cli: async ({ workspace, home }, use) => {
+    await use((args, options) =>
+      runSupabase(args, {
+        entrypoint: "legacy",
+        ...options,
+        cwd: options?.cwd ?? workspace.path,
+        home: home.dir,
+        exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
+        env: {
+          SUPABASE_PROFILE: inject("liveProfilePath"),
+          ...options?.env,
+        },
+      }),
+    );
+  },
+
+  invoke: async ({ project }, use) => {
+    await use(async (slug, options) => {
+      const key = options?.anonKey ?? project.anonKey;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (key.length > 0) {
+        headers["Authorization"] = `Bearer ${key}`;
+        headers["apikey"] = key;
+      }
+      const response = await fetch(`${project.functionsUrl}/${slug}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(options?.payload ?? {}),
+      });
+      const text = await response.text();
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = text;
+      }
+      return { status: response.status, body, text };
+    });
+  },
+});
+
+/** The sole live fixture. The live global setup owns the shared project. */
+export const test = base;
+
+export function requireLiveSuccess(
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  command: string,
+): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
   }
 }
 
-/**
- * `describe` for local-stack live tests that additionally require a reachable
- * Docker daemon. Composes the configured-live gate (`isLiveConfigured`) with a
- * `docker info` probe so these suites stay inert (skipped, not failed) outside
- * the cli-e2e-ci runner — a machine that merely exposes Docker must never
- * launch a real stack just by collecting the live Vitest project. The
- * synchronous read-only probe runs once when this helper module is collected,
- * and only when the live environment is configured.
- */
-export const describeDockerLive = describe.skipIf(!isLiveConfigured() || !hasDockerDaemon());
+/** Rethrow a target failure without discarding failures from exact cleanup. */
+export function throwWithCleanup(primary: unknown, cleanup: ReadonlyArray<unknown>): void {
+  if (primary !== undefined) {
+    if (cleanup.length > 0) {
+      throw new AggregateError([primary, ...cleanup], "Live e2e target and cleanup failed");
+    }
+    throw primary;
+  }
+  if (cleanup.length === 1) throw cleanup[0];
+  if (cleanup.length > 1) throw new AggregateError(cleanup, "Live e2e cleanup failed");
+}
 
-/**
- * `describe` for project-scoped live suites: runs only when the live env is
- * configured AND a project ref is available. On a control-plane-only stack
- * (e.g. local macOS where project instances can't be built) these skip rather
- * than fail. See `requireLiveProjectRef`.
- */
-export const describeLiveProject = describe.skipIf(!isLiveConfigured() || !liveProjectRef());
-
-/**
- * `describe` for data-plane live suites (migration / db / storage): runs only
- * when the live env is configured AND the project's own Postgres instance is
- * `ACTIVE_HEALTHY`. On a control-plane-only stack — including the current
- * cli-e2e-ci CI, which omits `supabase-postgres-17` (CLI-1825) — the project DB
- * is unreachable, so these SKIP rather than fail. They activate automatically
- * once the full data-plane is provisioned. The readiness probe runs once at
- * collection time (top-level await); see `liveProjectDataPlaneReady`.
- */
-export const describeLiveDataPlane = describe.skipIf(!(await liveProjectDataPlaneReady()));
-
-/**
- * Spawn the built CLI against the live platform, injecting the profile so the
- * Management API base resolves to the stack. Defaults to the `legacy` shell,
- * which hosts the platform commands (orgs, projects, branches, functions, …).
- */
-export function runSupabaseLive(
-  args: string[],
-  options?: Parameters<typeof runSupabase>[1],
-): ReturnType<typeof runSupabase> {
-  return runSupabase(args, {
-    entrypoint: "legacy",
-    ...options,
-    exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
-    env: {
-      SUPABASE_PROFILE: process.env["SUPABASE_PROFILE"] ?? LIVE_DEFAULT_PROFILE,
-      ...options?.env,
-    },
-  });
+export function expectFunctionOk(
+  result: InvokeResult,
+  slug: string,
+  extra?: Record<string, unknown>,
+): void {
+  if (result.status !== 200) {
+    throw new Error(
+      `Expected function ${slug} to return 200, got ${result.status}: ${result.text}`,
+    );
+  }
+  if (typeof result.body !== "object" || result.body === null) {
+    throw new Error(`Expected function ${slug} to return JSON: ${result.text}`);
+  }
+  const body = result.body as Record<string, unknown>;
+  if (body.case !== slug || body.ok !== true) {
+    throw new Error(`Unexpected response from ${slug}: ${result.text}`);
+  }
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (body[key] !== value) throw new Error(`Unexpected ${key} from ${slug}: ${result.text}`);
+  }
 }

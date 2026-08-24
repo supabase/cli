@@ -139,8 +139,12 @@ function readDocumentPid(documentFile: string): number | undefined {
   }
 }
 
-function cleanupErrorDetail(projectDir: string, error: unknown): string {
-  return `Failed to remove temp stack project ${projectDir}: ${
+function cleanupErrorDetail(
+  pathname: string,
+  error: unknown,
+  resource = "temp stack project",
+): string {
+  return `Failed to remove ${resource} ${pathname}: ${
     error instanceof Error ? error.message : String(error)
   }`;
 }
@@ -229,6 +233,39 @@ async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
   return removed;
 }
 
+async function cleanupOwnedPath(
+  pathname: string,
+  cleanup: () => void | Promise<void>,
+  environment: Pick<
+    CleanupEnvironment,
+    "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
+  >,
+): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    if (!isPermissionError(error)) {
+      throw error;
+    }
+
+    const removedByDocker = await environment.removeProjectWithDocker(pathname);
+    if (removedByDocker) {
+      return;
+    }
+
+    environment.repairProjectPermissions(pathname);
+    try {
+      await cleanup();
+    } catch (retryError) {
+      throw new Error(
+        `${retryError instanceof Error ? retryError.message : String(retryError)}\n${environment.describeProjectPermissions(
+          pathname,
+        )}`,
+      );
+    }
+  }
+}
+
 async function cleanupProject(
   project: StackProject,
   environment: Pick<
@@ -236,29 +273,7 @@ async function cleanupProject(
     "removeProjectWithDocker" | "repairProjectPermissions" | "describeProjectPermissions"
   >,
 ): Promise<void> {
-  try {
-    await project.cleanup();
-  } catch (error) {
-    if (!isPermissionError(error)) {
-      throw error;
-    }
-
-    const removedByDocker = await environment.removeProjectWithDocker(project.dir);
-    if (removedByDocker) {
-      return;
-    }
-
-    environment.repairProjectPermissions(project.dir);
-    try {
-      await project.cleanup();
-    } catch (retryError) {
-      throw new Error(
-        `${retryError instanceof Error ? retryError.message : String(retryError)}\n${environment.describeProjectPermissions(
-          project.dir,
-        )}`,
-      );
-    }
-  }
+  await cleanupOwnedPath(project.dir, project.cleanup, environment);
 }
 
 function captureSnapshot(projectDir: string, homeDir?: string): StackRuntimeSnapshot {
@@ -389,12 +404,17 @@ export function createStackE2eCleanupManager(
 
   return {
     registerHome(home) {
-      homes.set(normalizeDir(home.dir), home);
+      const dir = normalizeDir(home.dir);
+      homes.set(dir, {
+        dir,
+        dispose: () => home.dispose(),
+      });
     },
     registerStackProject(project) {
-      projects.set(normalizeDir(project.dir), {
-        dir: normalizeDir(project.dir),
-        cleanup: project.cleanup,
+      const dir = normalizeDir(project.dir);
+      projects.set(dir, {
+        dir,
+        cleanup: () => project.cleanup(),
       });
     },
     associateHome(projectDir, homeDir) {
@@ -410,9 +430,14 @@ export function createStackE2eCleanupManager(
       homes.clear();
 
       const failures: Array<string> = [];
+      const associatedHomes = new Map<string, TempHome>();
 
       for (const project of pendingProjects) {
-        const home = project.homeDir ? pendingHomes.get(project.homeDir) : undefined;
+        const homeDir = project.homeDir;
+        const home = homeDir === undefined ? undefined : pendingHomes.get(homeDir);
+        if (home !== undefined && homeDir !== undefined) {
+          associatedHomes.set(homeDir, home);
+        }
         const snapshot = environment.captureSnapshot(project.dir, project.homeDir);
         const hasRuntimeArtifacts =
           snapshot.documentFiles.length > 0 ||
@@ -446,18 +471,18 @@ export function createStackE2eCleanupManager(
           await cleanupProject(project, environment);
         } catch (error) {
           failures.push(cleanupErrorDetail(project.dir, error));
-        } finally {
-          if (home !== undefined) {
-            try {
-              home.dispose();
-            } catch (error) {
-              failures.push(cleanupErrorDetail(home.dir, error));
-            }
-          }
         }
       }
 
-      // Cleanup of leaked stack projects is best-effort: assertions in the
+      for (const home of associatedHomes.values()) {
+        try {
+          await cleanupOwnedPath(home.dir, home.dispose, environment);
+        } catch (error) {
+          failures.push(cleanupErrorDetail(home.dir, error, "temp home"));
+        }
+      }
+
+      // Cleanup of leaked stack resources is best-effort: assertions in the
       // test itself have already passed by the time `drain()` runs, and CI
       // runners are ephemeral so a leaked temp dir doesn't affect
       // correctness. Surface the details so developers can still see them
@@ -468,7 +493,7 @@ export function createStackE2eCleanupManager(
       // sandbox).
       if (failures.length > 0) {
         console.warn(
-          `[stack-e2e-cleanup] ${failures.length} project(s) could not be cleaned up:\n${failures.join("\n")}`,
+          `[stack-e2e-cleanup] ${failures.length} resource(s) could not be cleaned up:\n${failures.join("\n")}`,
         );
       }
     },

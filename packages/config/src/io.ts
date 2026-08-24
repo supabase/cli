@@ -8,6 +8,7 @@ import {
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
+import { getDefaultProjectConfig, setOwnProperty, subtractValue } from "./sparse.ts";
 import { loadProjectEnvironment, type ProjectEnvironment } from "./project.ts";
 
 const projectConfigSchemaKey = "$schema";
@@ -147,7 +148,17 @@ const decodeRemotesWithoutChecks = Schema.decodeUnknownSync(RemotesSchema, {
   disableChecks: true,
 });
 const encodeProjectConfig = Schema.encodeSync(ProjectConfigSchema);
-const defaultEncodedProjectConfig = encodeProjectConfig(decodeProjectConfig({}));
+
+let defaultEncodedProjectConfig: ReturnType<typeof encodeProjectConfig> | undefined;
+
+/**
+ * Memoized like `getDefaultProjectConfig` — only the save path needs the
+ * encoded defaults, so importing the package pays for no schema decode.
+ */
+function getDefaultEncodedProjectConfig(): ReturnType<typeof encodeProjectConfig> {
+  defaultEncodedProjectConfig ??= encodeProjectConfig(getDefaultProjectConfig());
+  return defaultEncodedProjectConfig;
+}
 const defaultEncodedFunctionConfig = {
   enabled: true,
   verify_jwt: true,
@@ -187,9 +198,12 @@ function mergeRemoteSubtree(
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(remote)) {
-    const existing = result[key];
-    result[key] =
-      isObject(existing) && isObject(value) ? mergeRemoteSubtree(existing, value) : value;
+    const existing = Object.hasOwn(result, key) ? result[key] : undefined;
+    setOwnProperty(
+      result,
+      key,
+      isObject(existing) && isObject(value) ? mergeRemoteSubtree(existing, value) : value,
+    );
   }
   return result;
 }
@@ -346,68 +360,6 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   return { document: merged, appliedRemote: name, remoteLeafPaths };
 });
 
-function isEqualValue(left: unknown, right: unknown): boolean {
-  if (Array.isArray(left) && Array.isArray(right)) {
-    if (left.length !== right.length) {
-      return false;
-    }
-
-    for (let index = 0; index < left.length; index += 1) {
-      if (!isEqualValue(left[index], right[index])) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  if (isObject(left) && isObject(right)) {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
-
-    if (leftKeys.length !== rightKeys.length) {
-      return false;
-    }
-
-    for (const key of leftKeys) {
-      if (!(key in right) || !isEqualValue(left[key], right[key])) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  return Object.is(left, right);
-}
-
-function stripDefaults(value: unknown, defaults: unknown): unknown {
-  if (defaults === undefined) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return isEqualValue(value, defaults) ? undefined : value;
-  }
-
-  if (isObject(value)) {
-    const defaultObject = isObject(defaults) ? defaults : {};
-    const result: Record<string, unknown> = {};
-
-    for (const [key, child] of Object.entries(value)) {
-      const stripped = stripDefaults(child, defaultObject[key]);
-
-      if (stripped !== undefined) {
-        result[key] = stripped;
-      }
-    }
-
-    return Object.keys(result).length === 0 ? undefined : result;
-  }
-
-  return isEqualValue(value, defaults) ? undefined : value;
-}
-
 function stripFunctionRecordDefaults(value: unknown): unknown {
   if (!isObject(value)) {
     return value;
@@ -420,7 +372,11 @@ function stripFunctionRecordDefaults(value: unknown): unknown {
 
   const functions: Record<string, unknown> = {};
   for (const [name, functionConfig] of Object.entries(functionsValue)) {
-    functions[name] = stripDefaults(functionConfig, defaultEncodedFunctionConfig) ?? {};
+    setOwnProperty(
+      functions,
+      name,
+      subtractValue(functionConfig, defaultEncodedFunctionConfig) ?? {},
+    );
   }
 
   return { ...value, functions };
@@ -428,7 +384,7 @@ function stripFunctionRecordDefaults(value: unknown): unknown {
 
 function encodeMinimalProjectConfig(config: ProjectConfig): Record<string, unknown> {
   const encoded = stripFunctionRecordDefaults(encodeProjectConfig(config));
-  const stripped = stripDefaults(encoded, defaultEncodedProjectConfig);
+  const stripped = subtractValue(encoded, getDefaultEncodedProjectConfig());
   return isObject(stripped) ? stripped : {};
 }
 

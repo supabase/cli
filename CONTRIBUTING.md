@@ -179,18 +179,41 @@ pnpm run check:all
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements a record-and-replay test harness for testing the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell) against real Supabase Management API responses without hitting staging on every run. It still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for this suite, but the suite itself no longer compares Go and TS output — that go-target parity harness was retired once the legacy port and the CLI-1970 Go binary trim landed.
+`apps/cli-e2e` implements the replay-and-record compatibility harness for the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell). Live tests are owned by `apps/cli` and run from the command they cover. The CLI still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for these suites, but there is no Go-vs-TypeScript parity runner.
 
 ### Architecture
 
-Fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing the request/response pairs. Every other run replays those committed fixtures against the same CLI, so tests are fast and deterministic with no network access.
+Replay fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing request/response pairs. Replay runs serve those committed fixtures back to the same CLI, so compatibility tests are fast and deterministic with no network access. The replay/record suite remains entirely under `apps/cli-e2e`.
 
-The harness works in two modes:
+The replay/record harness has two modes:
 
 | Mode                 | When                 | What it does                                                                                                           |
 | -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Replay** (default) | Every PR / local dev | Loads committed fixtures; serves recorded responses to the CLI subprocess. Fast and deterministic — no network access. |
 | **Record**           | `RECORD=true`        | Proxies CLI traffic to staging and captures request/response pairs as fixture files.                                   |
+
+### Live remote-project coverage
+
+The live suite lives in `apps/cli/src/**` as collocated `*.live.test.ts` files and runs in the CLI package's separate, serial `live` Vitest project. Global setup requires `SUPABASE_LIVE_API_URL` and `SUPABASE_ACCESS_TOKEN`, then provisions one uniquely named project through the typed Management API client, waits for it to become healthy, creates the shared storage fixture, and writes a temporary YAML profile. Every live subprocess receives that profile, so the same contract works with Supabox, a Docker-hosted API platform, or staging by changing only the URL and token. Teardown always removes the temporary profile and deletes the exact owned project unless `SUPABASE_LIVE_KEEP_PROJECT=1` is set.
+
+The configured URL is the Management API endpoint. Tenant data-plane URLs keep
+the CLI profile contract (`https://<ref>.<project_host>`) using the host derived
+from the provisioned project's database metadata.
+
+Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
+
+To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the Nx target from the repository root. The target's build dependency prepares the CLI artifacts before Vitest starts:
+
+```sh
+pnpm exec nx run supabase:test:live
+```
+
+Optional `SUPABASE_LIVE_ORG_ID`, `SUPABASE_LIVE_REGION`, and
+`SUPABASE_LIVE_PROJECT_NAME` values select provisioning details. Set
+`SUPABASE_LIVE_KEEP_PROJECT=1` only when debugging a failed run; the temporary
+profile is still cleaned up.
+
+Live CI is manual or daily scheduled and is not PR-blocking; run it manually on a PR branch when you need pre-merge remote coverage.
 
 ### Running the tests
 
