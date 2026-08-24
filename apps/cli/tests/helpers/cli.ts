@@ -300,6 +300,8 @@ export function spawnSupabase(
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",
+    // Isolate e2e from a developer/CI soak (`SUPABASE_SHADOW_CACHE=1`). Cache-subject tests opt in via `options.env`.
+    SUPABASE_SHADOW_CACHE: "0",
     ...options?.env,
   };
   if (entrypoint === "legacy") {
