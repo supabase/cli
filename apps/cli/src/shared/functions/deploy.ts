@@ -1240,6 +1240,7 @@ export async function buildDockerBinds(
     binds.push(`${hostOutputDir}:${toDockerPath(hostOutputDir)}:rw`);
   }
 
+  const warn = options.onWarning ?? (async () => {});
   const extraBinds: string[] = [];
   const explicitScopeBinds = new Set<string>();
   const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
@@ -1265,7 +1266,7 @@ export async function buildDockerBinds(
     moduleRoots,
     sourceRoot,
     appendModuleBind,
-    options.onWarning ?? (async () => {}),
+    warn,
   );
   await forEachLocalImportMapTarget(importMap, async (target, kind) => {
     try {
@@ -1296,15 +1297,11 @@ export async function buildDockerBinds(
         // reaches through that file still fails via the walker's
         // FunctionImportNotDirectoryError.
         if (error.code === "ENOTDIR") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping import map target that is not a directory: ${target}\n`,
-          );
+          await warn(`WARN: Skipping import map target that is not a directory: ${target}\n`);
           return;
         }
         if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping missing import map target: ${target}\n`,
-          );
+          await warn(`WARN: Skipping missing import map target: ${target}\n`);
           return;
         }
       }
@@ -1339,7 +1336,7 @@ export async function buildDockerBinds(
     occupiedContainerPaths.add(containerPath);
     uniqueScopeBinds.push(bind);
     options.onScopeBindOutsideRoots?.(bind);
-    await (options.onWarning ?? (async () => {}))(
+    await warn(
       `WARN: Mounting import map scope target outside the project root: ${dockerBindHostPath(bind)}\n`,
     );
   }
